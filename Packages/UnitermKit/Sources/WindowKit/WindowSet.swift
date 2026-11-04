@@ -1,4 +1,5 @@
 import AppKit
+import AppletKit
 import LayoutKit
 import StatusKit
 
@@ -26,6 +27,7 @@ enum WindowCascade {
 
 public enum WindowSetError: Error, Equatable {
   case cannotRestore
+  case cannotRoute
 }
 
 /// The open main windows, in the order they were opened.
@@ -49,8 +51,14 @@ public final class WindowSet {
   public typealias RestoringFactory =
     @MainActor (_ identifier: String, _ restored: RestoredWindow) throws -> MainWindowController
 
+  /// Makes the controller for a window that holds one routed pane. The pane is the window's only
+  /// pane. No shell starts beside it, and no directory comes from another window.
+  public typealias RoutedFactory =
+    @MainActor (_ identifier: String, _ applet: any Applet) throws -> MainWindowController
+
   private let makeController: Factory
   private let makeRestoredController: RestoringFactory?
+  private let makeRoutedController: RoutedFactory?
   private let visibleFrame: @MainActor (NSWindow) -> NSRect?
   private let screens: @MainActor () -> [ScreenArea]
   private var serial = 0
@@ -80,12 +88,14 @@ public final class WindowSet {
     screens: @escaping @MainActor () -> [ScreenArea] = WindowSet.attachedScreens,
     confirmer: @escaping CloseConfirmer = CloseDialog.present,
     makeRestoredController: RestoringFactory? = nil,
+    makeRoutedController: RoutedFactory? = nil,
     makeController: @escaping Factory
   ) {
     self.visibleFrame = visibleFrame
     self.screens = screens
     self.confirmer = confirmer
     self.makeRestoredController = makeRestoredController
+    self.makeRoutedController = makeRoutedController
     self.makeController = makeController
   }
 
@@ -137,6 +147,33 @@ public final class WindowSet {
 
     let number = serial + 1
     let controller = try makeController(Self.identifier(forSerial: number), directory)
+    serial = number
+
+    register(controller)
+
+    if let anchor, let window = controller.window {
+      let corner = WindowCascade.topLeft(
+        after: anchor.frame, size: window.frame.size, in: visibleFrame(anchor))
+      window.setFrameTopLeftPoint(corner)
+    }
+
+    show(controller)
+    return controller
+  }
+
+  /// Opens a window whose only pane is `applet`, and returns its controller. It cascades from the
+  /// active window like any new window, and it takes no directory from it. When the factory
+  /// throws, nothing opens, no number is used, and the applet stays the caller's to close.
+  @discardableResult
+  public func open(routing applet: any Applet) throws -> MainWindowController {
+    guard let makeRoutedController else {
+      throw WindowSetError.cannotRoute
+    }
+
+    let anchor = activeController?.window
+
+    let number = serial + 1
+    let controller = try makeRoutedController(Self.identifier(forSerial: number), applet)
     serial = number
 
     register(controller)
