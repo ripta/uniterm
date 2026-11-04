@@ -305,6 +305,42 @@ Left open:
 - Nobody has watched the confirmation or the chooser sheet place a pane on screen.
 - The user's hands-on look at File > Open and Open With.
 
+### UTERM-015 M1-M3 row review
+
+Commit: "Make the route own batch confirmation and inject the sheet clock".
+
+A fresh reviewer and an ADR-impact agent read the whole row. The reviewer asked whether every entry point reaches the
+same router, the same source-taking function, and the same start-directory rule. They do, and no directory or window
+state crosses between panes. The ADR-impact agent found no conflicts and no supersessions across all nine ADRs.
+
+Checks after the fixes:
+- `make fmt-check`, `make lint`, and `make check` pass. The coordinator re-ran them.
+- `make test-package` ran 656 tests, with 4 skipped and 0 failures.
+- `make test-app` ran 79 UI tests with 0 failures. `OpenPanelUITests` took 23 seconds.
+
+Findings and dispositions, all fixed by a fresh implementer:
+
+- Two As built lines disagreed with the code or with measurements. One was a stale note about a skipping minimize
+  test, and the other was a stale UI test time. A proposal bullet and one doc comment ran past the line width.
+- The sheet wait slept for real in production code, and its test used a real 0.1-second timer. The testing standards
+  require injected clocks. The sleeper is now injected. A new test proves the bounded fallback, in which a sheet that
+  never leaves sends the file to a new window. Disabling the wait made 5 of 13 tests in that class fail.
+- Each caller had to remember the batch confirmation. The route now owns the 10-file threshold and asks before it
+  inspects or places anything, so a later entry point cannot skip it. One test replaces three.
+- A viewer's own "Open..." skips the router's file inspection. The M3 As built now tells the first adopting viewer to
+  refuse FIFOs and devices.
+
+Best guesses in the fixes:
+- The confirmation now appears after the anchor window is brought forward, not before. A declined batch still brings
+  the window forward.
+- The sleeper takes no arguments. Its 20 ms interval lives in the production default.
+
+ADR candidates: none of the Decision Log's candidates is ready. The sender rule waits on M8, and "one route" waits on
+the byte-stream and canvas work. The ADR-impact agent raised one new possible candidate: a versioning rule for stored
+user preferences, such as the saved Open With choices. The run did not record it against UTERM-015, because the saved
+choices follow the settings store's existing rule that reads never write. That store belongs to UTERM-001's work, so
+the candidate is left for the user.
+
 ## Status
 
 In progress.

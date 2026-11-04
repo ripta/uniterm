@@ -203,7 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       fileOpens = FileOpenCommands(opener: routedOpener)
 
       let coordinator = LaunchOpenCoordinator(
-        windows: windows, opener: routedOpener, confirm: CloseDialog.present,
+        windows: windows, opener: routedOpener,
         openFallbackWindow: { [weak self] in self?.openWindow() })
       launchOpens = coordinator
 

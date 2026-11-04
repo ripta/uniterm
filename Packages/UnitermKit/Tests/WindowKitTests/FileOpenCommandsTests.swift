@@ -37,10 +37,10 @@ final class FileOpenCommandsTests: XCTestCase {
   private func makeCommands(
     _ fixture: RoutingFixture, script: PanelScript,
     present: @escaping OpenWithPresenter = { _, _ in .cancelled },
-    confirm: @escaping CloseConfirmer = { _, _ in true }
+    sleeper: @escaping FileOpenCommands.SheetSleeper = {}
   ) -> FileOpenCommands {
     FileOpenCommands(
-      opener: fixture.opener, picker: script.picker, present: present, confirm: confirm)
+      opener: fixture.opener, picker: script.picker, present: present, sleeper: sleeper)
   }
 
   // MARK: Panel
@@ -121,8 +121,8 @@ final class FileOpenCommandsTests: XCTestCase {
   }
 
   /// Catches a pane routed while the panel's sheet is still attached, which the router would answer
-  /// with a new window. The picker returns with a real sheet on the window and ends it 100 ms later,
-  /// longer than the router's own hop off the main thread. The pane must still land beside the anchor.
+  /// with a new window. The picker returns with a real sheet on the window. The injected sleeper ends
+  /// it on its first call. The pane must still land beside the anchor.
   func testAPaneIsNotPlacedUntilTheSheetHasLeftTheWindow() async throws {
     let fixture = try makeFixture()
     let anchor = try fixture.anchoredWindow()
@@ -138,15 +138,51 @@ final class FileOpenCommandsTests: XCTestCase {
     script.onPick = {
       window.beginSheet(sheet)
       XCTAssertNotNil(window.attachedSheet)
-
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { window.endSheet(sheet) }
     }
 
-    await makeCommands(fixture, script: script).open(from: anchor)
+    var sleeps = 0
 
+    await makeCommands(
+      fixture, script: script,
+      sleeper: {
+        sleeps += 1
+        window.endSheet(sheet)
+      }
+    ).open(from: anchor)
+
+    XCTAssertEqual(sleeps, 1)
     XCTAssertNil(window.attachedSheet)
     XCTAssertEqual(fixture.windows.controllers.count, 1)
     XCTAssertEqual(anchor.controller.paneIDs.count, 2)
+  }
+
+  /// Catches a wait with no bound, which would hang File > Open behind a sheet that never leaves.
+  /// The sleeper never ends the sheet. After the poll limit the router answers as it does for a
+  /// window with a sheet, so the pane opens in a new window and the anchor keeps its one pane.
+  func testASheetThatNeverLeavesEndsTheWaitAndFallsThroughToANewWindow() async throws {
+    let fixture = try makeFixture()
+    let anchor = try fixture.anchoredWindow()
+    let window = try XCTUnwrap(anchor.controller.window)
+    let file = try fixture.textFile("a.txt")
+
+    let sheet = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 100, height: 50), styleMask: [.titled],
+      backing: .buffered, defer: true)
+
+    let script = PanelScript()
+    script.answer = [file]
+    script.onPick = { window.beginSheet(sheet) }
+
+    var sleeps = 0
+
+    await makeCommands(fixture, script: script, sleeper: { sleeps += 1 }).open(from: anchor)
+
+    XCTAssertEqual(sleeps, FileOpenCommands.sheetPolls)
+    XCTAssertNotNil(window.attachedSheet)
+    XCTAssertEqual(anchor.controller.paneIDs.count, 1)
+    XCTAssertEqual(fixture.windows.controllers.count, 2)
+
+    window.endSheet(sheet)
   }
 
   /// Catches a chosen folder that does not open a terminal there, and a command with no window that
@@ -190,35 +226,6 @@ final class FileOpenCommandsTests: XCTestCase {
 
     XCTAssertEqual(anchor.controller.paneIDs.count, 1)
     XCTAssertTrue(fixture.box.entries.isEmpty)
-  }
-
-  /// Catches a flood of panes from one selection. A batch above the threshold asks first, and a
-  /// refusal opens nothing. The same batch opens when the user agrees.
-  func testALargeSelectionAsksBeforeOpening() async throws {
-    let fixture = try makeFixture()
-    let files = try (0...LaunchOpenCoordinator.confirmationThreshold).map {
-      try fixture.textFile("f\($0).txt")
-    }
-
-    let script = PanelScript()
-    script.answer = files
-
-    var questions: [String] = []
-
-    await makeCommands(
-      fixture, script: script,
-      confirm: { question, _ in
-        questions.append(question.title)
-        return false
-      }
-    ).open(from: nil)
-
-    XCTAssertEqual(questions, ["Open 11 files?"])
-    XCTAssertTrue(fixture.box.entries.isEmpty)
-
-    await makeCommands(fixture, script: script).open(from: nil)
-
-    XCTAssertEqual(fixture.box.entries.count, 11)
   }
 
   // MARK: Open With

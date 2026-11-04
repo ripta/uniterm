@@ -106,10 +106,6 @@ private final class OpenFixture {
 
     coordinator = LaunchOpenCoordinator(
       windows: windows, opener: opener,
-      confirm: { request, _ in
-        holder.confirmations.append(request.title)
-        return holder.answer
-      },
       now: { holder.clock },
       openFallbackWindow: {
         holder.fallbackWindows += 1
@@ -159,8 +155,6 @@ private final class FactoryBox {
 
 @MainActor
 private final class Holder {
-  var confirmations: [String] = []
-  var answer = true
   var fallbackWindows = 0
   var clock: TimeInterval = 0
   weak var windows: WindowSet?
@@ -346,48 +340,6 @@ final class LaunchOpenCoordinatorTests: XCTestCase {
   }
 
   // MARK: Several files
-
-  /// Catches a batch of exactly the threshold that asks, or one above it that does not.
-  func testOnlyABatchAboveTheCountAsksForConfirmation() async throws {
-    let fixture = try makeFixture()
-    _ = try fixture.windows.open()
-    fixture.coordinator.launchFinished()
-
-    let limit = LaunchOpenCoordinator.confirmationThreshold
-    XCTAssertEqual(limit, 10)
-
-    let atLimit = try (0..<limit).map { try fixture.folder("at\($0)") }
-    fixture.coordinator.receive(atLimit, from: finder)
-    await fixture.settle()
-
-    XCTAssertTrue(fixture.holder.confirmations.isEmpty)
-    XCTAssertEqual(fixture.box.entries.count, limit)
-
-    let over = try (0...limit).map { try fixture.folder("over\($0)") }
-    fixture.coordinator.receive(over, from: finder)
-    await fixture.settle()
-
-    XCTAssertEqual(fixture.holder.confirmations, ["Open \(limit + 1) files?"])
-    XCTAssertEqual(fixture.box.entries.count, limit + limit + 1)
-  }
-
-  /// Catches a declined confirmation that opens anyway.
-  func testDecliningTheConfirmationOpensNothing() async throws {
-    let fixture = try makeFixture()
-    _ = try fixture.windows.open()
-    fixture.coordinator.launchFinished()
-    fixture.holder.answer = false
-
-    let over = try (0...LaunchOpenCoordinator.confirmationThreshold).map {
-      try fixture.folder("f\($0)")
-    }
-    fixture.coordinator.receive(over, from: finder)
-    await fixture.settle()
-
-    XCTAssertEqual(fixture.holder.confirmations.count, 1)
-    XCTAssertTrue(fixture.box.entries.isEmpty)
-    XCTAssertEqual(fixture.windows.controllers.count, 1)
-  }
 
   /// Catches a batch that gives up when one file fails. The good folders open one pane each, and
   /// the bad one is one summary message.

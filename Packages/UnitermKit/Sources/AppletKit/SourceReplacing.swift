@@ -4,10 +4,12 @@ import AppKit
 /// pane-local Open command.
 ///
 /// `replaceSource` and the applet type's `AppletSourceFactory` are the two faces of one
-/// source-taking function. The factory makes an applet that opens the source, and `replaceSource`
-/// swaps the source of a running one. A viewer implements both through the same code, so the
-/// router, a drop, and this command all reach one path. The start directory is explicit and absolute. It comes from the
-/// chosen file, and the applet never reads it from another pane.
+/// source-taking function. The factory makes an applet that opens the source. `replaceSource` swaps
+/// the source of a running one. A viewer implements both through the same code, so the router, a
+/// drop, and this command all reach one path.
+///
+/// The start directory is explicit and absolute. It comes from the chosen file, and the applet
+/// never reads it from another pane.
 @MainActor
 public protocol SourceReplacing: Applet {
   func replaceSource(with file: URL, startDirectory: String) throws
