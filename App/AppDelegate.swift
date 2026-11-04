@@ -1,5 +1,7 @@
 import AppKit
+import AppletCatalog
 import AppletKit
+import FileRouting
 import OSLog
 import Preferences
 import SettingsKit
@@ -12,11 +14,13 @@ import WindowKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private let logger = Logger(subsystem: "dev.uniterm.app", category: "app")
   private let settings: SettingsStore
+  private let defaults: UserDefaults
   private var appearance: AppearanceController?
   private var appearanceToken: UUID?
   private var paletteSync: TerminalPaletteSync?
   private var terminalEngine: GhosttyTerminalEngine?
   private var windowSet: WindowSet?
+  private var routedOpener: RoutedOpener?
   private var commands: CommandRegistry?
   private var commandMenu: CommandMenu?
   private var layoutPersistence: LayoutPersistence?
@@ -29,7 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   init(debugEnvironment: [String: String]) {
     self.debugEnvironment = debugEnvironment
-    self.settings = SettingsStore(defaults: Self.makeDefaults(debugEnvironment))
+    let defaults = Self.makeDefaults(debugEnvironment)
+    self.defaults = defaults
+    self.settings = SettingsStore(defaults: defaults)
     super.init()
   }
 
@@ -153,6 +159,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           commands: commands, restoring: restored, restoreApplet: restoreApplet,
           makeApplet: makeApplet)
       },
+      makeRoutedController: { identifier, applet in
+        try MainWindowController(
+          appearance: appearance, settings: settings, identifier: identifier,
+          commands: commands, startingWith: applet, restoreApplet: restoreApplet,
+          makeApplet: makeApplet)
+      },
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
@@ -160,6 +172,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           makeApplet: makeApplet)
       })
     windowSet = windows
+
+    let sourceFactories: [String: AppletSourceFactory] = [
+      TerminalDescription.typeID: { _, startDirectory in
+        try makeApplet(.terminalShell, startDirectory)
+      }
+    ]
+
+    routedOpener = RoutedOpener(
+      windows: windows, declarations: BuiltInApplets.declarations, factories: sourceFactories,
+      store: SavedChoiceStore(defaults: defaults))
 
     let menu = CommandMenu(
       registry: commands, activeController: { [weak self] in self?.windowSet?.activeController })

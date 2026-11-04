@@ -149,7 +149,9 @@ per-type choice the user saves overrides the rank.
   conforming to `public.json`. Without it, the file resolves to a dynamic type that matches no declaration.
 - One match is more specific than another when its declared type conforms to the other's. Rank decides only between
   matches that are equal or that neither conforms to. Two applets claiming the same type at the same rank fail a test,
-  so no silent tiebreak ever picks a default.
+  so no silent tiebreak ever picks a default. Two unrelated declared types can still tie at run time, when one file's
+  type conforms to both. The router then asks the user to pick, and refuses the file with a message when nothing can
+  ask. Amended 2026-11-03; see Decision Log.
 - An "Open With" choice in uniterm lists every applet that declares the file's type. It can save the choice for the
   file's exact type, and the user can clear a saved choice.
 - A saved choice matches the file's exact resolved type only, never types that conform to it. A choice for `.json`
@@ -438,7 +440,7 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 
 ### M1: The router
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Each applet type declares the content types it opens, and the router picks one applet per file by the rule "How a
   file type maps to an applet" settles
@@ -461,7 +463,33 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 - No script or controller can write a saved choice
 - A test fails when two applets claim the same type at the same rank, and when a declared type the system lacks is not
   imported with its conformance
-- Type and placement work runs off the main thread, so a path on a slow network volume never stalls the UI
+- Type resolution and the file-system checks run off the main thread, so a path on a slow network volume never stalls
+  the UI. Choosing the pane and changing the window stay on the main thread, since AppKit owns them. Amended
+  2026-11-03; see Decision Log.
+
+**As built:**
+
+- The production catalog holds one applet type, the terminal, which opens `public.folder` at the owner rank. No viewer
+  is built, so none declares a type. The factory that turns a file into an applet is kept apart from the declaration,
+  since the terminal's needs the host's engine. The app attaches it. A routed folder reuses the terminal's ordinary
+  start path.
+- Fixture types cannot be made through the system's database. A type exported in code, with no registration, conforms
+  to nothing, so the router takes its type source and conformance check as an injected input. Router tests use a table
+  of fixture types. The catalog tests use the real database, including a check that a package is refused.
+- The declared-type check takes the host's imported types as an input. M1 tests it with fixture tables. M2 feeds it from
+  `Info.plist`, and adds the drift test.
+- The tie rule changed from the plan. See Decision Log, 2026-11-03.
+- A symlink is followed before its target is classified, and the type is looked up on the target, since the system
+  types a link as `public.symlink`. The router never opens it, and a symlink to a FIFO is refused. The start directory
+  keeps the path as the request named it, so a link to a folder starts its terminal at the link, and a linked file
+  starts in the link's folder. See Decision Log.
+- A pane-group seam on the window answers "no group" until UTERM-004 M4. Ordinary splits report to it and routed splits
+  never do. The fixture group proves the difference. The re-run against UTERM-004's groups stays with that milestone.
+- The anchor is an input. The most recently key window is M2's.
+- The chooser is an alert with a pop-up, an "always use" checkbox, and a clear button. Its model is unit tested. The
+  alert's buttons and list are checked without presenting it. M3 wires it to a menu item.
+- The saved-choice writers are file-private to the chooser model's file. A test cannot prove a call fails to compile, so
+  it proves what the store does with entries it did not write.
 
 ### M2: Finder and Dock
 
@@ -644,6 +672,16 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 - 2026-11-03: Amended "Folders": the terminal declares `public.folder` at the owner rank and the image viewer at the
   alternate rank. Folders said only that the type mapping picks, and two equal claims fail its test. Amended UTERM-006,
   UTERM-008, and UTERM-009 to declare their types and gain a pane-local Open... with no key.
+- 2026-11-03: M1 work-queue best guesses (work-queue best guess). Amended "How a file type maps to an applet", which
+  said equal-rank claims fail a test and nothing about unrelated types that tie. A file whose type conforms to two
+  unrelated declared types can tie at run time, and the test cannot see it. The router now asks the user to pick, and
+  refuses with a message when nothing can ask, so no default is picked. Amended M1's last check, which said "Type and
+  placement work runs off the main thread, so a path on a slow network volume never stalls the UI". Only type resolution
+  and file-system checks move off it. Choosing the pane and changing the window stay on the main thread. Review fix: a
+  symlink's type comes from its target, and its start directory is the path as named, not the resolved target, matching
+  the shell's logical paths. Also recorded: saved choices live in one defaults dictionary keyed by exact type, a symlink
+  is followed before classifying its target, and the declared-type check takes the imported types as an input that M2
+  fills from `Info.plist`.
 
 ## References
 

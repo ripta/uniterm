@@ -1,0 +1,68 @@
+import AppletCatalog
+import AppletKit
+import FileRouting
+import XCTest
+
+/// Proves the production catalog against the system's real type database. The Info.plist drift
+/// check joins it when the app declares document types.
+final class BuiltInAppletsTests: XCTestCase {
+  /// Catches a declaration that changes without a deliberate edit here. The terminal is the only
+  /// built applet that opens files, and it opens folders as the owner.
+  func testTheCatalogIsExactlyTheTerminalOpeningFolders() {
+    XCTAssertEqual(
+      BuiltInApplets.declarations,
+      [
+        AppletTypeDeclaration(
+          typeID: "terminal", displayName: "Terminal",
+          opens: [OpenedType("public.folder", rank: .owner)])
+      ])
+  }
+
+  /// Catches two equal claims, an undeclared type, or a `public.directory` declaration in the
+  /// shipped catalog.
+  func testTheCatalogPassesTheAuditAgainstTheSystem() {
+    XCTAssertEqual(
+      CatalogAudit.problems(in: BuiltInApplets.declarations, types: SystemContentTypes()), [])
+  }
+
+  /// Catches a folder that routes anywhere but the terminal, started in the folder itself.
+  func testAFolderRoutesToTheTerminalAtItself() throws {
+    let folder = try makeFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let router = FileRouter(declarations: BuiltInApplets.declarations)
+
+    XCTAssertEqual(
+      router.decide(folder),
+      .open(
+        file: folder, appletTypeID: "terminal", startDirectory: folder.path, type: "public.folder")
+    )
+  }
+
+  /// Catches a package taken for a folder. A bundle conforms to `public.directory` and not to
+  /// `public.folder`, so the router refuses it as unsupported.
+  func testAPackageIsRefusedAsUnsupported() throws {
+    let folder = try makeFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let bundle = folder.appendingPathComponent("Thing.app", isDirectory: true)
+    try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+
+    let router = FileRouter(declarations: BuiltInApplets.declarations)
+
+    guard case .refused(_, .unsupported(let type)) = router.decide(bundle) else {
+      return XCTFail("expected the package to be refused")
+    }
+
+    XCTAssertEqual(type, "com.apple.application-bundle")
+  }
+
+  private func makeFolder() throws -> URL {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("uniterm-catalog-\(UUID().uuidString)", isDirectory: true)
+      .resolvingSymlinksInPath()
+
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+  }
+}
