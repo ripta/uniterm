@@ -260,6 +260,7 @@ extension MainWindowController {
   }
 
   public func windowDidBecomeKey(_ notification: Notification) {
+    onBecomeKey?(self)
     refreshPaletteHotkeyHint()
   }
 }

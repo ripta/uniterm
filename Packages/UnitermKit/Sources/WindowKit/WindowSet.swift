@@ -25,6 +25,18 @@ enum WindowCascade {
   }
 }
 
+/// The part of a window that bringing it forward touches. A test replaces the window with a fake
+/// that reports itself minimized.
+@MainActor
+protocol ForwardableWindow {
+  var isMiniaturized: Bool { get }
+
+  func deminiaturize(_ sender: Any?)
+  func makeKeyAndOrderFront(_ sender: Any?)
+}
+
+extension NSWindow: ForwardableWindow {}
+
 public enum WindowSetError: Error, Equatable {
   case cannotRestore
   case cannotRoute
@@ -137,6 +149,51 @@ public final class WindowSet {
       ?? controllers.last
   }
 
+  /// The open windows that have been key, least recently key first. It survives the app going to
+  /// the background, since no window is key then.
+  private var keyOrder: [MainWindowController] = []
+
+  /// The controller whose window was key most recently, among the windows still open.
+  public var mostRecentlyKey: MainWindowController? { keyOrder.last }
+
+  /// The controller a Launch Services open anchors to: the window that was key last, else the
+  /// newest window.
+  public var launchAnchorController: MainWindowController? {
+    mostRecentlyKey ?? controllers.last
+  }
+
+  /// Records that a window became key.
+  func noteKey(_ controller: MainWindowController) {
+    guard controllers.contains(where: { $0 === controller }) else { return }
+
+    keyOrder.removeAll { $0 === controller }
+    keyOrder.append(controller)
+  }
+
+  /// The focused pane of the window that was key last. Nil when no window is open.
+  public func launchAnchor() -> RouteAnchor? {
+    guard let controller = launchAnchorController else { return nil }
+
+    return RouteAnchor(controller: controller, pane: controller.focusedPane)
+  }
+
+  /// Brings a window forward, unminimized, and activates the app.
+  public func bringForward(_ controller: MainWindowController) {
+    guard let window = controller.window else { return }
+
+    Self.bringForward(window)
+    NSApp.activate()
+  }
+
+  /// Restores a minimized window, then makes it key and frontmost.
+  static func bringForward(_ window: some ForwardableWindow) {
+    if window.isMiniaturized {
+      window.deminiaturize(nil)
+    }
+
+    window.makeKeyAndOrderFront(nil)
+  }
+
   /// Opens a window, shows it, and returns its controller. It cascades from the active window, and
   /// the first window is centered. Its first pane starts in the directory the active window's
   /// focused pane reports. When the factory throws, nothing opens and no number is used.
@@ -226,6 +283,9 @@ public final class WindowSet {
     controller.onLayoutChange = { [weak self] in
       self?.onLayoutChange?()
     }
+    controller.onBecomeKey = { [weak self] controller in
+      self?.noteKey(controller)
+    }
     controller.visibleFrameProvider = visibleFrame
     controller.refreshMinimumSize()
     controllers.append(controller)
@@ -268,6 +328,8 @@ public final class WindowSet {
 
   private func windowDidClose(_ controller: MainWindowController) {
     controllers.removeAll { $0 === controller }
+
+    keyOrder.removeAll { $0 === controller }
     closing.append(controller)
     onLayoutChange?()
 

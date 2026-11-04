@@ -94,6 +94,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   /// Runs once, when the window closes. The set of windows uses it to let go of the controller.
   var onClose: ((MainWindowController) -> Void)?
 
+  /// Runs when the window becomes key. The set of windows uses it to remember which was key last.
+  var onBecomeKey: ((MainWindowController) -> Void)?
+
   /// The description of each pane as of the last snapshot of the window.
   private var savedDescriptions: [NodeID: AppletDescription] = [:]
 
