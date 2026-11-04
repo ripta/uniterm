@@ -8,7 +8,19 @@ Open. The specs live in the code repo, so every commit below is in `/Users/ripta
 
 ## TL;DR
 
-In progress.
+The row finished on 2026-11-04. UTERM-015 stays `accepted`, because M4 to M8 remain.
+
+What M1 to M3 built:
+- M1 built a router that picks an applet by declared content type and rank, with saved Open With choices.
+- M2 opens what Finder, the Dock, and Spotlight send. It refuses every other sender before touching a path.
+- M3 added File > Open on Cmd-O, Open With, and a shared pane-local "Open…" for future viewers.
+
+Two pieces of M2 moved to new milestones by amendment:
+- The Finder sender measurement became M8, a hand check queued with no dependency. The run's `osascript` call to drive
+  Finder was denied, so nobody knows yet whether a Finder open can be told apart from `open -a`.
+- Approvals for other senders became M7, which waits on UTERM-004 M6.
+
+Every local check passed on every commit, including the full UI suite.
 
 ## Run state
 
@@ -341,6 +353,34 @@ user preferences, such as the saved Open With choices. The run did not record it
 choices follow the settings store's existing rule that reads never write. That store belongs to UTERM-001's work, so
 the candidate is left for the user.
 
+## Final review
+
+A fresh reviewer and an ADR-impact agent read the whole run. The range adds and edits no ADR. Both found it consistent
+with all nine ADRs, with no conflicts and no supersessions. The reviewer traced the row-review fixes and found no
+regressions. It found two proposal-hygiene items, both fixed in "Date the M3 amendments and tidy the decision log".
+
+- The amendment marker and Decision Log entry from M3 said 2026-11-03, but M3 landed on 2026-11-04. Fixed, along with
+  the proposal's Updated date.
+- Three Decision Log entries had stray blank lines before them. The history note for the row did not mention M8.
+  Fixed.
+
 ## Status
 
-In progress.
+The run is done. Its commits, in order:
+- "Route files to applets by declared content type"
+- "Open files that Finder, the Dock, and Spotlight send"
+- "Open files and folders from File > Open on Cmd-O"
+- "Make the route own batch confirmation and inject the sheet clock"
+- "Move UTERM-015 M1-M3 to the queue history"
+- "Date the M3 amendments and tidy the decision log"
+
+Nothing was pushed. No row was held or blocked, and no work was stashed. Freeze reports nothing, and no edit from
+another session turned up.
+
+Left for the user:
+- M8, now in the queue: record the sender a Finder open reports at cold launch and while running, and the sender a
+  Dock drop reports. Then check Open With and a Dock drop by hand. If Finder cannot be told apart from `open -a`, the
+  decision "Opens that arrive through Launch Services" reopens.
+- A hands-on look at File > Open, Open With, and the 11-file confirmation.
+- A possible ADR on versioning stored user preferences, raised by the row's ADR check. It is not recorded against
+  UTERM-015.
