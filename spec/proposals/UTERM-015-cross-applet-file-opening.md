@@ -686,15 +686,15 @@ Amended 2026-11-03; see Decision Log. Moved from M2.
 
 ### M8: Finder sender record
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS
 
-Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check only the user can run.
+Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milestone is a check only the user can run.
 
 - The sender a cold-launch Finder open, a warm one, and a Dock drop each report is recorded in the As built block,
-  read from the debug log line of a build run directly
+  read from the `open-event` line that `log stream --level debug` shows for the `dev.uniterm.app` subsystem
 - Finder and `open -a` report senders that tell them apart. When they do not, the user rules on the Launch Services
   decision, which reopens
-- Open With in Finder and a drop on the Dock icon open the file, cold and warm, in a release build
+- Open With in Finder and a drop on the Dock icon open a folder, cold and warm, in a release build
 
 ## Decision Log
 
@@ -861,6 +861,13 @@ Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check o
   above 10 files asks first, as Finder's batch does, since the user can pick hundreds of files. The panel's start
   folder falls back to home when the reported folder no longer exists, since the panel would otherwise fall back to
   AppKit's own memory.
+- 2026-11-04: M8 work-queue best guesses (work-queue best guess). Amended M8's first check, which said the sender is
+  "read from the debug log line of a build run directly". When Finder or the Dock launches uniterm cold, no shell owns
+  the process, so its standard error goes nowhere. The same line goes to the unified log at debug level, which is not
+  persisted, so it is read live with `log stream --level debug`. Amended M8's last check, which said the release build
+  opens "the file". `Info.plist` declares only `public.folder`, so Finder's Open With and the Dock icon offer uniterm
+  only for a folder. A file would fail the check for the wrong reason. The run's `osascript` call to drive Finder was
+  denied again, so nothing was measured, and M8 stays in progress.
 
 ## References
 
