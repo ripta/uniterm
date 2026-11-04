@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-03
-**Updated:** 2026-11-03
+**Updated:** 2026-11-04
 
 ## Dependencies
 
@@ -503,7 +503,7 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 
 **Status:** DONE
 
-Amended 2026-11-03; see Decision Log.
+Amended 2026-11-04; see Decision Log.
 
 - An open-documents event from an Apple opener opens its file or folder in uniterm, at launch and while running, proven
   with a sender fixture. Open With in Finder and a drop on the Dock icon by hand are M8's
@@ -797,7 +797,6 @@ Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check o
   the shell's logical paths. Also recorded: saved choices live in one defaults dictionary keyed by exact type, a symlink
   is followed before classifying its target, and the declared-type check takes the imported types as an input that M2
   fills from `Info.plist`.
-
 - 2026-11-03: M2 work-queue best guesses (work-queue best guess). Amended M2, M7, and M8 and the Launch Services
   decision.
   1. Approvals moved out of M2. The session grant bound to the sender's PID and PID version, and the single prompt for a
@@ -845,7 +844,6 @@ Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check o
   10. A cold-launch open waits for restore, and the layout opens no default window while one waits. When the replay
       leaves no window, because every file failed, the app opens one default window. A warm open that fails with no
       window open leaves the app with none, as closing the last window does.
-
 - 2026-11-03: M2 review fix (work-queue best guess). Amended M2's first check, which said "Open With in Finder and a
   drop on the Dock icon open the file in uniterm, at launch and while running". Only the user can run it, and a check
   only the user can run blocks DONE. It now says an open-documents event from an Apple opener opens its file, proven
@@ -853,8 +851,7 @@ Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check o
   "platform-binary requirements". The code matches an Apple-anchored requirement on the identifier, since the platform
   identifier measured, 26, is tied to the OS release. M8 has its own queue row, because it needs no dependency. Its
   result can reopen the Launch Services decision before M7 builds on it.
-
-- 2026-11-03: M3 work-queue best guesses (work-queue best guess). Amended M3's pane-local Open check, which said "and
+- 2026-11-04: M3 work-queue best guesses (work-queue best guess). Amended M3's pane-local Open check, which said "and
   in a controller-owned pane that controller gets no path or content outside its scope, tested with fixture
   controllers and scopes". No controller, scope, or event channel exists yet, so there is nothing to test it against.
   M4 already holds the check, "A pane whose source lies outside a controller's scope sends that controller no path
