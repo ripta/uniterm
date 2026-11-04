@@ -21,6 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminalEngine: GhosttyTerminalEngine?
   private var windowSet: WindowSet?
   private var routedOpener: RoutedOpener?
+  private var launchOpens: LaunchOpenCoordinator?
+
+  /// Opens that arrived before the coordinator existed. Launch Services can deliver the event of a
+  /// cold launch ahead of the end of launching. The sender is identified when the event arrives,
+  /// since a sender that exits afterward cannot be identified.
+  private var earlyOpens: [(urls: [URL], sender: SenderIdentity?)] = []
   private var commands: CommandRegistry?
   private var commandMenu: CommandMenu?
   private var layoutPersistence: LayoutPersistence?
@@ -183,6 +189,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       windows: windows, declarations: BuiltInApplets.declarations, factories: sourceFactories,
       store: SavedChoiceStore(defaults: defaults))
 
+    if let routedOpener {
+      let coordinator = LaunchOpenCoordinator(
+        windows: windows, opener: routedOpener, confirm: CloseDialog.present,
+        openFallbackWindow: { [weak self] in self?.openWindow() })
+      launchOpens = coordinator
+
+      for early in earlyOpens {
+        coordinator.receive(early.urls, from: early.sender)
+      }
+
+      earlyOpens = []
+    }
+
     let menu = CommandMenu(
       registry: commands, activeController: { [weak self] in self?.windowSet?.activeController })
     commandMenu = menu
@@ -197,7 +216,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       persistence = nil
 
       do {
-        try windows.open()
+        if launchOpens?.hasPending != true {
+          try windows.open()
+        }
+
         windows.post(
           level: .error, source: .uniterm,
           text: "The layout folder is not available, so this window's layout is not saved: \(error)"
@@ -211,12 +233,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     layoutPersistence = persistence
 
     do {
-      try persistence?.launch()
+      try persistence?.launch(hasPendingOpen: { [weak self] in self?.launchOpens?.hasPending == true
+      })
     } catch {
       logger.error("the first window did not open: \(String(describing: error))")
       failLaunch("uniterm could not open its first window", detail: error)
       return
     }
+
+    launchOpens?.launchFinished()
 
     let sync = TerminalPaletteSync(engine: engine) { [weak self] error in
       self?.paletteDidNotApply(error)
@@ -301,6 +326,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// count. With a window open, minimized or not, AppKit's own handling brings it back.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
     !openWindow(onlyIfNone: true)
+  }
+
+  /// Files from Finder, the Dock, or another program.
+  ///
+  /// The sender is read from the event being handled.
+  ///
+  /// The reply to the sender is the same whatever happens to its files, so a refused sender learns
+  /// nothing about them. AppKit sends that reply, since this method returns nothing.
+  func application(_ application: NSApplication, open urls: [URL]) {
+    let event = NSAppleEventManager.shared().currentAppleEvent
+    let tokens = OpenEventSender.tokens(of: event)
+    let resolver = SystemSenderResolver()
+
+    // The code-signing lookups run on the main thread. Each is a local check of a signed binary
+    // on disk and of a live process's signing state, with no network and no wait on the user, so
+    // the wait is short. They must run here. The event is current only inside this callback, and
+    // the sender exits quickly, so a later lookup would find it gone.
+
+    let sender = tokens.sender.flatMap { resolver.identity(of: $0) }
+    let actual = tokens.actual.flatMap { resolver.identity(of: $0) }
+
+    debugLog(
+      "open-event files=\(urls.count) event=\(event != nil) "
+        + "sender-token=\(tokens.sender.map { "pid=\($0.pid)" } ?? "none") "
+        + "sender={\(sender?.logDescription ?? "unidentified")} "
+        + "actual-token=\(tokens.actual.map { "pid=\($0.pid)" } ?? "none") "
+        + "actual={\(actual?.logDescription ?? "unidentified")}")
+
+    guard let launchOpens else {
+      earlyOpens.append((urls, sender))
+      return
+    }
+
+    launchOpens.receive(urls, from: sender)
+  }
+
+  /// Writes a line to standard error in debug builds, so a run started from a shell can record
+  /// who sent an open. The unified log drops debug lines by default.
+  private func debugLog(_ line: String) {
+    logger.debug("\(line, privacy: .public)")
+
+    #if DEBUG
+      FileHandle.standardError.write(Data("uniterm: \(line)\n".utf8))
+    #endif
   }
 
   private func paletteDidNotApply(_ error: any Error) {

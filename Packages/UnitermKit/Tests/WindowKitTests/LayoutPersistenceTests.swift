@@ -397,6 +397,66 @@ final class LayoutPersistenceTests: XCTestCase {
     )
   }
 
+  // MARK: Pending open
+
+  /// Catches a cold launch that opens a default shell beside a routed open. Each launch outcome
+  /// that would open a default window must open none while an open waits. The caller then makes
+  /// the window from the open.
+  func testAPendingOpenSkipsTheDefaultWindowOnEveryOutcome() throws {
+    func launchWithPending(_ directory: URL) throws -> (LaunchFixture, LayoutPersistence.Outcome) {
+      let fixture = LaunchFixture(directory: directory)
+      addTeardownBlock { @MainActor in fixture.cleanUp() }
+
+      return (fixture, try fixture.persistence.launch(hasPendingOpen: { true }))
+    }
+
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data("garbage".utf8).write(to: layoutFile)
+    let (fresh, freshOutcome) = try launchWithPending(directory)
+    XCTAssertEqual(freshOutcome, .fresh)
+    XCTAssertTrue(fresh.windows.controllers.isEmpty)
+    fresh.persistence.saveForQuit()
+
+    try FileManager.default.removeItem(at: directory)
+    try plant(SavedLayout(windows: []))
+    let (empty, emptyOutcome) = try launchWithPending(directory)
+    XCTAssertEqual(emptyOutcome, .restored(windows: 0))
+    XCTAssertTrue(empty.windows.controllers.isEmpty)
+    empty.persistence.saveForQuit()
+
+    let (_, secondOutcome) = try launchWithPending(directory)
+    let (second, secondInstance) = try launchWithPending(directory)
+    XCTAssertEqual(secondOutcome, .restored(windows: 0))
+    XCTAssertEqual(secondInstance, .secondInstance)
+    XCTAssertTrue(second.windows.controllers.isEmpty)
+  }
+
+  /// Catches a pending open that suppresses saved windows. They still restore as saved.
+  func testAPendingOpenStillRestoresSavedWindows() throws {
+    try plant(SavedLayout(windows: [savedWindow(tree: savedPane(1, "a"))]))
+
+    let fixture = LaunchFixture(directory: directory)
+    addTeardownBlock { @MainActor in fixture.cleanUp() }
+
+    let outcome = try fixture.persistence.launch(hasPendingOpen: { true })
+
+    XCTAssertEqual(outcome, .restored(windows: 1))
+    XCTAssertEqual(fixture.windows.controllers.count, 1)
+  }
+
+  /// Catches a layout folder that cannot be used, which must also leave the window to the open.
+  func testAPendingOpenSkipsTheDefaultWindowWhenTheLayoutIsUnavailable() throws {
+    try Data("not a folder".utf8).write(to: directory)
+
+    let fixture = LaunchFixture(directory: directory)
+    addTeardownBlock { @MainActor in fixture.cleanUp() }
+
+    let outcome = try fixture.persistence.launch(hasPendingOpen: { true })
+
+    XCTAssertEqual(outcome, .unavailable)
+    XCTAssertTrue(fixture.windows.controllers.isEmpty)
+  }
+
   // MARK: Saving
 
   /// Catches a launch that saves a half-restored layout. Restoring two windows changes the
