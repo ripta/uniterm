@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var windowSet: WindowSet?
   private var routedOpener: RoutedOpener?
   private var launchOpens: LaunchOpenCoordinator?
+  private var fileOpens: FileOpenCommands?
 
   /// Opens that arrived before the coordinator existed. Launch Services can deliver the event of a
   /// cold launch ahead of the end of launching. The sender is identified when the event arrives,
@@ -130,11 +131,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       app: AppCommandHooks(
         newWindow: { [weak self] in self?.openWindow() },
         showSettings: { [weak self] in self?.presentSettings() },
+        openFile: { [weak self] anchor in
+          Task { await self?.fileOpens?.open(from: anchor) }
+        },
+        openFileWith: { [weak self] anchor in
+          Task { await self?.fileOpens?.openWith(from: anchor) }
+        },
         canQuit: { [weak self] in self?.askingToQuit == false },
         warn: { [weak self] text in
           self?.windowSet?.post(level: .warning, source: .uniterm, text: text)
         }))
-    commands.register(TerminalApplet.commandSet)
+    for set in BuiltInApplets.commandSets {
+      commands.register(set)
+    }
+
     self.commands = commands
 
     let settings = settings
@@ -190,6 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       store: SavedChoiceStore(defaults: defaults))
 
     if let routedOpener {
+      fileOpens = FileOpenCommands(opener: routedOpener)
+
       let coordinator = LaunchOpenCoordinator(
         windows: windows, opener: routedOpener, confirm: CloseDialog.present,
         openFallbackWindow: { [weak self] in self?.openWindow() })

@@ -115,6 +115,21 @@ public final class LaunchOpenCoordinator {
     openFallbackWindow()
   }
 
+  /// Asks before a batch of more files than the threshold opens that many panes. A smaller batch
+  /// is approved without a question. File > Open asks through this too.
+  static func approveBatch(
+    of count: Int, over window: NSWindow?, using confirm: CloseConfirmer
+  ) async -> Bool {
+    guard count > confirmationThreshold else { return true }
+
+    let question = CloseConfirmation(
+      title: "Open \(count) files?",
+      detail: "uniterm opens one pane for each of the \(count) files.",
+      confirmTitle: "Open", cancelTitle: "Cancel")
+
+    return await confirm(question, window)
+  }
+
   private func run(_ request: Request) async {
     let files = request.files.filter(\.isFileURL)
 
@@ -130,14 +145,12 @@ public final class LaunchOpenCoordinator {
     guard !files.isEmpty else { return }
 
     if files.count > Self.confirmationThreshold {
-      let question = CloseConfirmation(
-        title: "Open \(files.count) files?",
-        detail: "uniterm opens one pane for each of the \(files.count) files.",
-        confirmTitle: "Open", cancelTitle: "Cancel")
-
       NSApp.activate()
 
-      guard await confirm(question, windows.launchAnchorController?.window) else { return }
+      guard
+        await Self.approveBatch(
+          of: files.count, over: windows.launchAnchorController?.window, using: confirm)
+      else { return }
     }
 
     let anchor = windows.launchAnchor()

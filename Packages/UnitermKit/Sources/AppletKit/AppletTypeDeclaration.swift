@@ -46,7 +46,8 @@ public struct AppletTypeDeclaration: Sendable, Equatable {
 /// Makes an applet that opens one file or folder. This is the entry point an applet's own open
 /// panel and drop use. The start directory is explicit and absolute. It comes from the request,
 /// and the factory never reads it from another pane. The factory throws when it cannot open the
-/// file.
+/// file. An applet that also adopts `SourceReplacing` implements `replaceSource` through the same
+/// code, so a pane-local Open and a routed open take the same path.
 public typealias AppletSourceFactory =
   @MainActor (_ file: URL, _ startDirectory: String) throws ->
   any Applet

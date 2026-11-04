@@ -1,4 +1,5 @@
 import AppKit
+import AppletKit
 import XCTest
 
 @testable import WindowKit
@@ -73,6 +74,83 @@ final class CommandRegistryTests: XCTestCase {
     XCTAssertTrue(registry.runWithoutWindow(.newWindow))
     XCTAssertFalse(registry.runWithoutWindow(.splitRight))
     XCTAssertEqual(opened, 1)
+  }
+}
+
+/// The File > Open commands, as the registry and the menu hold them.
+@MainActor
+final class OpenCommandTests: XCTestCase {
+  /// Catches an Open that loses its anchor or invents one. It gets the focused pane of the window
+  /// that ran it, and nothing when no window is open.
+  func testOpenHandsTheHookTheFocusedPaneOfTheWindowThatRanIt() throws {
+    let fixture = try WindowFixture()
+    defer { fixture.cleanUp() }
+
+    var opened: [RouteAnchor?] = []
+    var openedWith: [RouteAnchor?] = []
+
+    let registry = CommandRegistry(
+      app: AppCommandHooks(openFile: { opened.append($0) }, openFileWith: { openedWith.append($0) })
+    )
+
+    let context = fixture.controller.commandContext()
+
+    XCTAssertTrue(registry.run(.openFile, in: context))
+    XCTAssertTrue(registry.run(.openFileWith, in: context))
+    XCTAssertTrue(registry.runWithoutWindow(.openFile))
+
+    XCTAssertTrue(opened[0]?.controller === fixture.controller)
+    XCTAssertEqual(opened[0]?.pane, fixture.controller.focusedPane)
+    XCTAssertEqual(openedWith[0]?.pane, fixture.controller.focusedPane)
+    XCTAssertNil(opened[1])
+  }
+
+  /// Catches an Open run from the palette that anchors to the pane focus returns to, or to nothing.
+  /// The palette targets pane B while focus sits on pane A. The command dismisses the palette and
+  /// runs on B.
+  func testOpenFromThePaletteAnchorsToThePaneThePaletteTargets() throws {
+    var opened: [RouteAnchor?] = []
+
+    let registry = CommandRegistry(app: AppCommandHooks(openFile: { opened.append($0) }))
+    registry.register(FakeApplet.commandSet)
+
+    let fixture = try WindowFixture(commands: registry)
+    defer { fixture.cleanUp() }
+    let controller = fixture.controller
+
+    let first = controller.focusedPane
+    let second = try XCTUnwrap(controller.openPane(.terminalShell, axis: .row))
+
+    controller.showCommandPalette()
+    XCTAssertEqual(controller.paletteTarget, second)
+
+    controller.paneArea.focus(first)
+    XCTAssertEqual(controller.paneArea.focusedPane, first)
+    XCTAssertNotEqual(first, second)
+
+    controller.dispatch(.openFile)
+
+    XCTAssertEqual(opened.count, 1)
+    XCTAssertEqual(opened.first??.pane, second)
+    XCTAssertFalse(controller.isPaletteVisible)
+  }
+
+  /// Catches an Open that lands outside the File menu's first section, loses Cmd-O, or gives Open
+  /// With a key. Cmd-O must also join the keys uniterm reserves, so no applet can take it.
+  func testOpenHoldsCommandOInTheFileMenuAndOpenWithHoldsNoKey() throws {
+    let registry = CommandRegistry.testing()
+    let menu = CommandMenu(registry: registry, activeController: { nil })
+
+    XCTAssertEqual(registry.command(.openFile)?.menu?.home, .file)
+    XCTAssertEqual(registry.command(.openFile)?.menu?.section, 0)
+    XCTAssertEqual(registry.command(.openFileWith)?.menu?.section, 0)
+
+    let open = try XCTUnwrap(menu.keyEquivalent(of: .openFile))
+    XCTAssertEqual(open.key, "o")
+    XCTAssertEqual(open.modifiers, [.command])
+
+    XCTAssertEqual(try XCTUnwrap(menu.keyEquivalent(of: .openFileWith)).key, "")
+    XCTAssertTrue(menu.reservedKeys().contains(KeyChord("o")))
   }
 }
 

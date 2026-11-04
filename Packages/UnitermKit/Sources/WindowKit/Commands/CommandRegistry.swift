@@ -7,6 +7,13 @@ public struct AppCommandHooks {
   public var newWindow: @MainActor () -> Void
   public var showSettings: @MainActor () -> Void
 
+  /// Shows the open panel and routes the chosen files. The anchor is the focused pane of the window
+  /// whose menu ran the command, and nil when no window is open.
+  public var openFile: @MainActor (RouteAnchor?) -> Void
+
+  /// Shows the open panel for one file, then the Open With chooser for it.
+  public var openFileWith: @MainActor (RouteAnchor?) -> Void
+
   /// False while a quit waits for its answer, so a second request does not cancel the question.
   public var canQuit: @MainActor () -> Bool
 
@@ -16,11 +23,15 @@ public struct AppCommandHooks {
   public init(
     newWindow: @escaping @MainActor () -> Void = {},
     showSettings: @escaping @MainActor () -> Void = {},
+    openFile: @escaping @MainActor (RouteAnchor?) -> Void = { _ in },
+    openFileWith: @escaping @MainActor (RouteAnchor?) -> Void = { _ in },
     canQuit: @escaping @MainActor () -> Bool = { true },
     warn: @escaping @MainActor (String) -> Void = { _ in }
   ) {
     self.newWindow = newWindow
     self.showSettings = showSettings
+    self.openFile = openFile
+    self.openFileWith = openFileWith
     self.canQuit = canQuit
     self.warn = warn
   }

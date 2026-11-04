@@ -22,6 +22,10 @@ public struct RoutedPane {
   public let pane: NodeID
 }
 
+/// Shows the Open With chooser for a model and says what the user did. Tests inject their own.
+public typealias OpenWithPresenter =
+  @MainActor (_ model: OpenWithModel, _ window: NSWindow?) async -> OpenWithOutcome
+
 /// What an open did. The failures are already posted as one message.
 public struct RoutedOpenReport {
   public var opened: [RoutedPane] = []
@@ -103,11 +107,68 @@ public final class RoutedOpener {
       }
     }
 
-    let live = anchor.flatMap { $0.controller.window != nil ? $0 : nil }
+    let live = Self.live(anchor)
     place(ready, anchor: live, batch: files.count > 1, report: &report)
     summarize(report.failures, total: files.count, anchor: live)
 
     return report
+  }
+
+  /// Opens one file with the applet the user picks in the Open With chooser. The chooser lists
+  /// every applet that declares the file's type, and it can save the pick or clear a saved one.
+  /// Clearing routes the file again by rank. Cancelling opens nothing.
+  ///
+  /// The chooser hangs from the anchor's window and is gone before the pane is placed, so a sheet
+  /// never makes the window look full.
+  @discardableResult
+  public func openWithChoice(
+    _ file: URL, from anchor: RouteAnchor?, present: OpenWithPresenter
+  ) async -> RoutedOpenReport {
+    let router = FileRouter(
+      declarations: declarations, types: types, savedChoices: store.choices())
+
+    var report = RoutedOpenReport()
+
+    let inspection = await router.inspection(of: file)
+
+    guard case .ready(_, let type, let startDirectory) = inspection else {
+      if case .refused(let refusal) = inspection {
+        report.failures.append(refusal.message(for: file))
+      }
+
+      summarize(report.failures, total: 1, anchor: Self.live(anchor))
+      return report
+    }
+
+    guard
+      let model = OpenWithModel(
+        file: file, type: type, candidates: router.candidates(forType: type), store: store)
+    else {
+      report.failures.append(RouteRefusal.unsupported(type: type).message(for: file))
+      summarize(report.failures, total: 1, anchor: Self.live(anchor))
+      return report
+    }
+
+    switch await present(model, anchor?.controller.window) {
+    case .open(let typeID):
+      var ready: [Ready] = []
+      make(file, typeID: typeID, startDirectory: startDirectory, into: &ready, report: &report)
+
+      let live = Self.live(anchor)
+      place(ready, anchor: live, batch: false, report: &report)
+      summarize(report.failures, total: 1, anchor: live)
+      return report
+
+    case .clearedSavedChoice:
+      return await open([file], from: anchor)
+
+    case .cancelled:
+      return report
+    }
+  }
+
+  private static func live(_ anchor: RouteAnchor?) -> RouteAnchor? {
+    anchor.flatMap { $0.controller.window != nil ? $0 : nil }
   }
 
   private func make(

@@ -564,14 +564,51 @@ Amended 2026-11-03; see Decision Log.
 
 ### M3: File > Open
 
-**Status:** NOT STARTED
+**Status:** DONE
+
+Amended 2026-11-03; see Decision Log.
 
 - File > Open opens a panel and routes the chosen file, by the key ownership "Who owns Cmd-O" settles
 - The panel starts in the focused pane's `currentDirectory`, or the home folder when there is none
 - A test checks that no built-in applet command claims Cmd-O
-- Each viewer's pane-local Open command replaces its source, and in a controller-owned pane that controller gets no
-  path or content outside its scope, tested with fixture controllers and scopes
+- Each viewer's pane-local Open command replaces its source, proven on a fixture applet
 - The panel selects several files, and they follow the batch rule
+
+**As built:**
+
+- File > Open is the window command `uniterm.open`, titled "Open File or Folder" in the palette and "Open..." in the
+  File menu, section 0, beside New Window. Cmd-O joins the reserved keys through the live menu, so no applet can take
+  it. It is an app-scope command, so it also runs with no window. It waits while a sheet holds the window.
+- "Open With..." is `uniterm.open-with`, with no key. It takes one file from the panel, then shows M1's chooser for it.
+  The chooser lists every applet that declares the type, saves the pick, or clears a saved one. Clearing routes the
+  file again by rank. A file no applet declares is refused with the usual message and no chooser.
+- The panel lives in AppletKit, so the window command and the viewers' pane-local Open share it. It chooses files and
+  folders, treats a package as one file, and always sets its start directory. The start directory is the focused pane's
+  `currentDirectory`, or the home folder when there is no window, the pane reports none, or the reported folder is
+  gone. It hangs from the anchor's window as a sheet, or runs as a modal with no window. The router runs after the
+  panel returns. The panel is injectable. With no window open the panel runs `runModal`, which waits on the user. Its
+  loop still pumps events and no other window exists to block, so ADR-08's main-thread bound holds.
+- After the panel, the batch confirmation, and the chooser, the commands wait for the sheet to leave the window, up to
+  25 polls of 20 ms, before the router places a pane. The router treats an attached sheet as no room, so a sheet
+  that lingered would have sent the pane to a new window. A unit test attaches a real sheet that ends one run-loop
+  turn later and shows the pane lands beside the anchor. On screen, only the open panel is covered, by the UI test. The
+  confirmation and the chooser sheets are covered by the same wait and the unit test, and nobody has watched them.
+- Several chosen files follow the batch rule. A selection above the 10-file threshold asks first, through the
+  confirmer M2 built, which now serves both entry points.
+- The pane-local Open is `AppletCommand.openSource()` with a `SourceReplacing` protocol. An applet that adopts the
+  protocol gets "Open..." with no key in the File menu. It takes one file or folder and calls the applet's
+  `replaceSource`. A failure reaches the pane's status bar, and the applet keeps its source. The terminal does not
+  adopt it. No viewer exists, so a fixture applet proves it. The start directory comes from one rule that the router and
+  this command share, kept in AppletKit. A test over every command set in the built-in catalog fails when an applet
+  claims Cmd-O or the terminal declares an Open of its own. The app registers that same catalog list.
+- The controller half of this milestone's old fourth check moved to M4. See the Decision Log.
+- A UI test presses Cmd-O in a terminal pane, drives the real panel through go-to-folder, and shows a new terminal
+  beside the first, in the chosen folder, with no second window. No hook substitutes the panel. The routed pane
+  landing beside the anchor proves the sheet is gone by then.
+- No `test-cost` target exists in this repo. The new test classes ran in under 0.5 s each in the package suite, and the
+  UI test took about 15 s.
+- A screenshot of the real panel as a sheet over the window was looked at. Nobody has yet looked at the File menu, or
+  at Open With's chooser, on screen.
 
 ### M4: The path-reading power
 
@@ -811,6 +848,17 @@ Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check o
   "platform-binary requirements". The code matches an Apple-anchored requirement on the identifier, since the platform
   identifier measured, 26, is tied to the OS release. M8 has its own queue row, because it needs no dependency. Its
   result can reopen the Launch Services decision before M7 builds on it.
+
+- 2026-11-03: M3 work-queue best guesses (work-queue best guess). Amended M3's pane-local Open check, which said "and
+  in a controller-owned pane that controller gets no path or content outside its scope, tested with fixture
+  controllers and scopes". No controller, scope, or event channel exists yet, so there is nothing to test it against.
+  M4 already holds the check, "A pane whose source lies outside a controller's scope sends that controller no path
+  or content from it", so M3 now says only that the pane-local Open replaces its source, proven on a fixture applet.
+  Also recorded: the window commands are `uniterm.open` and `uniterm.open-with`, with the palette titles "Open File
+  or Folder" and "Open File or Folder With", so the palette tells them apart from a viewer's "Open...". A selection
+  above 10 files asks first, as Finder's batch does, since the user can pick hundreds of files. The panel's start
+  folder falls back to home when the reported folder no longer exists, since the panel would otherwise fall back to
+  AppKit's own memory.
 
 ## References
 

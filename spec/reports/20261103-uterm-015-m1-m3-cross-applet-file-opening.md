@@ -19,7 +19,7 @@ base. The row has no dependencies, and no milestone carries a `Live after` line.
 |---|---|---|
 | UTERM-015 M1: The router | DONE | "Route files to applets by declared content type" |
 | UTERM-015 M2: Finder and Dock | DONE | "Open files that Finder, the Dock, and Spotlight send" |
-| UTERM-015 M3: File > Open | IN PROGRESS | |
+| UTERM-015 M3: File > Open | DONE | "Open files and folders from File > Open on Cmd-O" |
 
 M2 added two milestones to UTERM-015 by amendment. M7, "Launch Services approvals", joins the queue row `UTERM-015
 M4-M7`, which waits on UTERM-004 M6. M8, a check only the user can run, has its own queue row right after this one:
@@ -229,6 +229,81 @@ ADR impact: no conflicts and no supersessions.
 Left open:
 - M8: the Finder sender record, at cold launch and while running, and Open With and a Dock drop by hand.
 - Nobody has looked at the 11-file confirmation or a brought-forward window on screen. Tests prove both.
+
+### UTERM-015 M3: File > Open
+
+Commit: "Open files and folders from File > Open on Cmd-O".
+
+Checks, final round:
+- `make fmt-check`, `make lint`, and `make check` pass. The coordinator re-ran them on the final tree.
+- `make test-package` ran 657 tests, with 4 skipped and 0 failures. The skips are older tests.
+- `make test-app` ran 79 UI tests with 0 failures.
+- `proposals.py check` reports only that the finished row moves to `history.md`, which the row's finish does.
+- `proposals.py freeze` reports nothing.
+- The coordinator found no uniterm crash report in `~/Library/Logs/DiagnosticReports` after the hand launch. The sandbox denied the implementer's own check.
+
+Test cost: the new package tests run in under half a second together. `OpenPanelUITests` adds one UI test of about 22
+seconds. One unit test uses a real 0.1-second timer. It ends a sheet late, to prove that placement waits for the sheet
+to detach.
+
+| Test class | Tests | Wall time |
+|---|---|---|
+| `FileOpenCommandsTests` | about 13 | about 0.5 s |
+| `SourceOpeningTests` | 6 | under 0.05 s |
+| `OpenCommandTests` | 3 | about 0.02 s |
+| `BuiltInCommandsTests` | 1 | under 0.01 s |
+| `OpenPanelUITests` | 1 | 22 s |
+
+Visual check: a UI test screenshot showed the system Open panel as a sheet on the uniterm window, starting in the home
+folder. The coordinator looked at it. That first capture covered the whole screen, including the user's other
+windows. It was deleted, and the test now captures only the panel and keeps nothing on success. The user's own look
+at File > Open and Open With is a check left to the user.
+
+Best guesses by the implementer:
+
+- The menu titles are "Open…" and "Open With…". The palette titles are "Open File or Folder" and "Open File or Folder
+  With", so the palette never lists two "Open…" entries. A viewer's pane-local command is "Open…".
+- Both commands are app-scoped, as New Window is, so they work with no window. The anchor is the key window's focused
+  pane, or the pane the palette targets.
+- A panel selection of more than 10 files asks first, through the same confirmation as Finder batches.
+- A reported directory that is gone or relative falls back to home, never to AppKit's remembered folder.
+- No production chooser is wired for run-time type ties. With the terminal as the only declaring applet, a tie cannot
+  happen. A tie still refuses with a message.
+- The pane-local Open helper lives in AppletKit, because applets cannot import WindowKit. The terminal does not adopt
+  it, since it has no source to replace.
+- Placement waits for an attached sheet to detach, for up to 25 checks 20 ms apart. It waits after the open panel,
+  after the batch confirmation, and after the Open With chooser. AppKit's ordering could not be proven from its
+  documentation.
+- M3's controller half moved to M4 by amendment, as the plan's best guess 3 said.
+
+Review findings and dispositions:
+
+- CONFIRMED: the UI test kept a full-screen screenshot that showed the user's other windows. Fixed. It now captures the
+  panel only, with `.deleteOnSuccess`. The earlier screenshot and the result bundles holding it were deleted.
+- PLAUSIBLE, confirmed by trace: two Returns in the go-to-folder sheet could race. Fixed. The test waits for the sheet
+  to close between them.
+- The start-directory rule existed twice, once for the router and once for the pane-local Open. The two could disagree
+  on a symlink to a folder. Fixed. One rule in AppletKit serves both, with a symlink test through the pane-local path.
+- PLAUSIBLE, traced: placement could run while a sheet was still attached, and fall back to a new window. The trace
+  found no documented ordering. Fixed with the bounded wait above. Its test fails with the wait disabled. Only the open
+  panel is covered on screen. The confirmation and chooser sheets rely on the same wait and its unit test.
+- The Cmd-O test covered only the terminal. Fixed. It now loops over every built-in applet's command set from the
+  catalog. The app registers from that same list.
+- No test showed the palette path anchoring to the pane the palette targets. Fixed.
+- A doubled blank line in the proposal, and test fields placed in the wrong group. Fixed.
+
+ADR impact: no conflicts and no supersessions.
+
+- ADVISORY, recorded: with no window open, the open panel runs modally while it waits on the user. ADR-08 asks the main
+  thread not to wait on the user. The modal loop still pumps events, and there is no other window to block. The M3 As
+  built block says so.
+- Three ADR candidates were dismissed. The pane-local source contract is a mechanism under the waiting "one route"
+  candidate. "A path the user picked is not a grant" falls outside ADR-09, which governs programmatic effects. The
+  panel's start-directory rule is already in the project's `CLAUDE.md`.
+
+Left open:
+- Nobody has watched the confirmation or the chooser sheet place a pane on screen.
+- The user's hands-on look at File > Open and Open With.
 
 ## Status
 
