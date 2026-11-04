@@ -24,7 +24,7 @@ private final class FixtureGroups: PaneGroupOwnership {
 /// Windows, a router, and fixture applets. A text file routes to a viewer. A folder routes to a
 /// fixture terminal. Types come from the real type database, so the fixtures use real files.
 @MainActor
-private final class RoutingFixture {
+final class RoutingFixture {
   let suite = "uniterm-routing-\(UUID().uuidString)"
   let defaults: UserDefaults
   let log = AppletLog()
@@ -32,7 +32,9 @@ private final class RoutingFixture {
   let opener: RoutedOpener
   let directory: URL
 
-  init() throws {
+  /// With `terminalAlsoOpensText`, the terminal claims plain text as an alternate, so the viewer
+  /// owns text and the chooser lists both.
+  init(terminalAlsoOpensText: Bool = false) throws {
     directory = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("uniterm-routed-\(UUID().uuidString)", isDirectory: true)
       .resolvingSymlinksInPath()
@@ -74,7 +76,8 @@ private final class RoutingFixture {
         opens: [OpenedType("public.plain-text", rank: .owner)]),
       AppletTypeDeclaration(
         typeID: "terminal", displayName: "Terminal",
-        opens: [OpenedType("public.folder", rank: .owner)]),
+        opens: [OpenedType("public.folder", rank: .owner)]
+          + (terminalAlsoOpensText ? [OpenedType("public.plain-text", rank: .alternate)] : [])),
     ]
 
     var factories: [String: AppletSourceFactory] = [:]
@@ -88,6 +91,7 @@ private final class RoutingFixture {
         let applet = FakeApplet()
         applet.title = id
         applet.currentDirectory = start
+        box.made.append(applet)
         return applet
       }
     }
@@ -122,8 +126,9 @@ private final class RoutingFixture {
 }
 
 @MainActor
-private final class RoutedBox {
+final class RoutedBox {
   var entries: [(file: URL, start: String)] = []
+  var made: [FakeApplet] = []
 }
 
 @MainActor

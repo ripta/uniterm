@@ -1,3 +1,4 @@
+import AppletKit
 import Darwin
 import Foundation
 
@@ -83,11 +84,8 @@ enum PathInspector {
     }
   }
 
-  /// The folder a routed pane starts in: the folder itself, or the file's own folder.
+  /// The folder a routed pane starts in. The rule is shared with the pane-local Open.
   static func startDirectory(of url: URL, kind: FileKind) -> String {
-    switch kind {
-    case .folder: return url.path
-    case .regularFile: return url.deletingLastPathComponent().path
-    }
+    SourceStartDirectory.of(url, isFolder: kind == .folder)
   }
 }

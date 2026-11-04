@@ -88,7 +88,10 @@ final class WindowFixture {
   let log: AppletLog
   let controller: MainWindowController
 
-  init(storedPosition: String? = nil, stored: [String: String] = [:]) throws {
+  init(
+    storedPosition: String? = nil, stored: [String: String] = [:],
+    commands: CommandRegistry = .testing()
+  ) throws {
     let defaults = UserDefaults(suiteName: suite)!
     if let storedPosition {
       defaults.set(storedPosition, forKey: "statusBarPosition")
@@ -111,7 +114,7 @@ final class WindowFixture {
 
     controller = try MainWindowController(
       appearance: AppearanceController(store: store), settings: store, statusCenter: center,
-      commands: .testing()
+      commands: commands
     ) { _, _ in
       let applet = FakeApplet()
       log.made.append(applet)

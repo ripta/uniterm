@@ -69,7 +69,8 @@ let package = Package(
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
     .testTarget(
-      name: "AppletCatalogTests", dependencies: ["AppletCatalog", "FileRouting", "AppletKit"]),
+      name: "AppletCatalogTests",
+      dependencies: ["AppletCatalog", "FileRouting", "AppletKit", "WindowKit"]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit"]),
     .testTarget(name: "LayoutKitTests", dependencies: ["LayoutKit", "AppletKit", "PaneModel"]),
