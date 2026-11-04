@@ -2,7 +2,6 @@
 
 | Milestones | Depends on | Note |
 |------------|------------|------|
-| UTERM-015 M1-M3 | None | Split at M3: M4-M7 wait on UTERM-004 M6's approval flow and permission set |
 | UTERM-015 M8 | None | The user records the sender each Finder and Dock path reports, and checks Open With and a Dock drop by hand. Its result can reopen "Opens that arrive through Launch Services" before M7 builds on it |
 | UTERM-009 M1-M4 | None | |
 | UTERM-008 M1-M2 | None | Split at M2: M3 needs the exec driver and applet command hook from UTERM-004 M3 |
