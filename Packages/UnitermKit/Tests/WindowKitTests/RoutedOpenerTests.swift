@@ -98,7 +98,11 @@ final class RoutingFixture {
 
     opener = RoutedOpener(
       windows: windows, declarations: declarations, factories: factories,
-      store: SavedChoiceStore(defaults: defaults))
+      store: SavedChoiceStore(defaults: defaults),
+      confirmBatch: { question, _ in
+        box.asked.append(question.title)
+        return box.approve
+      })
   }
 
   let box: RoutedBox
@@ -129,6 +133,8 @@ final class RoutingFixture {
 final class RoutedBox {
   var entries: [(file: URL, start: String)] = []
   var made: [FakeApplet] = []
+  var asked: [String] = []
+  var approve = true
 }
 
 @MainActor
@@ -260,6 +266,33 @@ final class RoutedOpenerTests: XCTestCase {
   }
 
   // MARK: Batches
+
+  /// Catches a batch of exactly the threshold that asks, a batch above it that does not, and a
+  /// declined question that opens anyway. The route owns the question, so every entry point asks.
+  func testOnlyABatchAboveTheThresholdAsksAndADeclineOpensNothing() async throws {
+    let fixture = try makeFixture()
+    let limit = RoutedOpener.confirmationThreshold
+    XCTAssertEqual(limit, 10)
+
+    let atLimit = try (0..<limit).map { try fixture.textFile("at\($0).txt") }
+    await fixture.opener.open(atLimit, from: nil)
+
+    XCTAssertTrue(fixture.box.asked.isEmpty)
+    XCTAssertEqual(fixture.box.entries.count, limit)
+
+    let over = try (0...limit).map { try fixture.textFile("over\($0).txt") }
+    fixture.box.approve = false
+    let declined = await fixture.opener.open(over, from: nil)
+
+    XCTAssertEqual(fixture.box.asked, ["Open \(limit + 1) files?"])
+    XCTAssertTrue(declined.opened.isEmpty)
+    XCTAssertEqual(fixture.box.entries.count, limit)
+
+    fixture.box.approve = true
+    await fixture.opener.open(over, from: nil)
+
+    XCTAssertEqual(fixture.box.entries.count, limit + limit + 1)
+  }
 
   /// Catches a batch that splits the anchor's window, or leaves a file out. A batch opens in one
   /// new window, and each file splits the largest pane there.

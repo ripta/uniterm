@@ -541,7 +541,8 @@ Amended 2026-11-03; see Decision Log.
   the coordinator opens one window after the replay when none is open. Saved windows still restore as saved.
 - Most-recently-key tracking is a list of the windows that have been key. When the last key window closes, the one
   before it takes over, and with none ever key the newest window anchors.
-- A batch above 10 files asks first, through the same confirmer the close dialog uses, so a test injects the answer. The
+- A batch above 10 files asks first. `RoutedOpener.open` owns the question and the threshold, through an injected
+  confirmer that defaults to the close dialog, so every entry point asks and a test injects the answer. The
   dialog is not styled for opening, and its accessibility identifier still says close confirmation. Nobody has looked at
   it on screen.
 - Unit tests cover the identity checks against the real Finder, Dock, Spotlight, `osascript`, `python3`, and
@@ -549,12 +550,11 @@ Amended 2026-11-03; see Decision Log.
   version, which does not resolve. Hand-built Apple Events cannot carry the sender tokens, since the system sets them,
   so the token read is proven live only.
 - The drift test reads `App/Info.plist` through a path from the test file and feeds the catalog audit its imported
-  types. The window-minimize test skips when the test session cannot minimize a window, and it skipped in this run, so
-  unminimizing is unproven by a test.
+  types.
 - The UI test sends an open from the test runner to the running app. The runner is not an Apple opener, so it proves a
   refusal with a message and no new pane. An accepted open needs Finder as the sender, which no test can be, so the
   accepted path is covered by unit tests with a sender fixture and by the hand checks below.
-- No `test-cost` target exists in this repo. New test classes ran in under 1 s each: `LaunchOpenCoordinatorTests` 14
+- No `test-cost` target exists in this repo. New test classes ran in under 1 s each: `LaunchOpenCoordinatorTests` 12
   tests in 0.7 s, `SenderIdentityTests` 9 in 0.1 s, `InfoPlistDriftTests` 7, `OpenAuthorityTests` 5.
 - The hand checks, Open With from Finder and a drop on the Dock icon, cold and warm, moved to M8 with the Finder sender
   record. See the Decision Log, 2026-11-03, review fix.
@@ -588,13 +588,15 @@ Amended 2026-11-03; see Decision Log.
   gone. It hangs from the anchor's window as a sheet, or runs as a modal with no window. The router runs after the
   panel returns. The panel is injectable. With no window open the panel runs `runModal`, which waits on the user. Its
   loop still pumps events and no other window exists to block, so ADR-08's main-thread bound holds.
-- After the panel, the batch confirmation, and the chooser, the commands wait for the sheet to leave the window, up to
-  25 polls of 20 ms, before the router places a pane. The router treats an attached sheet as no room, so a sheet
-  that lingered would have sent the pane to a new window. A unit test attaches a real sheet that ends one run-loop
-  turn later and shows the pane lands beside the anchor. On screen, only the open panel is covered, by the UI test. The
-  confirmation and the chooser sheets are covered by the same wait and the unit test, and nobody has watched them.
+- After the panel and the chooser, the commands wait for the sheet to leave the window, up to 25 polls of 20 ms,
+  before the router places a pane. The sleep is injected. The router treats an attached sheet as no room, so a sheet
+  that lingered would have sent the pane to a new window. A unit test attaches a real sheet that an injected sleeper
+  ends and shows the pane lands beside the anchor. A second test never ends the sheet and shows the wait stops at the
+  poll limit and the pane opens in a new window. The batch confirmation needs no wait, since a batch always opens in a
+  new window. On screen, only the open panel is covered, by the UI test. The chooser sheet is covered by the same wait
+  and the unit test, and nobody has watched it.
 - Several chosen files follow the batch rule. A selection above the 10-file threshold asks first, through the
-  confirmer M2 built, which now serves both entry points.
+  confirmer that `RoutedOpener` owns, which serves both entry points.
 - The pane-local Open is `AppletCommand.openSource()` with a `SourceReplacing` protocol. An applet that adopts the
   protocol gets "Open..." with no key in the File menu. It takes one file or folder and calls the applet's
   `replaceSource`. A failure reaches the pane's status bar, and the applet keeps its source. The terminal does not
@@ -605,8 +607,11 @@ Amended 2026-11-03; see Decision Log.
 - A UI test presses Cmd-O in a terminal pane, drives the real panel through go-to-folder, and shows a new terminal
   beside the first, in the chosen folder, with no second window. No hook substitutes the panel. The routed pane
   landing beside the anchor proves the sheet is gone by then.
-- No `test-cost` target exists in this repo. The new test classes ran in under 0.5 s each in the package suite, and the
-  UI test took about 15 s.
+- No `test-cost` target exists in this repo. The new test classes ran in under 0.5 s each in the package suite, and
+  `OpenPanelUITests` took 23 s.
+- The pane-local Open skips the router's file inspection. A FIFO or device the user picks in a viewer's own panel
+  reaches `replaceSource`. The first viewer that adopts `SourceReplacing` must refuse non-regular files, or run the
+  same inspection.
 - A screenshot of the real panel as a sheet over the window was looked at. Nobody has yet looked at the File menu, or
   at Open With's chooser, on screen.
 
@@ -685,8 +690,8 @@ Amended 2026-11-03; see Decision Log. Moved from M2.
 
 Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check only the user can run.
 
-- The sender a cold-launch Finder open, a warm one, and a Dock drop each report is recorded in the As built block, read from the
-  debug log line of a build run directly
+- The sender a cold-launch Finder open, a warm one, and a Dock drop each report is recorded in the As built block,
+  read from the debug log line of a build run directly
 - Finder and `open -a` report senders that tell them apart. When they do not, the user rules on the Launch Services
   decision, which reopens
 - Open With in Finder and a drop on the Dock icon open the file, cold and warm, in a release build

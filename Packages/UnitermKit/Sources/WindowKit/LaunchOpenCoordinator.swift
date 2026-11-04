@@ -16,9 +16,6 @@ import StatusKit
 /// cold-launch open does not start a shell beside the routed pane.
 @MainActor
 public final class LaunchOpenCoordinator {
-  /// A batch of more files than this asks for a confirmation first.
-  public static let confirmationThreshold = 10
-
   private static let logger = Logger(subsystem: "dev.uniterm.app", category: "open")
 
   private struct Request {
@@ -27,7 +24,6 @@ public final class LaunchOpenCoordinator {
 
   private let windows: WindowSet
   private let opener: RoutedOpener
-  private let confirm: CloseConfirmer
   private let now: @MainActor () -> TimeInterval
   private let openFallbackWindow: @MainActor () -> Void
 
@@ -37,17 +33,16 @@ public final class LaunchOpenCoordinator {
   private var draining = false
   private var windowCheckDue = false
 
-  /// `confirm` asks before a large batch. `openFallbackWindow` runs after the replay when no window
-  /// is open, so a launch whose only opens were refused or failed still shows a window.
+  /// `openFallbackWindow` runs after the replay when no window is open, so a launch whose only
+  /// opens were refused or failed still shows a window.
   public init(
-    windows: WindowSet, opener: RoutedOpener, confirm: @escaping CloseConfirmer,
+    windows: WindowSet, opener: RoutedOpener,
     coalescer: RefusalCoalescer = RefusalCoalescer(),
     now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
     openFallbackWindow: @escaping @MainActor () -> Void
   ) {
     self.windows = windows
     self.opener = opener
-    self.confirm = confirm
     self.coalescer = coalescer
     self.now = now
     self.openFallbackWindow = openFallbackWindow
@@ -115,21 +110,6 @@ public final class LaunchOpenCoordinator {
     openFallbackWindow()
   }
 
-  /// Asks before a batch of more files than the threshold opens that many panes. A smaller batch
-  /// is approved without a question. File > Open asks through this too.
-  static func approveBatch(
-    of count: Int, over window: NSWindow?, using confirm: CloseConfirmer
-  ) async -> Bool {
-    guard count > confirmationThreshold else { return true }
-
-    let question = CloseConfirmation(
-      title: "Open \(count) files?",
-      detail: "uniterm opens one pane for each of the \(count) files.",
-      confirmTitle: "Open", cancelTitle: "Cancel")
-
-    return await confirm(question, window)
-  }
-
   private func run(_ request: Request) async {
     let files = request.files.filter(\.isFileURL)
 
@@ -143,15 +123,6 @@ public final class LaunchOpenCoordinator {
     }
 
     guard !files.isEmpty else { return }
-
-    if files.count > Self.confirmationThreshold {
-      NSApp.activate()
-
-      guard
-        await Self.approveBatch(
-          of: files.count, over: windows.launchAnchorController?.window, using: confirm)
-      else { return }
-    }
 
     let anchor = windows.launchAnchor()
 

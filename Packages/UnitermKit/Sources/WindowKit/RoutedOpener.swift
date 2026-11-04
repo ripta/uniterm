@@ -59,6 +59,10 @@ public final class RoutedOpener {
   private let types: any ContentTypeSystem
   private let store: SavedChoiceStore
   private let chooser: Chooser?
+  private let confirmBatch: CloseConfirmer
+
+  /// A batch of more files than this asks for a confirmation before anything is placed.
+  public static let confirmationThreshold = 10
 
   /// The most failure messages one summary names before it counts the rest.
   static let namedFailures = 3
@@ -66,7 +70,8 @@ public final class RoutedOpener {
   public init(
     windows: WindowSet, declarations: [AppletTypeDeclaration],
     factories: [String: AppletSourceFactory], types: any ContentTypeSystem = SystemContentTypes(),
-    store: SavedChoiceStore, chooser: Chooser? = nil
+    store: SavedChoiceStore, chooser: Chooser? = nil,
+    confirmBatch: @escaping CloseConfirmer = CloseDialog.present
   ) {
     self.windows = windows
     self.declarations = declarations
@@ -74,11 +79,19 @@ public final class RoutedOpener {
     self.types = types
     self.store = store
     self.chooser = chooser
+    self.confirmBatch = confirmBatch
   }
 
   /// Routes the files. The router sees the saved choices as they are now.
+  ///
+  /// A batch above the confirmation threshold asks first, and a refusal opens nothing. Every entry
+  /// point reaches the question through here, so none can skip it.
   @discardableResult
   public func open(_ files: [URL], from anchor: RouteAnchor?) async -> RoutedOpenReport {
+    guard await approveBatch(of: files.count, over: Self.window(for: anchor)) else {
+      return RoutedOpenReport()
+    }
+
     let router = FileRouter(
       declarations: declarations, types: types, savedChoices: store.choices())
     let decisions = await router.decisions(for: files)
@@ -165,6 +178,21 @@ public final class RoutedOpener {
     case .cancelled:
       return report
     }
+  }
+
+  private func approveBatch(of count: Int, over window: NSWindow?) async -> Bool {
+    guard count > Self.confirmationThreshold else { return true }
+
+    let question = CloseConfirmation(
+      title: "Open \(count) files?",
+      detail: "uniterm opens one pane for each of the \(count) files.",
+      confirmTitle: "Open", cancelTitle: "Cancel")
+
+    return await confirmBatch(question, window)
+  }
+
+  private static func window(for anchor: RouteAnchor?) -> NSWindow? {
+    anchor?.controller.window
   }
 
   private static func live(_ anchor: RouteAnchor?) -> RouteAnchor? {

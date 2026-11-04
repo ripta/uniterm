@@ -16,21 +16,27 @@ public final class FileOpenCommands {
   private let opener: RoutedOpener
   private let picker: OpenPicker
   private let present: OpenWithPresenter
-  private let confirm: CloseConfirmer
+  private let sleeper: SheetSleeper
 
-  /// How many times a sheet gets a chance to detach, and how long each wait lasts.
+  /// Waits one poll interval while a sheet detaches. Tests inject their own.
+  public typealias SheetSleeper = @MainActor () async -> Void
+
+  /// How many times a sheet gets a chance to detach.
   static let sheetPolls = 25
-  static let sheetPoll: Duration = .milliseconds(20)
+
+  public static let sheetPoll: SheetSleeper = {
+    try? await Task.sleep(for: .milliseconds(20))
+  }
 
   public init(
     opener: RoutedOpener, picker: @escaping OpenPicker = SystemOpenPanel.pick,
     present: @escaping OpenWithPresenter = FileOpenCommands.presentChooser,
-    confirm: @escaping CloseConfirmer = CloseDialog.present
+    sleeper: @escaping SheetSleeper = FileOpenCommands.sheetPoll
   ) {
     self.opener = opener
     self.picker = picker
     self.present = present
-    self.confirm = confirm
+    self.sleeper = sleeper
   }
 
   public static func presentChooser(
@@ -40,19 +46,12 @@ public final class FileOpenCommands {
   }
 
   /// Asks for files and folders, and opens each as the router decides. A single file opens beside
-  /// the anchor pane. Several follow the batch rule, and a large batch asks first.
+  /// the anchor pane. Several follow the batch rule, which the router enforces.
   public func open(from anchor: RouteAnchor?) async {
     let files = await pick(from: anchor, allowsMultipleSelection: true).filter(\.isFileURL)
 
     guard !files.isEmpty else { return }
 
-    let window = anchor?.controller.window
-
-    guard
-      await LaunchOpenCoordinator.approveBatch(of: files.count, over: window, using: confirm)
-    else { return }
-
-    await Self.waitForSheetToDetach(from: window)
     await opener.open(files, from: anchor)
   }
 
@@ -64,7 +63,7 @@ public final class FileOpenCommands {
 
     await opener.openWithChoice(file, from: anchor) { [present] model, window in
       let outcome = await present(model, window)
-      await Self.waitForSheetToDetach(from: window)
+      await waitForSheetToDetach(from: window)
       return outcome
     }
   }
@@ -72,12 +71,12 @@ public final class FileOpenCommands {
   /// Gives a sheet that just answered time to leave its window. The router treats a window with a
   /// sheet attached as full, and a pane placed then would land in a new window. The wait is bounded,
   /// so a sheet that stays still gets the router's answer.
-  private static func waitForSheetToDetach(from window: NSWindow?) async {
+  private func waitForSheetToDetach(from window: NSWindow?) async {
     var polls = 0
 
-    while let window, window.attachedSheet != nil, polls < sheetPolls {
+    while let window, window.attachedSheet != nil, polls < Self.sheetPolls {
       polls += 1
-      try? await Task.sleep(for: sheetPoll)
+      await sleeper()
     }
   }
 
@@ -88,7 +87,7 @@ public final class FileOpenCommands {
       startingIn: directory, allowsMultipleSelection: allowsMultipleSelection)
 
     let chosen = await picker(request, anchor?.controller.window)
-    await Self.waitForSheetToDetach(from: anchor?.controller.window)
+    await waitForSheetToDetach(from: anchor?.controller.window)
     return chosen
   }
 }
