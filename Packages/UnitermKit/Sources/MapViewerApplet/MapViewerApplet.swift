@@ -134,6 +134,17 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     host?.appletDidChange(self)
   }
 
+  /// True when the file layer has pins for Zoom to Fit Pins to show.
+  var canFitPins: Bool { !filePins.isEmpty }
+
+  /// Shows every pin of the file layer, as a load does, and saves that region with the pane.
+  func fitPins() {
+    guard let region = GeoRegion.fitting(filePins.map(\.coordinate)) else { return }
+
+    content.show(region: region)
+    regionSettled(region)
+  }
+
   // MARK: Source
 
   /// Shows the pins of `file` in place of the file layer's. The pins on the map go at once. The new
