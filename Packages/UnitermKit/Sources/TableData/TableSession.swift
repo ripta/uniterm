@@ -111,6 +111,17 @@ public final class TableSession {
     queryDidChange()
   }
 
+  /// A click on a column header sorts by it ascending. A second click sorts descending, and a third
+  /// clears the sort.
+  public func cycleSort(_ column: ColumnIdentity) {
+    guard let current = query.sort, current.column == column else {
+      setSort(SortSpec(column: column, ascending: true))
+      return
+    }
+
+    setSort(current.ascending ? SortSpec(column: column, ascending: false) : nil)
+  }
+
   public func setFilter(_ filter: String) {
     restoredQueryWaits = false
     query.filter = filter

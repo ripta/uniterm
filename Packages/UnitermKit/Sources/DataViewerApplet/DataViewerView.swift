@@ -8,18 +8,31 @@ enum DataViewerBody: Equatable {
   case message(String)
 }
 
+/// A nested cell that the user asked to open: its compact JSON text, a title for it, and where the
+/// cell sits.
+struct NestedRequest {
+  let bytes: [UInt8]
+  let title: String
+  let rect: NSRect
+  let anchor: NSView
+}
+
 /// The data viewer's body: a filter field, a notice line, the table, and a message that stands in
-/// for the table. It takes a dropped file anywhere in the pane.
+/// for the table. It takes a dropped file anywhere in the pane, unless it shows a nested value.
+///
+/// A double click on a nested cell asks the owner to open it as a table of its own.
 @MainActor
 final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
   var onSort: ((ColumnIdentity) -> Void)?
   var onFilter: ((String) -> Void)?
   var onOpen: (() -> Void)?
+  var onExpand: ((NestedRequest) -> Void)?
 
   /// Gets the dropped files. Returns false to refuse them.
   var onDrop: (([URL]) -> Bool)?
 
   private weak var session: TableSession?
+  private let isNested: Bool
   let filterField = NSSearchField()
   private let noticeLabel = NSTextField(wrappingLabelWithString: "")
   private let scrollView = NSScrollView()
@@ -33,13 +46,16 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
   override var isFlipped: Bool { true }
 
-  init(session: TableSession) {
+  init(session: TableSession, isNested: Bool = false) {
     self.session = session
+    self.isNested = isNested
 
     super.init(frame: .zero)
 
     wantsLayer = true
-    registerForDraggedTypes([.fileURL])
+    if !isNested { registerForDraggedTypes([.fileURL]) }
+
+    let suffix = isNested ? "-nested" : ""
 
     filterField.placeholderString = "Filter rows"
     filterField.sendsWholeSearchString = false
@@ -47,11 +63,11 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     filterField.target = self
     filterField.action = #selector(filterChanged)
     filterField.translatesAutoresizingMaskIntoConstraints = false
-    filterField.setAccessibilityIdentifier("data-viewer-filter")
+    filterField.setAccessibilityIdentifier("data-viewer-filter\(suffix)")
 
     noticeLabel.font = .systemFont(ofSize: 11)
     noticeLabel.translatesAutoresizingMaskIntoConstraints = false
-    noticeLabel.setAccessibilityIdentifier("data-viewer-notice")
+    noticeLabel.setAccessibilityIdentifier("data-viewer-notice\(suffix)")
 
     tableView.dataSource = self
     tableView.delegate = self
@@ -61,7 +77,9 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     tableView.allowsMultipleSelection = true
     tableView.columnAutoresizingStyle = .noColumnAutoresizing
     tableView.usesAlternatingRowBackgroundColors = false
-    tableView.setAccessibilityIdentifier("data-viewer-table")
+    tableView.setAccessibilityIdentifier("data-viewer-table\(suffix)")
+    tableView.target = self
+    tableView.doubleAction = #selector(cellDoubleClicked)
 
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
@@ -71,7 +89,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     messageLabel.alignment = .center
     messageLabel.font = .systemFont(ofSize: 13)
-    messageLabel.setAccessibilityIdentifier("data-viewer-message")
+    messageLabel.setAccessibilityIdentifier("data-viewer-message\(suffix)")
 
     openButton.target = self
     openButton.action = #selector(openPressed)
@@ -109,7 +127,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     setAccessibilityElement(true)
     setAccessibilityRole(.group)
-    setAccessibilityIdentifier("data-viewer")
+    setAccessibilityIdentifier("data-viewer\(suffix)")
     apply(.latte)
     show(.message(""), notices: [], filter: "", sort: nil)
   }
@@ -137,7 +155,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     if case .message(let text) = body {
       messageLabel.stringValue = text
-      openButton.isHidden = false
+      openButton.isHidden = isNested
     }
 
     noticeLabel.stringValue = notices.joined(separator: " ")
@@ -234,8 +252,22 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
         return field
       }()
 
-    field.stringValue = session.snapshot.text(row: session.selection.row(at: row), column: column)
-    field.textColor = palette[.text].nsColor
+    let source = session.selection.row(at: row)
+
+    switch session.snapshot.kind(row: source, column: column) {
+    case .nested:
+      field.stringValue = "\u{25B8} " + session.snapshot.text(row: source, column: column)
+      field.textColor = palette[.blue].nsColor
+
+    case .null:
+      field.stringValue = "null"
+      field.textColor = palette[.overlay1].nsColor
+
+    default:
+      field.stringValue = session.snapshot.text(row: source, column: column)
+      field.textColor = palette[.text].nsColor
+    }
+
     return field
   }
 
@@ -250,6 +282,24 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
   @objc private func filterChanged() {
     onFilter?(filterField.stringValue)
+  }
+
+  @objc private func cellDoubleClicked() {
+    guard let session, tableView.clickedRow >= 0, tableView.clickedRow < session.visibleCount,
+      tableView.clickedColumn >= 0, tableView.clickedColumn < tableView.tableColumns.count
+    else { return }
+
+    let source = session.selection.row(at: tableView.clickedRow)
+    let column = tableView.clickedColumn
+
+    guard session.snapshot.kind(row: source, column: column) == .nested else { return }
+
+    onExpand?(
+      NestedRequest(
+        bytes: Array(session.snapshot.cell(row: source, column: column)),
+        title: tableView.tableColumns[column].title,
+        rect: tableView.frameOfCell(atColumn: column, row: tableView.clickedRow),
+        anchor: tableView))
   }
 
   @objc private func openPressed() {

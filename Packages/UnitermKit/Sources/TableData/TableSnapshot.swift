@@ -35,6 +35,14 @@ public struct TableSnapshot: Sendable {
     return pages[page].cell(row: local, column: column)
   }
 
+  /// What a cell holds. A CSV cell is always `text`. A JSON row lacking the column is `missing`.
+  public func kind(row: Int, column: Int) -> CellKind {
+    guard row >= 0, row < rowCount else { return .missing }
+
+    let (page, local) = locate(row)
+    return pages[page].kind(row: local, column: column)
+  }
+
   /// A cell as text, at most `limit` bytes of it. Bytes that are not valid UTF-8 show as U+FFFD,
   /// and a cut text ends in an ellipsis.
   public func text(row: Int, column: Int, limit: Int = 2_000) -> String {

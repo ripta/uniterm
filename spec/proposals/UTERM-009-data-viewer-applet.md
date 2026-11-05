@@ -109,6 +109,17 @@ Decision: flatten nested objects into columns, and show arrays as cells that ope
   JSON Lines.
 - A missing key and an explicit `null` display differently.
 - Numbers display their original text, so a large integer or a long decimal is never rounded.
+- A nested object with more than 64 members is a map keyed by data, such as IDs as keys. It is one expandable cell in
+  place of that many columns. Objects flatten to six key segments, and what lies below is an expandable cell.
+- A table holds at most 1,000 columns. Keys past that fold into one last expandable cell, so no value is lost.
+- Duplicate keys in one object keep every value. The nth repeat of a key path in a row fills the path's nth column, by
+  the same occurrence that separates repeated CSV headers.
+- A nested table opens in a popover over its cell, within the pane, and a cell in it can open one more.
+- A scalar on its own and a syntax error show a message and no rows. An empty array shows a message.
+- Sorting a mixed column follows one order. Numbers come first, then text, booleans, nested cells, null, and missing.
+  Descending reverses all but null and missing, which stay last.
+
+Amended 2026-11-04; see Decision Log.
 
 Rationale: common API fields become columns the user can sort and filter, and array contents stay tables instead of
 text. Rejecting nested JSON would fail on most API output. Naming columns by segment list keeps two different values
@@ -294,9 +305,9 @@ None.
 - A header click cycles ascending, descending, then no sort. A sort or filter over a growing table reruns off the main
   thread at most every 250 ms. The view keeps the last finished result until the run over the newer snapshot ends, so
   rows never show out of order.
-- The extension picks the reader. CSV, TSV, and TAB load. JSON, JSON Lines, GeoJSON, and spreadsheet files show a
-  "not supported yet" message, and any other extension is named and refused. The router declares CSV and JSON only, so
-  a TSV file opens through the pane's own Open or a drop.
+- The extension picks the reader. CSV, TSV, and TAB load. JSON, JSON Lines, and GeoJSON files load as JSON. Spreadsheet
+  files show a "not supported yet" message, and any other extension is named and refused. The router declares CSV and
+  JSON only, so a TSV file opens through the pane's own Open or a drop. Amended 2026-11-04; see Decision Log.
 - The bookmark is made at open, kept when it still names the file that opened, and made again otherwise. Resolution
   runs off the main thread, and `describe()` returns the restored payload until it ends.
 - Fuzzing: a seeded mutation fuzzer runs the loader, the store, and the sort and filter on mutated files. `make fuzz`
@@ -313,7 +324,7 @@ None.
 
 ### M2: JSON
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - An array of JSON objects opens as a table, one column per flattened key path
 - Nested values follow the settled JSON shapes rule
@@ -327,6 +338,38 @@ None.
 - A fuzzing run with malformed JSON input, through the parsing stack as shipped and under a memory-error detector,
   finds no crash and no memory error
 - A large top-level array of objects streams within the memory budget, without parsing the whole document first
+
+**As built:**
+
+- The JSON rules are documented beside their code. The shapes, nesting, map, column cap, duplicate-key, and JSON Lines
+  rules are in the doc comment of the JSON rule type. The mixed-type sort order is in the doc comment of the query
+  engine. The numbers behind them, and the reasons, are in the Decision Log entry of 2026-11-04 that amends "JSON
+  shapes".
+- The reader is a streaming scanner in Swift. It takes chunks of any size, keeps each number's original text, and
+  copies one array element or object member at a time, up to 16 MiB. A second pass flattens that element. So memory
+  follows the budget and one element, and a file bigger than the budget stops after the first chunks it reads.
+- Caps: nesting 256 levels, a string 1 MiB, a key 4 KiB, a nested cell 1 MiB, and 65,536 cells in a row. A string is
+  cut. A number past 64 KiB, and a nested value past its cap, show a note in place of the value, since a cut number reads
+  as a different value. A cut value, or a row that dropped cells, is counted in the same notice as a cut CSV cell. A
+  repeat of a key costs the same however many came before it, and a long element checks for a cancel as rows pass.
+- The row store gained typed pages for JSON. A cell carries a kind, and a row holds only the cells it has, found by
+  binary search on column. So a missing key and `null` differ, and a sort can tell the string `"12"` from the number 12.
+  CSV pages are unchanged.
+- A syntax error, or nesting past the cap, ends the load with a message that names the line. The rows read before it
+  are not shown. See the Decision Log entry of 2026-11-04.
+- A nested cell shows its compact JSON after a marker, in the table's accent color. A double click opens it in a
+  popover that holds its own table, sort, and filter, under the shared budget. A package test proves the load and the
+  release of its rows. A UI test drives the double click, and it has not run. The coordinator's `make test-app` runs it.
+- Fuzzing: the JSON corpus joined the existing fuzz class, with mutated files, random read splits, and an open of every
+  nested cell. 5000 iterations at the default seed found no crash and no memory error under the address sanitizer.
+  The sanitizer does not instrument the system libraries, but this reader uses none.
+- A GeoJSON file opens as key and value rows. A large `features` member shows the too-large note, so a FeatureCollection
+  is not browsable here. That is a known limit of loading GeoJSON as JSON. The router still sends GeoJSON to the map.
+- The column registry is not charged to the budget. Its bound is 1,001 columns. Each holds at most 6 key segments of
+  4 KiB, and a title of the same size, so the worst case is about 50 MiB for a hostile file and kilobytes for a real
+  one. Each open nested popover also takes one more 32 MiB floor beyond the limit, as "Large files" allows.
+- The visual check is left to the user. Things to look at: the nested-cell marker and color, the popover's size and
+  position over a cell, `null` in a muted color, and a wide table's `(more keys)` column.
 
 ### M3: Search
 
@@ -437,6 +480,27 @@ None.
 - 2026-11-04: A header click cycles ascending, descending, then no sort. Numbers sort before text when ascending, text
   sorts by its lowercased form, and empty cells come last in both directions. "Clicking a column header sorts by that
   column" fixes none of this. (work-queue best guess)
+- 2026-11-04: Amended "JSON shapes". The decision named the flattening, the nested-table cells, and the top-level shapes,
+  and gave no numbers or rules for width, repeats, or sorting. The text now holds them. A nested object with more than
+  64 members is a map. Objects flatten to six key segments. A table holds 1,000 columns, and the keys past that fold
+  into one last cell. Duplicate keys keep every value, in occurrence columns, as repeated CSV headers do. A nested
+  table opens in a popover in the same pane. A scalar on its own, and a syntax error, show a message. The numbers are
+  constants. The map threshold and the depth would change if real files flatten badly, and a user-facing setting is not
+  warranted until someone needs one. (work-queue best guess)
+- 2026-11-04: JSON Lines is told from a single value by the file name, then by the first 64 KiB. A name ending in
+  `.jsonl` or `.ndjson` is JSON Lines. Any other name is JSON Lines when the sample holds a whole first value and a
+  second one. A value longer than the sample is one value, and data after it is an error. The milestone asks only for
+  "told apart". (work-queue best guess)
+- 2026-11-04: The mixed-type sort order is numbers, text, booleans, nested cells, null, then missing. Descending reverses
+  the first four, and null and missing stay last in both directions, as empty cells already did in M1. A JSON string
+  sorts as text even when it looks like a number, and a number compares as a double. M1 left the full order to M2.
+  (work-queue best guess)
+- 2026-11-04: A syntax error or a nesting past the cap fails the load and shows no rows, even when rows were read first.
+  The alternative keeps the rows with an error notice, and needs a new end state in the session, the phase, the notices,
+  and the status segment. "Deeply nested input shows an error" allows either. (work-queue best guess)
+- 2026-11-04: Amended M1's As built note on readers. A GeoJSON file is JSON, so it loads as JSON in place of showing
+  "not supported yet". Before, M1 listed it with the formats that waited for a later reader. The router still sends
+  GeoJSON to the map. (work-queue best guess)
 
 ## References
 

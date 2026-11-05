@@ -33,6 +33,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private var restoreWaitsForStart: Bool
   private var describesFromRecord: Bool
   private var closed = false
+  private let budget: TableBudget
+  private let pageTarget: Int
+  private var nested: NestedTable?
+  private var palette = ThemePalette.latte
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
@@ -43,6 +47,8 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     record = DataViewerDescription(startDirectory: startDirectory)
     restoreWaitsForStart = false
     describesFromRecord = false
+    self.budget = budget
+    self.pageTarget = pageTarget
 
     session = TableSession(budget: budget, pageTarget: pageTarget)
     content = DataViewerView(session: session)
@@ -60,6 +66,8 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     record = try DataViewerDescription.decode(description)
     restoreWaitsForStart = record.path != nil
     describesFromRecord = true
+    self.budget = budget
+    self.pageTarget = pageTarget
 
     session = TableSession(budget: budget, pageTarget: pageTarget)
     content = DataViewerView(session: session)
@@ -103,10 +111,25 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
   private func wire() {
     session.onChange = { [weak self] in self?.refresh() }
-    content.onSort = { [weak self] column in self?.cycleSort(column) }
+    content.onSort = { [weak self] column in self?.session.cycleSort(column) }
     content.onFilter = { [weak self] text in self?.session.setFilter(text) }
     content.onOpen = { [weak self] in self?.showOpenPanel() }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
+    content.onExpand = { [weak self] request in self?.expand(request) }
+  }
+
+  // MARK: Nested
+
+  /// Opens a nested cell as a table in a popover over the cell, within this pane.
+  private func expand(_ request: NestedRequest) {
+    nested?.close()
+
+    let table = NestedTable(
+      bytes: request.bytes, title: request.title, budget: budget, palette: palette,
+      pageTarget: pageTarget)
+
+    nested = table
+    table.present(relativeTo: request.rect, of: request.anchor)
   }
 
   // MARK: Source
@@ -126,6 +149,8 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     opening?.cancel()
     openGeneration += 1
     resolvedNotice = nil
+    nested?.close()
+    nested = nil
 
     let generation = openGeneration
     session.close()
@@ -189,19 +214,6 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     }
   }
 
-  // MARK: Sort
-
-  /// A click on a header sorts by it ascending. A second click sorts descending, and a third clears
-  /// the sort.
-  private func cycleSort(_ column: ColumnIdentity) {
-    guard let current = session.query.sort, current.column == column else {
-      session.setSort(SortSpec(column: column, ascending: true))
-      return
-    }
-
-    session.setSort(current.ascending ? SortSpec(column: column, ascending: false) : nil)
-  }
-
   // MARK: Applet
 
   public func start() {
@@ -213,6 +225,8 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    nested?.close()
+    nested = nil
     opening?.cancel()
     opening = nil
     session.onChange = nil
@@ -228,6 +242,8 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   }
 
   public func apply(_ palette: ThemePalette) {
+    self.palette = palette
+    nested?.apply(palette)
     content.apply(palette)
   }
 
@@ -290,7 +306,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     case .idle:
       return .message(
         record.path == nil
-          ? "Open a CSV file, or drop one here."
+          ? "Open a CSV or JSON file, or drop one here."
           : "Opening\u{2026}")
 
     case .loading:
