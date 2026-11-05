@@ -183,6 +183,12 @@ file.
   Find Previous (Cmd-Shift-G), and Focus Filter with no key. The filter field and the open panel need no key. The data
   viewer has no tabs, so its description has no undo-only part. Cmd-Shift-T reopens a closed data viewer pane from its
   description.
+- All four sit in Edit > Find, a submenu of the Edit menu that an applet fills through a menu home of its own. The
+  submenu shows only while the focused applet has such commands. The fixed edit actions stay as they were. The commands
+  are off until a table shows. They run against the pane, so they work while the filter or find field has focus.
+- The find query belongs to the pane. It is apart from the filter. Search marks cells among the rows the filter shows,
+  numbered as shown, and runs again when the filter, the sort, or the loaded rows change. The query is not in the
+  description, and the viewer never reads or writes the system find pasteboard. Amended 2026-11-04; see Decision Log.
 
 - The payload holds the file's absolute path, a macOS bookmark of the file, the selected `.xlsx` sheet, the sort as a
   column identity and a direction, and the filter text. It has its own version, per ADR-06.
@@ -197,7 +203,7 @@ file.
   a restored sort lands on the right one.
 - The bookmark is created at load, and remade when an open, a restore included, finds a different file than the
   bookmark names. Resolution runs in `start()`, off the main thread, without UI and without mounting volumes.
-  `describe()` never touches the disk. Amended 2026-11-03; see Decision Log.
+  `describe()` never touches the disk.
 
 Rationale: the path is what the user named, so it wins while a file is there. The bookmark recovers a file that was
 moved or renamed. Bookmark-first resolution follows the file ID, which would show a rotated-away backup instead of the
@@ -373,12 +379,40 @@ None.
 
 ### M3: Search
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Searching highlights matching cells and steps between them
 - Find, Find Next, Find Previous, and Focus Filter are registry commands the data viewer declares, with menu items, and
   none of their keys is a reserved window key
 - The Find items sit in Edit > Find, work while focus is in the filter field, and are disabled when no file is loaded
+
+**As built:**
+
+- Edit > Find is shared contract. An applet command names the new `editFind` menu home, and the menu builds the submenu
+  below Select All. The rule that this home takes find commands only is a convention. Its doc comment states it, and
+  the code does not enforce it. The submenu and its separator hide unless the focused applet type owns an item in it. Availability,
+  the hidden-under-another-applet rule, the disabled-under-a-sheet rule, and the key reservation are the registry's
+  and are unchanged. A command on a reserved key in this home loses the key and warns like any other. See the Decision
+  Log entry of 2026-11-04.
+- Find opens a find bar under the filter field with a match count. Return steps forward, Shift-Return steps back, and
+  Escape closes the bar and clears the query. Find Next with no query opens the bar. Focus Filter is in the same
+  submenu, in its own section.
+- The keys work from a focused text field because the window routes a Command key to the menu before any view sees it.
+  Find reaches the pane, not the field. A package test types the key into a real field editor, and the UI tests drive
+  the same path in the app.
+- Search runs in the session on the snapshot and the rows shown, off the main thread. Each new query or new rows
+  cancel the older run. It matches ignoring case, as the filter does, and keeps at most 1,000,000 matches. A cut list
+  reads "1,000,000+" in the count.
+- The current match keeps its cell, by row of the file and column, when a filter, a sort, or new rows change what is
+  shown. When that cell no longer matches, the first match after it takes over. Adding or deleting letters of the same
+  word keeps the place. Any other query, and a cleared bar, starts at the first match. The view scrolls to the current
+  match only for a new query or a step, so a reload of rows never pulls back a view the user scrolled.
+- The count reads "X of N matches". It adds "in the first N rows" when the load stopped at the budget, and "in X of N
+  rows" when a filter hides rows. Both together read "in X of the first N rows".
+- A match is a tinted cell, and the current one is tinted more. The UI tests check the count line, not the colors. The
+  visual check is left to the user. Things to look at: the two tints on both palettes, the find bar under the filter,
+  and the scroll to the current match in a wide table.
+- No change to table parsing, so `make fuzz` did not run.
 
 ### M4: Spreadsheets
 
@@ -501,6 +535,24 @@ None.
 - 2026-11-04: Amended M1's As built note on readers. A GeoJSON file is JSON, so it loads as JSON in place of showing
   "not supported yet". Before, M1 listed it with the formats that waited for a later reader. The router still sends
   GeoJSON to the map. (work-queue best guess)
+
+- 2026-11-04: Edit > Find as an applet menu home (work-queue best guess). "The applet contract" named the find commands
+  and no menu. M3 and UTERM-007 name Edit > Find. Applets could not place a command in Edit, so the menu gained an
+  `editFind` home. It builds a Find submenu below the fixed edit actions, shown only while the focused applet has
+  commands in it. UTERM-013 keeps the standard edit actions as fixed uniterm items. This adds nothing to them, and the
+  home takes find commands only. UTERM-007's viewer uses the same home. Focus Filter sits in the same submenu, in its
+  own section. All four are off until a table shows. Amended "The applet contract" with the placement. Before, it
+  named the commands and not the menu, and it said nothing of the find query. The decision carries one marker, so the
+  marker moved here from the bookmark bullet. The 2026-11-03 entry above still records that change.
+- 2026-11-04: The find query is pane state, apart from the filter, and not in the description (work-queue best
+  guess). Search covers the rows the filter shows, numbered as shown, and reruns when the filter, sort, or loaded rows
+  change. Searching the whole file and showing hits in filtered-out rows was weighed. It needs a second row space and a
+  way to show hidden hits. The query is left out of the payload so it needs no version bump, and a restored pane starts
+  with the find bar closed. UTERM-007 already says its find query belongs to the pane and never touches the system find
+  pasteboard, so this follows it.
+- 2026-11-04: Search matches ignoring case, in every column, and keeps at most 1,000,000 matches (work-queue best
+  guess). The matches live outside the budget, at 8 bytes each. A search with more is not a way to find a cell, and the
+  count says so with a plus sign. "Large files" says only that search runs off the main thread on a snapshot.
 
 ## References
 

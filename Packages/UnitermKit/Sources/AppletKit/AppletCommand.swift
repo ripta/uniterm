@@ -6,6 +6,11 @@ public enum AppletMenuHome: Sendable {
   case view
   case window
 
+  /// The Find submenu of the Edit menu. It holds the find commands of whichever viewer has focus.
+  /// The standard edit actions stay fixed items of Edit, and an applet places only find commands
+  /// here. The submenu shows only while the focused applet has such commands.
+  case editFind
+
   /// A menu named for the applet type. It shows only while the focused applet has such commands.
   case applet
 }

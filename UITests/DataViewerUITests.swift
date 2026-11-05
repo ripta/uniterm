@@ -186,4 +186,104 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(
       waitFor(message, timeout: 5) { $0.contains("missing") }, "the message does not say missing")
   }
+
+  // MARK: Find
+
+  private func findCount(in window: XCUIElement) -> XCUIElement {
+    window.descendants(matching: .any)["data-viewer-find-count"]
+  }
+
+  private func openFindFile() throws -> (XCUIApplication, XCUIElement) {
+    let file = try makeCSV("name,city\nann,rome\nbob,romeo\ncy,oslo\n")
+
+    try plantViewer(path: file.path)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 20), "no table")
+    return (app, window)
+  }
+
+  /// Catches a Find submenu that is missing from Edit, or whose items are live with no file to
+  /// search. An empty data viewer has Edit > Find, and its items are disabled.
+  func testEditFindExistsAndIsDisabledWithNoFile() throws {
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("d", modifierFlags: .command)
+    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+
+    app.typeKey("3", modifierFlags: .command)
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(window.buttons["data-viewer-open"].waitForExistence(timeout: 10))
+
+    let bar = app.menuBars
+    bar.menuBarItems["Edit"].click()
+
+    let find = bar.menuItems["Find"]
+    XCTAssertTrue(find.waitForExistence(timeout: 5), "no Edit > Find")
+    find.click()
+
+    for title in ["Find\u{2026}", "Find Next", "Find Previous", "Focus Filter"] {
+      let item = bar.menuItems[title]
+      XCTAssertTrue(item.waitForExistence(timeout: 5), "no \(title) item")
+      XCTAssertFalse(item.isEnabled, "\(title) is on with no file")
+    }
+
+    app.typeKey(.escape, modifierFlags: [])
+    app.typeKey(.escape, modifierFlags: [])
+  }
+
+  /// Catches a Cmd-F that does not open the find bar, a query that matches nothing, and Cmd-G and
+  /// Cmd-Shift-G that do not step. The count line is the match the highlight stands on. It reads
+  /// "1 of 2" for the first match, "2 of 2" after Cmd-G, and "1 of 2" again after Cmd-Shift-G. The
+  /// cell colors need a screenshot, which this suite does not take.
+  func testCommandFHighlightsMatchesAndCommandGStepsBetweenThem() throws {
+    let (app, window) = try openFindFile()
+
+    app.typeKey("f", modifierFlags: .command)
+
+    let field = window.searchFields["data-viewer-find"]
+    XCTAssertTrue(field.waitForExistence(timeout: 5), "Cmd-F did not open the find bar")
+
+    app.typeText("rom")
+
+    let count = findCount(in: window)
+    XCTAssertTrue(waitFor(count, timeout: 10) { $0 == "1 of 2 matches" })
+
+    app.typeKey("g", modifierFlags: .command)
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0 == "2 of 2 matches" })
+
+    app.typeKey("g", modifierFlags: [.command, .shift])
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0 == "1 of 2 matches" })
+  }
+
+  /// Catches Find keys that a focused filter field swallows. With the keyboard in the filter field,
+  /// Cmd-G still steps, and Cmd-F still moves the keyboard to the find bar, so the next typing
+  /// lands there and the filter keeps its text.
+  func testFindWorksWhileTheFilterFieldHasFocus() throws {
+    let (app, window) = try openFindFile()
+
+    app.typeKey("f", modifierFlags: .command)
+    app.typeText("rom")
+
+    let count = findCount(in: window)
+    XCTAssertTrue(waitFor(count, timeout: 10) { $0 == "1 of 2 matches" })
+
+    let filter = window.searchFields["data-viewer-filter"]
+    filter.click()
+    app.typeText("o")
+
+    app.typeKey("g", modifierFlags: .command)
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("2 of 2 matches") })
+    XCTAssertEqual(filter.value as? String, "o", "Cmd-G changed the filter text")
+
+    app.typeKey("f", modifierFlags: .command)
+    app.typeText("oslo")
+
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("1 of 1 matches") })
+    XCTAssertEqual(filter.value as? String, "o", "typing after Cmd-F went to the filter")
+  }
 }

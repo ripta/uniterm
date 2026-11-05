@@ -160,6 +160,10 @@ final class FakeApplet: Applet {
   var textActions: [String] = []
   var canPerformText = true
 
+  /// Whether the fake's Find command is on, and how often it ran.
+  var canFind = true
+  var finds = 0
+
   func start() { started = true }
   func close() { closed = true }
   func detach() { detachCount += 1 }
@@ -245,6 +249,9 @@ extension FakeApplet {
       text("bigger-text", "Bigger Text", KeyChord("+")),
       text("actual-size", "Actual Size", KeyChord("0")),
       text("clear", "Clear Screen", KeyChord("l"), .applet),
+      AppletCommand(
+        name: "find", title: "Find\u{2026}", key: KeyChord("f"), home: .editFind,
+        isAvailable: { fake($0)?.canFind == true }, run: { fake($0)?.finds += 1 }),
     ]
 
     for number in 1...9 {
@@ -281,6 +288,7 @@ extension CommandID {
   static let fakeBiggerText: CommandID = "fake.bigger-text"
   static let fakeActualSize: CommandID = "fake.actual-size"
   static let fakeClear: CommandID = "fake.clear"
+  static let fakeFind: CommandID = "fake.find"
 
   static func fakeTab(_ number: Int) -> CommandID {
     CommandID(number == 9 ? "fake.last-tab" : "fake.tab-\(number)")

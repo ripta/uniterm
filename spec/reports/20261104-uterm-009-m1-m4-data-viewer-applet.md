@@ -14,7 +14,7 @@ carries a `Live after` line. Nothing was held or skipped.
 |---|---|---|
 | UTERM-009 M1: CSV table | DONE | "Add a data viewer applet that opens CSV files as tables" |
 | UTERM-009 M2: JSON | DONE | "Open JSON and JSON Lines files in the data viewer" |
-| UTERM-009 M3: Search | QUEUED | |
+| UTERM-009 M3: Search | DONE | "Search the data viewer's table from Edit > Find" |
 | UTERM-009 M4: Spreadsheets | QUEUED | |
 
 ## Local checks
@@ -203,3 +203,77 @@ Left open:
 - An array of empty objects, such as `[{}, {}]`, has rows and no columns. The pane says "has no rows".
 - The cut-rows notice says "rows had oversized cells cut". For JSON it also counts values that were replaced by the
   too-large note.
+
+### UTERM-009 M3: Search
+
+Commit: "Search the data viewer's table from Edit > Find".
+
+Checks, final round:
+- `make fmt-check`, `make lint`, `make check`, and `make build` pass.
+- `make test-package` passes: 798 tests, 4 skipped, 0 failures.
+- `make fuzz` was not run. Table parsing did not change. The milestone added search and widened one matcher's
+  visibility.
+- `make test-app` on the final tree ran 87 tests with 1 failure, which is an unowned intermittent failure. See below.
+  The three new search UI tests passed.
+- `proposals.py check` and `proposals.py freeze` with the row's two commits report nothing.
+- The visual check is left to the user, as in M1. Things to look at: the two highlight tints on both palettes, the
+  find bar under the filter, the scroll to the current match, and the header stack.
+
+Unowned intermittent UI-test failures, recorded per "Test Failures" in `work-discipline.md`:
+- First full run, on the tree before the review fixes: `PaneTreeUITests.testDraggingADividerResizesThePanesOnBothSides`
+  failed at `PaneTreeUITests.swift:130`. The divider moved 0 points, where about 100 was expected. The test started at
+  06:16:57Z, while the implementer's `make test-package` and `build-for-testing` were running on the same machine.
+- Second full run, on the final tree with nothing else running:
+  `CommandPaletteUITests.testAProgramTitleShowsNeutralizedAsATab` failed at `CommandPaletteUITests.swift:226`, "the
+  title was not neutralized". The drag test passed in that run.
+- Attempt: both classes ran alone on the final tree with `-test-iterations 2`. All 42 runs passed.
+- Evidence the work did not cause them: neither test touches what M3 changed. The drag test exercises pane dividers.
+  The palette test sets a terminal title with `printf` and looks it up in the palette. M3's new palette commands show
+  only when a data viewer has focus. Both tests passed in every full run on M1 and M2.
+- Uncertain: neither failure was reproduced, and neither was run on the base commit. Contention is likely for the drag
+  test. Shell timing is a guess for the palette test, which types into a fresh shell before checking the title. A
+  passing rerun proves neither.
+
+Test cost:
+
+| Test class | Tests | Wall time |
+|---|---|---|
+| `TableSearchTests` | 13 | 0.46 s |
+| `CommandMenuTests` | 21, 4 new | 2.14 s. Each new test is under 0.06 s |
+| `DataViewerAppletTests` | 22, 3 new | 0.69 s |
+| `BuiltInCommandsTests` | 2, 1 new | 0.03 s |
+
+Best guesses made during the milestone. Each has a Decision Log entry marked "(work-queue best guess)":
+- Edit > Find is a new applet menu home, `editFind`, shared with UTERM-007's planned viewer. It builds a Find submenu
+  below Select All. The submenu hides unless the focused applet type owns an item in it. Focus Filter sits in the same
+  submenu, in its own section. The "find commands only" rule is a convention: the home's doc comment states it, and
+  the code does not enforce it.
+- The find query belongs to the pane. It is separate from the filter, and searches only the filtered rows, numbered
+  as shown. It is not stored in the description, so the payload version does not change. It never touches the system
+  find pasteboard.
+- Search ignores case and covers every column. It keeps at most 1,000,000 matches, about 8 MB, outside the budget. A
+  cut list shows "+" in the count.
+
+Amendments: "The applet contract" gained the Edit > Find placement and the find-query rule. A decision carries one
+marker, so the bookmark bullet's 2026-11-03 marker moved to the new text as 2026-11-04. The 2026-11-03 Decision Log
+entry still records the bookmark change.
+
+Review findings and their dispositions:
+1. An amendment marker was re-dated instead of added. CONFIRMED, and fixed by the one-marker rule in "Amending a
+   Proposal". The coordinator's instruction to restore the old date was wrong under that rule.
+2. Every finished search scrolled the view back to the current match, so a user scrolling while a file loads was
+   pulled back. PLAUSIBLE. The trace confirmed it, and it is fixed: only a new query or a step scrolls. The test fails
+   on the old logic.
+3. After a query with no matches, the search anchor stayed at the old row. PLAUSIBLE. The trace confirmed it, and it
+   is fixed: the place is kept only when the new query extends or shortens the old one. The test fails on the old
+   logic.
+4. Nothing tested where the current match lands when the rows change. Fixed with five tests. While tracing, the
+   implementer found the anchor was a position in the rows shown, so a sort or filter moved it to a different cell.
+   The anchor now holds a file row and a column. The filter and sort tests fail when the anchor is a position in the
+   rows shown.
+
+ADR impact: no conflict. ADR-04 and ADR-05 are consistent. `adr-impact` judged that the `editFind` home does not earn
+an ADR, since it is a mechanism under UTERM-013's menu-home rule and is easy to reverse.
+
+The reviewer verified that Cmd-F and Cmd-G reach the registry with a field editor focused, since the main window
+routes Command keys to the menu first. A test proves it with a real field editor.

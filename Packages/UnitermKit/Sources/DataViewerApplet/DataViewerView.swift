@@ -8,6 +8,12 @@ enum DataViewerBody: Equatable {
   case message(String)
 }
 
+/// What the find bar shows: the query in its field and a line about the matches.
+struct FindDisplay: Equatable {
+  var query = ""
+  var status = ""
+}
+
 /// A nested cell that the user asked to open: its compact JSON text, a title for it, and where the
 /// cell sits.
 struct NestedRequest {
@@ -22,9 +28,15 @@ struct NestedRequest {
 ///
 /// A double click on a nested cell asks the owner to open it as a table of its own.
 @MainActor
-final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
+final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
+  NSSearchFieldDelegate
+{
   var onSort: ((ColumnIdentity) -> Void)?
   var onFilter: ((String) -> Void)?
+  var onFind: ((String) -> Void)?
+
+  /// Steps to the next match when true, and the previous one when false.
+  var onStep: ((Bool) -> Void)?
   var onOpen: (() -> Void)?
   var onExpand: ((NestedRequest) -> Void)?
 
@@ -34,6 +46,11 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
   private weak var session: TableSession?
   private let isNested: Bool
   let filterField = NSSearchField()
+  let findField = NSSearchField()
+  let findCountLabel = NSTextField(labelWithString: "")
+  private let findRow = NSStackView()
+  private let header = NSStackView()
+  private var findVisible = false
   private let noticeLabel = NSTextField(wrappingLabelWithString: "")
   private let scrollView = NSScrollView()
   private let tableView = NSTableView()
@@ -65,8 +82,25 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     filterField.translatesAutoresizingMaskIntoConstraints = false
     filterField.setAccessibilityIdentifier("data-viewer-filter\(suffix)")
 
+    findField.placeholderString = "Find in rows"
+    findField.sendsWholeSearchString = false
+    findField.sendsSearchStringImmediately = true
+    findField.target = self
+    findField.action = #selector(findChanged)
+    findField.delegate = self
+    findField.setAccessibilityIdentifier("data-viewer-find\(suffix)")
+
+    findCountLabel.font = .systemFont(ofSize: 11)
+    findCountLabel.setContentHuggingPriority(.required, for: .horizontal)
+    findCountLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+    findCountLabel.setAccessibilityIdentifier("data-viewer-find-count\(suffix)")
+
+    findRow.orientation = .horizontal
+    findRow.spacing = 8
+    findRow.addArrangedSubview(findField)
+    findRow.addArrangedSubview(findCountLabel)
+
     noticeLabel.font = .systemFont(ofSize: 11)
-    noticeLabel.translatesAutoresizingMaskIntoConstraints = false
     noticeLabel.setAccessibilityIdentifier("data-viewer-notice\(suffix)")
 
     tableView.dataSource = self
@@ -103,19 +137,27 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     messageStack.addArrangedSubview(messageLabel)
     messageStack.addArrangedSubview(openButton)
 
-    addSubview(filterField)
-    addSubview(noticeLabel)
+    header.orientation = .vertical
+    header.alignment = .leading
+    header.spacing = 4
+    header.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 0, right: 8)
+    header.translatesAutoresizingMaskIntoConstraints = false
+    header.addArrangedSubview(filterField)
+    header.addArrangedSubview(findRow)
+    header.addArrangedSubview(noticeLabel)
+
+    addSubview(header)
     addSubview(scrollView)
     addSubview(messageStack)
 
     NSLayoutConstraint.activate([
-      filterField.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-      filterField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-      filterField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-      noticeLabel.topAnchor.constraint(equalTo: filterField.bottomAnchor, constant: 4),
-      noticeLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-      noticeLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-      scrollView.topAnchor.constraint(equalTo: noticeLabel.bottomAnchor, constant: 4),
+      filterField.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+      findRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+      noticeLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
+      header.topAnchor.constraint(equalTo: topAnchor),
+      header.leadingAnchor.constraint(equalTo: leadingAnchor),
+      header.trailingAnchor.constraint(equalTo: trailingAnchor),
+      scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
       scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
       scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -129,7 +171,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     setAccessibilityRole(.group)
     setAccessibilityIdentifier("data-viewer\(suffix)")
     apply(.latte)
-    show(.message(""), notices: [], filter: "", sort: nil)
+    show(.message(""), notices: [], filter: "", sort: nil, find: FindDisplay())
   }
 
   @available(*, unavailable)
@@ -144,13 +186,47 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     window?.makeFirstResponder(body == .table ? tableView : self)
   }
 
-  /// Shows the body, the notice lines, and the sort and filter the table carries.
-  func show(_ body: DataViewerBody, notices: [String], filter: String, sort: SortSpec?) {
+  /// Puts the keyboard in the find field and selects what it holds, so typing replaces the query.
+  func showFind() {
+    findVisible = true
+    findRow.isHidden = false
+    window?.makeFirstResponder(findField)
+    findField.selectText(nil)
+  }
+
+  /// Closes the find bar, drops its query, and hands the keyboard back to the table.
+  func hideFind() {
+    findVisible = false
+    findRow.isHidden = true
+    findField.stringValue = ""
+    onFind?("")
+    window?.makeFirstResponder(body == .table ? tableView : self)
+  }
+
+  func focusFilter() {
+    window?.makeFirstResponder(filterField)
+    filterField.selectText(nil)
+  }
+
+  /// Scrolls so the cell at the visible row and column is on screen.
+  func reveal(row: Int, column: Int) {
+    guard row < tableView.numberOfRows, column < tableView.numberOfColumns else { return }
+
+    tableView.scrollRowToVisible(row)
+    tableView.scrollColumnToVisible(column)
+  }
+
+  /// Shows the body, the notice lines, and the sort, filter, and find the table carries.
+  func show(
+    _ body: DataViewerBody, notices: [String], filter: String, sort: SortSpec?,
+    find: FindDisplay = FindDisplay()
+  ) {
     self.body = body
 
     let showsTable = body == .table
     scrollView.isHidden = !showsTable
     filterField.isHidden = !showsTable
+    findRow.isHidden = !showsTable || !findVisible
     messageStack.isHidden = showsTable
 
     if case .message(let text) = body {
@@ -164,6 +240,13 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     if filterField.currentEditor() == nil, filterField.stringValue != filter {
       filterField.stringValue = filter
     }
+
+    if findField.currentEditor() == nil, findField.stringValue != find.query {
+      findField.stringValue = find.query
+    }
+
+    findCountLabel.stringValue = find.status
+    findCountLabel.isHidden = find.status.isEmpty
 
     syncColumns()
     updateIndicators(sort: sort)
@@ -179,6 +262,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
     tableView.gridColor = palette[.surface0].nsColor
     messageLabel.textColor = palette[.subtext1].nsColor
     noticeLabel.textColor = palette[.yellow].nsColor
+    findCountLabel.textColor = palette[.subtext1].nsColor
     tableView.reloadData()
   }
 
@@ -254,6 +338,19 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     let source = session.selection.row(at: row)
 
+    switch session.matchState(row: row, column: column) {
+    case .current:
+      field.drawsBackground = true
+      field.backgroundColor = palette[.peach].nsColor.withAlphaComponent(0.6)
+
+    case .match:
+      field.drawsBackground = true
+      field.backgroundColor = palette[.yellow].nsColor.withAlphaComponent(0.3)
+
+    case .none:
+      field.drawsBackground = false
+    }
+
     switch session.snapshot.kind(row: source, column: column) {
     case .nested:
       field.stringValue = "\u{25B8} " + session.snapshot.text(row: source, column: column)
@@ -282,6 +379,31 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
   @objc private func filterChanged() {
     onFilter?(filterField.stringValue)
+  }
+
+  @objc private func findChanged() {
+    onFind?(findField.stringValue)
+  }
+
+  /// Return steps to the next match, Shift-Return to the previous one, and Escape closes the bar.
+  /// Both return true so the field does not also send its own action.
+  func control(
+    _ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector
+  ) -> Bool {
+    guard control === findField else { return false }
+
+    switch commandSelector {
+    case #selector(NSResponder.insertNewline(_:)):
+      onStep?(NSApp.currentEvent?.modifierFlags.contains(.shift) != true)
+      return true
+
+    case #selector(NSResponder.cancelOperation(_:)):
+      hideFind()
+      return true
+
+    default:
+      return false
+    }
   }
 
   @objc private func cellDoubleClicked() {

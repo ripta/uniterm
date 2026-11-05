@@ -37,4 +37,34 @@ final class BuiltInCommandsTests: XCTestCase {
     XCTAssertNotNil(open)
     XCTAssertNil(open?.key)
   }
+
+  /// Catches a data viewer find key that uniterm reserves, whether a window command, a fixed Edit
+  /// key, or one a later catalog entry takes. Every find key survives the reservation pass with no
+  /// warning, the commands sit in Edit > Find, and Focus Filter asks for no key.
+  func testTheDataViewerFindCommandsHoldTheirKeysInEditFind() throws {
+    var warnings: [String] = []
+    let registry = CommandRegistry(app: AppCommandHooks(warn: { warnings.append($0) }))
+
+    for set in BuiltInApplets.commandSets {
+      registry.register(set)
+    }
+
+    let menu = CommandMenu(registry: registry, activeController: { nil })
+    menu.refreshKeys()
+
+    let viewer = try XCTUnwrap(BuiltInApplets.commandSets.first { $0.typeID == "data-viewer" })
+    let find = viewer.commands.filter { $0.home == .editFind }
+
+    XCTAssertEqual(
+      find.map(\.name), ["find", "find-next", "find-previous", "focus-filter"])
+    XCTAssertEqual(
+      find.map(\.key), [KeyChord("f"), KeyChord("g"), KeyChord("g", [.command, .shift]), nil])
+
+    for command in find where command.key != nil {
+      let id = CommandRegistry.commandID(typeID: "data-viewer", name: command.name)
+      XCTAssertEqual(registry.appletKeys[id], command.key, command.title)
+    }
+
+    XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+  }
 }
