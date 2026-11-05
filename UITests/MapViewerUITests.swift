@@ -67,6 +67,31 @@ final class MapViewerUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(styleText(in: window), timeout: 10) { $0 == "Standard" })
   }
 
+  /// Catches a click on the map that leaves the focus mark on another pane. A map opens beside a
+  /// terminal, a click moves focus to the terminal, and a click on the map brings it back.
+  func testClickingTheMapFocusesItsPane() throws {
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("d", modifierFlags: .command)
+    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    app.typeKey("4", modifierFlags: .command)
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(map(in: window).waitForExistence(timeout: 10), "no map pane")
+
+    let terminalPane = window.groups["pane-1"]
+    let mapPane = window.groups["pane-2"]
+
+    terminalPane.textViews["terminal"].click()
+    XCTAssertTrue(waitFor(terminalPane, timeout: 10) { $0 == "focused" })
+    XCTAssertTrue(waitFor(mapPane, timeout: 10) { $0 == "unfocused" })
+
+    window.descendants(matching: .any)["map-viewer-map"].click()
+    XCTAssertTrue(
+      waitFor(mapPane, timeout: 10) { $0 == "focused" }, "a click on the map left it unfocused")
+  }
+
   /// Catches a restore that drops the stored style or region. A planted layout names the hybrid
   /// style and a region over San Francisco, and the pane shows both.
   func testAPlantedStyleAndRegionComeBack() throws {
