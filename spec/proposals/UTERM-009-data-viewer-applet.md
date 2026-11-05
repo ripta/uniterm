@@ -1,8 +1,8 @@
 # UTERM-009: Data Viewer Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-04
+**Updated:** 2026-11-05
 
 ## Dependencies
 
