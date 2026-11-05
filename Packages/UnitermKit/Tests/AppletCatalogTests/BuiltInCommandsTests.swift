@@ -68,11 +68,11 @@ final class BuiltInCommandsTests: XCTestCase {
     XCTAssertTrue(warnings.isEmpty, "\(warnings)")
   }
 
-  /// Catches a map command that gains a key, lands in the wrong menu, or loses its name. The
-  /// commands are the registry's contract with the menu and the palette. Open and Clear File Pins
-  /// sit in File, the three styles in View, and none asks for a key, so Cmd-O stays with the
-  /// window's File > Open.
-  func testTheMapCommandsSitInTheirMenusWithNoKeys() throws {
+  /// Catches a map command that gains or loses a key, lands in the wrong menu, or loses its name.
+  /// The commands are the registry's contract with the menu and the palette. Open and Clear File
+  /// Pins sit in File with no key, so Cmd-O stays with the window's File > Open. The three styles
+  /// sit in View on Cmd-1 to Cmd-3, which the terminal's tab keys leave free while a map is focused.
+  func testTheMapCommandsSitInTheirMenusWithTheirKeys() throws {
     var warnings: [String] = []
     let registry = CommandRegistry(app: AppCommandHooks(warn: { warnings.append($0) }))
 
@@ -84,6 +84,10 @@ final class BuiltInCommandsTests: XCTestCase {
     menu.refreshKeys()
 
     let map = try XCTUnwrap(BuiltInApplets.commandSets.first { $0.typeID == "map-viewer" })
+    let keys: [String: KeyChord] = [
+      "style-standard": KeyChord("1"), "style-satellite": KeyChord("2"),
+      "style-hybrid": KeyChord("3"),
+    ]
 
     XCTAssertEqual(
       map.commands.map(\.name),
@@ -93,12 +97,12 @@ final class BuiltInCommandsTests: XCTestCase {
       ["Open\u{2026}", "Clear File Pins", "Standard Map", "Satellite Map", "Hybrid Map"])
 
     for command in map.commands {
-      XCTAssertNil(command.key, command.title)
+      XCTAssertEqual(command.key, keys[command.name], command.title)
       XCTAssertEqual(
         command.home, command.name.hasPrefix("style-") ? .view : .file, command.title)
 
       let id = CommandRegistry.commandID(typeID: "map-viewer", name: command.name)
-      XCTAssertNil(registry.appletKeys[id], command.title)
+      XCTAssertEqual(registry.appletKeys[id], keys[command.name], command.title)
     }
 
     XCTAssertTrue(warnings.isEmpty, "\(warnings)")

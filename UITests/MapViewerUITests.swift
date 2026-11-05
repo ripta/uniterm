@@ -40,7 +40,8 @@ final class MapViewerUITests: UnitermUITestCase {
 
   /// Catches a launcher without the map viewer, a pane that shows no map, and a style command that
   /// does not reach the pane. Cmd-D shows the launcher, Cmd-4 picks the map viewer, and each style
-  /// in the View menu shows in the status bar and in the map's accessibility value.
+  /// in the View menu shows in the status bar and in the map's accessibility value. Cmd-2 and Cmd-3
+  /// then reach the style commands, not the terminal's tab keys.
   func testLauncherOpensAMapAndTheViewMenuSwitchesItsStyle() throws {
     let app = launchApp()
     let window = mainWindow(in: app)
@@ -65,6 +66,14 @@ final class MapViewerUITests: UnitermUITestCase {
 
     chooseStyle("Standard Map", in: app)
     XCTAssertTrue(waitFor(styleText(in: window), timeout: 10) { $0 == "Standard" })
+
+    app.typeKey("2", modifierFlags: .command)
+    XCTAssertTrue(
+      waitFor(styleText(in: window), timeout: 10) { $0 == "Satellite" },
+      "Cmd-2 did not reach the map's style command")
+
+    app.typeKey("3", modifierFlags: .command)
+    XCTAssertTrue(waitFor(styleText(in: window), timeout: 10) { $0 == "Hybrid" })
   }
 
   /// Catches a click on the map that leaves the focus mark on another pane. A map opens beside a
