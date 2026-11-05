@@ -8,8 +8,20 @@ is a separate row that waits on UTERM-004 M3. The specs live in the code repo, s
 
 ## Run state
 
-The run's base is "8< --- snip ---", which is also the row's base. The row has no dependencies, and no milestone
-carries a `Live after` line. Nothing is held, blocked, or skipped. No commands need the user's credentials.
+The run finished on 2026-11-05. UTERM-008 stays `accepted`, since its M3 row waits on UTERM-004 M3. The run's base is
+"8< --- snip ---", which is also the row's base. The row has no dependencies, and no milestone carries a `Live after`
+line. Nothing is held, blocked, or skipped, and no work was stashed. No commands needed the user's credentials.
+
+Commits, in order:
+1. "Add a map viewer applet with standard, satellite, and hybrid styles"
+2. "Load map pins from GeoJSON files"
+3. "Fix the map's stale gesture mark and separate the file layer", the row review
+4. "Finish the map viewer's file-pins row"
+5. "Reflow the map proposal's As built text", the final review
+6. "Record the end of the map viewer run", this report's last amendment
+
+The UI suite never ran in this run. Every attempt found the screen locked. Run `make test-app` with the screen unlocked
+before relying on the map's UI tests. `TerminalSessionIntegrationTests` failed throughout with the machine out of ptys.
 
 | Milestone | Run status | Commit |
 |---|---|---|
