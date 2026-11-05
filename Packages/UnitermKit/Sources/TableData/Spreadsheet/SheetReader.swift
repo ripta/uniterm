@@ -227,6 +227,8 @@ final class SheetHandler: XMLHandler {
 
       guard let index, let text = strings.string(at: index), !text.isEmpty else { return nil }
 
+      if strings.cut.contains(index) { cellIsCut = true }
+
       return (.string, Array(text), true)
 
     case "str":

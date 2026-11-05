@@ -1,4 +1,5 @@
 import Foundation
+import TableTestSupport
 import XCTest
 
 @testable import TableData
@@ -10,14 +11,18 @@ final class XLSXLoaderTests: XCTestCase {
     _ bytes: [UInt8], name: String = "book.xlsx", sheet: String? = nil,
     limits: SpreadsheetLimits = .standard,
     budget: TableBudget = TableBudget(limit: 1 << 30, floor: 1 << 20),
-    pageTarget: Int = TableLoader.defaultPageTarget, isCancelled: @escaping () -> Bool = { false }
+    pageTarget: Int = TableLoader.defaultPageTarget, isCancelled: @escaping () -> Bool = { false },
+    afterLease: (TableBudget) -> Void = { _ in }
   ) throws -> Loaded {
     let scratch = try Scratch(self)
     let file = try scratch.write(name, bytes)
 
     let log = EventLog()
+    let lease = budget.makeLease()
+    afterLease(budget)
+
     TableLoader.loadBlocking(
-      .file(file, sheet: sheet), lease: budget.makeLease(), pageTarget: pageTarget,
+      .file(file, sheet: sheet), lease: lease, pageTarget: pageTarget,
       limits: limits, isCancelled: isCancelled, emit: log.add)
 
     guard case .finished(let snapshot, let end, let progress)? = log.events.last else {
@@ -437,7 +442,9 @@ final class XLSXLoaderTests: XCTestCase {
     XCTAssertTrue(what.contains("shared strings table"), what)
   }
 
-  /// Catches a table that is charged to nothing. The budget refuses it, so the load stops.
+  /// Catches a table that is charged to nothing. The budget refuses it, so the load stops. A budget
+  /// refusal is not a hostile file, so it ends like a CSV load that ran out of budget and never
+  /// reports an expansion cap.
   func testSharedStringsAreChargedToTheBudget() throws {
     let table =
       Workbook.header + "<sst>"
@@ -451,12 +458,48 @@ final class XLSXLoaderTests: XCTestCase {
         strings: ZipPart("xl/sharedStrings.xml", table)),
       budget: budget)
 
-    guard case .spreadsheetTooLarge(_, let what)? = failure(loaded) else {
-      return XCTFail("expected the budget to refuse, got \(loaded.end)")
-    }
-
-    XCTAssertTrue(what.contains("shared strings"), what)
+    XCTAssertEqual(loaded.end, .stoppedAtBudget)
+    XCTAssertNil(failure(loaded))
     XCTAssertEqual(budget.used, 0)
+  }
+
+  /// Catches a memory-pressure warning during the shared strings that reads as a hostile file.
+  func testSharedStringsStopOnMemoryPressureLikeAnyOtherLoad() throws {
+    let table =
+      Workbook.header + "<sst>"
+      + String(repeating: "<si><t>some text</t></si>", count: 4_000) + "</sst>"
+
+    let loaded = try load(
+      rawWorkbook(
+        sheet: ZipPart("xl/worksheets/sheet1.xml", bytes: sheetXML("")),
+        strings: ZipPart("xl/sharedStrings.xml", table)),
+      afterLease: { $0.memoryPressureWarning() })
+
+    XCTAssertEqual(loaded.end, .stoppedLowMemory)
+  }
+
+  /// Catches a row that holds a cut shared string and is not counted. The notice counts rows, as it
+  /// does for CSV, so two rows that use one cut string count twice and a row of whole strings does
+  /// not count.
+  func testRowsThatUseACutSharedStringAreCounted() throws {
+    var limits = SpreadsheetLimits()
+    limits.cellBytes = 8
+
+    let strings =
+      Workbook.header
+      + "<sst><si><t>h</t></si><si><t>0123456789</t></si><si><t>ok</t></si></sst>"
+
+    let rows =
+      Workbook.row(1, cell("A1", "0", type: "s"))
+      + Workbook.row(2, cell("A2", "1", type: "s"))
+      + Workbook.row(3, cell("A3", "1", type: "s") + cell("B3", "2", type: "s"))
+      + Workbook.row(4, cell("A4", "2", type: "s"))
+
+    let loaded = try load(
+      Workbook.bytes(sheets: [SheetSpec("S", rows)], stringsXML: strings), limits: limits)
+
+    XCTAssertEqual(loaded.end, .completed)
+    XCTAssertEqual(loaded.progress.truncatedRows, 2)
   }
 
   /// Catches an entity declaration reaching the parser. A billion-laughs table must never expand.

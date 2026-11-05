@@ -1,4 +1,5 @@
 import Foundation
+import TableTestSupport
 import XCTest
 
 @testable import TableData
@@ -20,7 +21,7 @@ import XCTest
 /// libxml2 and the Compression framework, which the sanitizer sees only through its allocator and
 /// memory-function interceptors. A heap overflow in their own code can go unseen, so a clean run
 /// here is weaker evidence than one over Swift code.
-final class CSVFuzzTests: XCTestCase {
+final class TableFuzzTests: XCTestCase {
   private var iterations: Int {
     ProcessInfo.processInfo.environment["UNITERM_FUZZ_ITERATIONS"].flatMap(Int.init) ?? 300
   }

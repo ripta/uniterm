@@ -70,7 +70,7 @@ test-package: ghostty ## Run the package tests with swift test
 .PHONY: fuzz
 fuzz: ghostty ## Fuzz the table readers under the address sanitizer. Slow, so make ci leaves it out
 	cd $(PACKAGE_DIR) && UNITERM_FUZZ_ITERATIONS=$(FUZZ_ITERATIONS) \
-		swift test --sanitize=address --scratch-path ../../$(FUZZ_SCRATCH) --filter CSVFuzzTests
+		swift test --sanitize=address --scratch-path ../../$(FUZZ_SCRATCH) --filter TableFuzzTests
 
 .PHONY: test-app
 test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission

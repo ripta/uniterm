@@ -11,7 +11,7 @@ extension LoadRun {
   mutating func readSpreadsheet(
     from descriptor: Int32, fileSize: Int, path: String, sheet requested: String?
   ) {
-    isSheet = true
+    sheet.isActive = true
 
     var sharedReserved = 0
     let lease = lease
@@ -48,7 +48,7 @@ extension LoadRun {
 
       if let stringsPath = layout.sharedStringsPath {
         let handler = SharedStringsHandler(
-          cellBytes: limits.cellBytes, reserve: { lease.reserve($0) == .granted })
+          cellBytes: limits.cellBytes, reserve: { lease.reserve($0) })
 
         defer { sharedReserved += handler.reserved }
 
@@ -57,7 +57,6 @@ extension LoadRun {
           handler: handler)
 
         strings = handler.table
-        progress.truncatedRows += handler.cutStrings
       }
 
       let handler = SheetHandler(
@@ -91,17 +90,14 @@ extension LoadRun {
 
   /// Takes a finished row. Returns false once the load has ended.
   private mutating func acceptSheetRow(_ row: SheetRow, pump: XMLPump) -> Bool {
-    sheetRowCount += 1
+    sheet.rowCount += 1
 
-    if sheetRowCount & 0xFF == 0, isCancelled() {
-      finish(.cancelled)
-      return false
-    }
+    if cancelled(atRow: sheet.rowCount) { return false }
 
     if row.wasCut { progress.truncatedRows += 1 }
 
-    if sheetFirstRow {
-      sheetFirstRow = false
+    if sheet.isFirstRow {
+      sheet.isFirstRow = false
 
       if row.allLabels {
         var header = [String](repeating: "", count: (row.cells.last?.column ?? -1) + 1)
@@ -110,12 +106,12 @@ extension LoadRun {
           header[cell.column] = String(String(decoding: cell.bytes, as: UTF8.self).prefix(512))
         }
 
-        sheetHeader = header
+        sheet.header = header
         return true
       }
     }
 
-    sheetColumns = max(sheetColumns, (row.cells.last?.column ?? -1) + 1)
+    sheet.columns = max(sheet.columns, (row.cells.last?.column ?? -1) + 1)
     builder.append(typed: row.cells)
     progress.bytesRead = pump.inflatedBytes
 
@@ -138,8 +134,17 @@ extension LoadRun {
     case .cancelled:
       finish(.cancelled)
 
-    case .tooLarge(let what), .outOfMemory(let what):
+    case .tooLarge(let what):
       finish(.failed(.spreadsheetTooLarge(path: path, what: what)))
+
+    case .refused(.memoryPressure):
+      finish(.stoppedLowMemory)
+
+    case .refused(.released):
+      finish(.cancelled)
+
+    case .refused:
+      finish(.stoppedAtBudget)
 
     case .invalid(let reason):
       finish(.failed(.invalidSpreadsheet(path: path, reason: reason)))
@@ -151,4 +156,13 @@ extension LoadRun {
       finish(.failed(.invalidSpreadsheet(path: path, reason: "its data ended early")))
     }
   }
+}
+
+/// What a sheet read keeps between rows.
+struct SheetReadState {
+  var isActive = false
+  var header: [String]?
+  var columns = 0
+  var isFirstRow = true
+  var rowCount = 0
 }

@@ -144,6 +144,9 @@ struct SharedStrings: Sendable {
   var bytes: [UInt8] = []
   var ends: [UInt32] = []
 
+  /// The strings that a size cap cut. A cell that shows one of them is a cut cell.
+  var cut: Set<Int> = []
+
   var count: Int { ends.count }
 
   /// What the table holds, as memory the load reserves.
@@ -162,18 +165,17 @@ struct SharedStrings: Sendable {
 final class SharedStringsHandler: XMLHandler {
   private(set) var table = SharedStrings()
   private(set) var reserved = 0
-  private(set) var cutStrings = 0
 
   private let cellBytes: Int
-  private let reserve: (Int) -> Bool
+  private let reserve: (Int) -> TableBudget.Reservation
   private var inItem = false
   private var inText = false
   private var phonetic = 0
   private var current: [UInt8] = []
   private var currentIsCut = false
 
-  /// `reserve` asks the memory budget for bytes. It returns false when the budget says no.
-  init(cellBytes: Int, reserve: @escaping (Int) -> Bool) {
+  /// `reserve` asks the memory budget for bytes and returns its answer.
+  init(cellBytes: Int, reserve: @escaping (Int) -> TableBudget.Reservation) {
     self.cellBytes = cellBytes
     self.reserve = reserve
   }
@@ -209,14 +211,16 @@ final class SharedStringsHandler: XMLHandler {
       table.bytes.append(contentsOf: SpreadsheetText.unescape(current))
       table.ends.append(UInt32(truncatingIfNeeded: table.bytes.count))
 
-      if currentIsCut { cutStrings += 1 }
+      if currentIsCut { table.cut.insert(table.count - 1) }
 
       // The reservation runs ahead of the table in 1 MiB steps, so the budget is asked rarely.
       if table.cost > reserved {
         let step = table.cost - reserved + (1 << 20)
 
-        guard reserve(step) else {
-          stop(.outOfMemory("the shared strings table needs more memory than is free"))
+        let answer = reserve(step)
+
+        guard answer == .granted else {
+          stop(.refused(answer))
           return
         }
 

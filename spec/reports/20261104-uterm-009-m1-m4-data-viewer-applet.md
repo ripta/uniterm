@@ -397,3 +397,63 @@ Left open:
   compiling anything. The run left the file for the user.
 - `XMLParser` builds an attribute dictionary for every element, so a very large sheet loads slowly. The 4 GiB cap
   bounds the time, and a cancel is seen at the next row.
+
+### Row review: UTERM-009 M1-M4
+
+Commit: "Fix data viewer messages and counts across its readers".
+
+The reviewer read the range from the row's base to M4's commit, and looked at how the milestones fit together.
+`adr-impact` ran beside it on the same range. Fixes were made by a fresh implementer.
+
+Checks:
+- `make fmt-check`, `make lint`, `make check`, and `make build` pass.
+- `make test-package` passes: 835 tests, 4 skipped, 0 failures.
+- `make fuzz` passes at 5000 iterations under AddressSanitizer, with the renamed `TableFuzzTests` filter.
+- `make swiftpm-offline-check` passes.
+- `proposals.py check` reports only the row-finishing items. `proposals.py freeze` with the row's four commits reports
+  nothing.
+- `make test-app` ran 89 tests with 1 failure. `DockedPaletteUITests.testADockedPaletteTakesNoKeyboardUntilTheHotkeyAndGivesItBack`
+  failed with "Failed to synthesize event: Timed out while synthesizing event". The class then passed alone on the
+  same tree. This is the same automation-layer symptom as the earlier runs, in a test the row does not touch. It is
+  recorded as an unowned intermittent failure with the others.
+
+Findings and their dispositions:
+1. A legitimate workbook whose shared strings exceeded the pane's free budget stopped with the "hostile file"
+   message. CONFIRMED and fixed. A budget refusal now ends the load like a CSV or JSON budget stop, with the same
+   memory wording. The "hostile" message stays only on the real caps. Both regression tests failed on the old code. A
+   related edge was also fixed: strings load, then the first page is refused. Before, the pane showed an empty table
+   under "the first 0 rows". Now it shows the memory message. No test covers that edge, since the pane's message
+   label is private to the view.
+2. The `.xlsx` cut-row count counted shared-string entries, not rows. CONFIRMED and fixed: rows that show a cut
+   string are counted. The regression test failed on the old code, with 1 where 2 was expected.
+3. The settled "Input sources" decision still said a file URL is the only source, after M2 added an in-memory source
+   for nested tables. Amended with one marker and a Decision Log entry. The doc comment is fixed.
+4. The launcher entry still said "Shows a CSV file as a table". It now names CSV, JSON, and Excel files.
+5. The row-limit notice said "of the file" for a workbook. A workbook now says "of the sheet". This is a best guess
+   with a Decision Log entry, and "Large files" is amended.
+6. The ZIP fixture writer existed three times. The package-test copies now share one writer, in a new `TableTestSupport`
+   test target. The UI-test copy stays, since that target cannot import the package. A comment says which writer it
+   mirrors.
+7. `CSVFuzzTests` fuzzed all three formats. It is renamed `TableFuzzTests`, and the `make fuzz` filter is updated.
+8. Duplicated notice code moved into one helper, and the identical `finish` arms are merged. JSON and sheets share
+   one cancel cadence. Each reader's load state now lives beside its reader. The CSV state stays in the shared load
+   run, because moving it was not cheap.
+9. The app's restorer said "wrong type, expected terminal" for an unknown applet type. It now says the type is
+   unknown. The placeholder behavior is unchanged.
+
+UI fragility: the reviewer judged that nothing in M3 or M4 plausibly causes the full-suite failures. M3's Find
+submenu is built once and hidden or shown on existing notifications. The sheet picker exists only in a data viewer
+pane, and the other suites never open one. It could not rule out the extra run length, the extra app launches, or
+the new launcher row. Its suggested bisect is three full runs on M2's commit, and three on M3 without the data viewer
+tests. The run did not do that bisect, since it costs about an hour of GUI time.
+
+ADR impact across the range: no conflict with an accepted ADR. ADR-07 is still advisory, and wider now that the range
+adds libxml2, zlib, and a third-party package. ADR-08 is unchanged from M1. `adr-impact` proposed three ADR
+candidates:
+- A file-backed viewer's description holds a path and a bookmark, never file contents. The path wins while a regular
+  file is there, and the bookmark is remade when it names a different file. This passes the bar: UTERM-006,
+  UTERM-007, and UTERM-008 follow the same rule, it is stored data, and it is settled. It is recorded as `Undecided` in
+  the Decision Log.
+- A shared memory budget across viewer panes. Not recorded. Only UTERM-009 settles it, so it is not yet a rule
+  other viewers must follow.
+- The `editFind` menu home. Not recorded. M3's `adr-impact` judged it a mechanism under UTERM-013's menu-home rule.
