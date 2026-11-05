@@ -151,6 +151,24 @@ final class DataViewerAppletTests: XCTestCase {
     XCTAssertEqual(budget.used, 0)
   }
 
+  /// Catches a nested table whose load stopped with columns and no rows. It would show an empty
+  /// table and no notice. It says memory is short instead, as the main pane does. It cannot prove
+  /// the wording of a stop that keeps some rows.
+  func testANestedValueStoppedBeforeAnyRowShowsTheMemoryMessage() async throws {
+    let budget = TableBudget(limit: 1, floor: 0)
+    let table = NestedTable(
+      bytes: Array(#"[{"x":1,"y":2}]"#.utf8), title: "items", budget: budget, palette: .latte)
+
+    let done = await eventually { table.session.phase != .loading && table.session.phase != .idle }
+    XCTAssertTrue(done)
+    XCTAssertEqual(table.session.snapshot.rowCount, 0)
+    XCTAssertFalse(table.session.snapshot.columns.isEmpty)
+
+    guard case .message(let text) = table.view.body else { return XCTFail("no message") }
+
+    XCTAssertTrue(text.contains("not enough memory"), text)
+  }
+
   /// Catches a folder, which the loader must refuse without reading it.
   func testAFolderShowsAMessage() async throws {
     let scratch = try Scratch(self)
@@ -632,5 +650,24 @@ final class DataViewerAppletTests: XCTestCase {
     XCTAssertTrue(
       applet.content.findCountLabel.stringValue.hasSuffix("matches in the first \(loaded) rows"),
       applet.content.findCountLabel.stringValue)
+  }
+
+  /// Catches a status segment that reads "The first 0 rows" while the body says memory is short.
+  /// A stop before any row says so in the segment too, in the warning style.
+  func testAStopBeforeAnyRowSaysSoInTheStatusSegment() async throws {
+    let scratch = try Scratch(self)
+    let file = scratch.url.appendingPathComponent("wide.xlsx")
+    try makeWorkbook([("S", [["a", "b"], ["1", "2"]])]).write(to: file)
+
+    let applet = DataViewerApplet(
+      startDirectory: nil, budget: TableBudget(limit: 1, floor: 0), pageTarget: 2_000)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase != .loading && applet.session.phase != .idle }
+
+    XCTAssertTrue(applet.session.stoppedBeforeAnyRow)
+    XCTAssertFalse(applet.segments.isEmpty)
+    XCTAssertEqual(applet.segments.compactMap(\.text), ["Stopped for memory, no rows loaded"])
+    XCTAssertEqual(applet.segments.first?.style, .warning)
   }
 }

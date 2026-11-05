@@ -307,8 +307,9 @@ struct LoadRun {
     }
   }
 
-  /// Checks for cancellation once in 256 rows, so a read of small rows stays cheap. Ends the load and
-  /// returns true when it was cancelled.
+  /// Checks for cancellation once in 256 rows, so a read of small rows stays cheap.
+  ///
+  /// Ends the load and returns true when it was cancelled.
   mutating func cancelled(atRow count: Int) -> Bool {
     guard count & 0xFF == 0, isCancelled() else { return false }
 

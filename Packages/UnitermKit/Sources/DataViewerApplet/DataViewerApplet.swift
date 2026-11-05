@@ -388,7 +388,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return .message(failure)
     }
 
-    if !session.snapshot.columns.isEmpty, !stoppedBeforeAnyRow {
+    if !session.snapshot.columns.isEmpty, !session.stoppedBeforeAnyRow {
       return .table
     }
 
@@ -415,13 +415,6 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     case .failed:
       return .message("")
     }
-  }
-
-  /// True when a budget or memory stop left the table with columns and no rows, such as a workbook
-  /// whose first page of rows was refused. A table with nothing in it would only look empty.
-  private var stoppedBeforeAnyRow: Bool {
-    (session.phase == .stoppedAtBudget || session.phase == .stoppedLowMemory)
-      && session.snapshot.rowCount == 0
   }
 
   private func failure() -> String? {
@@ -490,6 +483,13 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       ]
 
     case .stoppedAtBudget, .stoppedLowMemory:
+      if session.stoppedBeforeAnyRow {
+        return [
+          AppletSegment(
+            symbolName: "tablecells", text: "Stopped for memory, no rows loaded", style: .warning)
+        ]
+      }
+
       return [
         AppletSegment(
           symbolName: "tablecells",

@@ -7,8 +7,18 @@ below is in `/Users/ripta/projects/uniterm`, on the `agent/petunia` branch.
 
 ## Run state
 
-The run's base is "8< --- snip ---", which is also the row's base. The row has no dependencies, and no milestone
-carries a `Live after` line. Nothing was held or skipped.
+The run finished on 2026-11-05, and UTERM-009 is `implemented`. The run's base is "8< --- snip ---", which is also the
+row's base. The row has no dependencies, and no milestone carries a `Live after` line. Nothing was held, blocked, or
+skipped, and no work was stashed.
+
+Commits, in order:
+1. "Add a data viewer applet that opens CSV files as tables"
+2. "Open JSON and JSON Lines files in the data viewer"
+3. "Search the data viewer's table from Edit > Find"
+4. "Open .xlsx workbooks in the data viewer"
+5. "Fix data viewer messages and counts across its readers", the row review
+6. "Mark the data viewer proposal implemented"
+7. "Fix the data viewer's zero-row stop notices", the final review
 
 | Milestone | Run status | Commit |
 |---|---|---|
@@ -457,3 +467,107 @@ candidates:
 - A shared memory budget across viewer panes. Not recorded. Only UTERM-009 settles it, so it is not yet a rule
   other viewers must follow.
 - The `editFind` menu home. Not recorded. M3's `adr-impact` judged it a mechanism under UTERM-013's menu-home rule.
+
+After the row review, the row was finished in "Mark the data viewer proposal implemented". UTERM-009 is
+`implemented`, the index says so, and the row moved from `queue.md` to `history.md`. `proposals.py check` reports
+nothing.
+
+### Final review
+
+Commit: "Fix the data viewer's zero-row stop notices".
+
+The reviewer read the whole run, from the run's base to the commit that marks the proposal implemented. It also did
+the run's ADR review. `adr-impact` checked the two commits after the row-level check and found no new ADR impact.
+
+ADR review: the range adds or edits no file under `spec/adr/`. `proposals.py freeze` with all six run commits reports
+nothing.
+
+Findings and their dispositions:
+1. The in-process parsing candidate does not say that UTERM-006 and UTERM-007 declined its twin rule. UTERM-006
+   declined "decoders uniterm does not own run in a sandboxed helper", because ADR-07 already states the principle.
+   UTERM-007 chose UTERM-006's rule instead. ADR-07's exception clause already allows a bounded in-process design, so
+   the reviewer suggests this candidate is a per-design exception under ADR-07, not a separate rule. Left for the
+   user: the proposal is frozen, and rewording a Decision Log entry is not an allowed edit. See "ADR candidates" below.
+2. The pinning candidate mixes the invariant with its mechanism. The invariant is "a third-party dependency is pinned
+   to one exact, tested version", for supply-chain reasons. It extends the libghostty pin in ADR-07 and CLAUDE.md to
+   every package. Left for the user, for the same reason.
+3. The path-and-bookmark candidate states a mapping. The invariant behind it is "never contents". UTERM-008 declined a
+   close relative, "program-supplied content stays out of the layout file", as "an applet's own decision". Left for
+   the user, for the same reason.
+4. When a stop left zero rows, the status segment still read "the first 0 rows" beside the memory message. PLAUSIBLE,
+   traced and fixed in the commit above.
+5. A nested table whose load stopped with columns and no rows showed an empty table. PLAUSIBLE, traced and fixed with
+   the main pane's rule.
+6. A two-idea doc comment on the shared cancel cadence was split.
+7. The "Large files" amendment moved its marker without saying so. Recorded as a correction of fact in a new Decision
+   Log entry.
+
+Checks after the fixes:
+- `make fmt-check`, `make lint`, `make check`, `make build`, and `make test-package` pass. The implementer ran them.
+  The two new tests failed before the fixes.
+- `proposals.py check` and `proposals.py freeze` with all six run commits report nothing.
+- `make test-app` ran 89 tests with 2 failures, `WindowsUITests.testCommandWClosesOnlyTheKeyWindow` and
+  `WindowsUITests.testPaneActionsGoToTheKeyWindowOnly`. In one of them a keystroke took 15 s to synthesize, and the
+  launcher never opened. A rerun of the windows and data viewer suites passed all 6 windows tests. In that same short
+  run, `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile` failed with "Timed out while
+  synthesizing event". That test had passed in every earlier run on this code.
+- The run stopped rerunning at that point. Synthesis timeouts were now hitting short runs and whichever test was
+  running. See "Unowned intermittent UI failures" below.
+
+The reviewer confirmed these cross-cutting points:
+- `make fuzz` and `make swiftpm-offline-check` match the README and the Makefile help.
+- `make ci` runs the offline check and not `make fuzz`.
+- `Licenses/README.txt` lists ZIPFoundation 0.9.20.
+- `Package.swift` pins `exact: "0.9.20"`, and both `Package.resolved` files are committed.
+- The `Info.plist` document types match the router declarations.
+
+## Unowned intermittent UI failures
+
+Every full `make test-app` run on M1 and M2 passed. Every full run from M3 on had 1 to 6 failures. The failures were
+in different tests each time, mostly in suites this row does not touch: palette, docked palette, tabs, terminal,
+windows, and pane tree. The errors all come from the macOS automation layer:
+- "Failed to synthesize event: Timed out while synthesizing event"
+- "Application has not loaded accessibility"
+- "Lost connection to the application … Couldn't communicate with a helper application"
+- "Application is not running"
+
+No uniterm crash report exists. Each failing class passed when run alone at least once. The last short rerun also hit
+a synthesis timeout, in a data viewer test that had always passed.
+
+Not settled:
+- The runs went from about 23:00 to 01:00 local time. A display that slept or locked fits the growing failures, but
+  nothing proves it.
+- The row reviewer found nothing in M3 or M4 that plausibly churns the accessibility tree. It could not rule out the
+  longer run, the extra app launches, or the new launcher row.
+- No run used the base commit, so the base commit was not ruled out.
+
+The check that settles it is one full `make test-app` with the display awake. If it fails, bisect: three full runs on
+M2's commit, then three on M3's with the data viewer tests excluded.
+
+## ADR candidates
+
+The run recorded three ADR candidates in UTERM-009's Decision Log, all `Undecided`. None was written. The user
+decides which become ADRs, usually in the next `/proposal-reviewer` run.
+
+1. Untrusted files are parsed in-process only through Swift and OS-maintained C libraries. A third-party C parser is
+   rejected.
+   - Cuts across the system: every file-reading applet must follow it.
+   - Hard to reverse: moving parsing into a helper process later changes every reader.
+   - A decision, not a mechanism.
+   - Open: the final review points out that UTERM-006 and UTERM-007 declined the twin rule, because ADR-07 already
+     states it. ADR-07 is `proposed`, and its exception clause asks why isolation is impossible. UTERM-009 gives a
+     cost reason and a revisit hook instead. Every `adr-impact` run flagged this as advisory. The likely clean outcome
+     is an edit to ADR-07's exception clause, not a separate ADR.
+2. Every third-party Swift package is pinned to one exact version, with `Package.resolved` committed and its license
+   collected.
+   - Cuts across the system: every future dependency must follow it.
+   - A clear rule, enforced now by `make swiftpm-offline-check`.
+   - Stricter than the coding standards' Swift doc, which allows a version range.
+   - Could live as one line in CLAUDE.md's Stack Decisions instead of an ADR.
+3. A file-backed viewer's description holds a path and a bookmark, never file contents. The path wins while a regular
+   file is there, and the bookmark is remade when it names a different file.
+   - Cuts across the system: UTERM-006, UTERM-007, and UTERM-008 follow the same rule.
+   - Hard to reverse: it is stored data.
+   - Settled in "The applet contract".
+   - Open: the final review says the invariant is "never contents", and the path precedence is a mapping. UTERM-008
+     declined a close relative as an applet's own decision.
