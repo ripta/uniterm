@@ -22,7 +22,9 @@ final class RecordingHost: AppletHost {
 
   func appletDidChange(_ applet: any Applet) { changes += 1 }
 
-  func appletTabsDidChange(_ applet: any Applet) {}
+  var tabChanges = 0
+
+  func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
 
   func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool { false }
 

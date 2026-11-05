@@ -160,7 +160,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try DataViewerApplet(restoring: description)
 
       case MapViewerDescription.typeID:
-        return try MapViewerApplet(restoring: description)
+        return try MapViewerApplet(
+          restoring: description, placeNames: MapViewerApplet.applePlaceNames)
 
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
@@ -179,7 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return DataViewerApplet(startDirectory: directory)
 
       case .mapViewer:
-        return MapViewerApplet(startDirectory: directory)
+        return MapViewerApplet(
+          startDirectory: directory, placeNames: MapViewerApplet.applePlaceNames)
       }
     }
 
@@ -212,7 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try DataViewerApplet.opening(file, startDirectory: startDirectory)
       },
       MapViewerDescription.typeID: { file, startDirectory in
-        MapViewerApplet.opening(file, startDirectory: startDirectory)
+        MapViewerApplet.opening(
+          file, startDirectory: startDirectory, placeNames: MapViewerApplet.applePlaceNames)
       },
     ]
 

@@ -30,6 +30,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private static let limits = GeoJSONLimits()
 
   let content = MapViewerView()
+  let places: PlaceNamer
   private var record: MapViewerDescription
   private var closed = false
   private(set) var opening: Task<Void, Never>?
@@ -42,7 +43,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
-  public init(startDirectory: String?) {
+  ///
+  /// `placeNames` answers the palette's place name for the map's center. With none, the pane asks
+  /// no one and shows no name.
+  public init(startDirectory: String?, placeNames: PlaceLookup? = nil) {
+    places = PlaceNamer(lookup: placeNames)
     record = MapViewerDescription(startDirectory: startDirectory)
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
@@ -52,7 +57,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// Restores a pane from its description. The region and style come back with no work on the
   /// disk or the network. A description this build cannot read is refused.
-  public init(restoring description: AppletDescription) throws {
+  public init(restoring description: AppletDescription, placeNames: PlaceLookup? = nil) throws {
+    places = PlaceNamer(lookup: placeNames)
     record = try MapViewerDescription.decode(description)
     restoreWaitsForStart = record.path != nil
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
@@ -69,8 +75,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
   /// opens `file`.
-  public static func opening(_ file: URL, startDirectory: String) -> MapViewerApplet {
-    let applet = MapViewerApplet(startDirectory: startDirectory)
+  public static func opening(
+    _ file: URL, startDirectory: String, placeNames: PlaceLookup? = nil
+  ) -> MapViewerApplet {
+    let applet = MapViewerApplet(startDirectory: startDirectory, placeNames: placeNames)
     applet.replaceSource(with: file, startDirectory: startDirectory)
 
     return applet
@@ -106,6 +114,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
       self.host?.applet(self, post: .warning, text: text)
     }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
+    content.onRegionShown = { [weak self] region in self?.places.regionShown(region) }
+    places.onName = { [weak self] _ in self?.refresh() }
   }
 
   // MARK: Style
@@ -299,6 +309,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.onRegionSettled = nil
     content.onLoadFailure = nil
     content.onDrop = nil
+    content.onRegionShown = nil
+    places.cancel()
     content.stopObserving()
     content.mapView.delegate = nil
   }
@@ -357,10 +369,13 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.setAccessibilityValue(accessibilitySummary())
 
     let newTitle = record.path.map { ($0 as NSString).lastPathComponent } ?? Self.untitled
+    let tab = AppletTab(
+      id: publishedTabs.first.id, title: newTitle, details: places.name.map { [$0] } ?? [])
 
-    if newTitle != title {
-      title = newTitle
-      publishedTabs = AppletTabList(first: AppletTab(id: publishedTabs.first.id, title: newTitle))
+    title = newTitle
+
+    if tab != publishedTabs.first {
+      publishedTabs = AppletTabList(first: tab)
       host?.appletTabsDidChange(self)
     }
   }
