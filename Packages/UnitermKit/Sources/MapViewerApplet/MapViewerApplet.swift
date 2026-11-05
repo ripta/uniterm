@@ -1,16 +1,23 @@
 import AppKit
 import AppletKit
 import GeoData
+import SourceAccess
 import StatusKit
 import Theme
 
-/// Shows a map that the user can pan and zoom, in one of three styles.
+/// Shows a map that the user can pan and zoom, in one of three styles, with the pins of a GeoJSON
+/// file on it.
 ///
 /// MapKit owns the map and its gestures. The applet keeps the visible region and the style in its
 /// description, and `describe()` reads memory only. The region is saved when the map settles, not
 /// at every frame.
+///
+/// Every file load goes through `replaceSource`. The open panel, a drop, the router, and a restore
+/// reach the same path, which finds the file and parses it off the main thread. The file's pins are
+/// their own layer, so loading another file replaces them and nothing else. The description holds
+/// the file's path and bookmark, never its pins.
 @MainActor
-public final class MapViewerApplet: Applet {
+public final class MapViewerApplet: Applet, SourceReplacing {
   public let typeID = MapViewerDescription.typeID
   public weak var host: (any AppletHost)?
   public let isRunningSomething = false
@@ -21,13 +28,25 @@ public final class MapViewerApplet: Applet {
 
   private static let untitled = "Map"
 
+  /// The name of the layer that holds the file's pins.
+  static let fileLayer = "file"
+
   let content = MapViewerView()
   private var record: MapViewerDescription
   private var closed = false
+  private let limits: GeoJSONLimits
+  private(set) var opening: Task<Void, Never>?
+  private var openGeneration = 0
+  private var restoreWaitsForStart = false
+  private var filePins: [GeoPin] = []
+  private var fileNotices: [String] = []
+  private var fileFailure: String?
+  private var resolvedNotice: String?
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
   public init(startDirectory: String?) {
+    limits = GeoJSONLimits()
     record = MapViewerDescription(startDirectory: startDirectory)
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
@@ -38,7 +57,9 @@ public final class MapViewerApplet: Applet {
   /// Restores a pane from its description. The region and style come back with no work on the
   /// disk or the network. A description this build cannot read is refused.
   public init(restoring description: AppletDescription) throws {
+    limits = GeoJSONLimits()
     record = try MapViewerDescription.decode(description)
+    restoreWaitsForStart = record.path != nil
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
     wire()
@@ -49,6 +70,25 @@ public final class MapViewerApplet: Applet {
     }
 
     refresh()
+  }
+
+  /// An empty pane with its own file bounds, so a test can reach them with a small file.
+  init(startDirectory: String?, limits: GeoJSONLimits) {
+    self.limits = limits
+    record = MapViewerDescription(startDirectory: startDirectory)
+    publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
+
+    wire()
+    refresh()
+  }
+
+  /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
+  /// opens `file`.
+  public static func opening(_ file: URL, startDirectory: String) throws -> MapViewerApplet {
+    let applet = MapViewerApplet(startDirectory: startDirectory)
+    try applet.replaceSource(with: file, startDirectory: startDirectory)
+
+    return applet
   }
 
   public var view: NSView { content }
@@ -80,6 +120,7 @@ public final class MapViewerApplet: Applet {
 
       self.host?.applet(self, post: .warning, text: text)
     }
+    content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
   }
 
   // MARK: Style
@@ -108,14 +149,165 @@ public final class MapViewerApplet: Applet {
     host?.appletDidChange(self)
   }
 
+  // MARK: Source
+
+  /// Shows the pins of `file` in place of the file layer's. The pins on the map go at once. The new
+  /// file is found and parsed off the main thread, and a failure shows its message in the pane.
+  /// The map then fits the new pins, and that region is saved with the pane.
+  public func replaceSource(with file: URL, startDirectory: String) throws {
+    record.startDirectory = startDirectory
+    record.path = file.path
+    record.bookmark = nil
+    restoreWaitsForStart = false
+
+    open(path: file.path, bookmark: nil, fitsPins: true)
+  }
+
+  private func open(path: String, bookmark: Data?, fitsPins: Bool) {
+    opening?.cancel()
+    openGeneration += 1
+    resolvedNotice = nil
+    fileFailure = nil
+    fileNotices = []
+    filePins = []
+    content.removePins(layer: Self.fileLayer)
+
+    let generation = openGeneration
+    let limits = limits
+
+    opening = Task { [weak self] in
+      let resolved = await SourceResolver.resolve(path: path, bookmark: bookmark)
+
+      guard let self, generation == self.openGeneration, !self.closed else { return }
+
+      switch resolved {
+      case .failure(let error):
+        self.finishOpen(failure: error.errorDescription)
+
+      case .success(let source):
+        self.record.bookmark = source.bookmark
+
+        if source.movedFrom != nil {
+          self.record.path = source.file.path
+          self.resolvedNotice = "Moved. Found at \(source.file.path)."
+        }
+
+        let result = await GeoJSONFileReader.read(source.file, limits: limits)
+
+        guard generation == self.openGeneration, !self.closed else { return }
+
+        switch result {
+        case .failure(let error):
+          self.finishOpen(failure: error.errorDescription)
+
+        case .success(let layer):
+          self.finishOpen(layer: layer, fitsPins: fitsPins)
+        }
+      }
+    }
+  }
+
+  private func finishOpen(failure: String?) {
+    opening = nil
+    fileFailure = failure ?? "The file could not be opened."
+    refresh()
+    host?.appletDidChange(self)
+  }
+
+  private func finishOpen(layer: GeoFileLayer, fitsPins: Bool) {
+    opening = nil
+    filePins = layer.pins
+    fileNotices = layer.notices(limit: limits.maxPoints)
+
+    if layer.pins.isEmpty && layer.skippedShapes == 0 && layer.invalidCoordinates == 0 {
+      fileNotices.append("The file has no points to show.")
+    }
+
+    let accent = fileAccent
+
+    record.fileAccent = accent.rawValue
+    content.replacePins(layer: Self.fileLayer, pins: layer.pins, defaultAccent: accent)
+
+    if fitsPins, let region = GeoRegion.fitting(layer.pins.map(\.coordinate)) {
+      record.region = region
+      content.show(region: region)
+    }
+
+    refresh()
+    host?.appletDidChange(self)
+  }
+
+  /// The file layer's default accent: the stored one while it names an accent, else the first of
+  /// the fixed order. The layer keeps it for the pane's life, even after a clear.
+  var fileAccent: ThemeToken {
+    PinAccents.validated(record.fileAccent) ?? PinAccents.layerDefault(at: 0)
+  }
+
+  /// The pins the file layer shows now.
+  var filePinsShown: [GeoPin] { filePins }
+
+  /// True when the file layer holds pins or names a file, which is when Clear File Pins has work.
+  var canClearFile: Bool { record.path != nil || !filePins.isEmpty || fileFailure != nil }
+
+  /// Removes the file layer's pins and forgets the file, so a relaunch does not bring them back.
+  /// The layer keeps its default accent.
+  func clearFile() {
+    opening?.cancel()
+    opening = nil
+    openGeneration += 1
+    restoreWaitsForStart = false
+    resolvedNotice = nil
+    fileFailure = nil
+    fileNotices = []
+    filePins = []
+    record.path = nil
+    record.bookmark = nil
+    content.removePins(layer: Self.fileLayer)
+
+    refresh()
+    host?.appletDidChange(self)
+  }
+
+  /// A drop of one file replaces the file layer. Several files are refused with a message, and the
+  /// pane keeps what it showed.
+  func handleDrop(_ urls: [URL]) -> Bool {
+    guard let file = urls.first else { return false }
+
+    guard urls.count == 1 else {
+      host?.applet(
+        self, post: .warning, text: "Drop one file at a time. The map shows one file in a pane.")
+      return false
+    }
+
+    do {
+      try replaceSource(with: file, startDirectory: SourceStartDirectory.of(file))
+      return true
+    } catch {
+      host?.applet(
+        self, post: .error,
+        text:
+          "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: "
+          + error.localizedDescription)
+      return false
+    }
+  }
+
   // MARK: Applet
 
-  public func start() {}
+  public func start() {
+    guard restoreWaitsForStart, let path = record.path else { return }
+
+    restoreWaitsForStart = false
+    open(path: path, bookmark: record.bookmark, fitsPins: false)
+  }
 
   public func close() {
     closed = true
+    opening?.cancel()
+    opening = nil
     content.onRegionSettled = nil
     content.onLoadFailure = nil
+    content.onDrop = nil
     content.stopObserving()
     content.mapView.delegate = nil
   }
@@ -149,8 +341,37 @@ public final class MapViewerApplet: Applet {
   private func refresh() {
     guard !closed else { return }
 
-    segments = [AppletSegment(symbolName: "map", text: Self.name(of: record.style))]
+    var newSegments = [AppletSegment(symbolName: "map", text: Self.name(of: record.style))]
+
+    if !filePins.isEmpty {
+      newSegments.append(
+        AppletSegment(
+          symbolName: "mappin",
+          text: filePins.count == 1 ? "1 pin" : "\(filePins.count.formatted()) pins"))
+    }
+
+    segments = newSegments
+
+    var lines: [String] = []
+
+    if let fileFailure { lines.append(fileFailure) }
+
+    if opening != nil { lines.append("Opening\u{2026}") }
+
+    lines += fileNotices
+
+    if let resolvedNotice { lines.append(resolvedNotice) }
+
+    content.show(notices: lines)
     content.setAccessibilityValue(accessibilitySummary())
+
+    let newTitle = record.path.map { ($0 as NSString).lastPathComponent } ?? Self.untitled
+
+    if newTitle != title {
+      title = newTitle
+      publishedTabs = AppletTabList(first: AppletTab(id: publishedTabs.first.id, title: newTitle))
+      host?.appletTabsDidChange(self)
+    }
   }
 
   private static func name(of style: MapStyle) -> String {
@@ -169,6 +390,8 @@ public final class MapViewerApplet: Applet {
     if let center = record.region?.center {
       text += String(format: " %.2f,%.2f", center.latitude, center.longitude)
     }
+
+    if !filePins.isEmpty { text += " pins=\(filePins.count)" }
 
     return text
   }

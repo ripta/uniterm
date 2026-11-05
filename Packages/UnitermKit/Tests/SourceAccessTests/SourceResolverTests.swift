@@ -1,6 +1,6 @@
 import XCTest
 
-@testable import TableData
+@testable import SourceAccess
 
 /// How a stored path and bookmark become the file to open.
 final class SourceResolverTests: XCTestCase {

@@ -211,6 +211,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       DataViewerDescription.typeID: { file, startDirectory in
         try DataViewerApplet.opening(file, startDirectory: startDirectory)
       },
+      MapViewerDescription.typeID: { file, startDirectory in
+        try MapViewerApplet.opening(file, startDirectory: startDirectory)
+      },
     ]
 
     routedOpener = RoutedOpener(

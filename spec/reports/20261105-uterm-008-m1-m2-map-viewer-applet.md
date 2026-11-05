@@ -14,7 +14,7 @@ carries a `Live after` line. Nothing is held, blocked, or skipped. No commands n
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-008 M1: Basic map | DONE | "Add a map viewer applet with standard, satellite, and hybrid styles" |
-| UTERM-008 M2: Pins from a file | QUEUED | |
+| UTERM-008 M2: Pins from a file | DONE | "Load map pins from GeoJSON files" |
 
 ## Local checks
 
@@ -127,4 +127,84 @@ Neither is recorded as an ADR candidate.
 
 ## M2: Pins from a file
 
-Queued.
+Commit: "Load map pins from GeoJSON files". The proposal edits and this report ride in the same commit.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| `make fmt-check`, `make lint`, `make check` | pass |
+| `make build`, UI-test `build-for-testing` | pass |
+| `make swiftpm-offline-check` | pass |
+| `swift test --skip TerminalSessionIntegrationTests` | 897 tests, 4 skipped, 0 failures |
+| `make test-package` | 918 tests, 4 skipped, 21 failures, all the known `TerminalSessionIntegrationTests` |
+| `make fuzz` | pass: `TableFuzzTests` and `GeoJSONFuzzTests` at 5000 iterations each, the map's in about 3 s |
+| `make test-app` | not run: the screen is locked (see below) |
+| `proposals.py freeze` | `[]` |
+| `proposals.py check` | only the finished row's move to `history.md`, which the row's finish makes |
+
+### Unowned failures
+
+- `TerminalSessionIntegrationTests`: the same 21 pty failures as in M1.
+- A `MapViewerUITests` rerun at 03:38 local time failed before any test ran. The runner said "Failed to initialize for
+  UI testing: System authentication is running". That confirms the screen is locked, which also explains M1's
+  activation failures. The UI suite waits for an unlocked session.
+
+### Best guesses and deviations
+
+- `GeoData` stays AppKit-free. The review found that it linked AppKit through `Theme`. The AppKit-free parts of `Theme`
+  moved to a new `ThemeCore` target. `Theme` keeps the AppKit color bridges and re-exports `ThemeCore`, so existing
+  callers are unchanged.
+- The bookmark resolver and the file-error messages moved to a new Foundation-only `SourceAccess` target. The data
+  viewer converts its errors at the boundary. Its tests pass unchanged.
+- GeoJSON is the system's `public.geojson`, which this macOS declares. It conforms to `public.json`, so the app adds a
+  document type row and no imported type. The router prefers it over the data viewer's JSON by specificity. The
+  proposal text that said the map declares an imported type is amended.
+- Bounds: 32 MiB per file, refused whole, and 10,000 file pins, past which the first points load with a notice.
+- Null geometry counts as a skipped shape. Points off the globe are skipped and counted, since MapKit raises on them.
+- Label: the first non-blank string among `name`, `title`, and `label`, cut to 256 characters, else the coordinate.
+  Control, line-separator, and format characters such as U+202E are blanked, so a file cannot reorder its label. The
+  joiners U+200C and U+200D stay, so emoji survive.
+- Pin IDs are the top-level feature's ordinal and the point's index within it, such as `3:0`.
+- Accent: `uniterm:accent`, then `marker-color` by OKLab distance against Latte. Glyph: `uniterm:glyph`, then a one- or
+  two-character `marker-symbol`. Maki names are ignored without a count. The proposal's "Pin styling" is amended.
+- Layer default accents start at blue. Each neighboring pair is at least 0.12 apart in OKLab in both flavors.
+- A stored file accent that is not an accent reads as the first default.
+- Markers are circles, so the coordinate is the marker's center.
+- A user load fits the map to the pins. A restore keeps the saved region.
+- A failed second load clears the old file pins and keeps the new path and bookmark, so a restore can retry.
+- Clearing is the File > Clear File Pins command. There is no pane control.
+- The drop target is the pane's view, not the map view itself.
+- `SplitMix64` moved into the shared table test support, so both fuzzers use one generator.
+
+### Review findings
+
+| Finding | Verdict | Disposition |
+|---|---|---|
+| `GeoData` links AppKit through `Theme` | plan gap | fixed: `ThemeCore` split |
+| Clearing is a menu command only | PLAUSIBLE | dismissed: the plan allowed a registry command |
+| "Pin styling" amendment marker moved to the wrong paragraph | CONFIRMED | fixed |
+| Properties still parsed past the point bound | PLAUSIBLE, trace confirmed | fixed. No output changes, so the test pins the counts, not the bug |
+| Bidi and format characters reach the label | PLAUSIBLE, trace confirmed | fixed, with a test that failed before the fix |
+| A found-but-unread file drops its bookmark | CONFIRMED | fixed, with a test that failed before the fix |
+| Makefile and source lines past 100 columns | CONFIRMED | fixed on lines the diff touched |
+| Duplicated `SplitMix64` | CONFIRMED | fixed: shared |
+| ADR-07 (proposed): GeoJSON decoded in-process | ADVISORY | the proposal's hostile-GeoJSON risk states the bound |
+
+`adr-impact` found no conflict and no supersession. It named two uncovered decisions. File-type routing precedence
+is UTERM-015's settled rule, not a new decision. In-process parsing under bounds and fuzzing repeats the choice UTERM-009
+recorded against ADR-07, which is still proposed. Neither is recorded as an ADR candidate.
+
+### Test cost
+
+| Class | Tests | Wall time |
+|---|---|---|
+| MapFileTests | 16 before the review fixes | 0.407 s |
+| MapMarkerTests | 5 | 0.101 s |
+| GeoJSONFileReaderTests | 3 | 0.002 s |
+| GeoJSONFuzzTests | 1, 150 iterations | 0.051 s |
+| GeoFileLayerBuilderTests | 7 before the review fixes | 0.002 s |
+| PinAccentsTests, PinGlyphTests, GeoRegionFittingTests | 7 | 0.001 s |
+| PinColorTests | 4 | negligible |
+| SourceAccessErrorTests | 3 | negligible |
+| SourceResolverTests, moved | 5 | 0.005 s |

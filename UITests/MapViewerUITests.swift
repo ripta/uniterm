@@ -124,4 +124,111 @@ final class MapViewerUITests: UnitermUITestCase {
     XCTAssertTrue(map(in: thirdWindow).waitForExistence(timeout: 20), "no map pane")
     XCTAssertTrue(waitFor(styleText(in: thirdWindow), timeout: 10) { $0 == "Standard" })
   }
+
+  // MARK: Pins from a file
+
+  private func makeGeoJSON(name: String = "places.geojson") throws -> URL {
+    let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("uniterm-map-\(UUID().uuidString)", isDirectory: true)
+      .resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+
+    let file = folder.appendingPathComponent(name)
+    let text = """
+      {"type":"FeatureCollection","features":[
+      {"type":"Feature","properties":{"name":"Ferry Building"},
+       "geometry":{"type":"Point","coordinates":[-122.3935,37.7955]}},
+      {"type":"Feature","properties":{"name":"Pair","marker-color":"#d20f39"},
+       "geometry":{"type":"MultiPoint","coordinates":[[-122.41,37.77],[-122.42,37.78]]}},
+      {"type":"Feature","properties":{},
+       "geometry":{"type":"LineString","coordinates":[[-122.4,37.7],[-122.5,37.8]]}}]}
+      """
+    try Data(text.utf8).write(to: file)
+    return file
+  }
+
+  /// Chooses a file in the open panel that is already showing, by typing its path into the
+  /// go-to-folder sheet.
+  private func choose(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
+    let panel = window.sheets.firstMatch
+    XCTAssertTrue(panel.waitForExistence(timeout: 10), "no open panel")
+
+    app.typeKey("g", modifierFlags: [.command, .shift])
+
+    let goTo = panel.sheets.firstMatch
+    XCTAssertTrue(goTo.waitForExistence(timeout: 5), "no go-to-folder sheet")
+
+    app.typeText(file.path)
+
+    let typed = goTo.textFields.firstMatch
+    XCTAssertTrue(
+      waitFor(typed, timeout: 5) { $0 == file.path }, "the go-to field holds the wrong path")
+
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(waitUntilGone(goTo, timeout: 5), "the go-to-folder sheet never closed")
+
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")
+  }
+
+  /// Catches Cmd-O routing a GeoJSON file anywhere but the map, and a map that shows no pins for
+  /// it. The file opens in a new pane beside the terminal, with three pins and a segment that says
+  /// so. The line in the file is skipped.
+  func testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins() throws {
+    let file = try makeGeoJSON()
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("o", modifierFlags: .command)
+    choose(file, in: app, window: window)
+
+    XCTAssertTrue(map(in: window).waitForExistence(timeout: 15), "no map pane")
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 15) { $0.hasSuffix("pins=3") }, "the pins did not load")
+    XCTAssertTrue(window.textViews["terminal"].exists, "the terminal went away")
+  }
+
+  /// Catches a restore that loses the file's pins, and a clear that does not stick. A planted
+  /// layout names the file, and its pins load at launch. File > Clear File Pins removes them and
+  /// drops the path, so the next launch shows an empty map and the layout holds no path.
+  func testARestoredFileLoadsAndClearingItSticksOverARelaunch() throws {
+    let file = try makeGeoJSON()
+
+    try plantMap(
+      payload:
+        #"{"startDirectory":"\#(file.deletingLastPathComponent().path)","path":"\#(file.path)"}"#)
+
+    let first = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
+    let firstWindow = mainWindow(in: first)
+
+    XCTAssertTrue(map(in: firstWindow).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(
+      waitFor(map(in: firstWindow), timeout: 15) { $0.hasSuffix("pins=3") },
+      "the restored pins did not load")
+
+    let fileMenu = first.menuBars.menuBarItems["File"]
+    fileMenu.click()
+
+    let clear = fileMenu.menus.menuItems["Clear File Pins"]
+    XCTAssertTrue(clear.waitForExistence(timeout: 5), "the File menu has no Clear File Pins")
+    clear.click()
+
+    XCTAssertTrue(waitFor(map(in: firstWindow), timeout: 10) { !$0.contains("pins=") })
+
+    first.typeKey("q", modifierFlags: .command)
+    XCTAssertTrue(first.wait(for: .notRunning, timeout: 15))
+
+    let written = try String(
+      contentsOf: layoutDirectory.appendingPathComponent("layout.json"), encoding: .utf8)
+
+    XCTAssertFalse(written.contains("places.geojson"), "the path stayed in the layout: \(written)")
+
+    let second = launchApp()
+    let secondWindow = mainWindow(in: second)
+
+    XCTAssertTrue(map(in: secondWindow).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(waitFor(map(in: secondWindow), timeout: 5) { !$0.contains("pins=") })
+  }
 }

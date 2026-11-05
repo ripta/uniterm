@@ -8,7 +8,7 @@ import XCTest
 final class BuiltInAppletsTests: XCTestCase {
   /// Catches a declaration that changes without a deliberate edit here. The terminal opens folders
   /// as the owner, the data viewer opens CSV, JSON, and `.xlsx` as the owner, and the map viewer
-  /// opens no type yet.
+  /// opens GeoJSON as the owner.
   func testTheCatalogIsTheTerminalOpeningFoldersAndTheDataViewerOpeningTables() {
     XCTAssertEqual(
       BuiltInApplets.declarations,
@@ -23,7 +23,9 @@ final class BuiltInAppletsTests: XCTestCase {
             OpenedType("public.json", rank: .owner),
             OpenedType("org.openxmlformats.spreadsheetml.sheet", rank: .owner),
           ]),
-        AppletTypeDeclaration(typeID: "map-viewer", displayName: "Map Viewer", opens: []),
+        AppletTypeDeclaration(
+          typeID: "map-viewer", displayName: "Map Viewer",
+          opens: [OpenedType("public.geojson", rank: .owner)]),
       ])
   }
 
@@ -47,6 +49,34 @@ final class BuiltInAppletsTests: XCTestCase {
         .open(file: file, appletTypeID: "data-viewer", startDirectory: folder.path, type: type),
         name)
     }
+  }
+
+  /// Catches a GeoJSON file that routes to the data viewer, or plain JSON that routes to the map.
+  /// `public.geojson` conforms to `public.json`, so the map's claim is the more specific one. The
+  /// files are real, and the type comes from the system.
+  func testGeoJSONRoutesToTheMapAndPlainJSONStaysWithTheDataViewer() throws {
+    let folder = try makeFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let router = FileRouter(declarations: BuiltInApplets.declarations)
+
+    let geo = folder.appendingPathComponent("places.geojson")
+    try Data(#"{"type":"FeatureCollection","features":[]}"#.utf8).write(to: geo)
+
+    XCTAssertEqual(
+      router.decide(geo),
+      .open(
+        file: geo, appletTypeID: "map-viewer", startDirectory: folder.path,
+        type: "public.geojson"))
+
+    let json = folder.appendingPathComponent("places.json")
+    try Data(#"{"type":"FeatureCollection","features":[]}"#.utf8).write(to: json)
+
+    XCTAssertEqual(
+      router.decide(json),
+      .open(
+        file: json, appletTypeID: "data-viewer", startDirectory: folder.path,
+        type: "public.json"))
   }
 
   /// Catches two equal claims, an undeclared type, or a `public.directory` declaration in the
