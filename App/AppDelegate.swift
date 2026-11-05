@@ -212,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try DataViewerApplet.opening(file, startDirectory: startDirectory)
       },
       MapViewerDescription.typeID: { file, startDirectory in
-        try MapViewerApplet.opening(file, startDirectory: startDirectory)
+        MapViewerApplet.opening(file, startDirectory: startDirectory)
       },
     ]
 

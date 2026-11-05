@@ -208,3 +208,36 @@ recorded against ADR-07, which is still proposed. Neither is recorded as an ADR 
 | PinColorTests | 4 | negligible |
 | SourceAccessErrorTests | 3 | negligible |
 | SourceResolverTests, moved | 5 | 0.005 s |
+
+## Row review
+
+Range: from the run's base to "Load map pins from GeoJSON files". Commit: "Fix the map's stale gesture mark and keep
+the file layer out of the command namespace".
+
+| Finding | Verdict | Disposition |
+|---|---|---|
+| A click or keystroke that moved nothing let a later resize or fit save the region | PLAUSIBLE, trace confirmed | fixed: Command keys are skipped, and setting a region or a resize clears the mark. Tests failed before the fix |
+| The file layer was the literal string "file", which a command layer could reuse | PLAUSIBLE, confirmed by code | fixed: layers are a `MapLayer` enum, and command layers cluster under a `command:` prefix |
+| Floating-point rounding past a pole makes a fit fail | PLAUSIBLE, not confirmed | no code change. A brute-force search found no case. A pole-grid test pins the contract. Diagnosis unresolved |
+| Overlapping tests at two layers | test value | each applet-level test now names what only it proves |
+| A test-only initializer for the file bounds | CONFIRMED | removed. The bound is one constant, and tests cross it with a sparse file and a 10,001-point file |
+| `replaceSource` declared `throws` but never throws | CONFIRMED | fixed: no `throws`, dead catch removed |
+
+`adr-impact` found no conflict over the range. Its candidates were these. Program content staying off the layout file
+was already declined in the proposal's Decision Log. The shared file-access target is a mechanism, and the invariant it
+serves is UTERM-009's. File-reading bounds belong to ADR-07, which is still proposed. The implementer's suggestion of a
+layer type that keeps the file layer apart is a mechanism too. None is recorded as an ADR candidate.
+
+Best guesses from the fixes:
+
+- A scroll or magnify that moves nothing, such as at the zoom limit, can still leave a stale gesture mark. Clearing on
+  mouse-up would mean tracking MapKit's will-change events. The next step, if it matters, is latching on
+  `regionWillChange`.
+- The gesture observer is internal so a test can feed it a real event.
+
+Left for M3: command layers can use the `MapLayer` command case, but M3 still needs a layer store in front of MapKit for
+caps, accents, order, and the staged `set-layer` swap.
+
+Checks: `make fmt-check`, `make lint`, `make check`, `make build`, and `build-for-testing` pass.
+`swift test --skip TerminalSessionIntegrationTests` gives 900 tests, 4 skipped, 0 failures. `make test-package` gives
+921 tests with the same 21 known pty failures. `proposals.py freeze` gives `[]`.

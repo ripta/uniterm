@@ -29,6 +29,19 @@ final class GeoScratch {
     }
   }
 
+  /// A file of `bytes` that holds no data, so a size bound is crossed without writing the bytes.
+  @discardableResult
+  func writeSparse(_ name: String, bytes: Int) throws -> URL {
+    let file = url.appendingPathComponent(name)
+    FileManager.default.createFile(atPath: file.path, contents: nil)
+
+    let handle = try FileHandle(forWritingTo: file)
+    try handle.truncate(atOffset: UInt64(bytes))
+    try handle.close()
+
+    return file
+  }
+
   @discardableResult
   func write(_ name: String, _ text: String) throws -> URL {
     let file = url.appendingPathComponent(name)
@@ -66,7 +79,7 @@ enum GeoFixtures {
 @MainActor
 final class MapFileTests: XCTestCase {
   private func load(_ applet: MapViewerApplet, _ file: URL) async throws {
-    try applet.replaceSource(with: file, startDirectory: file.deletingLastPathComponent().path)
+    applet.replaceSource(with: file, startDirectory: file.deletingLastPathComponent().path)
     await applet.opening?.value
   }
 
@@ -95,7 +108,7 @@ final class MapFileTests: XCTestCase {
 
     XCTAssertEqual(applet.filePinsShown.map(\.id), ["0:0", "1:0", "1:1"])
     XCTAssertEqual(applet.filePinsShown.map(\.label), ["Home", "Pair", "Pair"])
-    XCTAssertEqual(applet.content.pins(layer: "file").count, 3)
+    XCTAssertEqual(applet.content.pins(layer: .file).count, 3)
     XCTAssertEqual(
       notices(applet), ["Skipped 2 shapes that are not points. The map shows points only."])
     XCTAssertEqual(applet.title, "pins.geojson")
@@ -111,7 +124,7 @@ final class MapFileTests: XCTestCase {
   }
 
   /// Catches a second file that adds to the first, or one that touches another layer. The file
-  /// layer is replaced and a layer named something else keeps its pins.
+  /// layer is replaced and a command's layer keeps its pins, even one that is named "file".
   func testLoadingASecondFileReplacesOnlyTheFileLayer() async throws {
     let scratch = try GeoScratch(self)
     let first = try scratch.write(
@@ -123,15 +136,15 @@ final class MapFileTests: XCTestCase {
     let applet = MapViewerApplet(startDirectory: nil)
     let other = GeoPin(id: "x", coordinate: GeoCoordinate(latitude: 5, longitude: 5), label: "X")
 
-    applet.content.replacePins(layer: "other", pins: [other], defaultAccent: .green)
+    applet.content.replacePins(layer: .command("file"), pins: [other], defaultAccent: .green)
 
     try await load(applet, first)
-    XCTAssertEqual(applet.content.pins(layer: "file").map(\.label), ["A"])
+    XCTAssertEqual(applet.content.pins(layer: .file).map(\.label), ["A"])
 
     try await load(applet, second)
 
-    XCTAssertEqual(applet.content.pins(layer: "file").map(\.label).sorted(), ["B", "C"])
-    XCTAssertEqual(applet.content.pins(layer: "other"), [other])
+    XCTAssertEqual(applet.content.pins(layer: .file).map(\.label).sorted(), ["B", "C"])
+    XCTAssertEqual(applet.content.pins(layer: .command("file")), [other])
     XCTAssertEqual(applet.title, "b.geojson")
   }
 
@@ -180,11 +193,9 @@ final class MapFileTests: XCTestCase {
   /// parsed, and the message names the bound.
   func testAFilePastTheSizeBoundIsRefused() async throws {
     let scratch = try GeoScratch(self)
-    let file = try scratch.write(
-      "big.geojson",
-      GeoFixtures.collection(Array(repeating: GeoFixtures.point("A", 1, 1), count: 50)))
+    let file = try scratch.writeSparse("big.geojson", bytes: GeoJSONLimits().maxBytes + 1)
 
-    let applet = MapViewerApplet(startDirectory: nil, limits: GeoJSONLimits(maxBytes: 1024))
+    let applet = MapViewerApplet(startDirectory: nil)
 
     try await load(applet, file)
 
@@ -198,12 +209,10 @@ final class MapFileTests: XCTestCase {
   /// the file, so a later restore can find it after a move.
   func testAFileFoundButNotReadKeepsItsBookmark() async throws {
     let scratch = try GeoScratch(self)
-    let big = try scratch.write(
-      "big.geojson",
-      GeoFixtures.collection(Array(repeating: GeoFixtures.point("A", 1, 1), count: 50)))
+    let big = try scratch.writeSparse("big.geojson", bytes: GeoJSONLimits().maxBytes + 1)
     let bad = try scratch.write("bad.geojson", "{ not json")
 
-    let applet = MapViewerApplet(startDirectory: nil, limits: GeoJSONLimits(maxBytes: 1024))
+    let applet = MapViewerApplet(startDirectory: nil)
 
     for file in [big, bad] {
       try await load(applet, file)
@@ -219,15 +228,21 @@ final class MapFileTests: XCTestCase {
   /// points load and the pane says the file has more.
   func testAFilePastThePointBoundLoadsItsFirstPointsAndSaysSo() async throws {
     let scratch = try GeoScratch(self)
-    let features = (0..<10).map { GeoFixtures.point("P\($0)", Double($0), 0) }
+    let bound = GeoJSONLimits().maxPoints
+    let features = (0...bound).map { GeoFixtures.point("P\($0)", Double($0 % 360) - 180, 0) }
     let file = try scratch.write("many.geojson", GeoFixtures.collection(features))
 
-    let applet = MapViewerApplet(startDirectory: nil, limits: GeoJSONLimits(maxPoints: 4))
+    let applet = MapViewerApplet(startDirectory: nil)
 
     try await load(applet, file)
 
-    XCTAssertEqual(applet.filePinsShown.map(\.label), ["P0", "P1", "P2", "P3"])
-    XCTAssertEqual(notices(applet), ["The file has more than 4 points. Showing the first 4."])
+    XCTAssertEqual(applet.filePinsShown.count, bound)
+    XCTAssertEqual(applet.filePinsShown.first?.label, "P0")
+    XCTAssertEqual(applet.filePinsShown.last?.label, "P\(bound - 1)")
+    let count = bound.formatted()
+
+    XCTAssertEqual(
+      notices(applet), ["The file has more than \(count) points. Showing the first \(count)."])
   }
 
   /// Catches style values that are dropped without a word. Two unusable values add up to one
@@ -274,7 +289,7 @@ final class MapFileTests: XCTestCase {
     applet.clearFile()
 
     XCTAssertTrue(applet.filePinsShown.isEmpty)
-    XCTAssertTrue(applet.content.pins(layer: "file").isEmpty)
+    XCTAssertTrue(applet.content.pins(layer: .file).isEmpty)
     XCTAssertFalse(applet.canClearFile)
 
     let stored = try MapViewerDescription.decode(applet.describe())
@@ -299,7 +314,7 @@ final class MapFileTests: XCTestCase {
 
     let applet = MapViewerApplet(startDirectory: nil)
 
-    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    applet.replaceSource(with: file, startDirectory: scratch.url.path)
     let running = applet.opening
     applet.clearFile()
     await running?.value
@@ -335,7 +350,8 @@ final class MapFileTests: XCTestCase {
 
   /// Catches a moved file that reports missing, and a new file at the old path that loses to the
   /// bookmark. The bookmark finds a moved file and the pane says where. A different file at the
-  /// stored path wins over the bookmark of the old one.
+  /// stored path wins over the bookmark of the old one. The resolver's own tests prove the lookup.
+  /// This one owns what they cannot: the notice text in the pane and the bookmark the pane stores.
   func testAMovedFileIsFoundAndANewFileAtTheStoredPathWins() async throws {
     let scratch = try GeoScratch(self)
     let old = try scratch.write(
@@ -385,7 +401,8 @@ final class MapFileTests: XCTestCase {
   }
 
   /// Catches a stored accent that is not an accent. It reads as the first default and is stored
-  /// again once a file loads.
+  /// again once a file loads. The accent tests prove which names validate. This one owns the
+  /// wiring, that the applet reads and writes the stored accent through that check.
   func testAStoredAccentOutsideTheSetReadsAsTheDefault() async throws {
     let scratch = try GeoScratch(self)
     let file = try scratch.write(

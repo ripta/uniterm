@@ -14,7 +14,8 @@ final class GeoJSONFileReaderTests: XCTestCase {
   /// Catches a decoder shape that the extraction mistakes for a point. Point and MultiPoint become
   /// pins. A LineString, a Polygon, a MultiPolygon, a feature with no geometry, and a geometry
   /// collection of a line are skipped. A polyline is an `MKMultiPoint` subclass, so it is the case
-  /// most likely to turn into pins by mistake.
+  /// most likely to turn into pins by mistake. The builder's tests take plain values. This one owns
+  /// the MapKit side, since only here do real decoded objects, polyline subclasses included, arrive.
   func testOnlyPointAndMultiPointBecomePins() throws {
     let nothing = #"{"type":"Feature","properties":{},"geometry":null}"#
     let multiPolygon =

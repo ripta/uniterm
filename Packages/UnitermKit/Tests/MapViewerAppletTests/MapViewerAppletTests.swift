@@ -232,6 +232,60 @@ final class MapViewerAppletTests: XCTestCase {
     XCTAssertEqual(host.changes, 1)
   }
 
+  /// Catches a gesture that moved nothing and leaves its mark behind. A click, or a command key
+  /// such as Cmd-O, is a gesture the map does not act on. A resize after it must not save the
+  /// layout, and neither must a region the pane sets itself, such as the fit after a file load.
+  func testAGestureThatMovesNothingDoesNotClaimALaterProgrammaticSettle() throws {
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    layOut(applet)
+
+    applet.content.noteUserGesture()
+    layOut(applet, width: 800, height: 500)
+    settle(applet)
+
+    XCTAssertEqual(host.changes, 0, "a resize after a click saved the layout")
+
+    applet.content.noteUserGesture()
+    applet.content.show(region: region(48.85, 2.35, 0.5))
+    settle(applet)
+
+    XCTAssertEqual(host.changes, 0, "a fit after a click saved the layout")
+    XCTAssertNil(try MapViewerDescription.decode(applet.describe()).region)
+  }
+
+  /// Catches a command key that counts as a map gesture. Cmd-O and Cmd-K reach the map while it
+  /// has focus, and neither moves it. An arrow key does.
+  func testACommandKeyIsNotAMapGesture() throws {
+    let applet = MapViewerApplet(startDirectory: nil)
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+      backing: .buffered, defer: false)
+
+    window.contentView = applet.content
+    window.makeFirstResponder(applet.content.mapView)
+
+    func key(_ flags: NSEvent.ModifierFlags, _ characters: String) throws -> NSEvent {
+      try XCTUnwrap(
+        NSEvent.keyEvent(
+          with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+          windowNumber: window.windowNumber, context: nil, characters: characters,
+          charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 0))
+    }
+
+    try XCTSkipUnless(try key([], "a").window === window, "the test window has no number")
+
+    applet.content.observe(try key(.command, "o"))
+
+    XCTAssertFalse(applet.content.userIsMoving)
+
+    applet.content.observe(try key([], String(UnicodeScalar(NSLeftArrowFunctionKey)!)))
+
+    XCTAssertTrue(applet.content.userIsMoving)
+  }
+
   /// Catches a restored region that matches the map already showing, where MapKit may report
   /// nothing. No flag waits for a report, so the user's first move still counts.
   func testARestoredRegionThatChangesNothingDoesNotSwallowTheFirstMove() throws {

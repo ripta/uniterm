@@ -108,13 +108,13 @@ final class MapMarkerTests: XCTestCase {
           MapPinAnnotation(
             pin: GeoPin(
               id: "\($0)", coordinate: GeoCoordinate(latitude: 1, longitude: 1), label: "L"),
-            layer: "file", layerAccent: accent)
+            layer: .file, layerAccent: accent)
         }
 
         let views: [(MapMarkerView, Double)] = [
           (
             try marker(
-              MapPinAnnotation(pin: pin, layer: "file", layerAccent: accent), in: content),
+              MapPinAnnotation(pin: pin, layer: .file, layerAccent: accent), in: content),
             MapMarkerView.pinSide
           ),
           (
@@ -147,7 +147,7 @@ final class MapMarkerTests: XCTestCase {
       content.apply(palette)
 
       let view = try marker(
-        MapPinAnnotation(pin: pin, layer: "file", layerAccent: .teal), in: content)
+        MapPinAnnotation(pin: pin, layer: .file, layerAccent: .teal), in: content)
       let pixels = try render(view)
       let ring = pixels.color(x: pixels.width / 2, y: 2 * scale)
 
@@ -166,7 +166,7 @@ final class MapMarkerTests: XCTestCase {
     let pin = MapPinAnnotation(
       pin: GeoPin(
         id: "p", coordinate: GeoCoordinate(latitude: 1, longitude: 1), label: "L", accent: .mauve),
-      layer: "file", layerAccent: .blue)
+      layer: .file, layerAccent: .blue)
 
     let cluster = MKClusterAnnotation(memberAnnotations: [pin])
     let pinView = try marker(pin, in: content)
@@ -195,14 +195,14 @@ final class MapMarkerTests: XCTestCase {
     let content = MapViewerView()
     let pin = GeoPin(id: "p", coordinate: GeoCoordinate(latitude: 1, longitude: 1), label: "Cafe")
 
-    let first = MapPinAnnotation(pin: pin, layer: "file", layerAccent: .blue)
-    let second = MapPinAnnotation(pin: pin, layer: "other", layerAccent: .peach)
+    let first = MapPinAnnotation(pin: pin, layer: .file, layerAccent: .blue)
+    let second = MapPinAnnotation(pin: pin, layer: .command("file"), layerAccent: .peach)
 
     let firstView = try marker(first, in: content)
     let secondView = try marker(second, in: content)
 
     XCTAssertEqual(firstView.clusteringIdentifier, "file")
-    XCTAssertEqual(secondView.clusteringIdentifier, "other")
+    XCTAssertEqual(secondView.clusteringIdentifier, "command:file")
     XCTAssertTrue(firstView.canShowCallout)
     XCTAssertEqual(first.title, "Cafe")
   }
@@ -216,7 +216,7 @@ final class MapMarkerTests: XCTestCase {
       glyph: .symbol("no.such.symbol"))
 
     let view = try marker(
-      MapPinAnnotation(pin: pin, layer: "file", layerAccent: .blue), in: content)
+      MapPinAnnotation(pin: pin, layer: .file, layerAccent: .blue), in: content)
     let found = sample(try render(view), side: MapMarkerView.pinSide)
 
     XCTAssertGreaterThanOrEqual(found.glyph.contrastRatio(with: found.disc), 4.5)
