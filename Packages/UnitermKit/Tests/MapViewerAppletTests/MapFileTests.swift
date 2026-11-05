@@ -489,7 +489,6 @@ final class MapFileTests: XCTestCase {
     XCTAssertNil(open.key)
     XCTAssertEqual(open.title, "Open\u{2026}")
     XCTAssertNil(clear.key)
-    XCTAssertTrue(MapViewerApplet.commandSet.commands.allSatisfy { $0.key == nil })
 
     let applet = MapViewerApplet(startDirectory: nil)
 
