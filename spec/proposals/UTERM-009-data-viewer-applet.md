@@ -311,9 +311,10 @@ None.
 - A header click cycles ascending, descending, then no sort. A sort or filter over a growing table reruns off the main
   thread at most every 250 ms. The view keeps the last finished result until the run over the newer snapshot ends, so
   rows never show out of order.
-- The extension picks the reader. CSV, TSV, and TAB load. JSON, JSON Lines, and GeoJSON files load as JSON. Spreadsheet
-  files show a "not supported yet" message, and any other extension is named and refused. The router declares CSV and
-  JSON only, so a TSV file opens through the pane's own Open or a drop. Amended 2026-11-04; see Decision Log.
+- The extension picks the reader. CSV, TSV, and TAB load. JSON, JSON Lines, and GeoJSON files load as JSON. The
+  spreadsheet extensions go to the workbook reader, which decides by content, and any other extension is named and
+  refused. The router declares CSV, JSON, and `.xlsx`, so a TSV or `.xlsm` file opens through the pane's own Open or a
+  drop. Amended 2026-11-04; see Decision Log.
 - The bookmark is made at open, kept when it still names the file that opened, and made again otherwise. Resolution
   runs off the main thread, and `describe()` returns the restored payload until it ends.
 - Fuzzing: a seeded mutation fuzzer runs the loader, the store, and the sort and filter on mutated files. `make fuzz`
@@ -416,7 +417,7 @@ None.
 
 ### M4: Spreadsheets
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - An `.xlsx` file opens as a table, and a workbook with several sheets offers a sheet picker
 - The viewer declares `.xlsx` at the owner rank, for UTERM-015's router
@@ -433,6 +434,71 @@ None.
 - The selected sheet survives reopen and relaunch
 - ZIPFoundation is pinned exactly, `Package.resolved` is committed, its license notice is collected, and the
   offline-build check either covers SwiftPM fetches or states that it covers Ghostty only
+
+**As built:**
+
+- ZIPFoundation 0.9.20 is pinned with `exact:` in the package manifest. It is the newest release, and its tag was
+  published 2025-09-24. Both `Package.resolved` files are committed, and both name revision
+  `22787ffb59de99e5dc1fbfe80b19c97a904ad48d`, the commit that tag points to. Only the table target depends on it. The
+  license script collects a notice for every package the resolved file pins. It checks the checkouts before it wipes
+  anything, and refuses one that is not at the pinned revision. The notice is in `Licenses/swift-packages`, with a line in `Licenses/README.txt`.
+- The offline check covers SwiftPM fetches, the complete one of the two options. `make swiftpm-offline-check` runs in
+  `make ci`. It fills a kept cache at `.cache/swiftpm` from the committed pins, shows with a control that a dead proxy
+  stops both `swift` and `xcodebuild` from fetching, then resolves into empty folders from the kept cache alone. It builds
+  the table target with automatic resolution off, and fails if a resolve rewrites either `Package.resolved`. CI keeps
+  only `.cache/ghostty`, so a CI run fetches the package once, in the check's first step. That is accepted. See the
+  Decision Log entry of 2026-11-04.
+- The reader inflates a part on a second thread and hands it to `XMLParser` through a bound stream pair. The parser runs
+  on the loader's thread and takes rows as they arrive. No part is ever held whole. A package test cancels a load of a
+  sheet that inflates to about 5 MB after its first rows, and shows that under 1 MiB was inflated. A reader that gathered
+  the part first fails it. Another test shows that no chunk is larger than the 64 KiB pipe. Caps count the
+  bytes the inflating thread produced, never a size in the archive. A test gives a stored entry a lying size, and another
+  inflates a sheet past a cap that its directory says is far smaller. Numbers and the reasons for them are in the Decision
+  Log entry of 2026-11-04.
+- Entity declarations are refused outright, not only bounded. The inflating thread stops at `<!DOCTYPE` or `<!ENTITY`
+  before the parser sees the bytes, and the parser's own declaration callbacks stop the rest. External entities are off.
+  A billion-laughs payload and an external-entity payload both end with a message and expand nothing.
+- Aborting an `XMLParser` parse does not stop it. The parser reads and discards the rest of the stream,
+  and a write to a closed pipe does not fail, so the inflating thread would inflate the whole part for nothing. The
+  handler tells the inflating thread to stop at the moment it aborts. ZIPFoundation has two traps that the loader guards. It finds the end record by stepping back through the whole file one
+  byte at a time, so a file with no end record in its last 64 KiB is refused first. A stored entry that claims more bytes
+  than the file holds makes it call the consumer forever with empty chunks, so a second empty chunk ends the read. The
+  archive opens through the descriptor the loader already checked, so a path swapped for a pipe after the check cannot
+  block the pane. The checksum of each part is verified after its last chunk, and a mismatch fails the load with a
+  message that says the data is corrupt, since the format is right and the bytes are wrong.
+- Cells land by reference, so sparse and out-of-order cells keep their columns, and a cell with no reference follows the
+  one before it. A reference whose letters run past the last column is cut and counted, not placed. A formula with no cached result shows "not computed" in a muted color, and holds no text, so a filter
+  or a search never finds it. A number in a date style shows as `yyyy-MM-dd`, with the time when the format has one.
+  Serial 60 shows 1900-02-29, serial 0 shows 1900-01-00, and the 1904 flag shifts every date. The time of day rounds to
+  the millisecond and then cuts to whole seconds, as Excel does, so 23:59:59.6 stays on its day. A number outside what the
+  system can show keeps its stored text. A percent or a currency format shows the stored number, since the viewer
+  applies no number format but dates. Booleans keep their own kind, and error values show their code.
+- The first row that holds anything is the header when every cell in it is text. A column with no header is named by its
+  position, and repeated headers keep separate identities. A row with no cells that hold anything is dropped, so a blank
+  row inside a table is not kept. Hidden sheets are left out of the picker, unless every sheet is hidden. A sheet name used twice gets a number, as in
+  `Sheet (2)`, so each can be picked, and that name is what the description stores.
+- The picker is a pop-up beside the filter. It shows for two or more sheets, and stays up beside a message, so a sheet
+  with no rows never traps the user on it. Choosing a sheet loads it with no sort or filter. The chosen sheet is in the
+  description from that moment, so a reopen or a relaunch brings it back, and a stored sheet the workbook no longer has
+  falls back to the first. The sheet field was in the payload from its first version, so there is no version bump.
+- `.xls`, `.xlsb`, a password-protected workbook, and another old Office file each show a message that names what the
+  file is and what to do. They are told apart by content. A compound file's directory is read, and a walk that does
+  not reach the end of the chain reads as `.xls`. An `.xlsb` is a ZIP archive whose workbook part is binary. A file with a spreadsheet
+  extension that is none of these says it is not a ZIP archive. An `.xlsm` opens, and its macro part is never read.
+- Fuzzing: the workbook corpus joined the existing fuzz class. It mutates the XML of each part before zipping, and the
+  archive's own bytes. Its seeds are plain, rich-text, wide, deeply nested, entity, huge shared-strings, zip-bomb, broken
+  package, and compound-file workbooks. The limits shrink for most iterations, so small files reach every cap. 5000
+  iterations at the default seed found no crash and no memory error under the address sanitizer. ASan does not
+  instrument libxml2 or zlib. It sees their heap use only through its allocator and memory-function interceptors, so an
+  overflow inside their own code can go unseen. A clean run is weaker evidence for this reader than for the Swift readers.
+  The walk of cells in the fuzz invariants covers a bounded part of a wide sheet, so the run stays linear.
+- Known limits. `XMLParser` builds an attribute dictionary for every element, so a sheet of millions of cells loads at
+  roughly the speed of a few hundred thousand elements a second. The sheet cap of 4 GiB inflated bounds the time, and a
+  cancel is seen at the next row. Shared strings are charged to the budget while the sheet loads, and are given back at
+  the end.
+- The visual check is left to the user, and the UI tests have not run. The coordinator's `make test-app` runs them. The UI
+  tests open a workbook through Cmd-O, switch sheets through the picker, and restore a stored sheet. Things to look at:
+  the picker's place above the filter, "not computed" cells, and a workbook with a date column.
 
 ## Decision Log
 
@@ -469,11 +535,12 @@ None.
 - 2026-11-02: Review gate: kept all. The user chose the open panel's explicit `currentDirectory` over AppKit's
   remembered folder, as CLAUDE.md asks for hidden state flow.
 - 2026-11-02: ADR candidate (cuts across the system): untrusted files are parsed in-process only through Swift and
-  OS-maintained C libraries, and a third-party C parser is rejected. Waits on M4's fuzzing results and the
-  untrusted-file risk's revisit hook, either of which may move parsing into a sandboxed helper.
+  OS-maintained C libraries, and a third-party C parser is rejected. Undecided on 2026-11-04. M4's fuzzing found no
+  crash and no memory error, and the untrusted-file risk's revisit hook has not fired. The sanitizer does not instrument
+  libxml2 or zlib, so the run is weaker evidence than for the Swift readers. The final review lists it.
 - 2026-11-02: ADR candidate (cuts across the system): every third-party Swift package is pinned to an exact version,
-  with `Package.resolved` committed and its license collected. Waits on M4, which settles whether the offline-build
-  check covers SwiftPM fetches.
+  with `Package.resolved` committed and its license collected. Undecided on 2026-11-04. M4 settled that the offline-build
+  check covers SwiftPM fetches. The final review lists it.
 - 2026-11-02: Accepted by the user after the review.
 - 2026-11-03: Amended "The applet contract": the bookmark is remade when an open finds a different file than the
   bookmark names. Before, it was created once at load and refreshed only when resolution reported it stale. So after
@@ -553,6 +620,35 @@ None.
 - 2026-11-04: Search matches ignoring case, in every column, and keeps at most 1,000,000 matches (work-queue best
   guess). The matches live outside the budget, at 8 bytes each. A search with more is not a way to find a cell, and the
   count says so with a plus sign. "Large files" says only that search runs off the main thread on a snapshot.
+
+- 2026-11-04: ZIPFoundation 0.9.20 is the pin (work-queue best guess). It is the newest release at least two weeks old,
+  published 2025-09-24. The proposal says only "an exact version". The check is `exact:` in the package manifest and a
+  matching revision in both `Package.resolved` files. A newer release needs a deliberate edit.
+- 2026-11-04: The offline check covers SwiftPM fetches (work-queue best guess). M4's check allowed either that or a
+  statement that it covers Ghostty only. A sibling script is added in place of growing the Ghostty one, since the two
+  share nothing but the dead proxy and the control. It uses a kept cache at `.cache/swiftpm` that it fills first from
+  the committed pins, and it covers both `swift` and `xcodebuild`. If the control cannot cut the network on a machine,
+  the script fails and says so, and the fallback is to state that the check covers Ghostty only.
+- 2026-11-04: Spreadsheet caps and rules picked in M4 (work-queue best guess). Inflated bytes: 32 MiB for each small
+  part, 64 MiB for the shared strings table, which is also charged to the memory budget, and 4 GiB for the sheet. An
+  archive holds at most 100,000 entries and XML nests 64 deep. A cell keeps 1 MiB, a row 16 MiB and 65,536 cells, and a
+  sheet 16,384 columns. A DOCTYPE or an entity declaration is refused outright, which is stronger than bounding
+  expansion, since no workbook holds one. The first row that holds anything is the header when all of it is text, rows
+  with no content are dropped, hidden sheets are not listed, and only date formats change how a number shows. "Spreadsheet
+  formats" and M4 name none of these. Only constants and the header rule change if they are wrong.
+- 2026-11-04: Choosing a sheet clears the sort and the filter (work-queue best guess). The columns of another sheet are
+  not the old sheet's, so a stored sort could land on a wrong column. The description holds one sort and one filter, not
+  one for each sheet. Remembering a query for each sheet was weighed and needs a payload change.
+- 2026-11-04: A formula with no cached value shows the text "not computed" and holds no bytes (work-queue best
+  guess). "Spreadsheet formats" says it shows as empty, marked as not computed. The cell is empty in the store, so a
+  filter and a search never match it, and it sorts with null. The view draws the marker.
+- 2026-11-04: Amended M1's As built note on readers. The spreadsheet extensions now go to the workbook reader, and the
+  router also declares `.xlsx`. Before, spreadsheet files showed a "not supported yet" message, and the router declared
+  CSV and JSON only. (work-queue best guess)
+
+- 2026-11-04: Two more spreadsheet rules (work-queue best guess). A sheet name used twice is numbered, as in `Sheet (2)`,
+  and the description stores the numbered name. A time of day rounds to the millisecond and then cuts to whole seconds,
+  as Excel shows it, so a date-only style never rolls into the next day from rounding to the second.
 
 ## References
 

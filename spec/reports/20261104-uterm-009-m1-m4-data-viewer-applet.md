@@ -15,7 +15,7 @@ carries a `Live after` line. Nothing was held or skipped.
 | UTERM-009 M1: CSV table | DONE | "Add a data viewer applet that opens CSV files as tables" |
 | UTERM-009 M2: JSON | DONE | "Open JSON and JSON Lines files in the data viewer" |
 | UTERM-009 M3: Search | DONE | "Search the data viewer's table from Edit > Find" |
-| UTERM-009 M4: Spreadsheets | QUEUED | |
+| UTERM-009 M4: Spreadsheets | DONE | "Open .xlsx workbooks in the data viewer" |
 
 ## Local checks
 
@@ -277,3 +277,123 @@ an ADR, since it is a mechanism under UTERM-013's menu-home rule and is easy to 
 
 The reviewer verified that Cmd-F and Cmd-G reach the registry with a field editor focused, since the main window
 routes Command keys to the menu first. A test proves it with a real field editor.
+
+### UTERM-009 M4: Spreadsheets
+
+Commit: "Open .xlsx workbooks in the data viewer".
+
+ZIPFoundation is pinned `exact:` at 0.9.20, tagged 2025-09-24, the newest release at least two weeks old. Both
+`Package.resolved` files name revision `22787ffb59de99e5dc1fbfe80b19c97a904ad48d`. Only `TableData` depends on it.
+
+Checks, final round:
+- `make fmt-check`, `make lint`, `make check`, and `make build` pass.
+- `make test-package` passes: 833 tests, 4 skipped, 0 failures.
+- `make fuzz` passes at 5000 iterations under AddressSanitizer. The workbook test takes 30.5 s at that count.
+- `make swiftpm-offline-check` passes, in about 16 s.
+- `make licenses` adds only the ZIPFoundation notice and its README section. The coordinator checked the README diff.
+- `proposals.py check` reports only the row-finishing items. `proposals.py freeze` reports nothing.
+- `make test-app` on the final tree ran 89 tests with 6 failures. Every failing class then passed alone on the same
+  tree, 50 of 50, in two runs: the data viewer, tabs, and windows suites, then the pane tree, terminal, and palette
+  suites. That covers both new `.xlsx` UI tests and the nested-table test. See the unowned failures below.
+- The visual check is left to the user. Things to look at: the sheet picker above the filter, "not computed" cells,
+  and a date column.
+
+Offline check: the run took the option that covers SwiftPM, per run best guess 6. A sibling script,
+`scripts/swiftpm-offline-check.sh`, runs as `make swiftpm-offline-check` and joins `make ci`. It fills a kept cache
+at `.cache/swiftpm` from the committed pins. A control shows that a dead proxy stops both `swift` and `xcodebuild`
+from fetching. Both tools then resolve offline into empty folders, and `swift build` builds the `TableData` target.
+The check fails if either `Package.resolved` changes. It does not build the whole app offline. CI caches only
+`.cache/ghostty`, so CI fetches ZIPFoundation once per run, in the check's first step. `ci.yml` is unchanged.
+
+Test cost:
+
+| Test class | Wall time |
+|---|---|
+| `XLSXLoaderTests`, about 28 tests | about 1.3 s. The 8 MiB inflate-cap test takes 0.58 s and the streaming test 0.62 s |
+| `SpreadsheetDatesTests` | about 0.001 s |
+| `DataViewerAppletTests`, 27 tests | about 1.0 s for the class |
+| Workbook fuzz | 0.74 s at 300 iterations, 30.5 s at 5000 under ASan |
+
+Best guesses made during the milestone. Each has a Decision Log entry marked "(work-queue best guess)":
+- Caps: 32 MiB inflated per small part, 64 MiB of shared strings, also charged to the budget, a 4 GiB sheet, 100,000
+  archive entries, XML depth 64, and 16,384 columns, plus M1's cell and row caps.
+- Any DOCTYPE or entity declaration is refused outright. That is stronger than "bounded", and no real workbook holds
+  one.
+- Header rule: the first row that holds anything is the header when every cell in it is text. Empty rows are dropped.
+  Hidden sheets are not offered in the picker.
+- Only date formats change how a number shows. Percent and currency show the stored number.
+- Choosing a sheet clears the sort and filter, since the columns differ. Keeping a query per sheet would need a
+  payload change.
+- A formula with no cached value draws a muted "not computed". Filter and search never match it, and it sorts with
+  null.
+- A repeated sheet name is numbered: the second "A" becomes "A (2)". The description stores the numbered name, so the
+  payload meaning and version do not change.
+- Date times round to the millisecond, then show whole seconds without rounding, so a date-only format never rolls
+  into the next day. This rests on the implementer's knowledge of Excel's behavior. Nobody checked it against Excel.
+- The archive opens through `/dev/fd/N` on the descriptor the loader already checked, so a swapped-in FIFO cannot
+  block the pane.
+- License collection covers every package in `Package.resolved`, and refuses a checkout that is not at the pinned
+  revision.
+
+ADR candidates: the implementer moved both waiting candidates in the Decision Log, on in-process parsing and on
+package pinning, from "Waits on" to "Undecided". See "ADR candidates" at the end of this report.
+
+Review findings and their dispositions:
+1. A failed check in `collect-licenses.sh` ran after `Licenses/` was wiped and left it half-written. CONFIRMED and
+   fixed: the checkouts are validated before the wipe.
+2. The streaming test proved only the producer's chunk size. PLAUSIBLE. The trace confirmed it, and it exposed a real
+   product bug: `XMLParser.abortParsing` does not stop the parse, so a cancel, a budget stop, or a handler abort left
+   the inflating thread working through the whole part, up to the 4 GiB cap. Fixed with a stop flag the inflating
+   thread checks between chunks. The new test cancels a load of a 5 MB sheet after its first rows and asserts that
+   under 1 MiB was inflated. It failed on the old code and on a deliberately buffering variant, at 4.68 MB.
+3. CRC checks were skipped, so a corrupted entry loaded wrong values silently. This was an unapproved shortcut, and
+   the trace confirmed it. Fixed: each part's checksum is verified, and a mismatch fails the load with a message that
+   says the file is corrupt.
+4. A compound-file directory walk that failed partway returned a partial set, so a truncated `.xls` was misnamed.
+   PLAUSIBLE. The trace confirmed it, and it is fixed.
+5. Cell references with more than three letters were placed silently. PLAUSIBLE. The trace confirmed it. Fixed: they
+   are cut and counted like any column past the last.
+6. Duplicate sheet names collapsed in the picker. PLAUSIBLE. The trace confirmed it, and repeated names are now
+   numbered.
+7. The coordinator added a date-rollover question. A date-only style rounded into the next day. Confirmed and fixed,
+   as above.
+
+UI-test failures in the first `make test-app` round:
+- `testCommandOOpensAWorkbookAndTheSheetPickerSwitchesSheets` and `testTheSelectedSheetComesBackAfterARelaunch`
+  failed with "no table". The UI test's workbook writer computed the ZIP end record's directory offset after
+  appending part of that record, so the offset was 12 bytes too large. This was a fixture bug: the package tests'
+  writer was correct, and the product correctly refused the bad file. The fixture is fixed and now writes real CRCs.
+- `CommandPaletteUITests.testAProgramTitleShowsNeutralizedAsATab` failed again, as the first test of the suite. This
+  time its first keystroke timed out with "Failed to synthesize event". In the same run,
+  `testCommandORoutesACSVFileToTheDataViewer` failed with "Application has not loaded accessibility". Both are errors
+  of the macOS event and accessibility system, not app logic. They are recorded as unowned intermittent failures with
+  M3's. The palette test has now failed in 2 of the last 4 full runs, with two different symptoms.
+
+Unowned intermittent failures in the final `make test-app` round, recorded per "Test Failures" in
+`work-discipline.md`:
+- Failed: `DataViewerUITests.testADoubleClickOnANestedCellOpensItAsATable`,
+  `PaneTreeUITests.testShrinkingTheWindowStopsAtTheTreesMinimum`, `TabsUITests.testClosingATabRunningSomethingAsksFirst`,
+  `TabsUITests.testProgramModeHasNoNewTab`, `TerminalUITests.testClearScreenClearsTheTerminal`, and
+  `WindowsUITests.testPaneActionsGoToTheKeyWindowOnly`.
+- The errors come from the automation layer. They include "Lost connection to the application … Couldn't communicate
+  with a helper application", "Application dev.uniterm.app is not running", and missing snapshots. No uniterm crash
+  report exists in `~/Library/Logs/DiagnosticReports`, so the app did not crash.
+- Attempt: each failing class ran alone on the same tree, and all 50 tests passed.
+- What stays uncertain: full suites passed cleanly on M1 and M2, and no full suite has passed since M3. The run ran
+  around midnight local time, and the failures grew across runs. A locked or sleeping display fits that pattern, but
+  nothing proves it. A change in M3 or M4 that makes long runs fragile is not ruled out: M3 rebuilds the Edit menu's
+  Find submenu on focus changes, and M4 adds a sheet picker. The row review was asked to look for that. A full
+  `make test-app` with the display awake is the check that would settle it.
+
+ADR impact: no conflict with an accepted ADR. The ADR-07 advisory repeats, now for the libxml2 and zlib exposure the
+`.xlsx` reader adds. `adr-impact` points out that the clean fix is either an amendment to ADR-07's exception clause,
+or a proposal sentence saying why isolation is not possible now. Its reasoning: the proposal's claim that this is "the
+same exposure for which libxls was rejected, made smaller by OS maintenance" changes only the likelihood, not the
+class of exposure.
+
+Left open:
+- `.cg.yaml` holds four uncommitted allow rules that the run did not write itself: `./scripts/swiftpm-offline-check.sh`,
+  `chmod +x`, `swift package resolve`, and `swiftc`. Approving cg prompts likely added them. The `swiftc` prefix allows
+  compiling anything. The run left the file for the user.
+- `XMLParser` builds an attribute dictionary for every element, so a very large sheet loads slowly. The 4 GiB cap
+  bounds the time, and a cancel is seen at the next row.

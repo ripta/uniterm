@@ -187,6 +187,134 @@ final class DataViewerUITests: UnitermUITestCase {
       waitFor(message, timeout: 5) { $0.contains("missing") }, "the message does not say missing")
   }
 
+  // MARK: Workbooks
+
+  /// A workbook with two sheets of text cells, written as a ZIP archive of stored entries. Sales
+  /// has two data rows and Costs has one.
+  private func makeWorkbook(name: String = "book.xlsx") throws -> URL {
+    let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("uniterm-data-\(UUID().uuidString)", isDirectory: true)
+      .resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+
+    func sheet(_ rows: [[String]]) -> String {
+      let body = rows.map { cells in
+        "<row>" + cells.map { "<c t=\"inlineStr\"><is><t>\($0)</t></is></c>" }.joined() + "</row>"
+      }.joined()
+
+      return "<worksheet><sheetData>\(body)</sheetData></worksheet>"
+    }
+
+    let parts: [(String, String)] = [
+      (
+        "_rels/.rels",
+        "<Relationships><Relationship Id=\"r\" Type=\"x/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+      ),
+      (
+        "xl/workbook.xml",
+        "<workbook xmlns:r=\"x\"><sheets><sheet name=\"Sales\" r:id=\"r1\"/><sheet name=\"Costs\" r:id=\"r2\"/></sheets></workbook>"
+      ),
+      (
+        "xl/_rels/workbook.xml.rels",
+        "<Relationships><Relationship Id=\"r1\" Type=\"x/worksheet\" Target=\"s1.xml\"/><Relationship Id=\"r2\" Type=\"x/worksheet\" Target=\"s2.xml\"/></Relationships>"
+      ),
+      ("xl/s1.xml", sheet([["region", "amount"], ["east", "3"], ["west", "5"]])),
+      ("xl/s2.xml", sheet([["item", "cost"], ["rent", "9"]])),
+    ]
+
+    func le(_ value: Int, _ width: Int) -> [UInt8] {
+      (0..<width).map { UInt8(truncatingIfNeeded: value >> (8 * $0)) }
+    }
+
+    func crc(_ bytes: [UInt8]) -> Int {
+      var value: UInt32 = 0xFFFF_FFFF
+
+      for byte in bytes {
+        value ^= UInt32(byte)
+
+        for _ in 0..<8 {
+          value = value & 1 == 1 ? 0xEDB8_8320 ^ (value >> 1) : value >> 1
+        }
+      }
+
+      return Int(value ^ 0xFFFF_FFFF)
+    }
+
+    var archive: [UInt8] = []
+    var directory: [UInt8] = []
+
+    for (path, text) in parts {
+      let body = Array(text.utf8)
+      let name = Array(path.utf8)
+      let offset = archive.count
+
+      archive += le(0x0403_4B50, 4) + le(20, 2) + le(0, 2) + le(0, 2) + le(0, 4) + le(crc(body), 4)
+      archive += le(body.count, 4) + le(body.count, 4) + le(name.count, 2) + le(0, 2) + name + body
+
+      directory += le(0x0201_4B50, 4) + le(20, 2) + le(20, 2) + le(0, 2) + le(0, 2) + le(0, 4)
+      directory += le(crc(body), 4) + le(body.count, 4) + le(body.count, 4) + le(name.count, 2)
+      directory += le(0, 2) + le(0, 2) + le(0, 2) + le(0, 2) + le(0, 4) + le(offset, 4) + name
+    }
+
+    let directoryStart = archive.count
+
+    archive += directory
+    archive += le(0x0605_4B50, 4) + le(0, 2) + le(0, 2) + le(parts.count, 2) + le(parts.count, 2)
+    archive += le(directory.count, 4) + le(directoryStart, 4) + le(0, 2)
+
+    let file = folder.appendingPathComponent(name)
+    try Data(archive).write(to: file)
+    return file
+  }
+
+  /// Catches Cmd-O routing an `.xlsx` file anywhere but the data viewer, a workbook that shows no
+  /// sheet picker, and a picker that does not switch the table. The first sheet has two rows, and
+  /// choosing Costs shows its one row.
+  func testCommandOOpensAWorkbookAndTheSheetPickerSwitchesSheets() throws {
+    let file = try makeWorkbook()
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("o", modifierFlags: .command)
+    choose(file, in: app, window: window)
+
+    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 15), "no table")
+    XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "2 rows" })
+
+    let picker = window.popUpButtons["data-viewer-sheets"]
+    XCTAssertTrue(picker.waitForExistence(timeout: 5), "no sheet picker")
+
+    picker.click()
+    window.menuItems["Costs"].click()
+
+    XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "1 rows" })
+    XCTAssertTrue(
+      window.tables["data-viewer-table"].staticTexts["rent"].waitForExistence(timeout: 5),
+      "the second sheet's row is not shown")
+  }
+
+  /// Catches a relaunch that shows the first sheet again. The saved pane stores the sheet name and
+  /// loads that sheet.
+  func testTheSelectedSheetComesBackAfterARelaunch() throws {
+    let file = try makeWorkbook()
+
+    try plantViewer(path: file.path, extra: #","sheet":"Costs""#)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 20), "no table")
+    XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "1 rows" })
+    XCTAssertTrue(
+      window.tables["data-viewer-table"].staticTexts["rent"].waitForExistence(timeout: 5),
+      "the stored sheet did not load")
+    XCTAssertTrue(
+      waitFor(window.popUpButtons["data-viewer-sheets"], timeout: 5) { $0 == "Costs" },
+      "the picker does not show the stored sheet")
+  }
+
   // MARK: Find
 
   private func findCount(in window: XCUIElement) -> XCUIElement {

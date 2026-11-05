@@ -81,6 +81,10 @@ test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session a
 ghostty-offline-check: ## Rebuild the pinned Ghostty with the network off, from the kept caches
 	scripts/ghostty-offline-check.sh
 
+.PHONY: swiftpm-offline-check
+swiftpm-offline-check: ## Resolve and build the Swift packages with the network off, from the committed pins
+	scripts/swiftpm-offline-check.sh
+
 ##@ Lint
 
 .PHONY: fmt
@@ -109,11 +113,11 @@ check-ghosttykit-imports: ## Fail when any module but TerminalSurface can reach 
 	scripts/check-ghosttykit-imports.sh
 
 .PHONY: licenses
-licenses: ## Collect the license notices for Ghostty and its libraries into Licenses/
+licenses: ## Collect the license notices for Ghostty, its libraries, and the Swift packages into Licenses/
 	scripts/collect-licenses.sh
 
 .PHONY: ci
-ci: fmt-check lint check test ghostty-offline-check ## Run what CI runs. Includes the 4-minute offline Ghostty rebuild
+ci: fmt-check lint check test ghostty-offline-check swiftpm-offline-check ## Run what CI runs. Includes the 4-minute offline Ghostty rebuild
 
 .PHONY: ci-changes
 ci-changes:

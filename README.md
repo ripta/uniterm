@@ -12,8 +12,9 @@ Each window also has a status bar and a command palette. Both can be docked in d
 
 Early development. The terminal applet runs through libghostty, with tabs and a program mode. A window holds splits that
 can be resized, and the app opens several windows. It has a status bar with message history, undo for a closed pane, and
-close guards for running programs. Every window's layout is saved and restored across launches. A data viewer opens a
-CSV file as a table that sorts and filters. The other applets and the command palette are not built yet.
+close guards for running programs. Every window's layout is saved and restored across launches. A data viewer opens
+CSV, JSON, and `.xlsx` files as tables that sort, filter, and search. The other applets and the command palette are not
+built yet.
 
 ## Stack
 
@@ -21,6 +22,8 @@ CSV file as a table that sorts and filters. The other applets and the command pa
 - SwiftUI for small views, such as status bar segments.
 - [libghostty](https://ghostty.org) for terminal emulation.
 - [Janet](https://janet-lang.org) for scripting.
+- [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) for the ZIP container of `.xlsx` files. It is the only
+  third-party Swift package. It is pinned to an exact version, and its notice ships in `Licenses/`.
 
 ## Building
 
@@ -44,6 +47,9 @@ Commands:
 - `make fmt`, `make fmt-check`, `make lint`, and `make check` format and check the sources.
 - `make ghostty-offline-check` proves that the pinned libghostty rebuilds with the network off. It takes about four
   minutes, and `make ci` runs it.
+- `make swiftpm-offline-check` proves that the Swift packages resolve and build with the network off. The versions come
+  from the committed `Package.resolved` files and the sources from `.cache/swiftpm`. It takes under a minute, and
+  `make ci` runs it. CI does not keep `.cache/swiftpm`, so a CI run fetches the packages once before the offline step.
 - `make help` lists every target.
 
 GitHub CI skips the macOS SDK and build/test jobs when all changed files are root-level Markdown or Markdown under

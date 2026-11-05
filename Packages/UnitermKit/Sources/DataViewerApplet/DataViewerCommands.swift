@@ -2,14 +2,15 @@ import AppletKit
 import TableData
 
 extension DataViewerApplet {
-  /// The data viewer opens CSV and JSON files and is the default for both. A GeoJSON file goes to a
-  /// map, whose type is more specific. TSV opens through the pane's own Open, and no type here
-  /// routes to it.
+  /// The data viewer opens CSV, JSON, and `.xlsx` files and is the default for all three. A GeoJSON
+  /// file goes to a map, whose type is more specific. TSV and the other spreadsheet extensions open
+  /// through the pane's own Open, and no type here routes to them.
   public nonisolated static let typeDeclaration = AppletTypeDeclaration(
     typeID: DataViewerDescription.typeID, displayName: "Data Viewer",
     opens: [
       OpenedType("public.comma-separated-values-text", rank: .owner),
       OpenedType("public.json", rank: .owner),
+      OpenedType("org.openxmlformats.spreadsheetml.sheet", rank: .owner),
     ])
 
   /// The data viewer's own commands. Open has no key, since Cmd-O belongs to the window's File >

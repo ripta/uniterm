@@ -80,7 +80,7 @@ public enum QueryOutcome: Sendable, Equatable {
 /// 2. Text, by its lowercased form.
 /// 3. Booleans, false before true.
 /// 4. Nested cells, which compare equal to each other.
-/// 5. Null.
+/// 5. Null, and a spreadsheet formula with no cached result.
 /// 6. Missing, which is a JSON row without the key and a CSV cell with nothing in it.
 ///
 /// Descending reverses classes 1 to 4 and the order inside each. Null and then missing stay last in
@@ -194,7 +194,7 @@ public enum TableQueryEngine {
     case .missing:
       return .missing
 
-    case .null:
+    case .null, .notComputed:
       return .null
 
     case .bool:

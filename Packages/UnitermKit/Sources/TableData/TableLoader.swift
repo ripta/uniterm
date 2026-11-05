@@ -4,7 +4,9 @@ import Foundation
 /// Where a table's rows come from. A file is the only source today. A byte stream joins when its
 /// first caller lands, and spools to a file for the formats that need random access.
 public enum TableSource: Sendable, Equatable {
-  case file(URL)
+  /// A file. `sheet` names the sheet of a workbook to read, and the first visible sheet shows when
+  /// it is nil or the workbook has no sheet of that name. Other formats ignore it.
+  case file(URL, sheet: String? = nil)
 
   /// A JSON value that a nested cell holds, shown as a table of its own. `name` stands in for a
   /// path in messages.
@@ -18,6 +20,12 @@ public struct LoadProgress: Sendable, Equatable {
 
   /// Rows that a size cap cut short. See `CSVParser`.
   public var truncatedRows = 0
+
+  /// The sheets a workbook offers, in order. Empty for a file that is not a workbook.
+  public var sheets: [String] = []
+
+  /// The sheet the rows come from.
+  public var selectedSheet: String?
 
   public var fraction: Double? {
     totalBytes > 0 ? min(1, Double(bytesRead) / Double(totalBytes)) : nil
@@ -36,6 +44,11 @@ public enum LoadEnd: Sendable, Equatable {
 
   case failed(TableLoadError)
   case cancelled
+
+  /// True when the load ended early with the first rows of the file.
+  var isStoppedEarly: Bool {
+    self == .stoppedAtBudget || self == .stoppedLowMemory
+  }
 }
 
 public enum LoadEvent: Sendable {
@@ -65,26 +78,40 @@ public enum TableLoader {
       source, lease: lease, pageTarget: pageTarget, isCancelled: { Task.isCancelled }, emit: emit)
   }
 
+  /// The same load with the spreadsheet caps spelled out. Tests and the fuzzer shrink them to
+  /// reach a cap with a small file.
+  static func loadBlocking(
+    _ source: TableSource, lease: TableBudget.Lease, pageTarget: Int = defaultPageTarget,
+    limits: SpreadsheetLimits, isCancelled: @escaping () -> Bool = { false },
+    emit: @escaping (LoadEvent) -> Void
+  ) {
+    var run = LoadRun(
+      lease: lease, pageTarget: pageTarget, limits: limits, isCancelled: isCancelled, emit: emit)
+
+    switch source {
+    case .file(let url, let sheet):
+      run.load(file: url, sheet: sheet)
+
+    case .embeddedJSON(let name, let bytes):
+      run.load(embedded: bytes, name: name)
+    }
+  }
+
   /// The same load on the calling thread. Tests and the fuzzer call it directly.
   public static func loadBlocking(
     _ source: TableSource, lease: TableBudget.Lease, pageTarget: Int = defaultPageTarget,
     isCancelled: @escaping () -> Bool = { false }, emit: @escaping (LoadEvent) -> Void
   ) {
-    var run = LoadRun(lease: lease, pageTarget: pageTarget, isCancelled: isCancelled, emit: emit)
-
-    switch source {
-    case .file(let url):
-      run.load(file: url)
-
-    case .embeddedJSON(let name, let bytes):
-      run.load(embedded: bytes, name: name)
-    }
+    loadBlocking(
+      source, lease: lease, pageTarget: pageTarget, limits: .standard, isCancelled: isCancelled,
+      emit: emit)
   }
 }
 
 struct LoadRun {
   let lease: TableBudget.Lease
   let pageTarget: Int
+  let limits: SpreadsheetLimits
   let isCancelled: () -> Bool
   let emit: (LoadEvent) -> Void
 
@@ -105,17 +132,24 @@ struct LoadRun {
   var jsonTruncatedSeen = 0
   var jsonRowCount = 0
 
+  var isSheet = false
+  var sheetHeader: [String]?
+  var sheetColumns = 0
+  var sheetFirstRow = true
+  var sheetRowCount = 0
+
   init(
-    lease: TableBudget.Lease, pageTarget: Int, isCancelled: @escaping () -> Bool,
-    emit: @escaping (LoadEvent) -> Void
+    lease: TableBudget.Lease, pageTarget: Int, limits: SpreadsheetLimits,
+    isCancelled: @escaping () -> Bool, emit: @escaping (LoadEvent) -> Void
   ) {
     self.lease = lease
     self.pageTarget = pageTarget
+    self.limits = limits
     self.isCancelled = isCancelled
     self.emit = emit
   }
 
-  mutating func load(file url: URL) {
+  mutating func load(file url: URL, sheet: String?) {
     let path = url.path
     let ext = url.pathExtension.lowercased()
 
@@ -141,9 +175,8 @@ struct LoadRun {
     }
 
     switch Format.of(extension: ext) {
-    case .unsupported(let description, let comingLater):
-      finish(
-        .failed(.unsupportedFormat(path: path, description: description, comingLater: comingLater)))
+    case .unsupported(let description):
+      finish(.failed(.unsupportedFormat(path: path, description: description)))
       return
 
     case .csv:
@@ -153,6 +186,11 @@ struct LoadRun {
     case .json:
       progress.totalBytes = Int(info.st_size)
       readJSON(from: descriptor, fileExtension: ext, path: path)
+
+    case .spreadsheet:
+      progress.totalBytes = Int(info.st_size)
+      readSpreadsheet(
+        from: descriptor, fileSize: Int(info.st_size), path: path, sheet: sheet)
     }
   }
 
@@ -316,6 +354,13 @@ struct LoadRun {
       return TableSnapshot(columns: jsonColumns.columns, pages: all)
     }
 
+    if isSheet {
+      return TableSnapshot(
+        columns: TableColumn.columns(
+          header: sheetHeader, count: max(sheetColumns, sheetHeader?.count ?? 0)),
+        pages: all)
+    }
+
     let count = max(maxCells, header?.count ?? 0)
     return TableSnapshot(columns: TableColumn.columns(header: header, count: count), pages: all)
   }
@@ -363,11 +408,13 @@ struct LoadRun {
 private enum Format {
   case csv
   case json
-  case unsupported(description: String, comingLater: Bool)
+  case spreadsheet
+  case unsupported(description: String)
 
   /// The format a file name's extension names. CSV, TSV, and JSON load. A GeoJSON file is JSON, so it
-  /// loads too. A format that a later reader will take says so, and the rest say that the viewer
-  /// does not read them.
+  /// loads too. The spreadsheet extensions go to the workbook reader, which decides by content
+  /// whether it is a workbook it can read or a format it names and refuses. The rest say that the
+  /// viewer does not read them.
   static func of(extension ext: String) -> Format {
     switch ext {
     case "csv", "tsv", "tab":
@@ -376,14 +423,14 @@ private enum Format {
     case "json", "jsonl", "ndjson", "geojson":
       return .json
 
-    case "xlsx", "xlsm":
-      return .unsupported(description: "a spreadsheet", comingLater: true)
+    case "xlsx", "xlsm", "xls", "xlsb":
+      return .spreadsheet
 
     case "":
-      return .unsupported(description: "a file with no extension", comingLater: false)
+      return .unsupported(description: "a file with no extension")
 
     default:
-      return .unsupported(description: "a .\(ext) file", comingLater: false)
+      return .unsupported(description: "a .\(ext) file")
     }
   }
 }

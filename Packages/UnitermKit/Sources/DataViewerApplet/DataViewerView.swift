@@ -14,6 +14,12 @@ struct FindDisplay: Equatable {
   var status = ""
 }
 
+/// The sheets a workbook offers and the one that shows. The picker appears for more than one.
+struct SheetDisplay: Equatable {
+  var names: [String] = []
+  var selected: String?
+}
+
 /// A nested cell that the user asked to open: its compact JSON text, a title for it, and where the
 /// cell sits.
 struct NestedRequest {
@@ -40,6 +46,9 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   var onOpen: (() -> Void)?
   var onExpand: ((NestedRequest) -> Void)?
 
+  /// Gets the name of the sheet the user picked.
+  var onSheet: ((String) -> Void)?
+
   /// Gets the dropped files. Returns false to refuse them.
   var onDrop: (([URL]) -> Bool)?
 
@@ -48,6 +57,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   let filterField = NSSearchField()
   let findField = NSSearchField()
   let findCountLabel = NSTextField(labelWithString: "")
+  let sheetPicker = NSPopUpButton(frame: .zero, pullsDown: false)
   private let findRow = NSStackView()
   private let header = NSStackView()
   private var findVisible = false
@@ -100,6 +110,12 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     findRow.addArrangedSubview(findField)
     findRow.addArrangedSubview(findCountLabel)
 
+    sheetPicker.target = self
+    sheetPicker.action = #selector(sheetPicked)
+    sheetPicker.controlSize = .small
+    sheetPicker.isHidden = true
+    sheetPicker.setAccessibilityIdentifier("data-viewer-sheets")
+
     noticeLabel.font = .systemFont(ofSize: 11)
     noticeLabel.setAccessibilityIdentifier("data-viewer-notice\(suffix)")
 
@@ -142,6 +158,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     header.spacing = 4
     header.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 0, right: 8)
     header.translatesAutoresizingMaskIntoConstraints = false
+    header.addArrangedSubview(sheetPicker)
     header.addArrangedSubview(filterField)
     header.addArrangedSubview(findRow)
     header.addArrangedSubview(noticeLabel)
@@ -171,7 +188,8 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     setAccessibilityRole(.group)
     setAccessibilityIdentifier("data-viewer\(suffix)")
     apply(.latte)
-    show(.message(""), notices: [], filter: "", sort: nil, find: FindDisplay())
+    show(
+      .message(""), notices: [], filter: "", sort: nil, find: FindDisplay(), sheets: SheetDisplay())
   }
 
   @available(*, unavailable)
@@ -219,7 +237,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   /// Shows the body, the notice lines, and the sort, filter, and find the table carries.
   func show(
     _ body: DataViewerBody, notices: [String], filter: String, sort: SortSpec?,
-    find: FindDisplay = FindDisplay()
+    find: FindDisplay = FindDisplay(), sheets: SheetDisplay = SheetDisplay()
   ) {
     self.body = body
 
@@ -233,6 +251,8 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
       messageLabel.stringValue = text
       openButton.isHidden = isNested
     }
+
+    showSheets(sheets)
 
     noticeLabel.stringValue = notices.joined(separator: " ")
     noticeLabel.isHidden = notices.isEmpty || !showsTable
@@ -251,6 +271,20 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     syncColumns()
     updateIndicators(sort: sort)
     tableView.reloadData()
+  }
+
+  /// The picker stays up beside a message too, so a sheet with no rows never traps the user on it.
+  private func showSheets(_ sheets: SheetDisplay) {
+    sheetPicker.isHidden = sheets.names.count < 2
+
+    guard sheetPicker.itemTitles != sheets.names else {
+      sheetPicker.selectItem(withTitle: sheets.selected ?? "")
+      return
+    }
+
+    sheetPicker.removeAllItems()
+    sheetPicker.addItems(withTitles: sheets.names)
+    sheetPicker.selectItem(withTitle: sheets.selected ?? "")
   }
 
   func apply(_ palette: ThemePalette) {
@@ -360,6 +394,10 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
       field.stringValue = "null"
       field.textColor = palette[.overlay1].nsColor
 
+    case .notComputed:
+      field.stringValue = "not computed"
+      field.textColor = palette[.overlay1].nsColor
+
     default:
       field.stringValue = session.snapshot.text(row: source, column: column)
       field.textColor = palette[.text].nsColor
@@ -422,6 +460,12 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         title: tableView.tableColumns[column].title,
         rect: tableView.frameOfCell(atColumn: column, row: tableView.clickedRow),
         anchor: tableView))
+  }
+
+  @objc private func sheetPicked() {
+    guard let name = sheetPicker.titleOfSelectedItem else { return }
+
+    onSheet?(name)
   }
 
   @objc private func openPressed() {
