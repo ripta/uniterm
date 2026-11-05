@@ -117,6 +117,12 @@ public final class TableSession {
   /// Rows the query shows.
   public var visibleCount: Int { selection.count }
 
+  /// True when a budget or memory stop left no rows. The columns may be known by then, such as a
+  /// workbook whose first page of rows was refused. A table with nothing in it would only look empty.
+  public var stoppedBeforeAnyRow: Bool {
+    (phase == .stoppedAtBudget || phase == .stoppedLowMemory) && snapshot.rowCount == 0
+  }
+
   /// Replaces whatever the session holds with the source. The previous load stops. A restored query
   /// waits for the load to end, and an absent column in it is dropped then.
   public func load(_ source: TableSource, restoring restored: TableQuery? = nil) {

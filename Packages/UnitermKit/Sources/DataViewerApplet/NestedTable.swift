@@ -101,7 +101,9 @@ final class NestedTable: NSObject, NSPopoverDelegate {
       return .message(error.errorDescription ?? "\u{201C}\(title)\u{201D} could not be opened.")
     }
 
-    if !session.snapshot.columns.isEmpty { return .table }
+    if !session.snapshot.columns.isEmpty, !session.stoppedBeforeAnyRow {
+      return .table
+    }
 
     switch session.phase {
     case .idle, .loading:

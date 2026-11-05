@@ -676,6 +676,10 @@ None.
   guess). Before, a workbook counted the shared strings that were cut, so a long string used in many rows counted once
   and a long string used in none counted at all. A cell that shows a cut shared string is now a cut cell, so the unit
   matches CSV and JSON.
+- 2026-11-05: Correction of fact: the 2026-11-05 "Large files" entry above moved that decision's "Amended" marker from
+  the 2026-11-04 "Large files" entry, and did not say so. A decision carries one marker, so the 2026-11-04 entry still
+  records its own change. The prior meaning is that the 2026-11-05 "Input sources" entry was the only one of the two
+  that named a moved marker. No As built text changes.
 - 2026-11-05: ADR candidate (cuts across the system, hard to reverse): a file-backed viewer's description holds a path
   and a bookmark, never file contents. The path wins while a regular file is there, and the bookmark is remade when it
   names a different file than the one opened. Undecided. UTERM-006, UTERM-007, and UTERM-008 follow the same rule. The
