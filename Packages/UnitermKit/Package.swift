@@ -31,6 +31,8 @@ let package = Package(
     .library(name: "AppletCatalog", targets: ["AppletCatalog"]),
     .library(name: "TableData", targets: ["TableData"]),
     .library(name: "DataViewerApplet", targets: ["DataViewerApplet"]),
+    .library(name: "GeoData", targets: ["GeoData"]),
+    .library(name: "MapViewerApplet", targets: ["MapViewerApplet"]),
   ],
   dependencies: [
     // The first third-party Swift package. Only TableData uses it. The version is exact, and
@@ -76,8 +78,14 @@ let package = Package(
       name: "TableData", dependencies: [.product(name: "ZIPFoundation", package: "ZIPFoundation")]),
     .target(
       name: "DataViewerApplet", dependencies: ["AppletKit", "StatusKit", "TableData", "Theme"]),
+    // The map's pure model. It has no AppKit and no MapKit, so the region and style rules test
+    // without a map view.
+    .target(name: "GeoData"),
     .target(
-      name: "AppletCatalog", dependencies: ["AppletKit", "DataViewerApplet", "TerminalApplet"]),
+      name: "MapViewerApplet", dependencies: ["AppletKit", "GeoData", "StatusKit", "Theme"]),
+    .target(
+      name: "AppletCatalog",
+      dependencies: ["AppletKit", "DataViewerApplet", "MapViewerApplet", "TerminalApplet"]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
     .testTarget(
@@ -91,6 +99,10 @@ let package = Package(
       dependencies: [
         "DataViewerApplet", "TableData", "AppletKit", "StatusKit", "Theme", "TableTestSupport",
       ]),
+    .testTarget(name: "GeoDataTests", dependencies: ["GeoData"]),
+    .testTarget(
+      name: "MapViewerAppletTests",
+      dependencies: ["MapViewerApplet", "GeoData", "AppletKit", "StatusKit", "Theme"]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit"]),
     .testTarget(name: "LayoutKitTests", dependencies: ["LayoutKit", "AppletKit", "PaneModel"]),

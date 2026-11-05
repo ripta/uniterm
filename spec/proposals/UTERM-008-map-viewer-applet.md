@@ -238,7 +238,7 @@ None.
 
 ### M1: Basic map
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A pane can run the map applet and show a map
 - The user can pan and zoom
@@ -250,6 +250,35 @@ None.
 - Reopen and relaunch bring back the visible region and style. An empty pane reopens in its start directory
 - A layout save never touches the disk to describe a pane, and an unchanged pane describes itself the same way twice
 - The payload carries every stored field from its first version, so M2 and M3 need no version bump
+
+**As built:**
+
+- The map is two package targets. `GeoData` holds the region and style value types with no AppKit or MapKit. The applet
+  target holds the MapKit view, the commands, and the description. The payload holds every field the later milestones
+  use: region, style, file accent, path, bookmark, start directory, and the command-layer count. A test pins the stored
+  key set. An absent key takes its default, and an unknown style name reads as the standard map.
+- A region is checked when it is made, since MapKit raises an exception on one it cannot take. The checks are finite
+  numbers, a center latitude on the globe, a positive span, and latitude edges between the poles. A longitude is wrapped,
+  and a span past the globe is cut. A stored region out of range is corrupt. MapKit runs in uniterm's own process, as
+  ADR-07 weighs. The guard keeps the one failure this milestone can cause from being an exception, and the app has no
+  further bound on MapKit itself.
+- A region is saved only after a user gesture on the map. MapKit also reports a region after one is set, after a resize,
+  and for its own default on an empty pane, and none of those is saved, so an untouched pane never rewrites the layout.
+  A local event monitor marks the gesture, and a settle within 0.1% of the stored region is not saved again. The gate
+  was chosen over comparing reports with the applied region, because the default region of an empty pane matches no
+  region the pane applied.
+- The registry has no checked state for a command, so the three style commands show titles only. The status bar segment
+  names the current style. A checked item would need state on `AppletCommand`, which this milestone did not add.
+- `ThemeFlavor.isDark` is the explicit flavor-to-appearance rule. A test covers every flavor against its `base` surface.
+  Other callers' flavor checks are unchanged.
+- A failed map load shows a banner over the map and posts a warning. The banner clears when the map loads, and the map
+  stays usable under it.
+- MapKit needs no entitlement here. The App Sandbox is off and the project has no entitlements file, so nothing limits
+  the network access that tile fetching uses. The map does not use Core Location. The app builds and links with the
+  hardened runtime on. A tile fetch against the live service was not run in this milestone.
+- The package tests cover the style commands, the palette appearance for every flavor, region settle, restore, and
+  describe. The UI tests are built but not run by the implementer.
+- Left to the user: the look of the map in both flavors and all three styles.
 
 ### M2: Pins from a file
 

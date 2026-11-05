@@ -2,6 +2,16 @@
 public enum ThemeFlavor: String, Sendable, CaseIterable {
   case latte
   case mocha
+
+  /// True when the flavor's surfaces are dark. An applet that hands its colors to a system view
+  /// reads this to pick that view's light or dark appearance. A new flavor must answer here, since
+  /// the switch has no default.
+  public var isDark: Bool {
+    switch self {
+    case .latte: return false
+    case .mocha: return true
+    }
+  }
 }
 
 /// A named color. Applets and regions read colors by token and never carry raw values.

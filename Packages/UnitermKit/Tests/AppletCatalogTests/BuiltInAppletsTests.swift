@@ -7,7 +7,8 @@ import XCTest
 /// check joins it when the app declares document types.
 final class BuiltInAppletsTests: XCTestCase {
   /// Catches a declaration that changes without a deliberate edit here. The terminal opens folders
-  /// as the owner, and the data viewer opens CSV, JSON, and `.xlsx` as the owner.
+  /// as the owner, the data viewer opens CSV, JSON, and `.xlsx` as the owner, and the map viewer
+  /// opens no type yet.
   func testTheCatalogIsTheTerminalOpeningFoldersAndTheDataViewerOpeningTables() {
     XCTAssertEqual(
       BuiltInApplets.declarations,
@@ -22,6 +23,7 @@ final class BuiltInAppletsTests: XCTestCase {
             OpenedType("public.json", rank: .owner),
             OpenedType("org.openxmlformats.spreadsheetml.sheet", rank: .owner),
           ]),
+        AppletTypeDeclaration(typeID: "map-viewer", displayName: "Map Viewer", opens: []),
       ])
   }
 

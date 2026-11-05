@@ -67,4 +67,35 @@ final class BuiltInCommandsTests: XCTestCase {
 
     XCTAssertTrue(warnings.isEmpty, "\(warnings)")
   }
+
+  /// Catches a map style command that gains a key, lands outside the View menu, or loses its
+  /// name. The three commands are the registry's contract with the menu and the palette. Their
+  /// keys survive the reservation pass because they ask for none.
+  func testTheMapStyleCommandsSitInTheViewMenuWithNoKeys() throws {
+    var warnings: [String] = []
+    let registry = CommandRegistry(app: AppCommandHooks(warn: { warnings.append($0) }))
+
+    for set in BuiltInApplets.commandSets {
+      registry.register(set)
+    }
+
+    let menu = CommandMenu(registry: registry, activeController: { nil })
+    menu.refreshKeys()
+
+    let map = try XCTUnwrap(BuiltInApplets.commandSets.first { $0.typeID == "map-viewer" })
+
+    XCTAssertEqual(map.commands.map(\.name), ["style-standard", "style-satellite", "style-hybrid"])
+    XCTAssertEqual(
+      map.commands.map(\.title), ["Standard Map", "Satellite Map", "Hybrid Map"])
+
+    for command in map.commands {
+      XCTAssertNil(command.key, command.title)
+      XCTAssertEqual(command.home, .view, command.title)
+
+      let id = CommandRegistry.commandID(typeID: "map-viewer", name: command.name)
+      XCTAssertNil(registry.appletKeys[id], command.title)
+    }
+
+    XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+  }
 }

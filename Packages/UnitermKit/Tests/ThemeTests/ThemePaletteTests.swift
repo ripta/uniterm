@@ -39,3 +39,27 @@ final class ThemePaletteTests: XCTestCase {
     XCTAssertEqual(ThemeColor(hex: 0x04A5E5).hexString, "#04a5e5")
   }
 }
+
+/// The light or dark reading of a flavor, which applets hand to system views.
+final class ThemeFlavorAppearanceTests: XCTestCase {
+  /// Catches a flavor whose answer disagrees with its own surface color, and a new flavor that
+  /// lands on the wrong side. The expectation reads the flavor's `base` brightness, apart from the
+  /// property under test, so the two cannot drift together.
+  func testEveryFlavorIsDarkExactlyWhenItsBaseSurfaceIsDark() {
+    XCTAssertFalse(ThemeFlavor.allCases.isEmpty)
+
+    for flavor in ThemeFlavor.allCases {
+      let base = ThemePalette(flavor: flavor)[.base]
+      let brightness = (Int(base.red) + Int(base.green) + Int(base.blue)) / 3
+
+      XCTAssertEqual(flavor.isDark, brightness < 128, "\(flavor)")
+    }
+  }
+
+  /// Catches a swapped pair. The shipped flavors are Latte, which is light, and Mocha, which is
+  /// dark.
+  func testTheShippedFlavors() {
+    XCTAssertFalse(ThemeFlavor.latte.isDark)
+    XCTAssertTrue(ThemeFlavor.mocha.isDark)
+  }
+}

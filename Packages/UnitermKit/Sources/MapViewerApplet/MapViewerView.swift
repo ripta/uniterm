@@ -1,0 +1,218 @@
+import AppKit
+import GeoData
+import MapKit
+import Theme
+
+/// The map viewer's body: a map view, and a banner over it that says why the map could not load.
+///
+/// The map belongs to MapKit, which owns pan and zoom. This view hands it a region and a style,
+/// and reports the region the map settles on. It never reads its window's appearance. The owner
+/// sets the light or dark look from the palette.
+@MainActor
+final class MapViewerView: NSView, MKMapViewDelegate {
+  /// Gets the region the map settled on after the user moved it.
+  var onRegionSettled: ((GeoRegion) -> Void)?
+
+  /// Gets the reason the map could not load.
+  var onLoadFailure: ((String) -> Void)?
+
+  let mapView = MKMapView()
+  private let banner = NSBox()
+  private let bannerLabel = NSTextField(wrappingLabelWithString: "")
+  private var pendingRegion: GeoRegion?
+  private var eventMonitor: Any?
+
+  /// True from the user's first gesture on the map until MapKit reports where it settled. Only a
+  /// settle the user caused is reported. MapKit also reports a region after one is set, after a
+  /// resize, and for its own default, and none of those belongs in the description.
+  private(set) var userIsMoving = false
+  private(set) var style = MapStyle.standard
+  private(set) var failure: String?
+
+  init() {
+    super.init(frame: .zero)
+
+    setAccessibilityElement(true)
+    setAccessibilityRole(.group)
+    setAccessibilityIdentifier("map-viewer")
+    setAccessibilityLabel("Map")
+
+    mapView.delegate = self
+    mapView.translatesAutoresizingMaskIntoConstraints = false
+    mapView.setAccessibilityIdentifier("map-viewer-map")
+    addSubview(mapView)
+
+    bannerLabel.translatesAutoresizingMaskIntoConstraints = false
+    bannerLabel.setAccessibilityIdentifier("map-viewer-message")
+    bannerLabel.maximumNumberOfLines = 0
+    bannerLabel.alignment = .center
+
+    banner.boxType = .custom
+    banner.cornerRadius = 8
+    banner.borderWidth = 0
+    banner.contentViewMargins = NSSize(width: 12, height: 8)
+    banner.translatesAutoresizingMaskIntoConstraints = false
+    banner.contentView = bannerLabel
+    banner.isHidden = true
+    addSubview(banner)
+
+    NSLayoutConstraint.activate([
+      mapView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      mapView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      mapView.topAnchor.constraint(equalTo: topAnchor),
+      mapView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      banner.centerXAnchor.constraint(equalTo: centerXAnchor),
+      banner.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+      banner.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+      banner.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+      banner.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
+    ])
+
+    show(style: .standard)
+    apply(.latte)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  // MARK: Region
+
+  /// Shows `region`. A map with no size yet takes it at its first layout, since a region set on a
+  /// map with no frame is fitted to nothing.
+  func show(region: GeoRegion) {
+    pendingRegion = region
+    applyPendingRegion()
+  }
+
+  override func layout() {
+    super.layout()
+    applyPendingRegion()
+  }
+
+  private func applyPendingRegion() {
+    guard let region = pendingRegion, mapView.bounds.width > 0, mapView.bounds.height > 0 else {
+      return
+    }
+
+    pendingRegion = nil
+
+    mapView.setRegion(
+      MKCoordinateRegion(
+        center: CLLocationCoordinate2D(
+          latitude: region.center.latitude, longitude: region.center.longitude),
+        span: MKCoordinateSpan(
+          latitudeDelta: region.span.latitudeDelta, longitudeDelta: region.span.longitudeDelta)),
+      animated: false)
+  }
+
+  /// The region the map shows now, or nil when MapKit reports one a region cannot hold.
+  var currentRegion: GeoRegion? {
+    let region = mapView.region
+
+    return GeoRegion(
+      center: GeoCoordinate(
+        latitude: region.center.latitude, longitude: region.center.longitude),
+      span: GeoSpan(
+        latitudeDelta: region.span.latitudeDelta, longitudeDelta: region.span.longitudeDelta))
+  }
+
+  func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+    guard userIsMoving, pendingRegion == nil, let reported = currentRegion else { return }
+
+    userIsMoving = false
+    onRegionSettled?(reported)
+  }
+
+  // MARK: User gestures
+
+  /// Marks the map as moved by the user. The next settle is reported, and the mark clears.
+  func noteUserGesture() {
+    userIsMoving = true
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+
+    if let eventMonitor {
+      NSEvent.removeMonitor(eventMonitor)
+      self.eventMonitor = nil
+    }
+
+    guard window != nil else { return }
+
+    let gestures: NSEvent.EventTypeMask = [
+      .leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .magnify, .smartMagnify,
+      .keyDown,
+    ]
+
+    eventMonitor = NSEvent.addLocalMonitorForEvents(matching: gestures) { [weak self] event in
+      MainActor.assumeIsolated { self?.observe(event) }
+
+      return event
+    }
+  }
+
+  private func observe(_ event: NSEvent) {
+    guard let window, event.window === window else { return }
+
+    let point = mapView.convert(event.locationInWindow, from: nil)
+
+    if event.type == .keyDown {
+      if let responder = window.firstResponder as? NSView, responder.isDescendant(of: mapView) {
+        noteUserGesture()
+      }
+    } else if mapView.bounds.contains(point) {
+      noteUserGesture()
+    }
+  }
+
+  /// Stops watching events. The owner calls it when the pane closes.
+  func stopObserving() {
+    if let eventMonitor {
+      NSEvent.removeMonitor(eventMonitor)
+      self.eventMonitor = nil
+    }
+  }
+
+  // MARK: Style
+
+  func show(style: MapStyle) {
+    self.style = style
+
+    switch style {
+    case .standard: mapView.preferredConfiguration = MKStandardMapConfiguration()
+    case .satellite: mapView.preferredConfiguration = MKImageryMapConfiguration()
+    case .hybrid: mapView.preferredConfiguration = MKHybridMapConfiguration()
+    }
+  }
+
+  // MARK: Loading
+
+  func mapViewDidFailLoadingMap(_ mapView: MKMapView, withError error: any Error) {
+    let reason = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+    let text =
+      "The map could not load: \(reason). "
+      + "The map needs a network connection to fetch its tiles."
+
+    failure = text
+    bannerLabel.stringValue = text
+    banner.isHidden = false
+    onLoadFailure?(text)
+  }
+
+  func mapViewDidFinishLoadingMap(_ mapView: MKMapView) {
+    failure = nil
+    banner.isHidden = true
+  }
+
+  // MARK: Palette
+
+  /// Sets the light or dark look from the palette's flavor. A standard or hybrid map follows it.
+  /// A satellite map has no dark variant and does not change.
+  func apply(_ palette: ThemePalette) {
+    appearance = NSAppearance(named: palette.flavor.isDark ? .darkAqua : .aqua)
+
+    banner.fillColor = palette[.mantle].nsColor
+    bannerLabel.textColor = palette[.text].nsColor
+  }
+}

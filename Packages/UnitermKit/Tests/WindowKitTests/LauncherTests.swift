@@ -25,7 +25,7 @@ final class LauncherModelTests: XCTestCase {
   /// would show nothing.
   func testTheFilterMatchesNamesIgnoringCaseAndSpace() {
     var model = LauncherModel()
-    XCTAssertEqual(model.visible.map(\.kind), [.terminal, .program, .dataViewer])
+    XCTAssertEqual(model.visible.map(\.kind), [.terminal, .program, .dataViewer, .mapViewer])
 
     model.filter = "RUNNING"
     XCTAssertEqual(model.visible.map(\.kind), [.program])
@@ -67,10 +67,13 @@ final class LauncherModelTests: XCTestCase {
     XCTAssertEqual(model.selection?.kind, .dataViewer)
 
     model.move(by: 1)
+    XCTAssertEqual(model.selection?.kind, .mapViewer)
+
+    model.move(by: 1)
     XCTAssertEqual(model.selection?.kind, .terminal)
 
     model.move(by: -1)
-    XCTAssertEqual(model.selection?.kind, .dataViewer)
+    XCTAssertEqual(model.selection?.kind, .mapViewer)
 
     model.filter = "zzz"
     model.move(by: 1)
@@ -114,6 +117,17 @@ final class LauncherModelTests: XCTestCase {
     XCTAssertEqual(try model.choice().get(), .dataViewer)
     XCTAssertFalse(model.showsCommand)
     XCTAssertEqual(model.focus, .filter)
+  }
+
+  /// Catches a map viewer row that opens a terminal, or one that asks for a command.
+  func testTheMapViewerEntryChoosesTheMapViewerWithoutACommand() throws {
+    var model = LauncherModel()
+    model.select(.mapViewer)
+
+    XCTAssertEqual(try model.choice().get(), .mapViewer)
+    XCTAssertFalse(model.showsCommand)
+    XCTAssertEqual(model.focus, .filter)
+    XCTAssertEqual(model.selection?.kind.accessibilityIdentifier, "launcher-map-viewer")
   }
 
   /// Catches an empty program that opens, and a command that keeps stray space.
@@ -386,8 +400,14 @@ final class LauncherTests: XCTestCase {
     XCTAssertTrue(view.isFocused(view.filterField))
 
     send(#selector(NSResponder.moveDown(_:)), from: view.filterField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .mapViewer)
+
+    send(#selector(NSResponder.moveDown(_:)), from: view.filterField, in: view)
     XCTAssertEqual(view.model.selection?.kind, .terminal)
     XCTAssertTrue(view.isFocused(view.filterField))
+
+    send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .mapViewer)
 
     send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
     XCTAssertEqual(view.model.selection?.kind, .dataViewer)
@@ -505,7 +525,7 @@ final class LauncherTests: XCTestCase {
     }
 
     let rows = view.rows.map(frame)
-    XCTAssertEqual(rows.count, 3)
+    XCTAssertEqual(rows.count, 4)
     XCTAssertGreaterThan(rows[0].width, 200)
 
     let filter = frame(view.filterBox)
