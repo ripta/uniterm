@@ -242,3 +242,16 @@ caps, accents, order, and the staged `set-layer` swap.
 Checks: `make fmt-check`, `make lint`, `make check`, `make build`, and `build-for-testing` pass.
 `swift test --skip TerminalSessionIntegrationTests` gives 900 tests, 4 skipped, 0 failures. `make test-package` gives
 921 tests with the same 21 known pty failures. `proposals.py freeze` gives `[]`.
+
+## Final review
+
+Range: the run's base to "Finish the map viewer's file-pins row", with the run's four commits as its specs commits.
+This was also the run's ADR review. The range adds and edits no ADR. Commit: "Reflow the map proposal's As built text".
+
+- `proposals.py freeze` over all four commits gave `[]`.
+- `adr-impact` found no conflict and no supersession, and no uncovered decision that passes the ADR bar.
+- The reviewer found no correctness, security, or plan finding. It confirmed the row-review fixes match the As built
+  text, and that the queue keeps UTERM-008 M3 with the proposal still `accepted`.
+- Fixed: the new As built lines ran past the proposal's 120-column wrap, and one bullet broke mid-sentence. The
+  Decision Log tag "(run best guess)" now reads "(work-queue best guess)", matching UTERM-001's entries.
+- A `MapViewerUITests` rerun at 04:23 local time failed the same way as at 03:38: "System authentication is running".

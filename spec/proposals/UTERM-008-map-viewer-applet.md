@@ -260,18 +260,17 @@ None.
   use: region, style, file accent, path, bookmark, start directory, and the command-layer count. A test pins the stored
   key set. An absent key takes its default, and an unknown style name reads as the standard map.
 - A region is checked when it is made, since MapKit raises an exception on one it cannot take. The checks are finite
-  numbers, a center latitude on the globe, a positive span, and latitude edges between the poles. A longitude is wrapped,
-  and a span past the globe is cut. A stored region out of range is corrupt. MapKit runs in uniterm's own process, as
-  ADR-07 weighs. The guard keeps the one failure this milestone can cause from being an exception, and the app has no
-  further bound on MapKit itself.
+  numbers, a center latitude on the globe, a positive span, and latitude edges between the poles. A longitude is
+  wrapped, and a span past the globe is cut. A stored region out of range is corrupt. MapKit runs in uniterm's own
+  process, as ADR-07 weighs. The guard keeps the one failure this milestone can cause from being an exception, and the
+  app has no further bound on MapKit itself.
 - A region is saved only after a user gesture on the map. MapKit also reports a region after one is set, after a resize,
   and for its own default on an empty pane, and none of those is saved, so an untouched pane never rewrites the layout.
   A local event monitor marks the gesture, and a settle within 0.1% of the stored region is not saved again. A command
   key is not a gesture, since Cmd-O and Cmd-K reach the map while it has focus. A gesture can move nothing, so setting a
   region and resizing the pane both clear the mark. The resize clears it in `setFrameSize`, because MapKit reports the
-  resize before the layout pass. A click followed by a resize or a fit saves nothing. The gate
-  was chosen over comparing reports with the applied region, because the default region of an empty pane matches no
-  region the pane applied.
+  resize before the layout pass. A click followed by a resize or a fit saves nothing. The gate was chosen over comparing
+  reports with the applied region, because the default region of an empty pane matches no region the pane applied.
 - The registry has no checked state for a command, so the three style commands show titles only. The status bar segment
   names the current style. A checked item would need state on `AppletCommand`, which this milestone did not add.
 - `ThemeFlavor.isDark` is the explicit flavor-to-appearance rule. A test covers every flavor against its `base` surface.
@@ -328,33 +327,33 @@ None.
   unchanged. The resolver tests moved with the code. No message says "corrupt".
 - The map has one source-taking entry point, `replaceSource`. It does not throw, since a failed load shows in the pane,
   and `opening` does not throw either. The file bounds are one constant on the applet, and tests cross them with real
-  files: a sparse file one byte past the size bound, and a file of 10,001 points. The pane-local Open..., a drop of one file, the router's
-  factory, and a restore all reach it. It finds the file and parses it off the main thread. A user load fits the map to
-  the pins and saves that region. A restore does not move the saved region.
+  files: a sparse file one byte past the size bound, and a file of 10,001 points. The pane-local Open..., a drop of one
+  file, the router's factory, and a restore all reach it. It finds the file and parses it off the main thread. A user
+  load fits the map to the pins and saves that region. A restore does not move the saved region.
 - The file layer is bounded at 32 MiB and 10,000 points. A file past the size bound is refused whole, because
   `MKGeoJSONDecoder` cannot stop part way. A file past the point bound loads its first points and says so. The pane
   gives each kind of loss its own line: points past the bound, shapes that are not points, coordinates off the globe,
   and unusable style values.
 - The rules for IDs, labels, accents, and glyphs sit beside their code in `GeoData` and are pinned by tests. An ID is
-  the object's ordinal and the point's index, as `3:0`, so it is unique even when GeoJSON `id` is missing or repeats. The
-  uniterm property keys are `uniterm:accent` and `uniterm:glyph`. A pure red `marker-color` maps to maroon, since maroon
-  is nearer in OKLab against Latte than red is.
+  the object's ordinal and the point's index, as `3:0`, so it is unique even when GeoJSON `id` is missing or repeats.
+  The uniterm property keys are `uniterm:accent` and `uniterm:glyph`. A pure red `marker-color` maps to maroon, since
+  maroon is nearer in OKLab against Latte than red is.
 - The layer default order starts at blue and repeats after 14 layers. Every neighbor pair is at least 0.12 apart in
   OKLab in both flavors. The closest pair is 0.124, in Mocha.
-- `GeoData` stays free of AppKit and MapKit. It reads the accent set and the Latte colors from a new `ThemeCore`
-  target, which holds the tokens, flavors, color values, and color math. `Theme` keeps the AppKit colors and re-exports
+- `GeoData` stays free of AppKit and MapKit. It reads the accent set and the Latte colors from a new `ThemeCore` target,
+  which holds the tokens, flavors, color values, and color math. `Theme` keeps the AppKit colors and re-exports
   `ThemeCore`, so existing `import Theme` callers are unchanged. The decoder lives in the applet target, which converts
   decoded objects to plain values before they leave the reading function. A polyline subclasses `MKMultiPoint`, so a
   test pins that a LineString is skipped.
 - Labels and glyphs drop control characters, line and paragraph separators, and invisible format characters such as the
   bidirectional overrides. The zero-width joiners stay for emoji. A full layer skips the properties of later features
   and still counts what it leaves out.
-- `ThemeCore` holds the accent set, the WCAG ratio, and the OKLab distance. The disc is `base` in Latte and `crust` in Mocha,
-  and the glyph is `text`. The ratio is 7.06 in Latte and 12.97 in Mocha. A test renders a pin and a cluster to a bitmap
-  in both flavors on all 14 accents and checks at least 4.5 between the sampled disc and glyph pixels.
+- `ThemeCore` holds the accent set, the WCAG ratio, and the OKLab distance. The disc is `base` in Latte and `crust` in
+  Mocha, and the glyph is `text`. The ratio is 7.06 in Latte and 12.97 in Mocha. A test renders a pin and a cluster to a
+  bitmap in both flavors on all 14 accents and checks at least 4.5 between the sampled disc and glyph pixels.
 - A marker is a circle in the accent with the disc inside it. It has no teardrop tip, so the coordinate is the marker's
-  center and no anchor offset is needed. A theme switch re-tints live markers in place. Clustering uses the layer.
-  A layer is a `MapLayer`, either `file` or `command(name)`, so a command's layer cannot collide with the file's by any
+  center and no anchor offset is needed. A theme switch re-tints live markers in place. Clustering uses the layer. A
+  layer is a `MapLayer`, either `file` or `command(name)`, so a command's layer cannot collide with the file's by any
   name. The clustering identifier of a command layer is `command:` followed by its name, and the file's has no prefix.
   The tests cover the identifier and the colors. They cannot cover how MapKit merges markers in a live map.
 - Clearing the file layer is the File > Clear File Pins command. There is no pane control. It drops the stored path and
@@ -367,8 +366,8 @@ None.
   is weak: it sees their allocations and memory functions, not accesses inside their own code. A run of 5000 inputs
   under `make fuzz` passed.
 - The UI tests are built and not run by the implementer. They cover Cmd-O routing a `.geojson` file, a restore, and a
-  clear that survives a relaunch. XCUITest cannot start a drag from Finder, so the drop is covered in the package
-  tests. A UI test through the pane's Open... was not written, because the File menu also lists the window's Open....
+  clear that survives a relaunch. XCUITest cannot start a drag from Finder, so the drop is covered in the package tests.
+  A UI test through the pane's Open... was not written, because the File menu also lists the window's Open....
 - Left to the user: the look of pins and clusters in both flavors, the callout on selecting a pin, a drop onto the map
   view, and clustering in a live map.
 
@@ -503,13 +502,13 @@ None.
 - 2026-11-03: Amended "Where pins come from" for UTERM-015, the cross-applet file-opening proposal. App-level opening
   waited on that proposal, and M1 waited for it to be filed. UTERM-015 is accepted. The map gains an Open... command
   with no key and declares the GeoJSON type as owner, checked in M2. The Dependencies line names UTERM-015.
-- 2026-11-05: Amended "Where pins come from" and M2 (run best guess). The text said the map declares "the imported
-  GeoJSON type". This macOS already declares `public.geojson`, conforming to `public.json`, so the map declares that
-  identifier at the owner rank and the app imports nothing. `Info.plist` gains a document type row only. The router
+- 2026-11-05: Amended "Where pins come from" and M2 (work-queue best guess). The text said the map declares "the
+  imported GeoJSON type". This macOS already declares `public.geojson`, conforming to `public.json`, so the map declares
+  that identifier at the owner rank and the app imports nothing. `Info.plist` gains a document type row only. The router
   prefers `public.geojson` over the data viewer's `public.json` by specificity. The minimum system is macOS 26, which
   declares the type.
-- 2026-11-05: Amended "Pin styling" (run best guess). The text said a one-character `marker-symbol` becomes the glyph
-  and left the uniterm property names open. A one- or two-character `marker-symbol` now becomes the glyph, so it
+- 2026-11-05: Amended "Pin styling" (work-queue best guess). The text said a one-character `marker-symbol` becomes the
+  glyph and left the uniterm property names open. A one- or two-character `marker-symbol` now becomes the glyph, so it
   matches the glyph rule of one or two characters. The keys are `uniterm:accent` and `uniterm:glyph`, and they win over
   the simplestyle keys. An unusable value is counted and falls through to the next source. A Maki name is ignored and
   not counted, since ignoring Maki is the documented rule.
