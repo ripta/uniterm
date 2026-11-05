@@ -84,8 +84,9 @@ Checks:
 - `make fmt-check`, `make lint`, `make check`, and `make test-package` pass.
 - `make test-app` failed twice, once under cg and once outside the sandbox. Both runs failed before any test ran:
   "Timed out while enabling automation mode." The run's diff changes only spec text, and the same suite passed on the
-  last M3 commit, so the failure is not this work's. The likely cause is the GUI session's automation authorization,
-  which may be waiting on a system dialog. It is unresolved, and it does not block.
+  last M3 commit, so the failure is not this work's. Afterward, the user ran `make test-app` from their own prompt on
+  the same tree. It passed, with 79 tests, 0 failures, in 597 s. The failure therefore belongs to the agent session's
+  process, which could not enable automation mode. It does not belong to the tree.
 - `proposals.py check` and `proposals.py freeze` report nothing.
 
 Review:
