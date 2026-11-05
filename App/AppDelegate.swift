@@ -1,6 +1,7 @@
 import AppKit
 import AppletCatalog
 import AppletKit
+import DataViewerApplet
 import FileRouting
 import OSLog
 import Preferences
@@ -150,12 +151,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = settings
 
     let restoreApplet: AppletRestorer = { description in
-      guard description.type == TerminalDescription.typeID else {
+      switch description.type {
+      case TerminalDescription.typeID:
+        return try TerminalApplet(engine: engine, restoring: description)
+
+      case DataViewerDescription.typeID:
+        return try DataViewerApplet(restoring: description)
+
+      default:
         throw AppletRestoreError.wrongType(
           expected: TerminalDescription.typeID, found: description.type)
       }
-
-      return try TerminalApplet(engine: engine, restoring: description)
     }
 
     let makeApplet: AppletFactory = { choice, directory in
@@ -165,6 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case .terminalProgram(let command):
         return try TerminalApplet(engine: engine, program: command, workingDirectory: directory)
+
+      case .dataViewer:
+        return DataViewerApplet(startDirectory: directory)
       }
     }
 
@@ -192,7 +201,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let sourceFactories: [String: AppletSourceFactory] = [
       TerminalDescription.typeID: { _, startDirectory in
         try makeApplet(.terminalShell, startDirectory)
-      }
+      },
+      DataViewerDescription.typeID: { file, startDirectory in
+        try DataViewerApplet.opening(file, startDirectory: startDirectory)
+      },
     ]
 
     routedOpener = RoutedOpener(

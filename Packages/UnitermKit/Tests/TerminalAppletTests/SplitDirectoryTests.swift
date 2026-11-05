@@ -63,6 +63,9 @@ final class SplitDirectoryTests: XCTestCase {
 
       case .terminalProgram(let command):
         return try TerminalApplet(engine: engine, program: command, workingDirectory: requested)
+
+      case .dataViewer:
+        throw AppletRestoreError.unsupported("this fixture builds terminals only")
       }
     }
 

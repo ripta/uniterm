@@ -25,7 +25,7 @@ final class LauncherModelTests: XCTestCase {
   /// would show nothing.
   func testTheFilterMatchesNamesIgnoringCaseAndSpace() {
     var model = LauncherModel()
-    XCTAssertEqual(model.visible.map(\.kind), [.terminal, .program])
+    XCTAssertEqual(model.visible.map(\.kind), [.terminal, .program, .dataViewer])
 
     model.filter = "RUNNING"
     XCTAssertEqual(model.visible.map(\.kind), [.program])
@@ -64,10 +64,13 @@ final class LauncherModelTests: XCTestCase {
     XCTAssertEqual(model.selection?.kind, .program)
 
     model.move(by: 1)
+    XCTAssertEqual(model.selection?.kind, .dataViewer)
+
+    model.move(by: 1)
     XCTAssertEqual(model.selection?.kind, .terminal)
 
     model.move(by: -1)
-    XCTAssertEqual(model.selection?.kind, .program)
+    XCTAssertEqual(model.selection?.kind, .dataViewer)
 
     model.filter = "zzz"
     model.move(by: 1)
@@ -101,6 +104,16 @@ final class LauncherModelTests: XCTestCase {
     model.select(.program)
     XCTAssertEqual(model.focus, .command)
     XCTAssertTrue(model.showsCommand)
+  }
+
+  /// Catches a data viewer row that opens a terminal, or one that asks for a command.
+  func testTheDataViewerEntryChoosesTheDataViewerWithoutACommand() throws {
+    var model = LauncherModel()
+    model.select(.dataViewer)
+
+    XCTAssertEqual(try model.choice().get(), .dataViewer)
+    XCTAssertFalse(model.showsCommand)
+    XCTAssertEqual(model.focus, .filter)
   }
 
   /// Catches an empty program that opens, and a command that keeps stray space.
@@ -369,8 +382,15 @@ final class LauncherTests: XCTestCase {
     XCTAssertTrue(view.isFocused(view.commandField))
 
     send(#selector(NSResponder.moveDown(_:)), from: view.commandField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .dataViewer)
+    XCTAssertTrue(view.isFocused(view.filterField))
+
+    send(#selector(NSResponder.moveDown(_:)), from: view.filterField, in: view)
     XCTAssertEqual(view.model.selection?.kind, .terminal)
     XCTAssertTrue(view.isFocused(view.filterField))
+
+    send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .dataViewer)
 
     send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
     XCTAssertTrue(view.isFocused(view.commandField))
@@ -485,7 +505,7 @@ final class LauncherTests: XCTestCase {
     }
 
     let rows = view.rows.map(frame)
-    XCTAssertEqual(rows.count, 2)
+    XCTAssertEqual(rows.count, 3)
     XCTAssertGreaterThan(rows[0].width, 200)
 
     let filter = frame(view.filterBox)

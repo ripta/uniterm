@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-03
+**Updated:** 2026-11-04
 
 ## Dependencies
 
@@ -125,8 +125,10 @@ Decision: rows stream off the main thread into memory, under one memory budget.
   the load.
 - Rows live in a compact in-memory store. The loaded rows are a snapshot, so a later change to the file cannot corrupt
   the view.
-- One memory budget covers every data viewer pane together, and a memory-pressure warning stops loading early. When
-  loading stops, the pane says it shows the first N rows of the file.
+- One memory budget covers every data viewer pane together. Each pane keeps a floor of 32 MiB even when the budget is
+  spent, so the app holds at most the budget plus one floor for each pane beyond it. A memory-pressure warning stops
+  loading early. When loading stops, the pane says it shows the first N rows of the file. Amended 2026-11-04; see
+  Decision Log.
 - Sorting, filtering, and search run off the main thread on an immutable snapshot. A newer request cancels an older
   one, and results swap in when done.
 - Loading is not running work. Reopen and relaunch read the file again, so closing a loading pane does not ask.
@@ -230,7 +232,7 @@ None.
 
 ### M1: CSV table
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A pane can run the data viewer and open a CSV file as a table, from an open panel or by dropping a file on the pane
 - Every load goes through the one source-taking entry point
@@ -272,6 +274,42 @@ None.
   same file
 - Clicking a column header sorts by that column
 - A filter field hides rows that do not match
+
+**As built:**
+
+- The CSV rule is documented in the doc comment of the CSV rule type, beside its code. Best guesses behind it are in
+  the Decision Log entry of 2026-11-04. UTF-32 is not supported. Bytes that are not valid UTF-8 past the first 64 KiB
+  of a UTF-8 file show as U+FFFD.
+- Size caps protect the store from a hostile file: a cell keeps 1 MiB, a row 16 MiB and 65,536 cells. A cut row is
+  counted, and the pane says how many rows had cells cut.
+- Rows live in sealed pages of about 1 MiB, which reserve their cost from the shared budget as they seal. A page the
+  budget refuses is dropped, so the "first N rows" count is page-granular. A memory warning or critical event ends the
+  loads running at that moment, and a pane opened afterward loads normally. Numbers and reasons are in the Decision Log
+  entry of 2026-11-04.
+- Sealed pages are copied into exact-size arrays, so a page holds what the budget charged for. A closed or replaced
+  pane releases its lease, and a loader that is slow to notice its cancellation is refused from then on. The page being
+  filled is not reserved and stays under about 1 MiB for each loading pane.
+- A sort reserves its key memory from the same budget and gives it back when done. A sort the budget refuses leaves the
+  rows in file order, and the pane says so. See the Decision Log entry of 2026-11-04.
+- A header click cycles ascending, descending, then no sort. A sort or filter over a growing table reruns off the main
+  thread at most every 250 ms. The view keeps the last finished result until the run over the newer snapshot ends, so
+  rows never show out of order.
+- The extension picks the reader. CSV, TSV, and TAB load. JSON, JSON Lines, GeoJSON, and spreadsheet files show a
+  "not supported yet" message, and any other extension is named and refused. The router declares CSV and JSON only, so
+  a TSV file opens through the pane's own Open or a drop.
+- The bookmark is made at open, kept when it still names the file that opened, and made again otherwise. Resolution
+  runs off the main thread, and `describe()` returns the restored payload until it ends.
+- Fuzzing: a seeded mutation fuzzer runs the loader, the store, and the sort and filter on mutated files. `make fuzz`
+  builds the whole package under the address sanitizer in its own scratch folder, which links against the prebuilt
+  GhosttyKit, then runs only the fuzzer. 5000 iterations at the default seed found no crash and no memory error.
+  `make test-package` runs it at 300 iterations without the sanitizer, and `make ci` does not run `make fuzz`. The
+  sanitizer does not instrument libxml2 or zlib, so M4's fuzzing covers their heap use only as the interceptors see it.
+- A drop of several files is refused on the applet's drop entry point, and the package tests prove it. XCUITest cannot
+  start a drag from Finder, so no UI test drives it.
+- The visual check is left to the user. The run's screenshot of the running app was denied by its permission check.
+  The UI suite drives the launcher, the open panel, Cmd-O routing, and restore. Things to look at in the visual check:
+  the table's layout, the status segments, and the File menu. The menu shows two items titled "Open..." when a data
+  viewer has focus, the window's routed Open and the pane-local one, and the pane-local one sits in its own section.
 
 ### M2: JSON
 
@@ -374,6 +412,31 @@ None.
   committed to filing. UTERM-015 is that proposal, now accepted. The viewer gains an Open... command with no key and
   declares CSV, JSON, and `.xlsx` as owner. Revisit-hook audit: act on the filing clause, which is done and removed.
   The byte-stream clause stays.
+
+- 2026-11-04: Amended "Large files": each pane keeps a 32 MiB floor of the budget, so the app holds at most the budget
+  plus one floor for each pane beyond it. Before, the text said one budget covered every pane and gave no floor, while
+  the milestone asks that a pane opened last still loads a minimum of rows. Both cannot hold without a floor.
+  (work-queue best guess)
+- 2026-11-04: CSV rule picked in M1. Encoding: a byte-order mark wins, then valid UTF-8 in the first 64 KiB, then
+  Windows-1252. Delimiter: `.tsv` and `.tab` mean tab, otherwise the first 64 KiB is tried with comma, semicolon, tab,
+  and pipe, and the most consistent field count above one wins, with ties to comma. Header: the first row is the header
+  unless a cell is a number, and an empty header cell is named by position. The rule rests on this proposal's "The
+  applet contract" and M1 text, which say only that one documented rule exists. (work-queue best guess)
+- 2026-11-04: Budget numbers picked in M1: the smaller of 1 GiB and a quarter of physical memory, a 32 MiB floor for
+  each pane, and pages of about 1 MiB. "Large files" names no number. Only constants change if they are wrong.
+  (work-queue best guess)
+- 2026-11-04: Readers are picked by file extension, and a declared type the viewer cannot read yet shows a "not
+  supported yet" message. Any other extension is refused with its name, so `.txt` does not open as CSV. TSV is not
+  declared to the router, which keeps to the CSV and JSON declarations in "Input sources". (work-queue best guess)
+- 2026-11-04: The fuzzer is an in-repo seeded mutator under the address sanitizer, not libFuzzer, and `make fuzz` stays
+  out of `make ci`. The risk text asks for a fuzzing run per reader, not a CI gate. (work-queue best guess)
+- 2026-11-04: A sort reserves its key memory from the shared budget, and a sort the budget refuses leaves the filtered
+  rows in file order with a notice. The keys scale with the rows, which already fill the budget, so an unbounded sort
+  could double the app's use. "Large files" says only that sort runs off the main thread on a snapshot.
+  (work-queue best guess)
+- 2026-11-04: A header click cycles ascending, descending, then no sort. Numbers sort before text when ascending, text
+  sorts by its lowercased form, and empty cells come last in both directions. "Clicking a column header sorts by that
+  column" fixes none of this. (work-queue best guess)
 
 ## References
 
