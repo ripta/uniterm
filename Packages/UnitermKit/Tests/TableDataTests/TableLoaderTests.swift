@@ -102,28 +102,18 @@ final class TableLoaderTests: XCTestCase {
     XCTAssertEqual(loadFile(file).end, .failed(.permissionDenied(path: file.path)))
   }
 
-  /// Catches a declared type that the viewer cannot read yet and shows an empty table or crashes.
-  /// A spreadsheet says the format is not supported yet, and a format that never loads says so.
-  func testAFormatTheViewerCannotReadShowsAMessage() throws {
+  /// Catches a file with an extension the viewer does not read being opened as CSV, or crashing.
+  func testAFormatTheViewerDoesNotReadShowsAMessage() throws {
     let scratch = try Scratch(self)
-    let xlsx = try scratch.write("a.xlsx", "x")
-    let xls = try scratch.write("a.xls", "x")
-
-    let xlsxEnd = loadFile(xlsx)
-    XCTAssertEqual(
-      xlsxEnd.end,
-      .failed(.unsupportedFormat(path: xlsx.path, description: "a spreadsheet", comingLater: true)))
-    XCTAssertEqual(xlsxEnd.snapshot.rowCount, 0)
-    XCTAssertTrue(
-      try XCTUnwrap(
-        TableLoadError.unsupportedFormat(
-          path: xlsx.path, description: "a spreadsheet", comingLater: true
-        ).errorDescription
-      ).contains("not supported yet"))
+    let text = try scratch.write("notes.txt", "x")
+    let bare = try scratch.write("README", "x")
 
     XCTAssertEqual(
-      loadFile(xls).end,
-      .failed(.unsupportedFormat(path: xls.path, description: "a .xls file", comingLater: false)))
+      loadFile(text).end,
+      .failed(.unsupportedFormat(path: text.path, description: "a .txt file")))
+    XCTAssertEqual(
+      loadFile(bare).end,
+      .failed(.unsupportedFormat(path: bare.path, description: "a file with no extension")))
   }
 
   /// Catches a budget that is not honored. A file bigger than the budget loads its first rows

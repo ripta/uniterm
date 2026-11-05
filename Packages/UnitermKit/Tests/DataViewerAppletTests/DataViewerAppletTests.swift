@@ -433,10 +433,109 @@ final class DataViewerAppletTests: XCTestCase {
       applet.session.query.sort, SortSpec(column: .named("other"), ascending: true))
   }
 
+  // MARK: Workbooks
+
+  private func workbook(_ scratch: Scratch, _ name: String = "book.xlsx") throws -> URL {
+    let file = scratch.url.appendingPathComponent(name)
+
+    try makeWorkbook([
+      (name: "Sales", rows: [["region", "amount"], ["east", "3"], ["west", "5"]]),
+      (name: "Costs", rows: [["item", "cost"], ["rent", "9"]]),
+    ]).write(to: file)
+
+    return file
+  }
+
+  /// Catches a workbook that opens with no way to reach its other sheets, and a picker that does
+  /// not change the table. The picker lists every sheet, and choosing one shows its rows.
+  func testAWorkbookOffersASheetPickerThatSwitchesTheTable() async throws {
+    let scratch = try Scratch(self)
+    let applet = DataViewerApplet(startDirectory: scratch.url.path, budget: makeBudget())
+
+    try applet.replaceSource(
+      with: try workbook(scratch), startDirectory: scratch.url.path)
+
+    let done = await loaded(applet)
+    XCTAssertTrue(done)
+    XCTAssertFalse(applet.content.sheetPicker.isHidden)
+    XCTAssertEqual(applet.content.sheetPicker.itemTitles, ["Sales", "Costs"])
+    XCTAssertEqual(applet.session.snapshot.columns.map(\.title), ["region", "amount"])
+    XCTAssertEqual(try DataViewerDescription.decode(applet.describe()).sheet, "Sales")
+
+    applet.content.sheetPicker.selectItem(at: 1)
+    _ = applet.content.sheetPicker.sendAction(
+      applet.content.sheetPicker.action, to: applet.content.sheetPicker.target)
+
+    let switched = await eventually {
+      applet.session.phase == .loaded
+        && applet.session.snapshot.columns.map(\.title) == ["item", "cost"]
+    }
+
+    XCTAssertTrue(switched)
+    XCTAssertEqual(column(applet, 0), ["rent"])
+    XCTAssertEqual(applet.content.sheetPicker.titleOfSelectedItem, "Costs")
+    XCTAssertEqual(try DataViewerDescription.decode(applet.describe()).sheet, "Costs")
+  }
+
+  /// Catches a relaunch that shows the first sheet again. The stored sheet reloads, and a sheet
+  /// the workbook no longer has falls back to the first.
+  func testTheSelectedSheetSurvivesARestore() async throws {
+    let scratch = try Scratch(self)
+    let file = try workbook(scratch)
+
+    let applet = try restore(
+      DataViewerDescription(startDirectory: scratch.url.path, path: file.path, sheet: "Costs"))
+
+    XCTAssertEqual(try DataViewerDescription.decode(applet.describe()).sheet, "Costs")
+
+    applet.start()
+    let done = await loaded(applet)
+
+    XCTAssertTrue(done)
+    XCTAssertEqual(column(applet, 0), ["rent"])
+    XCTAssertEqual(try DataViewerDescription.decode(applet.describe()).sheet, "Costs")
+
+    let gone = try restore(
+      DataViewerDescription(startDirectory: scratch.url.path, path: file.path, sheet: "Deleted"))
+
+    gone.start()
+    let fallback = await loaded(gone)
+
+    XCTAssertTrue(fallback)
+    XCTAssertEqual(column(gone, 0), ["east", "west"])
+    XCTAssertEqual(try DataViewerDescription.decode(gone.describe()).sheet, "Sales")
+  }
+
+  /// Catches a spreadsheet format that shows a message saying "corrupt", or no message at all.
+  func testAnOldWorkbookShowsAMessageNamingItsFormat() async throws {
+    let scratch = try Scratch(self)
+    let file = scratch.url.appendingPathComponent("old.xls")
+    try Data([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] + [UInt8](repeating: 0, count: 600))
+      .write(to: file)
+
+    let applet = DataViewerApplet(startDirectory: scratch.url.path, budget: makeBudget())
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+
+    let failed = await eventually {
+      if case .failed = applet.session.phase { return true }
+
+      return false
+    }
+
+    XCTAssertTrue(failed)
+
+    guard case .message(let text) = applet.content.body else {
+      return XCTFail("expected a message")
+    }
+
+    XCTAssertTrue(text.contains(".xls"), text)
+    XCTAssertFalse(text.lowercased().contains("corrupt"), text)
+  }
+
   // MARK: Commands
 
   /// Catches an Open that asks for a key, which would shadow the window's Cmd-O, and a
-  /// declaration that drifts from the owner rank for CSV and JSON.
+  /// declaration that drifts from the owner rank for CSV, JSON, and `.xlsx`.
   func testTheCommandSetAndDeclaration() {
     let commands = DataViewerApplet.commandSet.commands
 
@@ -450,6 +549,7 @@ final class DataViewerAppletTests: XCTestCase {
       [
         OpenedType("public.comma-separated-values-text", rank: .owner),
         OpenedType("public.json", rank: .owner),
+        OpenedType("org.openxmlformats.spreadsheetml.sheet", rank: .owner),
       ])
   }
 

@@ -119,6 +119,15 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     content.onOpen = { [weak self] in self?.showOpenPanel() }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
     content.onExpand = { [weak self] request in self?.expand(request) }
+    content.onSheet = { [weak self] name in self?.selectSheet(name) }
+  }
+
+  /// Shows another sheet of the open workbook. The choice is in the description at once, so a
+  /// reopen or a relaunch brings the same sheet back.
+  private func selectSheet(_ name: String) {
+    record.sheet = name
+    describesFromRecord = false
+    session.selectSheet(name)
   }
 
   // MARK: Find
@@ -214,10 +223,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     describesFromRecord = false
     restoreWaitsForStart = false
 
-    open(path: file.path, bookmark: nil, restoring: nil)
+    open(path: file.path, bookmark: nil, restoring: nil, sheet: nil)
   }
 
-  private func open(path: String, bookmark: Data?, restoring query: TableQuery?) {
+  private func open(path: String, bookmark: Data?, restoring query: TableQuery?, sheet: String?) {
     opening?.cancel()
     openGeneration += 1
     resolvedNotice = nil
@@ -245,7 +254,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
           self.resolvedNotice = "Moved. Found at \(movedFrom)."
         }
 
-        self.session.load(.file(resolved.file), restoring: query)
+        self.session.load(.file(resolved.file, sheet: sheet), restoring: query)
 
       case .failure(let error):
         self.session.fail(error, restoring: query)
@@ -292,7 +301,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     guard restoreWaitsForStart, let path = record.path else { return }
 
     restoreWaitsForStart = false
-    open(path: path, bookmark: record.bookmark, restoring: record.query)
+    open(path: path, bookmark: record.bookmark, restoring: record.query, sheet: record.sheet)
   }
 
   public func close() {
@@ -327,6 +336,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
       description.sort = query.sort
       description.filter = query.filter.isEmpty ? nil : query.filter
+      description.sheet = session.selectedSheet ?? record.sheet
     }
 
     // The payload always encodes. The fields are plain values, so a failure is a programming error.
@@ -344,8 +354,15 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     let fileName = record.path.map { ($0 as NSString).lastPathComponent }
     let query = describesFromRecord ? record.query : session.query
 
+    if session.phase == .loaded || session.phase == .stoppedAtBudget
+      || session.phase == .stoppedLowMemory
+    {
+      record.sheet = session.selectedSheet
+    }
+
     content.show(
-      body(), notices: notices(), filter: query.filter, sort: query.sort, find: findDisplay())
+      body(), notices: notices(), filter: query.filter, sort: query.sort, find: findDisplay(),
+      sheets: SheetDisplay(names: session.sheets, selected: session.selectedSheet))
     revealCurrentMatch()
 
     let newTitle = fileName ?? Self.untitled
@@ -379,13 +396,17 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     case .idle:
       return .message(
         record.path == nil
-          ? "Open a CSV or JSON file, or drop one here."
+          ? "Open a CSV, JSON, or .xlsx file, or drop one here."
           : "Opening\u{2026}")
 
     case .loading:
       return .message("Loading\u{2026}")
 
     case .loaded:
+      if let sheet = session.selectedSheet, session.sheets.count > 1 {
+        return .message("The sheet \u{201C}\(sheet)\u{201D} has no rows.")
+      }
+
       return .message("\u{201C}\(title)\u{201D} has no rows.")
 
     case .stoppedAtBudget, .stoppedLowMemory:

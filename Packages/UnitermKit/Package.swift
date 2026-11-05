@@ -32,6 +32,11 @@ let package = Package(
     .library(name: "TableData", targets: ["TableData"]),
     .library(name: "DataViewerApplet", targets: ["DataViewerApplet"]),
   ],
+  dependencies: [
+    // The first third-party Swift package. Only TableData uses it. The version is exact, and
+    // Package.resolved is committed beside this file and in the Xcode workspace.
+    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20")
+  ],
   targets: [
     .target(name: "Theme"),
     .target(name: "Preferences"),
@@ -67,7 +72,8 @@ let package = Package(
       ]),
     .target(
       name: "TerminalApplet", dependencies: ["AppletKit", "StatusKit", "TerminalSurface", "Theme"]),
-    .target(name: "TableData"),
+    .target(
+      name: "TableData", dependencies: [.product(name: "ZIPFoundation", package: "ZIPFoundation")]),
     .target(
       name: "DataViewerApplet", dependencies: ["AppletKit", "StatusKit", "TableData", "Theme"]),
     .target(

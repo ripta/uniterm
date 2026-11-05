@@ -6,7 +6,9 @@ import XCTest
 /// A seeded mutation fuzzer for the table readers as shipped. The CSV side covers the encoding pick,
 /// the transcoder, the delimiter sniffer, the parser, the page store, and the sort and filter over
 /// it. The JSON side covers the scanner, the flattening, the column registry, and the nested
-/// values a cell opens.
+/// values a cell opens. The workbook side builds `.xlsx` archives in code and mutates their parts,
+/// their directory, and their compound-file lookalikes. It covers the ZIP reader, the inflating
+/// thread, the XML parts, and the caps, with the limits shrunk so a small file reaches them.
 ///
 /// `make test-package` runs it at a small count. `make fuzz` runs it under the address sanitizer
 /// at a large one, through `UNITERM_FUZZ_ITERATIONS`. `UNITERM_FUZZ_SEED` repeats a run. A failure
@@ -14,8 +16,10 @@ import XCTest
 ///
 /// It proves that no mutated input traps, reads out of bounds, or breaks the store's own
 /// invariants. It cannot prove the cells are right. The loader and parser tests prove that.
-/// ASan does not instrument the system libraries the way it does Swift, so memory errors inside
-/// libxml2 or zlib are a later reader's concern.
+/// ASan does not instrument the system libraries the way it does Swift. A workbook passes through
+/// libxml2 and the Compression framework, which the sanitizer sees only through its allocator and
+/// memory-function interceptors. A heap overflow in their own code can go unseen, so a clean run
+/// here is weaker evidence than one over Swift code.
 final class CSVFuzzTests: XCTestCase {
   private var iterations: Int {
     ProcessInfo.processInfo.environment["UNITERM_FUZZ_ITERATIONS"].flatMap(Int.init) ?? 300
@@ -168,6 +172,77 @@ final class CSVFuzzTests: XCTestCase {
     }
   }
 
+  /// Catches a workbook that makes the reader trap, hang, or leave the store inconsistent, and a
+  /// failure that is not one of the messages the pane shows. A workbook that loads must also keep
+  /// the budget's accounting honest.
+  func testMutatedWorkbooksLoadWithoutTrappingAndKeepTheStoreConsistent() throws {
+    let scratch = try Scratch(self)
+    var random = SplitMix64(seed: seed &+ 4)
+    let corpus = Self.workbookCorpus()
+
+    for iteration in 0..<iterations {
+      var item = corpus[Int(random.next() % UInt64(corpus.count))]
+
+      for _ in 0..<(1 + Int(random.next() % 4)) {
+        guard !item.parts.isEmpty else { break }
+
+        let index = Int(random.next() % UInt64(item.parts.count))
+
+        Self.mutate(&item.parts[index].data, using: &random, interesting: Self.xmlInteresting)
+      }
+
+      var bytes = item.raw ?? ZipFixture.archive(item.parts)
+
+      if item.raw != nil || random.next() % 8 == 0 {
+        Self.mutate(&bytes, using: &random, interesting: Self.interesting)
+      }
+
+      let file = try scratch.write(
+        ["fuzz.xlsx", "fuzz.xlsm", "fuzz.xls"][Int(random.next() % 3)], bytes)
+      let context = "seed \(seed &+ 4), iteration \(iteration), input kept at \(file.path)"
+
+      var limits = SpreadsheetLimits()
+
+      if random.next() % 4 != 0 {
+        limits.metadataBytes = 4 << 10
+        limits.sharedStringBytes = 32 << 10
+        limits.sheetBytes = 1 << 20
+        limits.cellBytes = 64
+        limits.rowCells = 200
+        limits.rowBytes = 4 << 10
+        limits.entries = 64
+        limits.depth = 24
+      }
+
+      let pageTarget = [64, 512, 4096, TableLoader.defaultPageTarget][Int(random.next() % 4)]
+      let budget = TableBudget(limit: random.next() % 5 == 0 ? 4_000 : 1 << 30, floor: 0)
+      let sheet = random.next() % 3 == 0 ? "Second" : nil
+      let log = EventLog()
+
+      TableLoader.loadBlocking(
+        .file(file, sheet: sheet), lease: budget.makeLease(), pageTarget: pageTarget,
+        limits: limits, emit: log.add)
+
+      guard case .finished(let snapshot, let end, _)? = log.events.last else {
+        XCTFail("no finished event, \(context)")
+        continue
+      }
+
+      switch end {
+      case .completed, .stoppedAtBudget,
+        .failed(.invalidSpreadsheet), .failed(.spreadsheetTooLarge),
+        .failed(.unsupportedSpreadsheet):
+        break
+
+      default:
+        XCTFail("unexpected end \(end), \(context)")
+        continue
+      }
+
+      try Self.check(snapshot, using: &random, context: context, scanRows: 100, scanColumns: 256)
+    }
+  }
+
   // MARK: Invariants
 
   /// Every nested cell is valid JSON that the reader already checked, so it must open as a table.
@@ -189,13 +264,17 @@ final class CSVFuzzTests: XCTestCase {
     }
   }
 
+  /// Walks the cells and runs a few sorts and a filter. A workbook can be 16,384 columns wide, so
+  /// the walk covers `scanRows` rows and `scanColumns` columns, and only that many rows of the
+  /// filter's answer are checked against every column.
   private static func check(
-    _ snapshot: TableSnapshot, using random: inout SplitMix64, context: String
+    _ snapshot: TableSnapshot, using random: inout SplitMix64, context: String,
+    scanRows: Int = .max, scanColumns: Int = .max
   ) throws {
     var cells = 0
 
-    for row in 0..<snapshot.rowCount {
-      for column in 0..<snapshot.columns.count {
+    for row in 0..<min(snapshot.rowCount, scanRows) {
+      for column in 0..<min(snapshot.columns.count, scanColumns) {
         cells += snapshot.cell(row: row, column: column).count
         _ = snapshot.text(row: row, column: column, limit: 16)
       }
@@ -227,7 +306,7 @@ final class CSVFuzzTests: XCTestCase {
 
     let selection = TableQueryEngine.evaluate(snapshot, query: TableQuery(filter: needle))
 
-    for index in 0..<(selection?.count ?? 0) {
+    for index in 0..<min(selection?.count ?? 0, scanRows) {
       let row = selection?.row(at: index) ?? 0
       let found = (0..<snapshot.columns.count).contains {
         snapshot.text(row: row, column: $0, limit: .max).lowercased().range(of: needle) != nil
@@ -303,6 +382,137 @@ final class CSVFuzzTests: XCTestCase {
       [0xFF, 0xFE] + accents.utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] },
       Array("[\"\u{1}\"]".utf8),
     ]
+  }
+
+  /// The bytes that change an XML part's structure, its names, or its numbers.
+  private static let xmlInteresting: [UInt8] =
+    Array("<>/=\"'&;!-[]? :_xsrtvfcwb0123456789ABXFD".utf8) + [0x0A, 0x00, 0xFF, 0xC3, 0xEF, 0xBB]
+
+  /// One workbook seed. `parts` are zipped after mutation. `raw` is a file that is not a workbook
+  /// the builder can make, such as a compound file, and takes byte mutations only.
+  private struct WorkbookSeed {
+    var parts: [ZipPart] = []
+    var raw: [UInt8]?
+  }
+
+  // The workbook seeds, written out in code since the repo holds no binary fixtures.
+  private static func workbookCorpus() -> [WorkbookSeed] {
+    func cell(_ ref: String, _ value: String, _ type: String? = nil, _ style: Int? = nil) -> String
+    {
+      let t = type.map { " t=\"\($0)\"" } ?? ""
+      let s = style.map { " s=\"\($0)\"" } ?? ""
+
+      return "<c r=\"\(ref)\"\(s)\(t)><v>\(value)</v></c>"
+    }
+
+    func seed(_ bytes: [UInt8]) -> WorkbookSeed {
+      WorkbookSeed(parts: unzip(bytes))
+    }
+
+    let plain = Workbook.bytes(
+      sheets: [
+        SheetSpec(
+          "First",
+          Workbook.row(1, cell("A1", "0", "s") + cell("B1", "1", "s") + cell("C1", "2", "s"))
+            + Workbook.row(
+              2, cell("A2", "4.5") + cell("B2", "44927", nil, 1) + cell("C2", "1", "b"))
+            + Workbook.row(3, "<c r=\"A3\"><f>A2*2</f></c>" + cell("C3", "#N/A", "e"))),
+        SheetSpec(
+          "Second", Workbook.row(1, cell("A1", "x", "str") + cell("B1", "y", "str")), isHidden: true
+        ),
+        SheetSpec("Third", Workbook.row(1, cell("A1", "z", "str"))),
+      ], strings: ["alpha", "beta", "gamma"], styles: [0, 14, 22, 164], formats: [164: "h:mm"],
+      date1904: false)
+
+    let rich = Workbook.bytes(
+      sheets: [
+        SheetSpec(
+          "S",
+          Workbook.row(
+            1,
+            cell("A1", "0", "s") + cell("B1", "1", "s")
+              + "<c r=\"C1\" t=\"inlineStr\"><is><r><t>in</t></r><rPh><t>x</t></rPh></is></c>"))
+      ],
+      stringsXML:
+        "<sst><si><r><t>a_x0041_b</t></r><rPh sb=\"0\"><t>ph</t></rPh></si><si><t>_xD83D__xDE00_ _xZZZZ_ _x00</t></si></sst>"
+    )
+
+    let wide = Workbook.bytes(
+      sheets: [
+        SheetSpec(
+          "W",
+          Workbook.row(1, (0..<400).map { cell("A\($0 + 1)", "\($0)") }.joined())
+            + Workbook.row(2, cell("XFD2", "1") + cell("XFE2", "2") + cell("A2", "3"))
+            + Workbook.row(3, (0..<300).map { _ in cell("B3", "1") }.joined())
+            + Workbook.row(4, cell("C4", "1") + cell("A4", "2") + cell("B4", "3")))
+      ])
+
+    let deep = Workbook.bytes(
+      sheets: [
+        SheetSpec("D", String(repeating: "<g>", count: 200) + Workbook.row(1, cell("A1", "1")))
+      ])
+
+    let doctype =
+      Workbook.header
+      + "<!DOCTYPE x [<!ENTITY a \"aaaaaaaaaa\"><!ENTITY b \"&a;&a;&a;&a;&a;&a;\">]>"
+    let entities = Workbook.bytes(sheets: [
+      SheetSpec("E", Workbook.row(1, "<c t=\"inlineStr\"><is><t>&b;</t></is></c>"))
+    ])
+    var entityParts = unzip(entities)
+    entityParts[2].data = Array(
+      (doctype + "<workbook><sheets><sheet name=\"E\" r:id=\"rId1\"/></sheets></workbook>").utf8)
+
+    let manyStrings = Workbook.bytes(
+      sheets: [SheetSpec("S", Workbook.row(1, cell("A1", "5", "s")))],
+      stringsXML: "<sst>" + String(repeating: "<si><t>some shared text</t></si>", count: 3_000)
+        + "</sst>")
+
+    let bomb = ZipFixture.archive([
+      ZipPart(
+        "_rels/.rels",
+        "<Relationships><Relationship Id=\"r\" Type=\"x/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+      ),
+      ZipPart(
+        "xl/workbook.xml",
+        "<workbook xmlns:r=\"x\"><sheets><sheet name=\"B\" r:id=\"r1\"/></sheets></workbook>"),
+      ZipPart(
+        "xl/_rels/workbook.xml.rels",
+        "<Relationships><Relationship Id=\"r1\" Type=\"x/worksheet\" Target=\"worksheets/s.xml\"/></Relationships>"
+      ),
+      ZipPart(
+        "xl/worksheets/s.xml",
+        bytes: Array("<worksheet><sheetData>".utf8) + [UInt8](repeating: 0x20, count: 3 << 20)
+          + Array("</sheetData></worksheet>".utf8), claimedSize: 64),
+    ])
+
+    let broken = ZipFixture.archive([
+      ZipPart(
+        "_rels/.rels",
+        "<Relationships><Relationship Id=\"r\" Type=\"x/officeDocument\" Target=\"../../x.xml\"/></Relationships>"
+      ),
+      ZipPart(
+        "x.xml",
+        "<workbook><sheets><sheet name=\"A\" r:id=\"r1\"/><sheet/><sheet name=\"A\"/></sheets></workbook>"
+      ),
+    ])
+
+    return [
+      seed(plain), seed(rich), seed(wide), seed(deep), WorkbookSeed(parts: entityParts),
+      seed(manyStrings), seed(bomb), WorkbookSeed(raw: bomb), seed(broken),
+      WorkbookSeed(raw: CompoundFixture.bytes(streams: ["Root Entry", "Workbook"])),
+      WorkbookSeed(raw: CompoundFixture.bytes(streams: ["Root Entry", "EncryptedPackage"])),
+      WorkbookSeed(raw: Array("PK".utf8) + [3, 4] + [UInt8](repeating: 0, count: 80)),
+      WorkbookSeed(raw: ZipFixture.archive([])),
+      WorkbookSeed(raw: ZipFixture.archive([ZipPart("xl/workbook.bin", bytes: [1])])),
+      WorkbookSeed(raw: []),
+    ]
+  }
+
+  /// The parts of an archive that `ZipFixture` wrote, so a test can mutate them and zip them again.
+  private static func unzip(_ archive: [UInt8]) -> [ZipPart] {
+    guard let parts = ZipFixture.parts(of: archive) else { return [] }
+
+    return parts
   }
 
   private static func mutate(

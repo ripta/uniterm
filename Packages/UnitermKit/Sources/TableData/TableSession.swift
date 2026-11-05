@@ -50,6 +50,13 @@ public final class TableSession {
   /// True when the last sort did not get the memory it needed. The rows then show in file order.
   public private(set) var sortSkipped = false
 
+  /// The sheets of the workbook that is open, in order. Empty for a file that is not a workbook.
+  public private(set) var sheets: [String] = []
+
+  /// The sheet the rows come from. A sheet asked for shows here from the start, and the workbook's
+  /// answer replaces it once the workbook has been read.
+  public private(set) var selectedSheet: String?
+
   /// The sort and filter the user asked for. A restored query shows here from the start, and takes
   /// effect once the load ends.
   public private(set) var query = TableQuery()
@@ -64,6 +71,7 @@ public final class TableSession {
   private var evaluationIsStale = false
   private var restoredQueryWaits = false
   private var generation = 0
+  private var source: TableSource?
   private var searchTask: Task<Void, Never>?
   private var searchSequence = 0
   private var revealOnCompletion = false
@@ -114,6 +122,10 @@ public final class TableSession {
   public func load(_ source: TableSource, restoring restored: TableQuery? = nil) {
     reset()
 
+    self.source = source
+
+    if case .file(_, let sheet) = source { selectedSheet = sheet }
+
     query = restored ?? TableQuery()
     restoredQueryWaits = restored != nil
     phase = .loading
@@ -149,6 +161,21 @@ public final class TableSession {
 
     query = restored ?? TableQuery()
     phase = .failed(error)
+    onChange?()
+  }
+
+  /// Shows another sheet of the open workbook. The new sheet starts with no sort and no filter,
+  /// since its columns are not the old sheet's. The picker keeps its list while the sheet loads.
+  public func selectSheet(_ name: String) {
+    guard name != selectedSheet, sheets.contains(name), case .file(let url, _)? = source else {
+      return
+    }
+
+    let listed = sheets
+
+    load(.file(url, sheet: name))
+
+    sheets = listed
     onChange?()
   }
 
@@ -308,6 +335,9 @@ public final class TableSession {
 
     snapshot = .empty
     progress = LoadProgress()
+    sheets = []
+    selectedSheet = nil
+    source = nil
     selection = .all(count: 0)
     sortSkipped = false
 
@@ -321,10 +351,12 @@ public final class TableSession {
     case .snapshot(let next, let latest):
       snapshot = next
       progress = latest
+      adoptWorkbook(latest, clearsWithoutSheets: false)
       snapshotDidChange()
 
     case .finished(let final, let end, let finalProgress):
       progress = finalProgress
+      adoptWorkbook(finalProgress, clearsWithoutSheets: end == .completed || end.isStoppedEarly)
 
       switch end {
       case .completed:
@@ -354,6 +386,18 @@ public final class TableSession {
       }
 
       snapshotDidChange()
+    }
+  }
+
+  /// Takes the workbook's sheet list and the sheet it chose. A finished load of a file with no
+  /// sheets clears them, so a restored sheet name does not outlive a file that is not a workbook.
+  private func adoptWorkbook(_ latest: LoadProgress, clearsWithoutSheets: Bool) {
+    if !latest.sheets.isEmpty {
+      sheets = latest.sheets
+      selectedSheet = latest.selectedSheet
+    } else if clearsWithoutSheets {
+      sheets = []
+      selectedSheet = nil
     }
   }
 

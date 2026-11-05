@@ -17,6 +17,10 @@ public enum CellKind: UInt8, Sendable {
 
   /// An object or an array that opens as a table. The bytes are its compact JSON text.
   case nested = 6
+
+  /// A spreadsheet formula that has no cached result. Nothing is evaluated, so the cell has no
+  /// value to show. It holds no bytes.
+  case notComputed = 7
 }
 
 /// One cell of a typed row, as a reader hands it to the store.
