@@ -3,6 +3,7 @@ import AppletCatalog
 import AppletKit
 import DataViewerApplet
 import FileRouting
+import MapViewerApplet
 import OSLog
 import Preferences
 import SettingsKit
@@ -158,6 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       case DataViewerDescription.typeID:
         return try DataViewerApplet(restoring: description)
 
+      case MapViewerDescription.typeID:
+        return try MapViewerApplet(restoring: description)
+
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
       }
@@ -173,6 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case .dataViewer:
         return DataViewerApplet(startDirectory: directory)
+
+      case .mapViewer:
+        return MapViewerApplet(startDirectory: directory)
       }
     }
 
