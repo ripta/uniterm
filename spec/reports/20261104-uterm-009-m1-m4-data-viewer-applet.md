@@ -13,7 +13,7 @@ carries a `Live after` line. Nothing was held or skipped.
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-009 M1: CSV table | DONE | "Add a data viewer applet that opens CSV files as tables" |
-| UTERM-009 M2: JSON | QUEUED | |
+| UTERM-009 M2: JSON | DONE | "Open JSON and JSON Lines files in the data viewer" |
 | UTERM-009 M3: Search | QUEUED | |
 | UTERM-009 M4: Spreadsheets | QUEUED | |
 
@@ -134,3 +134,72 @@ Left open:
   one is the pane-local Open from UTERM-015. The visual check should judge it.
 - No UI test drives a drop of several files, since XCUITest cannot start a drag from Finder. Package tests cover it
   on the applet's drop entry point.
+
+### UTERM-009 M2: JSON
+
+Commit: "Open JSON and JSON Lines files in the data viewer".
+
+Checks, final round:
+- `make fmt-check`, `make lint`, `make check`, and `make build` pass.
+- `make test-package` passes: 777 tests, 4 skipped, 0 failures.
+- `make fuzz` passes: 5000 iterations under AddressSanitizer, in 239 s. JSON mutation took 20.7 s and JSON chunking
+  28.3 s.
+- `make test-app` passes: 84 tests, 0 failures, including the new nested-table test. The coordinator ran it twice:
+  once before the review fixes, and once on the final tree.
+- `proposals.py check` and `proposals.py freeze --row-commit` on M1's commit report nothing.
+- The visual check is left to the user, as in M1.
+
+Test cost:
+
+| Test class | Wall time |
+|---|---|
+| `JSONLoaderTests` | about 1.1 s, plus the new flood tests, each under a 5 s deadline. A 1.7 MB streaming test takes 0.9 s and proves the load stops after the first chunk |
+| `JSONScannerTests` | 0.003 s |
+| JSON methods in `CSVFuzzTests`, at 300 iterations | about 0.2 s |
+| `DataViewerAppletTests` | 0.67 s for the class |
+
+The fuzz class's ASan run grew from 188 s to 239 s with the JSON corpus.
+
+Best guesses made during the milestone. Each has a Decision Log entry marked "(work-queue best guess)", and the
+"JSON shapes" decision is amended for the first four:
+- A nested object with more than 64 members is a map, shown as one expandable cell.
+- Objects flatten to six key segments. A table holds at most 1,000 columns. Keys past that fold into one `(more keys)`
+  cell, so no value is lost.
+- Duplicate keys keep every value. The nth repeat of a path in a row fills that path's nth-occurrence column.
+- JSON Lines: a `.jsonl` or `.ndjson` name decides. Otherwise a file is JSON Lines when its first 64 KiB holds a
+  whole first value and the start of a second.
+- Sort order: numbers, text, booleans, nested cells, null, then missing. Null and missing stay last in both directions.
+- A syntax error after good rows fails the whole load.
+- GeoJSON opens as JSON when it reaches the viewer through its own Open or a drop. The router still sends it to the
+  map. M1's As built note is amended to match.
+- A nested table opens in a popover with its own session and budget lease.
+- A value past the 1 MiB cell cap, or a number past 64 KiB, shows "(value too large to show)" and counts as cut.
+
+Review findings and their dispositions:
+1. A hostile wide or duplicate-key element ran up unbudgeted memory and quadratic CPU, and a cancel could not
+   interrupt it. CONFIRMED and fixed. Repeats are O(1). A row keeps at most 65,536 cells. The load checks for a
+   cancel every 256 rows. The duplicate-flood test took 36.9 s on the old code against a 5 s deadline, and the
+   wide-element test failed there too.
+2. The plan's visual check was not done. The screenshot was denied in M1, so the check is left to the user, and the
+   As built block says so.
+3. Positional cells past the column cap folded into `(more keys)` under an empty title. CONFIRMED and fixed: they are
+   titled `Column N`. The test failed on the old code.
+4. A number longer than 64 KiB failed the whole load. PLAUSIBLE. The trace confirmed it, and it is fixed: the number
+   shows the too-large note and counts as cut. Its text is never truncated, because a cut number reads as a different
+   value.
+5. A scalar-only JSON Lines file named `.json` was misread as one value. PLAUSIBLE. The trace confirmed it, and it
+   is fixed. The test failed on the old code.
+6. A GeoJSON FeatureCollection opens as key and value rows, and a large `features` member shows the too-large note.
+   Recorded in As built as a known limit.
+7. The column registry's memory is not charged to the budget. It is bounded at about 50 MiB for a hostile file, and
+   kilobytes for real files. Each open popover takes one more 32 MiB floor. Recorded in As built.
+
+ADR impact: no conflict with an accepted ADR. The ADR-07 advisory from M1 repeats for the JSON reader, and ADR-08 is
+consistent.
+
+Left open:
+- The visual check. M2's As built block lists what to look at: the nested-cell marker and its color, the popover's
+  size and position, the muted `null`, and the `(more keys)` column.
+- An array of empty objects, such as `[{}, {}]`, has rows and no columns. The pane says "has no rows".
+- The cut-rows notice says "rows had oversized cells cut". For JSON it also counts values that were replaced by the
+  too-large note.

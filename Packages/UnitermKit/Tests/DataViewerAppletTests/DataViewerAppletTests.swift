@@ -92,20 +92,63 @@ final class DataViewerAppletTests: XCTestCase {
     XCTAssertFalse(text.contains("corrupt"))
   }
 
-  /// Catches a declared type the viewer cannot read yet that crashes or shows an empty table. The
-  /// pane says the format is not supported yet.
-  func testAJSONFileSaysTheFormatIsNotSupportedYet() async throws {
+  /// Catches a JSON file that the pane cannot open, or that opens without its row count and
+  /// columns. The pane shows the table and reports the rows.
+  func testAJSONFileOpensAsATable() async throws {
     let scratch = try Scratch(self)
-    let file = try scratch.write("a.json", "[{\"a\":1}]")
+    let file = try scratch.write("a.json", #"[{"a":1,"b":{"c":"x"}},{"a":2}]"#)
     let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
 
     try applet.replaceSource(with: file, startDirectory: scratch.url.path)
-    _ = await eventually { applet.session.phase != .loading && applet.session.phase != .idle }
 
-    guard case .message(let text) = applet.content.body else { return XCTFail("no message") }
+    let done = await loaded(applet)
+    XCTAssertTrue(done)
+    XCTAssertEqual(applet.content.body, .table)
+    XCTAssertEqual(applet.segments.map(\.text), ["2 rows"])
+    XCTAssertEqual(applet.session.snapshot.columns.map(\.title), ["a", "b.c"])
+  }
 
-    XCTAssertTrue(text.contains("not supported yet"))
-    XCTAssertEqual(applet.session.visibleCount, 0)
+  /// Catches a JSON scalar or a syntax error that crashes the pane or leaves it blank. The pane
+  /// says what is wrong and names the line.
+  func testAJSONFileThatIsNotATableShowsAMessage() async throws {
+    let scratch = try Scratch(self)
+    let scalar = try scratch.write("one.json", "42")
+    let broken = try scratch.write("broken.json", "[1,\n2,,]")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+
+    for (file, expected) in [(scalar, "holds only a number"), (broken, "line 2")] {
+      try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+      _ = await eventually {
+        applet.title == file.lastPathComponent && applet.session.phase != .loading
+          && applet.session.phase != .idle
+      }
+
+      guard case .message(let text) = applet.content.body else { return XCTFail("no message") }
+
+      XCTAssertTrue(text.contains(expected), text)
+      XCTAssertFalse(text.contains("corrupt"))
+      XCTAssertEqual(applet.session.visibleCount, 0)
+    }
+  }
+
+  /// Catches a nested cell that opens to a blank popover, or that keeps its rows after it closes.
+  /// The value loads into a session of its own under the shared budget, shows its table, and gives
+  /// the budget back on close. A cell inside it opens one more.
+  func testANestedValueShowsATableAndFreesItsRowsOnClose() async throws {
+    let budget = makeBudget()
+    let table = NestedTable(
+      bytes: Array(#"[{"x":1,"y":[{"z":2}]},{"x":3}]"#.utf8), title: "items", budget: budget,
+      palette: .latte)
+
+    let done = await eventually { table.session.phase == .loaded }
+    XCTAssertTrue(done)
+    XCTAssertEqual(table.view.body, .table)
+    XCTAssertEqual(table.session.snapshot.columns.map(\.title), ["x", "y"])
+    XCTAssertGreaterThan(budget.used, 0)
+
+    table.close()
+
+    XCTAssertEqual(budget.used, 0)
   }
 
   /// Catches a folder, which the loader must refuse without reading it.

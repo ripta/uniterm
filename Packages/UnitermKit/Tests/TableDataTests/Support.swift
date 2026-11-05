@@ -58,6 +58,24 @@ struct Loaded {
   }
 
   var titles: [String] { snapshot.columns.map(\.title) }
+
+  /// The index of the column with this title. Fails the test when there is none.
+  func column(_ title: String, file: StaticString = #filePath, line: UInt = #line) -> Int {
+    guard let index = snapshot.columns.firstIndex(where: { $0.title == title }) else {
+      XCTFail("no column titled \(title) in \(titles)", file: file, line: line)
+      return 0
+    }
+
+    return index
+  }
+
+  func text(_ row: Int, _ title: String) -> String {
+    snapshot.text(row: row, column: column(title))
+  }
+
+  func kind(_ row: Int, _ title: String) -> CellKind {
+    snapshot.kind(row: row, column: column(title))
+  }
 }
 
 /// Loads a file on the calling thread, as the loader runs it, and returns the last event.
@@ -65,11 +83,23 @@ func loadFile(
   _ file: URL, budget: TableBudget = TableBudget(limit: 1 << 30, floor: 1 << 20),
   pageTarget: Int = TableLoader.defaultPageTarget, isCancelled: @escaping () -> Bool = { false }
 ) -> Loaded {
+  loadSource(.file(file), budget: budget, pageTarget: pageTarget, isCancelled: isCancelled)
+}
+
+/// Loads a nested value the way a nested cell does.
+func loadEmbedded(_ json: String) -> Loaded {
+  loadSource(.embeddedJSON(name: "cell", bytes: Array(json.utf8)))
+}
+
+func loadSource(
+  _ source: TableSource, budget: TableBudget = TableBudget(limit: 1 << 30, floor: 1 << 20),
+  pageTarget: Int = TableLoader.defaultPageTarget, isCancelled: @escaping () -> Bool = { false }
+) -> Loaded {
   let log = EventLog()
   let lease = budget.makeLease()
 
   TableLoader.loadBlocking(
-    .file(file), lease: lease, pageTarget: pageTarget, isCancelled: isCancelled, emit: log.add)
+    source, lease: lease, pageTarget: pageTarget, isCancelled: isCancelled, emit: log.add)
 
   guard case .finished(let snapshot, let end, let progress)? = log.events.last else {
     fatalError("a load must end with a finished event")

@@ -144,6 +144,34 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertFalse(written.contains("dx"), "rows were saved in the layout")
   }
 
+  /// Catches a nested JSON cell that does not open. A double click on an array cell opens its
+  /// values as a table in a popover over the pane, and the table shows the array's own rows.
+  func testADoubleClickOnANestedCellOpensItAsATable() throws {
+    let file = try makeCSV(
+      #"[{"name":"first","tags":[{"t":"alpha"},{"t":"beta"}]}]"#, name: "items.json")
+
+    try plantViewer(path: file.path)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    let table = window.tables["data-viewer-table"]
+
+    XCTAssertTrue(table.waitForExistence(timeout: 20), "no table")
+
+    let nestedCell = table.staticTexts.matching(
+      NSPredicate(format: "value BEGINSWITH %@", "\u{25B8} ")
+    ).firstMatch
+
+    XCTAssertTrue(nestedCell.waitForExistence(timeout: 10), "no nested cell")
+    nestedCell.doubleClick()
+
+    let nested = app.descendants(matching: .any)["data-viewer-table-nested"]
+
+    XCTAssertTrue(nested.waitForExistence(timeout: 10), "the nested table never opened")
+    XCTAssertTrue(nested.staticTexts["alpha"].waitForExistence(timeout: 5), "no nested row")
+    XCTAssertTrue(nested.staticTexts["beta"].exists, "no second nested row")
+  }
+
   /// Catches a missing file that shows an empty table or crashes the restore. The pane says the
   /// file is missing.
   func testARestoredViewerWhoseFileIsGoneSaysSo() throws {

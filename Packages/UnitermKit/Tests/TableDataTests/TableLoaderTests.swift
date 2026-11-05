@@ -103,21 +103,21 @@ final class TableLoaderTests: XCTestCase {
   }
 
   /// Catches a declared type that the viewer cannot read yet and shows an empty table or crashes.
-  /// A JSON file says the format is not supported yet, and a format that never loads says so.
+  /// A spreadsheet says the format is not supported yet, and a format that never loads says so.
   func testAFormatTheViewerCannotReadShowsAMessage() throws {
     let scratch = try Scratch(self)
-    let json = try scratch.write("a.json", "[{\"a\":1}]")
+    let xlsx = try scratch.write("a.xlsx", "x")
     let xls = try scratch.write("a.xls", "x")
 
-    let jsonEnd = loadFile(json)
+    let xlsxEnd = loadFile(xlsx)
     XCTAssertEqual(
-      jsonEnd.end,
-      .failed(.unsupportedFormat(path: json.path, description: "a JSON file", comingLater: true)))
-    XCTAssertEqual(jsonEnd.snapshot.rowCount, 0)
+      xlsxEnd.end,
+      .failed(.unsupportedFormat(path: xlsx.path, description: "a spreadsheet", comingLater: true)))
+    XCTAssertEqual(xlsxEnd.snapshot.rowCount, 0)
     XCTAssertTrue(
       try XCTUnwrap(
         TableLoadError.unsupportedFormat(
-          path: json.path, description: "a JSON file", comingLater: true
+          path: xlsx.path, description: "a spreadsheet", comingLater: true
         ).errorDescription
       ).contains("not supported yet"))
 

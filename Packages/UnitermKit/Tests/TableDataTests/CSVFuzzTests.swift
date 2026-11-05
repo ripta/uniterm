@@ -3,8 +3,10 @@ import XCTest
 
 @testable import TableData
 
-/// A seeded mutation fuzzer for the CSV stack as shipped: the encoding pick, the transcoder, the
-/// delimiter sniffer, the parser, the page store, and the sort and filter over it.
+/// A seeded mutation fuzzer for the table readers as shipped. The CSV side covers the encoding pick,
+/// the transcoder, the delimiter sniffer, the parser, the page store, and the sort and filter over
+/// it. The JSON side covers the scanner, the flattening, the column registry, and the nested
+/// values a cell opens.
 ///
 /// `make test-package` runs it at a small count. `make fuzz` runs it under the address sanitizer
 /// at a large one, through `UNITERM_FUZZ_ITERATIONS`. `UNITERM_FUZZ_SEED` repeats a run. A failure
@@ -98,7 +100,94 @@ final class CSVFuzzTests: XCTestCase {
     }
   }
 
+  /// Catches an input that makes the JSON reader trap, ends it some way other than a table or a
+  /// syntax message, or leaves the store inconsistent. Every nested cell it finds must open.
+  func testMutatedJSONFilesLoadWithoutTrappingAndKeepTheStoreConsistent() throws {
+    let scratch = try Scratch(self)
+    var random = SplitMix64(seed: seed &+ 2)
+    let corpus = Self.jsonCorpus()
+
+    for iteration in 0..<iterations {
+      var input = corpus[Int(random.next() % UInt64(corpus.count))]
+
+      for _ in 0..<(1 + Int(random.next() % 6)) {
+        Self.mutate(&input, using: &random, interesting: Self.jsonInteresting)
+      }
+
+      let file = try scratch.write(random.next() % 3 == 0 ? "fuzz.jsonl" : "fuzz.json", input)
+      let context = "seed \(seed &+ 2), iteration \(iteration), input kept at \(file.path)"
+
+      let pageTarget = [64, 512, 4096, TableLoader.defaultPageTarget][Int(random.next() % 4)]
+      let limit = random.next() % 5 == 0 ? 2_000 : 1 << 30
+      let loaded = loadFile(
+        file, budget: TableBudget(limit: limit, floor: 0), pageTarget: pageTarget)
+
+      switch loaded.end {
+      case .completed, .stoppedAtBudget, .failed(.invalidJSON), .failed(.notATable):
+        break
+
+      default:
+        XCTFail("unexpected end \(loaded.end), \(context)")
+        continue
+      }
+
+      try Self.check(loaded.snapshot, using: &random, context: context)
+      Self.checkNestedCells(in: loaded.snapshot, context: context)
+    }
+  }
+
+  /// Catches a scanner whose events depend on where the reads split. Random splits of mutated
+  /// JSON give the events of the whole input, in both modes.
+  func testRandomChunkingNeverChangesTheJSONEvents() {
+    var random = SplitMix64(seed: seed &+ 3)
+    let corpus = Self.jsonCorpus()
+
+    for iteration in 0..<iterations {
+      var input = corpus[Int(random.next() % UInt64(corpus.count))]
+
+      for _ in 0..<(1 + Int(random.next() % 4)) {
+        Self.mutate(&input, using: &random, interesting: Self.jsonInteresting)
+      }
+
+      let mode: JSONScanner.Mode = random.next() % 2 == 0 ? .single : .lines
+      let capture = mode == .lines ? 1 : 2
+      let whole = scanEvents([input[...]], mode: mode, captureAt: capture)
+
+      var chunks: [ArraySlice<UInt8>] = []
+      var offset = 0
+
+      while offset < input.count {
+        let size = 1 + Int(random.next() % 64)
+        chunks.append(input[offset..<min(offset + size, input.count)])
+        offset += size
+      }
+
+      XCTAssertEqual(
+        scanEvents(chunks, mode: mode, captureAt: capture), whole,
+        "seed \(seed &+ 3), iteration \(iteration)")
+    }
+  }
+
   // MARK: Invariants
+
+  /// Every nested cell is valid JSON that the reader already checked, so it must open as a table.
+  /// A few per snapshot keep the cost down.
+  private static func checkNestedCells(in snapshot: TableSnapshot, context: String) {
+    var opened = 0
+
+    for row in 0..<snapshot.rowCount where opened < 4 {
+      for column in 0..<snapshot.columns.count where opened < 4 {
+        guard snapshot.kind(row: row, column: column) == .nested else { continue }
+
+        opened += 1
+
+        let value = loadSource(
+          .embeddedJSON(name: "cell", bytes: Array(snapshot.cell(row: row, column: column))))
+
+        XCTAssertEqual(value.end, .completed, "nested cell \(row),\(column), \(context)")
+      }
+    }
+  }
 
   private static func check(
     _ snapshot: TableSnapshot, using random: inout SplitMix64, context: String
@@ -178,7 +267,49 @@ final class CSVFuzzTests: XCTestCase {
     0xF0, 0x9F, 0xD8, 0xDC,
   ]
 
-  private static func mutate(_ input: inout [UInt8], using random: inout SplitMix64) {
+  /// The bytes that change a JSON document's structure or its tokens.
+  private static let jsonInteresting: [UInt8] =
+    Array("{}[]\":,\\-+.eEuntrfalsd09/ ".utf8) + [
+      0x0A, 0x00, 0xFF, 0xC3, 0xED, 0xA0, 0xEF, 0xBB, 0xBF,
+    ]
+
+  // The JSON seeds, written out in code since the repo holds no binary fixtures.
+  private static func jsonCorpus() -> [[UInt8]] {
+    let texts = [
+      #"[{"id":1,"name":"a","tags":["x"],"o":{"p":null}},{"id":2.5e3,"o":{"p":true}}]"#,
+      "[\n  {\"a\": {\"b\": {\"c\": [1, {\"d\": 2}]}}},\n  {\"a\": 5}\n]\n",
+      "{\"a\":1}\n{\"b\":[1,2]}\n3\n\"four\"\n",
+      #"{"k":"v","n":[{"x":1}],"m":{"q":{}}}"#,
+      "[[1,2,3],[4],[]]",
+      #"[1,"two",null,false,-0,12345678901234567890,1e999]"#,
+      #"["\u00e9\ud83d\ude00\ud800 \\ \/ \n \" \t"]"#,
+      #"[{"a":1,"a":2,"b":{"c":3,"c":4}},{"a.b":1,"a":{"b":2}}]"#,
+      "[]", "{}", "", "   \n", "42", #"[1,]"#, #"{"a" 1}"#,
+      "[{" + [String](repeating: "\"a\":1", count: 3_000).joined(separator: ",") + "}]",
+      "[{" + (0..<3_000).map { "\"w\($0)\":[\($0)]" }.joined(separator: ",") + "}]",
+      "[[" + (0..<1_200).map(String.init).joined(separator: ",") + "]]",
+      "[1" + String(repeating: "9", count: 70_000) + "]",
+      String(repeating: "[", count: 300),
+      String(repeating: "{\"a\":", count: 300),
+      "[" + String(repeating: "[", count: 100) + String(repeating: "]", count: 100) + "]",
+      "[{" + (0..<1_100).map { "\"k\($0)\":\($0)" }.joined(separator: ",") + "}]",
+      "[{\"m\":{" + (0..<100).map { "\"id\($0)\":[\($0)]" }.joined(separator: ",") + "}}]",
+    ]
+
+    let accents = #"[{"name":"caf\#u{E9}","city":"Z\#u{FC}rich"}]"#
+
+    return texts.map { Array($0.utf8) } + [
+      [0xEF, 0xBB, 0xBF] + Array(accents.utf8),
+      [0xFF, 0xFE] + accents.utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] },
+      Array("[\"\u{1}\"]".utf8),
+    ]
+  }
+
+  private static func mutate(
+    _ input: inout [UInt8], using random: inout SplitMix64, interesting: [UInt8]? = nil
+  ) {
+    let interesting = interesting ?? Self.interesting
+
     let size = input.count
 
     switch random.next() % 8 {

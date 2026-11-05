@@ -72,10 +72,23 @@ public enum QueryOutcome: Sendable, Equatable {
 
 /// Filters and sorts a snapshot.
 ///
-/// The filter keeps a row when some cell contains the text, ignoring case. The sort reads one
-/// column. Ascending, cells that are plain numbers sort by value and come before cells that are
-/// text. Descending reverses that. Text sorts by its lowercased form, and a cell with nothing in it
-/// comes last in either direction. Rows that compare equal keep file order.
+/// The filter keeps a row when some cell contains the text, ignoring case. A nested cell holds its
+/// JSON text, so a filter finds text inside it too.
+///
+/// The sort reads one column, and orders every cell by one total order. Ascending, the classes are:
+/// 1. Numbers, by value. A JSON number compares as a double.
+/// 2. Text, by its lowercased form.
+/// 3. Booleans, false before true.
+/// 4. Nested cells, which compare equal to each other.
+/// 5. Null.
+/// 6. Missing, which is a JSON row without the key and a CSV cell with nothing in it.
+///
+/// Descending reverses classes 1 to 4 and the order inside each. Null and then missing stay last in
+/// either direction, so absent values never lead a sorted column. Rows that compare equal keep file
+/// order.
+///
+/// A CSV cell has no kind, so its text decides: a plain number is a number, nothing is missing, and
+/// anything else is text. A JSON string is always text, so `"12"` sorts as text and 12 as a number.
 public enum TableQueryEngine {
   /// Nil when `isCancelled` turned true before the result was done.
   public static func evaluate(
@@ -156,7 +169,53 @@ public enum TableQueryEngine {
   private enum Key {
     case number(Double)
     case text(String)
-    case empty
+    case bool(Bool)
+    case nested
+    case null
+    case missing
+
+    var rank: Int {
+      switch self {
+      case .number: return 0
+      case .text: return 1
+      case .bool: return 2
+      case .nested: return 3
+      case .null: return 4
+      case .missing: return 5
+      }
+    }
+
+    /// Absent values, which sort last in either direction.
+    var isAbsent: Bool { rank >= 4 }
+  }
+
+  private static func key(of snapshot: TableSnapshot, row: Int, column: Int, text: String) -> Key {
+    switch snapshot.kind(row: row, column: column) {
+    case .missing:
+      return .missing
+
+    case .null:
+      return .null
+
+    case .bool:
+      return .bool(text == "true")
+
+    case .number:
+      return .number(Double(text) ?? 0)
+
+    case .string:
+      return .text(text.lowercased())
+
+    case .nested:
+      return .nested
+
+    case .text:
+      if text.isEmpty { return .missing }
+
+      if let number = CSVRule.number(text) { return .number(number) }
+
+      return .text(text.lowercased())
+    }
   }
 
   private static func sort(
@@ -195,13 +254,7 @@ public enum TableQueryEngine {
       let text = snapshot.text(row: Int(row), column: column, limit: 512)
       heap += text.utf8.count > 15 ? text.utf8.count : 0
 
-      if text.isEmpty {
-        keys.append(.empty)
-      } else if let number = CSVRule.number(text) {
-        keys.append(.number(number))
-      } else {
-        keys.append(.text(text.lowercased()))
-      }
+      keys.append(key(of: snapshot, row: Int(row), column: column, text: text))
     }
 
     let ascending = spec.ascending
@@ -212,8 +265,12 @@ public enum TableQueryEngine {
 
       if result == .orderedSame { return left < right }
 
-      if case .empty = keys[left] { return false }
-      if case .empty = keys[right] { return true }
+      let leftAbsent = keys[left].isAbsent
+      let rightAbsent = keys[right].isAbsent
+
+      if leftAbsent != rightAbsent { return rightAbsent }
+
+      if leftAbsent { return result == .orderedAscending }
 
       return ascending ? result == .orderedAscending : result == .orderedDescending
     }
@@ -222,16 +279,22 @@ public enum TableQueryEngine {
   }
 
   private static func compare(_ left: Key, _ right: Key) -> ComparisonResult {
+    if left.rank != right.rank {
+      return left.rank < right.rank ? .orderedAscending : .orderedDescending
+    }
+
     switch (left, right) {
-    case (.empty, .empty): return .orderedSame
-    case (.empty, _): return .orderedDescending
-    case (_, .empty): return .orderedAscending
     case (.number(let a), .number(let b)):
       return a < b ? .orderedAscending : a > b ? .orderedDescending : .orderedSame
-    case (.number, .text): return .orderedAscending
-    case (.text, .number): return .orderedDescending
+
     case (.text(let a), .text(let b)):
       return a < b ? .orderedAscending : a > b ? .orderedDescending : .orderedSame
+
+    case (.bool(let a), .bool(let b)):
+      return a == b ? .orderedSame : (!a ? .orderedAscending : .orderedDescending)
+
+    default:
+      return .orderedSame
     }
   }
 }

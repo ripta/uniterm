@@ -5,6 +5,10 @@ import Foundation
 /// first caller lands, and spools to a file for the formats that need random access.
 public enum TableSource: Sendable, Equatable {
   case file(URL)
+
+  /// A JSON value that a nested cell holds, shown as a table of its own. `name` stands in for a
+  /// path in messages.
+  case embeddedJSON(name: String, bytes: [UInt8])
 }
 
 /// How far a load has come.
@@ -71,24 +75,35 @@ public enum TableLoader {
     switch source {
     case .file(let url):
       run.load(file: url)
+
+    case .embeddedJSON(let name, let bytes):
+      run.load(embedded: bytes, name: name)
     }
   }
 }
 
-private struct LoadRun {
+struct LoadRun {
   let lease: TableBudget.Lease
   let pageTarget: Int
   let isCancelled: () -> Bool
   let emit: (LoadEvent) -> Void
 
-  private var pages: [RowPage] = []
-  private var builder = RowPageBuilder()
+  var pages: [RowPage] = []
+  var builder = RowPageBuilder()
+  var progress = LoadProgress()
+  var end: LoadEnd?
+
   private var header: [String]?
   private var maxCells = 0
   private var firstRow = true
-  private var progress = LoadProgress()
-  private var end: LoadEnd?
   private var lastSnapshot = ContinuousClock.now
+
+  var isJSON = false
+  var jsonColumns = JSONColumns()
+  var jsonTop = JSONTop.unknown
+  var jsonKey: [UInt8]?
+  var jsonTruncatedSeen = 0
+  var jsonRowCount = 0
 
   init(
     lease: TableBudget.Lease, pageTarget: Int, isCancelled: @escaping () -> Bool,
@@ -132,11 +147,13 @@ private struct LoadRun {
       return
 
     case .csv:
-      break
-    }
+      progress.totalBytes = Int(info.st_size)
+      readCSV(from: descriptor, fileExtension: ext, path: path)
 
-    progress.totalBytes = Int(info.st_size)
-    readCSV(from: descriptor, fileExtension: ext, path: path)
+    case .json:
+      progress.totalBytes = Int(info.st_size)
+      readJSON(from: descriptor, fileExtension: ext, path: path)
+    }
   }
 
   private mutating func readCSV(from descriptor: Int32, fileExtension: String, path: String) {
@@ -196,7 +213,7 @@ private struct LoadRun {
 
   /// Reads one chunk and appends it to `bytes`. Returns the count, or nil after the load has ended
   /// with the read's error.
-  private mutating func fill(
+  mutating func fill(
     _ descriptor: Int32, _ chunk: inout [UInt8], into bytes: inout [UInt8], path: String
   ) -> Int? {
     while true {
@@ -263,7 +280,7 @@ private struct LoadRun {
 
   /// Moves the page being filled into the sealed pages, if the budget lets it. Returns false after
   /// the load ended because it did not.
-  private mutating func sealPage() -> Bool {
+  mutating func sealPage() -> Bool {
     guard builder.rowCount > 0 else { return true }
 
     let page = builder.sealed()
@@ -288,18 +305,22 @@ private struct LoadRun {
     }
   }
 
-  private func snapshot(includingPartialPage: Bool) -> TableSnapshot {
+  func snapshot(includingPartialPage: Bool) -> TableSnapshot {
     var all = pages
 
     if includingPartialPage, builder.rowCount > 0 {
       all.append(builder.sealed())
     }
 
+    if isJSON {
+      return TableSnapshot(columns: jsonColumns.columns, pages: all)
+    }
+
     let count = max(maxCells, header?.count ?? 0)
     return TableSnapshot(columns: TableColumn.columns(header: header, count: count), pages: all)
   }
 
-  private mutating func publishIfDue() {
+  mutating func publishIfDue() {
     guard end == nil else { return }
 
     let now = ContinuousClock.now
@@ -311,7 +332,7 @@ private struct LoadRun {
   }
 
   /// Ends the load. A load that stopped early still reports the rows it holds.
-  private mutating func finish(_ reason: LoadEnd) {
+  mutating func finish(_ reason: LoadEnd) {
     guard end == nil else { return }
 
     end = reason
@@ -341,17 +362,19 @@ private struct LoadRun {
 
 private enum Format {
   case csv
+  case json
   case unsupported(description: String, comingLater: Bool)
 
-  /// The format a file name's extension names. Only CSV and TSV load today. A format that a later
-  /// reader will take says so, and the rest say that the viewer does not read them.
+  /// The format a file name's extension names. CSV, TSV, and JSON load. A GeoJSON file is JSON, so it
+  /// loads too. A format that a later reader will take says so, and the rest say that the viewer
+  /// does not read them.
   static func of(extension ext: String) -> Format {
     switch ext {
     case "csv", "tsv", "tab":
       return .csv
 
     case "json", "jsonl", "ndjson", "geojson":
-      return .unsupported(description: "a JSON file", comingLater: true)
+      return .json
 
     case "xlsx", "xlsm":
       return .unsupported(description: "a spreadsheet", comingLater: true)
