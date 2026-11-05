@@ -205,9 +205,21 @@ final class MapViewerView: NSView, MKMapViewDelegate {
       if let responder = window.firstResponder as? NSView, responder.isDescendant(of: mapView) {
         noteUserGesture()
       }
-    } else if mapView.bounds.contains(point) {
+    } else if mapView.isMousePoint(point, in: mapView.bounds) {
       noteUserGesture()
+
+      if event.type == .leftMouseDown { takeFocus(in: window) }
     }
+  }
+
+  /// MapKit's map does not take the first responder on a click, so the pane's focus mark, which
+  /// follows the responder, would stay on the pane clicked before.
+  private func takeFocus(in window: NSWindow) {
+    if let responder = window.firstResponder as? NSView, responder.isDescendant(of: mapView) {
+      return
+    }
+
+    window.makeFirstResponder(mapView)
   }
 
   /// Stops watching events. The owner calls it when the pane closes.
