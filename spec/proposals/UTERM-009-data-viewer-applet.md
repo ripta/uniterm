@@ -43,12 +43,13 @@ Decision: files open from inside the pane now. Pipe and script input is deferred
   the pane. A drop accepts file URLs only.
 - A pane shows one file. Opening another file replaces it: the old load is cancelled, and the new file starts with no
   sort or filter. The open panel selects one file. A drop of several files is refused with a message asking for one
-  file, and the pane keeps what it showed. Amended 2026-11-03; see Decision Log.
+  file, and the pane keeps what it showed.
 - A drawer of open documents beside the table, as Preview has, is an idea for later. This proposal does not commit to
   it. Building it needs its own proposal, since it changes what a pane and its description hold.
-- All loading goes through one internal entry point that takes a source. Today the only source is a file URL. A
-  byte-stream source is added when its first caller lands. It spools to a file when a format needs random access, as
-  `.xlsx` does.
+- All loading goes through one internal entry point that takes a source. A source is a file URL, or a nested JSON value
+  that a cell holds, which loads from memory with no file behind it. A byte-stream source is added when its first
+  caller lands. It spools to a file when a format needs random access, as `.xlsx` does. Amended 2026-11-05; see
+  Decision Log.
 - App-level opening belongs to UTERM-015, the cross-applet proposal this decision committed to. Its File > Open on
   Cmd-O routes files here by type, and this Open... is the pane-local open it keeps. The data viewer declares CSV,
   `public.json`, and `.xlsx` at the owner rank. A GeoJSON file goes to the map, whose type is more specific. The data
@@ -138,8 +139,8 @@ Decision: rows stream off the main thread into memory, under one memory budget.
   the view.
 - One memory budget covers every data viewer pane together. Each pane keeps a floor of 32 MiB even when the budget is
   spent, so the app holds at most the budget plus one floor for each pane beyond it. A memory-pressure warning stops
-  loading early. When loading stops, the pane says it shows the first N rows of the file. Amended 2026-11-04; see
-  Decision Log.
+  loading early. When loading stops, the pane says it shows the first N rows of the file, or of the sheet for a
+  workbook. Amended 2026-11-05; see Decision Log.
 - Sorting, filtering, and search run off the main thread on an immutable snapshot. A newer request cancels an older
   one, and results swap in when done.
 - Loading is not running work. Reopen and relaunch read the file again, so closing a loading pane does not ask.
@@ -495,7 +496,12 @@ None.
 - Known limits. `XMLParser` builds an attribute dictionary for every element, so a sheet of millions of cells loads at
   roughly the speed of a few hundred thousand elements a second. The sheet cap of 4 GiB inflated bounds the time, and a
   cancel is seen at the next row. Shared strings are charged to the budget while the sheet loads, and are given back at
-  the end.
+  the end. A budget refusal while they load ends the load as a budget stop, or a memory-pressure stop, and never as a
+  hostile file. Only a real size cap says the workbook may not expand. A row counts in the "oversized cells cut" notice
+  when it holds a cut cell, and a cell that shows a cut shared string is a cut cell, so the unit is rows, as in CSV and
+  JSON. A stop that leaves columns and no rows shows the memory message in place of an empty table.
+- The tests of both packages that read workbooks build archives with one writer, in the `TableTestSupport` test-support
+  target. The UI-test target cannot import the package, so it keeps a copy of the writer and says so.
 - The visual check is left to the user, and the UI tests have not run. The coordinator's `make test-app` runs them. The UI
   tests open a workbook through Cmd-O, switch sheets through the picker, and restore a stored sheet. Things to look at:
   the picker's place above the filter, "not computed" cells, and a workbook with a date column.
@@ -649,6 +655,32 @@ None.
 - 2026-11-04: Two more spreadsheet rules (work-queue best guess). A sheet name used twice is numbered, as in `Sheet (2)`,
   and the description stores the numbered name. A time of day rounds to the millisecond and then cuts to whole seconds,
   as Excel shows it, so a date-only style never rolls into the next day from rounding to the second.
+
+- 2026-11-05: Amended "Input sources": a source is a file URL, or a nested JSON value that a cell holds, which loads from
+  memory with no file behind it. Before, the text said all loading goes through one entry point that takes a source, and
+  that the only source today is a file URL. The nested-table work added the in-memory source to that same entry point
+  and not to a second one, so the entry point stays single and its text was out of date. The marker on the one-file
+  bullet moved here, since a decision carries one marker; the 2026-11-03 entries above still record that change.
+- 2026-11-05: Amended "Large files": the stop notice says "of the sheet" for a workbook and "of the file" otherwise
+  (work-queue best guess). Before, it said "of the file" for every format. The count text already read "X of the first
+  N rows" in both cases, so it is unchanged. "Sheet" follows the sheet picker's own word. If the guess is wrong, only
+  the notice string changes.
+- 2026-11-05: A budget or memory-pressure refusal while a workbook's shared strings load ends the load as a budget stop
+  or a memory-pressure stop (work-queue best guess). Before, it failed the load with the "limits how far a workbook may
+  expand, so a hostile file cannot use all memory" message, which is false for a normal workbook that other panes
+  crowd out. The shared strings table is the first thing a workbook charges to the budget, so a refusal there leaves no
+  rows, and the pane says so in the words it uses for a CSV file. The hostile-file wording stays on the real caps.
+  A stop that leaves columns and no rows now shows the same message as a stop with no columns, in place of an empty
+  table under a "first 0 rows" notice.
+- 2026-11-05: The "oversized cells cut" notice counts rows that hold a cut cell, for a workbook too (work-queue best
+  guess). Before, a workbook counted the shared strings that were cut, so a long string used in many rows counted once
+  and a long string used in none counted at all. A cell that shows a cut shared string is now a cut cell, so the unit
+  matches CSV and JSON.
+- 2026-11-05: ADR candidate (cuts across the system, hard to reverse): a file-backed viewer's description holds a path
+  and a bookmark, never file contents. The path wins while a regular file is there, and the bookmark is remade when it
+  names a different file than the one opened. Undecided. UTERM-006, UTERM-007, and UTERM-008 follow the same rule. The
+  description is stored data, so a change needs a version bump and a migration. Settled in "The applet contract". The
+  final review lists it.
 
 ## References
 

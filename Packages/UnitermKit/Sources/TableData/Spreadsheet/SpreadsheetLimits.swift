@@ -53,6 +53,7 @@ enum SpreadsheetFailure: Error, Equatable {
   /// The parser stopped listening, so the producer's write failed. Never shown.
   case consumerGone
 
-  /// A budget or lease refused memory.
-  case outOfMemory(String)
+  /// The memory budget refused a reservation. This says nothing about the file, so it ends the load
+  /// like any other budget stop and never reads as a hostile workbook.
+  case refused(TableBudget.Reservation)
 }

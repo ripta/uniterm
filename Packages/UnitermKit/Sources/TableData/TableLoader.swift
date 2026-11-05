@@ -1,8 +1,9 @@
 import Darwin
 import Foundation
 
-/// Where a table's rows come from. A file is the only source today. A byte stream joins when its
-/// first caller lands, and spools to a file for the formats that need random access.
+/// Where a table's rows come from. A file is the usual source. A nested value that a cell holds
+/// loads from memory through the same entry point, with no file behind it. A byte stream joins when
+/// its first caller lands, and spools to a file for the formats that need random access.
 public enum TableSource: Sendable, Equatable {
   /// A file. `sheet` names the sheet of a workbook to read, and the first visible sheet shows when
   /// it is nil or the workbook has no sheet of that name. Other formats ignore it.
@@ -125,18 +126,8 @@ struct LoadRun {
   private var firstRow = true
   private var lastSnapshot = ContinuousClock.now
 
-  var isJSON = false
-  var jsonColumns = JSONColumns()
-  var jsonTop = JSONTop.unknown
-  var jsonKey: [UInt8]?
-  var jsonTruncatedSeen = 0
-  var jsonRowCount = 0
-
-  var isSheet = false
-  var sheetHeader: [String]?
-  var sheetColumns = 0
-  var sheetFirstRow = true
-  var sheetRowCount = 0
+  var json = JSONReadState()
+  var sheet = SheetReadState()
 
   init(
     lease: TableBudget.Lease, pageTarget: Int, limits: SpreadsheetLimits,
@@ -316,6 +307,15 @@ struct LoadRun {
     }
   }
 
+  /// Checks for cancellation once in 256 rows, so a read of small rows stays cheap. Ends the load and
+  /// returns true when it was cancelled.
+  mutating func cancelled(atRow count: Int) -> Bool {
+    guard count & 0xFF == 0, isCancelled() else { return false }
+
+    finish(.cancelled)
+    return true
+  }
+
   /// Moves the page being filled into the sealed pages, if the budget lets it. Returns false after
   /// the load ended because it did not.
   mutating func sealPage() -> Bool {
@@ -350,14 +350,14 @@ struct LoadRun {
       all.append(builder.sealed())
     }
 
-    if isJSON {
-      return TableSnapshot(columns: jsonColumns.columns, pages: all)
+    if json.isActive {
+      return TableSnapshot(columns: json.columns.columns, pages: all)
     }
 
-    if isSheet {
+    if sheet.isActive {
       return TableSnapshot(
         columns: TableColumn.columns(
-          header: sheetHeader, count: max(sheetColumns, sheetHeader?.count ?? 0)),
+          header: sheet.header, count: max(sheet.columns, sheet.header?.count ?? 0)),
         pages: all)
     }
 
@@ -386,10 +386,7 @@ struct LoadRun {
     case .failed, .cancelled:
       emit(.finished(.empty, reason, progress))
 
-    case .completed:
-      emit(.finished(snapshot(includingPartialPage: false), reason, progress))
-
-    case .stoppedAtBudget, .stoppedLowMemory:
+    case .completed, .stoppedAtBudget, .stoppedLowMemory:
       emit(.finished(snapshot(includingPartialPage: false), reason, progress))
     }
   }

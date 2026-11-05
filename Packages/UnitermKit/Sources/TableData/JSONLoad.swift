@@ -39,7 +39,7 @@ extension LoadRun {
     let lines = JSONRule.isLines(fileExtension: fileExtension, sample: sniffed[...])
     var scanner = JSONScanner(mode: lines ? .lines : .single, captureAt: lines ? 1 : 2)
 
-    isJSON = true
+    json.isActive = true
 
     var transcoder = TextTranscoder(encoding)
     var text: [UInt8] = []
@@ -70,7 +70,7 @@ extension LoadRun {
 
   /// Loads a nested value that is already in memory. It is one JSON value in UTF-8.
   mutating func load(embedded bytes: [UInt8], name: String) {
-    isJSON = true
+    json.isActive = true
     progress.totalBytes = bytes.count
 
     var scanner = JSONScanner(mode: .single, captureAt: 2)
@@ -132,7 +132,7 @@ extension LoadRun {
 
     guard end == nil else { return }
 
-    if case .scalar(let what) = jsonTop {
+    if case .scalar(let what) = json.top {
       finish(.failed(.notATable(path: path, what: what)))
       return
     }
@@ -152,12 +152,12 @@ extension LoadRun {
 
     switch event {
     case .beginObject:
-      if !lines, context.depth == 1 { jsonTop = .object }
+      if !lines, context.depth == 1 { json.top = .object }
 
       return true
 
     case .beginArray:
-      if !lines, context.depth == 1 { jsonTop = .array }
+      if !lines, context.depth == 1 { json.top = .array }
 
       return true
 
@@ -165,7 +165,7 @@ extension LoadRun {
       return context.depth == elementDepth ? acceptContainer(context) : true
 
     case .key(let bytes):
-      if !lines, context.depth == 1 { jsonKey = bytes }
+      if !lines, context.depth == 1 { json.key = bytes }
 
       return true
 
@@ -197,13 +197,13 @@ extension LoadRun {
 
     switch context.depth {
     case 0:
-      jsonTop = .scalar(what)
+      json.top = .scalar(what)
       return true
 
     case 1:
-      if case .object = jsonTop {
+      if case .object = json.top {
         return accept(
-          Self.memberCells(key: jsonKey ?? [], kind: kind, bytes: bytes), cut: 0, context)
+          Self.memberCells(key: json.key ?? [], kind: kind, bytes: bytes), cut: 0, context)
       }
 
       return accept(
@@ -217,13 +217,13 @@ extension LoadRun {
 
   /// A container element is complete. `context.captured` holds all of it.
   private mutating func acceptContainer(_ context: JSONContext) -> Bool {
-    if case .object = jsonTop, context.depth == 1 {
+    if case .object = json.top, context.depth == 1 {
       let compact = JSONShaper.compact(context.captured[...])
       let tooLarge = context.captureOverflow || compact.count > JSONRule.maxStringBytes
 
       return accept(
         Self.memberCells(
-          key: jsonKey ?? [], kind: tooLarge ? .string : .nested,
+          key: json.key ?? [], kind: tooLarge ? .string : .nested,
           bytes: tooLarge ? Array(JSONRule.tooLargeNote.utf8) : compact),
         cut: tooLarge ? 1 : 0, context)
     }
@@ -249,22 +249,19 @@ extension LoadRun {
   }
 
   private mutating func accept(_ shaped: [ShapedCell], cut: Int, _ context: JSONContext) -> Bool {
-    jsonRowCount += 1
+    json.rowCount += 1
 
-    if jsonRowCount & 0xFF == 0, isCancelled() {
-      finish(.cancelled)
-      return false
-    }
+    if cancelled(atRow: json.rowCount) { return false }
 
-    let (cells, folded) = jsonColumns.place(shaped)
+    let (cells, folded) = json.columns.place(shaped)
 
     builder.append(typed: cells)
 
-    if cut + folded > 0 || context.truncatedValues != jsonTruncatedSeen {
+    if cut + folded > 0 || context.truncatedValues != json.truncatedSeen {
       progress.truncatedRows += 1
     }
 
-    jsonTruncatedSeen = context.truncatedValues
+    json.truncatedSeen = context.truncatedValues
 
     if builder.cost >= pageTarget {
       _ = sealPage()
@@ -272,4 +269,14 @@ extension LoadRun {
 
     return end == nil
   }
+}
+
+/// What a JSON read keeps between rows.
+struct JSONReadState {
+  var isActive = false
+  var columns = JSONColumns()
+  var top = JSONTop.unknown
+  var key: [UInt8]?
+  var truncatedSeen = 0
+  var rowCount = 0
 }

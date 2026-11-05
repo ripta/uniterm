@@ -119,16 +119,7 @@ final class NestedTable: NSObject, NSPopoverDelegate {
   }
 
   private func notices() -> [String] {
-    var lines: [String] = []
-
-    if session.sortSkipped {
-      lines.append("There is not enough memory to sort this many rows, so they show in file order.")
-    }
-
-    if session.progress.truncatedRows > 0 {
-      lines.append("\(session.progress.truncatedRows.formatted()) rows had oversized cells cut.")
-    }
-
-    return lines
+    DataViewerNotices.lines(
+      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
   }
 }

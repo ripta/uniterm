@@ -25,7 +25,7 @@ struct LauncherEntry: Equatable {
       detail: "Runs one command, such as htop", symbol: "play.fill"),
     LauncherEntry(
       kind: .dataViewer, name: "Data viewer",
-      detail: "Shows a CSV file as a table", symbol: "tablecells"),
+      detail: "Shows a CSV, JSON, or Excel file as a table", symbol: "tablecells"),
   ]
 }
 

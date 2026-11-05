@@ -191,6 +191,10 @@ final class DataViewerUITests: UnitermUITestCase {
 
   /// A workbook with two sheets of text cells, written as a ZIP archive of stored entries. Sales
   /// has two data rows and Costs has one.
+  ///
+  /// The ZIP writer here is a copy. This target cannot import the package, so it cannot use the
+  /// shared writer, `ZipFixture` in the package's `TableTestSupport` test-support target. Keep the
+  /// two in step.
   private func makeWorkbook(name: String = "book.xlsx") throws -> URL {
     let folder = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("uniterm-data-\(UUID().uuidString)", isDirectory: true)

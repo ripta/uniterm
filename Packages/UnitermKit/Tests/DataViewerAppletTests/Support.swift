@@ -2,6 +2,7 @@ import AppKit
 import AppletKit
 import StatusKit
 import TableData
+import TableTestSupport
 import XCTest
 
 @testable import DataViewerApplet
@@ -70,9 +71,9 @@ func makeBudget() -> TableBudget {
   TableBudget(limit: 1 << 30, floor: 1 << 20)
 }
 
-/// A workbook with the given sheets, each a list of rows of text cells, written as a ZIP archive
-/// of stored entries. The applet reads it through the production reader. Each entry carries
-/// its checksum, which the reader verifies.
+/// A workbook with the given sheets, each a list of rows of text cells. The applet reads it
+/// through the production reader. The archive comes from the shared ZIP fixture writer, with
+/// stored entries.
 func makeWorkbook(_ sheets: [(name: String, rows: [[String]])]) -> Data {
   let header = #"<?xml version="1.0" encoding="UTF-8"?>"#
 
@@ -84,14 +85,18 @@ func makeWorkbook(_ sheets: [(name: String, rows: [[String]])]) -> Data {
     #"<Relationship Id="rId\#($0 + 1)" Type="x/worksheet" Target="worksheets/s\#($0 + 1).xml"/>"#
   }.joined()
 
-  var parts: [(String, String)] = [
-    (
+  var parts = [
+    ZipPart(
       "_rels/.rels",
       header
-        + #"<Relationships><Relationship Id="r" Type="x/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
-    ),
-    ("xl/workbook.xml", header + #"<workbook xmlns:r="x"><sheets>\#(list)</sheets></workbook>"#),
-    ("xl/_rels/workbook.xml.rels", header + "<Relationships>\(rels)</Relationships>"),
+        + #"<Relationships><Relationship Id="r" Type="x/officeDocument" Target="xl/workbook.xml"/></Relationships>"#,
+      method: .stored),
+    ZipPart(
+      "xl/workbook.xml", header + #"<workbook xmlns:r="x"><sheets>\#(list)</sheets></workbook>"#,
+      method: .stored),
+    ZipPart(
+      "xl/_rels/workbook.xml.rels", header + "<Relationships>\(rels)</Relationships>",
+      method: .stored),
   ]
 
   for (index, sheet) in sheets.enumerated() {
@@ -101,50 +106,10 @@ func makeWorkbook(_ sheets: [(name: String, rows: [[String]])]) -> Data {
     }.joined()
 
     parts.append(
-      (
+      ZipPart(
         "xl/worksheets/s\(index + 1).xml",
-        header + "<worksheet><sheetData>\(rows)</sheetData></worksheet>"
-      ))
+        header + "<worksheet><sheetData>\(rows)</sheetData></worksheet>", method: .stored))
   }
 
-  func le(_ value: Int, _ width: Int) -> [UInt8] {
-    (0..<width).map { UInt8(truncatingIfNeeded: value >> (8 * $0)) }
-  }
-
-  func crc(_ bytes: [UInt8]) -> Int {
-    var value: UInt32 = 0xFFFF_FFFF
-
-    for byte in bytes {
-      value ^= UInt32(byte)
-
-      for _ in 0..<8 {
-        value = value & 1 == 1 ? 0xEDB8_8320 ^ (value >> 1) : value >> 1
-      }
-    }
-
-    return Int(value ^ 0xFFFF_FFFF)
-  }
-
-  var file: [UInt8] = []
-  var directory: [UInt8] = []
-
-  for (name, text) in parts {
-    let body = Array(text.utf8)
-    let nameBytes = Array(name.utf8)
-    let offset = file.count
-
-    file += le(0x0403_4B50, 4) + le(20, 2) + le(0, 2) + le(0, 2) + le(0, 4) + le(crc(body), 4)
-    file += le(body.count, 4) + le(body.count, 4) + le(nameBytes.count, 2) + le(0, 2)
-    file += nameBytes + body
-
-    directory += le(0x0201_4B50, 4) + le(20, 2) + le(20, 2) + le(0, 2) + le(0, 2) + le(0, 4)
-    directory += le(crc(body), 4) + le(body.count, 4) + le(body.count, 4) + le(nameBytes.count, 2)
-    directory += le(0, 2) + le(0, 2) + le(0, 2) + le(0, 2) + le(0, 4) + le(offset, 4) + nameBytes
-  }
-
-  let end =
-    le(0x0605_4B50, 4) + le(0, 2) + le(0, 2) + le(parts.count, 2) + le(parts.count, 2)
-    + le(directory.count, 4) + le(file.count, 4) + le(0, 2)
-
-  return Data(file + directory + end)
+  return Data(ZipFixture.archive(parts))
 }

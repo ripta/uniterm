@@ -388,7 +388,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return .message(failure)
     }
 
-    if !session.snapshot.columns.isEmpty {
+    if !session.snapshot.columns.isEmpty, !stoppedBeforeAnyRow {
       return .table
     }
 
@@ -417,6 +417,13 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     }
   }
 
+  /// True when a budget or memory stop left the table with columns and no rows, such as a workbook
+  /// whose first page of rows was refused. A table with nothing in it would only look empty.
+  private var stoppedBeforeAnyRow: Bool {
+    (session.phase == .stoppedAtBudget || session.phase == .stoppedLowMemory)
+      && session.snapshot.rowCount == 0
+  }
+
   private func failure() -> String? {
     if case .failed(let error) = session.phase {
       return error.errorDescription
@@ -428,29 +435,27 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private func notices() -> [String] {
     var lines: [String] = []
     let loaded = session.snapshot.rowCount.formatted()
+    let whole = session.sheets.isEmpty ? "the file" : "the sheet"
 
-    switch session.phase {
-    case .stoppedAtBudget:
-      lines.append(
-        "Showing the first \(loaded) rows of the file. Sorting, filtering, and search cover only these rows."
-      )
+    if session.snapshot.rowCount > 0 {
+      switch session.phase {
+      case .stoppedAtBudget:
+        lines.append(
+          "Showing the first \(loaded) rows of \(whole). Sorting, filtering, and search cover only these rows."
+        )
 
-    case .stoppedLowMemory:
-      lines.append(
-        "Loading stopped because memory is low. Showing the first \(loaded) rows of the file. Sorting, filtering, and search cover only these rows."
-      )
+      case .stoppedLowMemory:
+        lines.append(
+          "Loading stopped because memory is low. Showing the first \(loaded) rows of \(whole). Sorting, filtering, and search cover only these rows."
+        )
 
-    default:
-      break
+      default:
+        break
+      }
     }
 
-    if session.sortSkipped {
-      lines.append("There is not enough memory to sort this many rows, so they show in file order.")
-    }
-
-    if session.progress.truncatedRows > 0 {
-      lines.append("\(session.progress.truncatedRows.formatted()) rows had oversized cells cut.")
-    }
+    lines += DataViewerNotices.lines(
+      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
 
     if let resolvedNotice {
       lines.append(resolvedNotice)

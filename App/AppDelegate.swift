@@ -159,8 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try DataViewerApplet(restoring: description)
 
       default:
-        throw AppletRestoreError.wrongType(
-          expected: TerminalDescription.typeID, found: description.type)
+        throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
       }
     }
 
