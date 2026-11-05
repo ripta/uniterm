@@ -694,7 +694,8 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
   read from the `open-event` line that `log stream --level debug` shows for the `dev.uniterm.app` subsystem
 - Finder and `open -a` report senders that tell them apart. When they do not, the user rules on the Launch Services
   decision, which reopens
-- Open With in Finder and a drop on the Dock icon open a folder, cold and warm, in a release build
+- A folder dragged onto uniterm's icon in a Finder window, and a folder dropped on its Dock icon, each open, cold and
+  warm, in a release build
 
 ## Decision Log
 
@@ -865,9 +866,12 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
   "read from the debug log line of a build run directly". When Finder or the Dock launches uniterm cold, no shell owns
   the process, so its standard error goes nowhere. The same line goes to the unified log at debug level, which is not
   persisted, so it is read live with `log stream --level debug`. Amended M8's last check, which said the release build
-  opens "the file". `Info.plist` declares only `public.folder`, so Finder's Open With and the Dock icon offer uniterm
-  only for a folder. A file would fail the check for the wrong reason. The run's `osascript` call to drive Finder was
-  denied again, so nothing was measured, and M8 stays in progress.
+  opens "the file". `Info.plist` declares only `public.folder`, so the Dock icon accepts only a folder. A file would
+  fail the check for the wrong reason. The run's `osascript` call to drive Finder was denied again, so nothing was
+  measured, and M8 stays in progress.
+- 2026-11-04: Amended M8's last check, which said Open With in Finder opens a folder. Finder has no Open With for
+  folders, and a folder is the only type uniterm declares, so Finder's Open With never offers uniterm today. The check
+  now drags a folder onto uniterm's icon in a Finder window, which Finder also sends.
 
 ## References
 
