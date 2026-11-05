@@ -5,6 +5,7 @@ import DataViewerApplet
 import FileRouting
 import MapViewerApplet
 import OSLog
+import PlaceSearch
 import Preferences
 import SettingsKit
 import StatusKit
@@ -161,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case MapViewerDescription.typeID:
         return try MapViewerApplet(
-          restoring: description, placeNames: MapViewerApplet.applePlaceNames)
+          restoring: description, places: .apple)
 
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
@@ -179,9 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       case .dataViewer:
         return DataViewerApplet(startDirectory: directory)
 
-      case .mapViewer:
+      case .mapViewer(let region):
         return MapViewerApplet(
-          startDirectory: directory, placeNames: MapViewerApplet.applePlaceNames)
+          startDirectory: directory, region: region, places: .apple)
       }
     }
 
@@ -190,19 +191,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
           commands: commands, restoring: restored, restoreApplet: restoreApplet,
-          makeApplet: makeApplet)
+          places: .apple, makeApplet: makeApplet)
       },
       makeRoutedController: { identifier, applet in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
           commands: commands, startingWith: applet, restoreApplet: restoreApplet,
-          makeApplet: makeApplet)
+          places: .apple, makeApplet: makeApplet)
       },
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
           startingIn: directory, commands: commands, restoreApplet: restoreApplet,
-          makeApplet: makeApplet)
+          places: .apple, makeApplet: makeApplet)
       })
     windowSet = windows
 
@@ -215,7 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       },
       MapViewerDescription.typeID: { file, startDirectory in
         MapViewerApplet.opening(
-          file, startDirectory: startDirectory, placeNames: MapViewerApplet.applePlaceNames)
+          file, startDirectory: startDirectory, places: .apple)
       },
     ]
 

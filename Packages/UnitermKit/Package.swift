@@ -35,6 +35,7 @@ let package = Package(
     .library(name: "DataViewerApplet", targets: ["DataViewerApplet"]),
     .library(name: "GeoData", targets: ["GeoData"]),
     .library(name: "MapViewerApplet", targets: ["MapViewerApplet"]),
+    .library(name: "PlaceSearch", targets: ["PlaceSearch"]),
   ],
   dependencies: [
     // The first third-party Swift package. Only TableData uses it. The version is exact, and
@@ -57,6 +58,7 @@ let package = Package(
       name: "WindowKit",
       dependencies: [
         "Theme", "Preferences", "AppletKit", "StatusKit", "PaneModel", "LayoutKit", "FileRouting",
+        "GeoData", "PlaceSearch",
       ]),
     .target(name: "SettingsKit", dependencies: ["Preferences"]),
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
@@ -92,9 +94,12 @@ let package = Package(
     // The map's pure model. It has no AppKit and no MapKit, so the region and style rules test
     // without a map view.
     .target(name: "GeoData", dependencies: ["ThemeCore"]),
+    // Finding and naming places through Apple Maps, and the search field the launcher and the map
+    // share. Every service sits behind a protocol, so tests never reach the network.
+    .target(name: "PlaceSearch", dependencies: ["GeoData", "Theme"]),
     .target(
       name: "MapViewerApplet",
-      dependencies: ["AppletKit", "GeoData", "SourceAccess", "StatusKit", "Theme"]),
+      dependencies: ["AppletKit", "GeoData", "PlaceSearch", "SourceAccess", "StatusKit", "Theme"]),
     .target(
       name: "AppletCatalog",
       dependencies: ["AppletKit", "DataViewerApplet", "MapViewerApplet", "TerminalApplet"]),
@@ -114,11 +119,12 @@ let package = Package(
       ]),
     .testTarget(name: "SourceAccessTests", dependencies: ["SourceAccess"]),
     .testTarget(name: "GeoDataTests", dependencies: ["GeoData", "ThemeCore"]),
+    .testTarget(name: "PlaceSearchTests", dependencies: ["PlaceSearch", "GeoData", "Theme"]),
     .testTarget(
       name: "MapViewerAppletTests",
       dependencies: [
-        "MapViewerApplet", "GeoData", "AppletKit", "SourceAccess", "StatusKit", "Theme",
-        "TableTestSupport",
+        "MapViewerApplet", "GeoData", "AppletKit", "PlaceSearch", "SourceAccess", "StatusKit",
+        "Theme", "TableTestSupport",
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit"]),
@@ -137,7 +143,7 @@ let package = Package(
       name: "WindowKitTests",
       dependencies: [
         "WindowKit", "Theme", "Preferences", "StatusKit", "AppletKit", "PaneModel", "LayoutKit",
-        "FileRouting",
+        "FileRouting", "GeoData", "PlaceSearch",
       ]),
   ],
   swiftLanguageModes: [.v6]

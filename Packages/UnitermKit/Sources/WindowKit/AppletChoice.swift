@@ -1,4 +1,5 @@
 import Foundation
+import GeoData
 
 /// What the user asked a new pane to run.
 public enum AppletChoice: Sendable, Equatable {
@@ -11,6 +12,7 @@ public enum AppletChoice: Sendable, Equatable {
   /// A data viewer with nothing open, started in the pane's directory.
   case dataViewer
 
-  /// A map viewer, started in the pane's directory.
-  case mapViewer
+  /// A map viewer, started in the pane's directory. It shows `region` when the user picked a place,
+  /// and its own default view otherwise.
+  case mapViewer(region: GeoRegion?)
 }

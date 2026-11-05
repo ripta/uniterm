@@ -3,6 +3,7 @@ import GeoData
 import XCTest
 
 @testable import MapViewerApplet
+@testable import PlaceSearch
 
 /// Answers place lookups from a script, and records each one. A held lookup waits until the test
 /// releases it, so a test can finish lookups out of order.
@@ -42,21 +43,12 @@ final class PlaceNamerTests: XCTestCase {
     await applet.places.pending?.value
   }
 
-  /// Catches a scale boundary that drifts. A view of 12 degrees of latitude or more names a
-  /// country, and anything closer names a city.
-  func testTheScaleFollowsTheSpan() {
-    XCTAssertEqual(PlaceScale(GeoSpan(latitudeDelta: 40, longitudeDelta: 60)), .country)
-    XCTAssertEqual(PlaceScale(GeoSpan(latitudeDelta: 12, longitudeDelta: 12)), .country)
-    XCTAssertEqual(PlaceScale(GeoSpan(latitudeDelta: 11.9, longitudeDelta: 20)), .city)
-    XCTAssertEqual(PlaceScale(GeoSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)), .city)
-  }
-
   /// Catches a name that never reaches the palette, or one written into the saved layout. The
   /// name rides on the pane's tab as a detail, the title stays the pane's own, and the
   /// description holds no trace of it.
   func testTheNameIsATabDetailAndIsNeverSaved() async throws {
     let places = ScriptedPlaces()
-    let applet = MapViewerApplet(startDirectory: nil, placeNames: places.lookup)
+    let applet = MapViewerApplet(startDirectory: nil, places: PlaceServices(names: places.lookup))
     let host = RecordingHost()
     applet.host = host
 
@@ -76,7 +68,7 @@ final class PlaceNamerTests: XCTestCase {
   /// out to country scale, asks again, at the scale the view now shows.
   func testOnlyAMoveThatCanChangeTheNameAsks() async {
     let places = ScriptedPlaces()
-    let applet = MapViewerApplet(startDirectory: nil, placeNames: places.lookup)
+    let applet = MapViewerApplet(startDirectory: nil, places: PlaceServices(names: places.lookup))
 
     await show(applet, region(48.85, 2.35, 0.2))
     await show(applet, region(48.86, 2.37, 0.2))
@@ -102,7 +94,7 @@ final class PlaceNamerTests: XCTestCase {
   func testAStaleAnswerIsDropped() async {
     let places = ScriptedPlaces()
     places.holds = true
-    let applet = MapViewerApplet(startDirectory: nil, placeNames: places.lookup)
+    let applet = MapViewerApplet(startDirectory: nil, places: PlaceServices(names: places.lookup))
 
     applet.content.onRegionShown?(region(48.85, 2.35, 0.2))
     let first = applet.places.pending
@@ -126,7 +118,7 @@ final class PlaceNamerTests: XCTestCase {
   /// offline. An answer of nothing, or of blank text, clears the detail.
   func testNoAnswerClearsTheName() async {
     let places = ScriptedPlaces()
-    let applet = MapViewerApplet(startDirectory: nil, placeNames: places.lookup)
+    let applet = MapViewerApplet(startDirectory: nil, places: PlaceServices(names: places.lookup))
 
     await show(applet, region(48.85, 2.35, 0.2))
     XCTAssertEqual(applet.publishedTabs.first.details, ["Paris, France"])
@@ -148,7 +140,7 @@ final class PlaceNamerTests: XCTestCase {
     let places = ScriptedPlaces()
     let applet = try MapViewerApplet(
       restoring: MapViewerDescription(region: region(48.85, 2.35, 0.2)).appletDescription(),
-      placeNames: places.lookup)
+      places: PlaceServices(names: places.lookup))
 
     applet.content.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
     applet.content.layoutSubtreeIfNeeded()
@@ -168,5 +160,80 @@ final class PlaceNamerTests: XCTestCase {
 
     XCTAssertNil(applet.places.pending)
     XCTAssertEqual(applet.publishedTabs.first.details, [])
+  }
+}
+
+/// A place searcher that answers from the test.
+@MainActor
+final class FakeMapSearch: PlaceSearching {
+  var onUpdate: ((Result<[PlaceSuggestion], PlaceSearchFailure>) -> Void)?
+  var region: GeoRegion?
+  private(set) var cancelled = false
+
+  func search(_ query: String) {}
+
+  func region(for suggestion: PlaceSuggestion) async -> Result<GeoRegion, PlaceSearchFailure> {
+    region.map { .success($0) } ?? .failure(.notFound)
+  }
+
+  func cancel() { cancelled = true }
+}
+
+/// Go to Place inside a map: offered only with a search, a pick moves the map and is saved, and
+/// the search goes away after it.
+@MainActor
+final class GoToPlaceTests: XCTestCase {
+  private let tokyo = GeoRegion(
+    center: GeoCoordinate(latitude: 35.68, longitude: 139.69),
+    span: GeoSpan(latitudeDelta: 0.4, longitudeDelta: 0.4))!
+
+  private func command() throws -> AppletCommand {
+    try XCTUnwrap(MapViewerApplet.commandSet.commands.first { $0.name == "go-to-place" })
+  }
+
+  /// Catches a Go to Place offered by a pane that has no way to search.
+  func testGoToPlaceNeedsASearch() throws {
+    XCTAssertFalse(try command().isAvailable(MapViewerApplet(startDirectory: nil)))
+
+    let search = FakeMapSearch()
+    let applet = MapViewerApplet(
+      startDirectory: nil, places: PlaceServices(search: { search }))
+
+    XCTAssertTrue(try command().isAvailable(applet))
+  }
+
+  /// Catches a pick that moves the map but is not saved, or leaves the search over the map. The
+  /// map shows the picked place's region, the layout records it, and the search closes and stops.
+  func testAPickMovesTheMapSavesItAndCloses() async throws {
+    let search = FakeMapSearch()
+    search.region = tokyo
+    let applet = MapViewerApplet(startDirectory: nil, places: PlaceServices(search: { search }))
+    let host = RecordingHost()
+    applet.host = host
+    applet.content.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+    applet.content.layoutSubtreeIfNeeded()
+
+    try command().run(applet)
+    let field = try XCTUnwrap(applet.content.placeSearch)
+
+    field.setQuery("Tokyo")
+    search.onUpdate?(.success([PlaceSuggestion(title: "Tokyo", subtitle: "Japan", token: 0)]))
+    _ = field.control(
+      field.field, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+    await field.pendingPick?.value
+
+    XCTAssertEqual(try MapViewerDescription.decode(applet.describe()).region, tokyo)
+    XCTAssertEqual(host.changes, 1)
+    XCTAssertNil(applet.content.placeSearch)
+    XCTAssertTrue(search.cancelled)
+    XCTAssertEqual(applet.content.mapView.region.center.latitude, 35.68, accuracy: 0.05)
+  }
+
+  /// Catches a new map from the launcher that forgets the picked place. The region is shown and
+  /// saved, since the user chose it.
+  func testANewMapAtAPlaceStartsThereAndSavesIt() throws {
+    let applet = MapViewerApplet(startDirectory: nil, region: tokyo)
+
+    XCTAssertEqual(try MapViewerDescription.decode(applet.describe()).region, tokyo)
   }
 }

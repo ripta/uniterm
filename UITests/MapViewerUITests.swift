@@ -101,6 +101,31 @@ final class MapViewerUITests: UnitermUITestCase {
       waitFor(mapPane, timeout: 10) { $0 == "focused" }, "a click on the map left it unfocused")
   }
 
+  /// Catches a place field the launcher never shows, a Cmd-L that does not reach the map, and a
+  /// search that Escape cannot close. No place is searched, so the test needs no network.
+  func testThePlaceFieldShowsInTheLauncherAndCmdLOpensItOverTheMap() throws {
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("d", modifierFlags: .command)
+    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    app.typeKey("4", modifierFlags: .command)
+
+    let launcherField = launcher(in: window).textFields["place-search-field"]
+    XCTAssertTrue(launcherField.waitForExistence(timeout: 5), "no place field in the launcher")
+
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(map(in: window).waitForExistence(timeout: 10), "no map pane")
+
+    app.typeKey("l", modifierFlags: .command)
+    let search = map(in: window).descendants(matching: .any)["place-search"]
+    XCTAssertTrue(search.waitForExistence(timeout: 5), "Cmd-L showed no place search")
+
+    app.typeKey(.escape, modifierFlags: [])
+    XCTAssertTrue(waitUntilGone(search), "Escape left the place search over the map")
+  }
+
   /// Catches a restore that drops the stored style or region. A planted layout names the hybrid
   /// style and a region over San Francisco, and the pane shows both.
   func testAPlantedStyleAndRegionComeBack() throws {
