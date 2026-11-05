@@ -1,25 +1,5 @@
-import CoreLocation
 import GeoData
-import MapKit
-
-/// Names the place at a coordinate, at a scale, or gives nil when it has no name for it.
-public typealias PlaceLookup = @MainActor (GeoCoordinate, PlaceScale) async -> String?
-
-/// How much of a place's name the map shows, from how far out it is zoomed.
-public enum PlaceScale: Equatable, Sendable {
-  /// A country or region, such as "Japan".
-  case country
-
-  /// A city with its context, such as "Los Angeles, CA".
-  case city
-
-  /// A map that shows this much latitude or more names countries.
-  static let countrySpan = 12.0
-
-  init(_ span: GeoSpan) {
-    self = span.latitudeDelta >= Self.countrySpan ? .country : .city
-  }
-}
+import PlaceSearch
 
 /// Names the place at the center of the map, for the palette.
 ///
@@ -85,28 +65,5 @@ final class PlaceNamer {
 
     name = next
     onName?(next)
-  }
-}
-
-extension MapViewerApplet {
-  /// Apple's reverse geocoder, which the app gives each map pane. It sends the map's center to
-  /// Apple, which already serves the map's tiles for that area. Open ocean and errors, such as
-  /// being offline, give nil.
-  public static let applePlaceNames: PlaceLookup = { center, scale in
-    let location = CLLocation(latitude: center.latitude, longitude: center.longitude)
-
-    guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
-
-    let items = try? await request.mapItems
-
-    guard let place = items?.first?.addressRepresentations else { return nil }
-
-    switch scale {
-    case .country:
-      return place.regionName
-
-    case .city:
-      return place.cityWithContext ?? place.cityName ?? place.regionName
-    }
   }
 }

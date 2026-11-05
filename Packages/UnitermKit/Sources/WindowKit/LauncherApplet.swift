@@ -72,7 +72,10 @@ final class LauncherApplet: Applet {
   }
 
   func start() {}
-  func close() {}
+
+  func close() {
+    launcher.stop()
+  }
   func detach() {}
   func reattach() {}
 

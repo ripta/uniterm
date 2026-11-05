@@ -1,6 +1,7 @@
 import AppKit
 import GeoData
 import MapKit
+import PlaceSearch
 import Theme
 
 /// The map viewer's body: a map view, and a banner over it that says why the map could not load.
@@ -15,6 +16,12 @@ final class MapViewerView: NSView, MKMapViewDelegate {
 
   /// Gets every region the map settles on, whoever moved it.
   var onRegionShown: ((GeoRegion) -> Void)?
+
+  /// Gets the region of a place the user picked in the place search.
+  var onPlacePicked: ((GeoRegion) -> Void)?
+
+  /// The place search over the map, while it shows.
+  private(set) var placeSearch: PlaceSearchView?
 
   /// Gets the reason the map could not load.
   var onLoadFailure: ((String) -> Void)?
@@ -210,6 +217,11 @@ final class MapViewerView: NSView, MKMapViewDelegate {
       if let responder = window.firstResponder as? NSView, responder.isDescendant(of: mapView) {
         noteUserGesture()
       }
+    } else if let placeSearch,
+      placeSearch.isMousePoint(
+        placeSearch.convert(event.locationInWindow, from: nil), in: placeSearch.bounds)
+    {
+      return
     } else if mapView.isMousePoint(point, in: mapView.bounds) {
       noteUserGesture()
 
@@ -265,6 +277,51 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   private func move(to camera: MKMapCamera) {
     noteUserGesture()
     mapView.setCamera(camera, animated: animatesCommands)
+  }
+
+  // MARK: Place search
+
+  /// Shows an empty place search over the top of the map and puts the keyboard in it. Each showing
+  /// starts a new search, so the field never holds a stale query.
+  func showPlaceSearch(makeSearcher: @MainActor () -> any PlaceSearching) {
+    if placeSearch == nil {
+      let search = PlaceSearchView(searcher: makeSearcher(), placeholder: "Go to place")
+      search.translatesAutoresizingMaskIntoConstraints = false
+      search.apply(palette)
+      search.onPick = { [weak self] region, _ in self?.onPlacePicked?(region) }
+      search.onEscapeEmpty = { [weak self] in self?.hidePlaceSearch() }
+      search.onSubmitWithoutPlace = { [weak self] in self?.hidePlaceSearch() }
+      addSubview(search)
+
+      let preferredWidth = search.widthAnchor.constraint(equalToConstant: 460)
+      preferredWidth.priority = .defaultHigh
+
+      NSLayoutConstraint.activate([
+        search.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+        search.centerXAnchor.constraint(equalTo: centerXAnchor),
+        search.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
+        search.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+        preferredWidth,
+      ])
+
+      placeSearch = search
+    }
+
+    layoutSubtreeIfNeeded()
+    placeSearch?.focusField()
+  }
+
+  /// Takes the place search away. The keyboard goes back to the map when the search had it.
+  func hidePlaceSearch() {
+    guard let search = placeSearch else { return }
+
+    let hadKeyboard = search.hasKeyboard
+
+    search.stop()
+    search.removeFromSuperview()
+    placeSearch = nil
+
+    if hadKeyboard { window?.makeFirstResponder(mapView) }
   }
 
   // MARK: Style
@@ -386,5 +443,7 @@ final class MapViewerView: NSView, MKMapViewDelegate {
     noticesLabel.textColor = palette[.text].nsColor
 
     for marker in markers.allObjects { marker.palette = palette }
+
+    placeSearch?.apply(palette)
   }
 }

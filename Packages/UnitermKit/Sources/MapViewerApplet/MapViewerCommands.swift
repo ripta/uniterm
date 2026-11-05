@@ -41,6 +41,10 @@ extension MapViewerApplet {
         name: "face-north", title: "Face North", key: KeyChord("n", [.command, .shift]),
         isAvailable: { $0.content.isTurned }
       ) { $0.content.faceNorth() },
+      .view(
+        name: "go-to-place", title: "Go to Place\u{2026}", key: KeyChord("l"),
+        isAvailable: { $0.canGoToPlace }
+      ) { $0.showPlaceSearch() },
     ])
 }
 

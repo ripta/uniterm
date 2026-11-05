@@ -89,6 +89,7 @@ final class BuiltInCommandsTests: XCTestCase {
       "style-standard": KeyChord("1"), "style-satellite": KeyChord("2"),
       "style-hybrid": KeyChord("3"), "zoom-in": KeyChord("+"), "zoom-out": KeyChord("-"),
       "zoom-to-pins": KeyChord("0"), "face-north": KeyChord("n", [.command, .shift]),
+      "go-to-place": KeyChord("l"),
     ]
     let file: Set = ["open", "clear-file"]
 
@@ -96,13 +97,13 @@ final class BuiltInCommandsTests: XCTestCase {
       map.commands.map(\.name),
       [
         "open", "clear-file", "style-standard", "style-satellite", "style-hybrid", "zoom-in",
-        "zoom-out", "zoom-to-pins", "face-north",
+        "zoom-out", "zoom-to-pins", "face-north", "go-to-place",
       ])
     XCTAssertEqual(
       map.commands.map(\.title),
       [
         "Open\u{2026}", "Clear File Pins", "Standard Map", "Satellite Map", "Hybrid Map",
-        "Zoom In", "Zoom Out", "Zoom to Fit Pins", "Face North",
+        "Zoom In", "Zoom Out", "Zoom to Fit Pins", "Face North", "Go to Place\u{2026}",
       ])
 
     for command in map.commands {

@@ -47,6 +47,7 @@ struct LauncherModel: Equatable {
   enum Focus: Equatable {
     case filter
     case command
+    case place
   }
 
   var filter = "" {
@@ -58,6 +59,10 @@ struct LauncherModel: Equatable {
   }
 
   private var preferred: LauncherEntry.Kind = .terminal
+
+  /// True when the launcher can search for a place to open a map at. Without it the map viewer
+  /// opens at its own default view, and the keyboard stays in the filter.
+  var offersPlace = false
 
   /// Set by an attempt to open that failed, and cleared by any edit or move.
   var refusal: LauncherRefusal?
@@ -80,7 +85,9 @@ struct LauncherModel: Equatable {
 
   var showsCommand: Bool { selection?.kind == .program }
 
-  var focus: Focus { showsCommand ? .command : .filter }
+  var showsPlace: Bool { offersPlace && selection?.kind == .mapViewer }
+
+  var focus: Focus { showsCommand ? .command : showsPlace ? .place : .filter }
 
   /// Selects an entry that is visible. Anything else is ignored.
   mutating func select(_ kind: LauncherEntry.Kind) {
@@ -138,7 +145,7 @@ struct LauncherModel: Equatable {
       return .success(.dataViewer)
 
     case .mapViewer:
-      return .success(.mapViewer)
+      return .success(.mapViewer(region: nil))
 
     case nil:
       return .failure(LauncherRefusal(reason: "No applet matches."))
