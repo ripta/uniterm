@@ -36,6 +36,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private let budget: TableBudget
   private let pageTarget: Int
   private var nested: NestedTable?
+  private var revealedRevision = 0
   private var palette = ThemePalette.latte
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
@@ -113,9 +114,80 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     session.onChange = { [weak self] in self?.refresh() }
     content.onSort = { [weak self] column in self?.session.cycleSort(column) }
     content.onFilter = { [weak self] text in self?.session.setFilter(text) }
+    content.onFind = { [weak self] text in self?.session.setFind(text) }
+    content.onStep = { [weak self] forward in self?.session.stepMatch(forward: forward) }
     content.onOpen = { [weak self] in self?.showOpenPanel() }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
     content.onExpand = { [weak self] request in self?.expand(request) }
+  }
+
+  // MARK: Find
+
+  /// True when the pane shows a table, which is what the find commands need.
+  var hasTable: Bool { content.body == .table }
+
+  /// Opens the find bar and puts the keyboard in it.
+  func showFind() {
+    content.showFind()
+  }
+
+  /// Steps to the next or the previous match. With no query to step through, it opens the find bar
+  /// instead, as Find Next does in other macOS apps.
+  func stepFind(forward: Bool) {
+    guard !session.findQuery.isEmpty else {
+      content.showFind()
+      return
+    }
+
+    session.stepMatch(forward: forward)
+  }
+
+  func focusFilter() {
+    content.focusFilter()
+  }
+
+  private func findDisplay() -> FindDisplay {
+    let query = session.findQuery
+
+    guard !query.isEmpty else { return FindDisplay() }
+
+    let matches = session.matches
+    var status: String
+
+    if session.isSearching {
+      status = "Searching\u{2026}"
+    } else if matches.isEmpty {
+      status = "No matches"
+    } else {
+      let position = (session.currentMatch ?? 0) + 1
+      let more = matches.isTruncated ? "+" : ""
+      status = "\(position.formatted()) of \(matches.count.formatted())\(more) matches"
+    }
+
+    let loaded = session.snapshot.rowCount.formatted()
+    let visible = session.visibleCount.formatted()
+    let cut = session.phase == .stoppedAtBudget || session.phase == .stoppedLowMemory
+    let filtered = session.visibleCount != session.snapshot.rowCount
+
+    switch (cut, filtered) {
+    case (true, true): status += " in \(visible) of the first \(loaded) rows"
+    case (true, false): status += " in the first \(loaded) rows"
+    case (false, true): status += " in \(visible) of \(loaded) rows"
+    case (false, false): break
+    }
+
+    return FindDisplay(query: query, status: status)
+  }
+
+  private func revealCurrentMatch() {
+    guard session.matchRevision != revealedRevision else { return }
+
+    revealedRevision = session.matchRevision
+
+    if let current = session.currentMatch {
+      let place = session.matches.position(at: current)
+      content.reveal(row: place.row, column: place.column)
+    }
   }
 
   // MARK: Nested
@@ -273,7 +345,8 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     let query = describesFromRecord ? record.query : session.query
 
     content.show(
-      body(), notices: notices(), filter: query.filter, sort: query.sort)
+      body(), notices: notices(), filter: query.filter, sort: query.sort, find: findDisplay())
+    revealCurrentMatch()
 
     let newTitle = fileName ?? Self.untitled
     let newSegments = segmentsForState()

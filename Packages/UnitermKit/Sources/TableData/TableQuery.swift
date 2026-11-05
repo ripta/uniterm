@@ -302,7 +302,7 @@ public enum TableQueryEngine {
 /// Finds a needle in a cell, ignoring case. An ASCII needle searches the cell's bytes. Bytes of a
 /// multi-byte character never equal an ASCII byte, so the search needs no decoding. Any other needle
 /// decodes each cell.
-private struct CellMatcher {
+struct CellMatcher {
   private let ascii: [UInt8]?
   private let lowered: String
 

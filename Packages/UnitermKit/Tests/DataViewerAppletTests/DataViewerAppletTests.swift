@@ -440,7 +440,8 @@ final class DataViewerAppletTests: XCTestCase {
   func testTheCommandSetAndDeclaration() {
     let commands = DataViewerApplet.commandSet.commands
 
-    XCTAssertEqual(commands.map(\.name), ["open"])
+    XCTAssertEqual(
+      commands.map(\.name), ["open", "find", "find-next", "find-previous", "focus-filter"])
     XCTAssertNil(commands.first?.key)
     XCTAssertEqual(commands.first?.home, .file)
 
@@ -450,5 +451,86 @@ final class DataViewerAppletTests: XCTestCase {
         OpenedType("public.comma-separated-values-text", rank: .owner),
         OpenedType("public.json", rank: .owner),
       ])
+  }
+
+  // MARK: Find
+
+  private func command(_ name: String) -> AppletCommand {
+    DataViewerApplet.commandSet.commands.first { $0.name == name }!
+  }
+
+  private let findNames = ["find", "find-next", "find-previous", "focus-filter"]
+
+  /// Catches a find command that is on with no file to search, or one that stays off once a table
+  /// shows. All four are off for an empty pane and on for a loaded one.
+  func testFindCommandsAreOffWithNoFileAndOnWithATable() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "name\nann\nbob\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+
+    for name in findNames {
+      XCTAssertFalse(command(name).isAvailable(applet), name)
+    }
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await loaded(applet)
+
+    for name in findNames {
+      XCTAssertTrue(command(name).isAvailable(applet), name)
+    }
+  }
+
+  /// Catches a find that touches the filter or the file, and a step that does not follow the
+  /// matches. The query marks cells among the rows shown, and Find Next and Find Previous move the
+  /// current match and wrap. The filter and the saved description stay as they were.
+  func testFindMarksCellsAndStepsWithoutTouchingTheFilter() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "name,city\nann,rome\nbob,romeo\ncy,oslo\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await loaded(applet)
+
+    let before = applet.describe()
+    applet.content.onFind?("rom")
+
+    let found = await eventually { applet.session.matches.count == 2 }
+    XCTAssertTrue(found)
+    XCTAssertEqual(applet.session.currentMatch, 0)
+    XCTAssertEqual(applet.session.query.filter, "")
+    XCTAssertEqual(applet.content.findCountLabel.stringValue, "1 of 2 matches")
+
+    command("find-next").run(applet)
+    XCTAssertEqual(applet.session.currentMatch, 1)
+
+    command("find-next").run(applet)
+    XCTAssertEqual(applet.session.currentMatch, 0)
+
+    command("find-previous").run(applet)
+    XCTAssertEqual(applet.session.currentMatch, 1)
+    XCTAssertEqual(applet.describe(), before, "the find query reached the description")
+  }
+
+  /// Catches a find that counts rows the filter hides, and one that forgets the load stopped early.
+  /// With the budget cut, the count says it covers the first rows only.
+  func testFindCountsNameTheRowsTheSearchCovered() async throws {
+    let scratch = try Scratch(self)
+    var text = "id,v\n"
+    for index in 0..<5_000 { text += "\(index),row number \(index)\n" }
+
+    let file = try scratch.write("big.csv", text)
+    let applet = DataViewerApplet(
+      startDirectory: nil, budget: TableBudget(limit: 40_000, floor: 8_000), pageTarget: 2_000)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .stoppedAtBudget }
+
+    applet.content.onFind?("number 1")
+    _ = await eventually { !applet.session.isSearching && !applet.session.matches.isEmpty }
+
+    let loaded = applet.session.snapshot.rowCount.formatted()
+    XCTAssertTrue(
+      applet.content.findCountLabel.stringValue.hasSuffix("matches in the first \(loaded) rows"),
+      applet.content.findCountLabel.stringValue)
   }
 }
