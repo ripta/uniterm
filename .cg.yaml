@@ -1,6 +1,7 @@
 version: 1
 allow:
   - prefix: [./scripts/run-ui-tests.sh]
+  - prefix: [./scripts/swiftpm-offline-check.sh]
   - prefix: [/usr/bin/lldb, --batch]
   - prefix: [/usr/bin/python3, /Users/ripta/.claude/plugins/cache/coding-standards/coding-standards/274fa9f4a2b2/scripts/proposals.py]
   - prefix: [/usr/bin/sed]
@@ -20,6 +21,7 @@ allow:
   - prefix: [sed]
   - prefix: [shasum]
   - prefix: [swift, build]
+  - prefix: [swift, package, resolve]
   - prefix: [swift, test]
   - prefix: [tar, -tf]
   - prefix: [tar, -tzf]
