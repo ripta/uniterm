@@ -31,5 +31,10 @@ final class BuiltInCommandsTests: XCTestCase {
 
     let terminal = BuiltInApplets.commandSets.first { $0.typeID == "terminal" }
     XCTAssertFalse(terminal?.commands.contains { $0.name == AppletCommand.openSourceName } ?? true)
+
+    let viewer = BuiltInApplets.commandSets.first { $0.typeID == "data-viewer" }
+    let open = viewer?.commands.first { $0.name == AppletCommand.openSourceName }
+    XCTAssertNotNil(open)
+    XCTAssertNil(open?.key)
   }
 }

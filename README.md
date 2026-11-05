@@ -12,8 +12,8 @@ Each window also has a status bar and a command palette. Both can be docked in d
 
 Early development. The terminal applet runs through libghostty, with tabs and a program mode. A window holds splits that
 can be resized, and the app opens several windows. It has a status bar with message history, undo for a closed pane, and
-close guards for running programs. Every window's layout is saved and restored across launches. The other applets and
-the command palette are not built yet.
+close guards for running programs. Every window's layout is saved and restored across launches. A data viewer opens a
+CSV file as a table that sorts and filters. The other applets and the command palette are not built yet.
 
 ## Stack
 
@@ -38,6 +38,9 @@ Commands:
 - `make run` builds, then runs the app in the foreground, so its logs and any crash show in the terminal.
 - `make test` runs the CI gating checks, package tests, and app UI tests. UI tests need a logged-in desktop session
   and Accessibility permission for the terminal. `make test-ci` runs just the CI gating checks, without Xcode or Zig.
+- `make fuzz` runs the table readers' fuzzer under the address sanitizer, in its own build folder. It tries
+  `FUZZ_ITERATIONS` mutated inputs, 5000 by default. `make test-package` runs the same fuzzer at a small count. `make ci`
+  does not run `make fuzz`.
 - `make fmt`, `make fmt-check`, `make lint`, and `make check` format and check the sources.
 - `make ghostty-offline-check` proves that the pinned libghostty rebuilds with the network off. It takes about four
   minutes, and `make ci` runs it.
