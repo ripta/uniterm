@@ -68,12 +68,17 @@ What the user still needs to do is every check in M8. The run wrote a wrapper at
 The scratchpad does not outlive the session, so here is what it does, to rebuild it if needed:
 1. Streams `/usr/bin/log stream --level debug --style compact --predicate 'subsystem == "dev.uniterm.app"'` to a file.
    Use `/usr/bin/log`, since zsh has a `log` builtin that shadows it.
-2. Walks through eight steps, pausing for Return after each: Finder Open With > Other… and a Dock drop, cold and warm,
-   on the Debug bundle and then on the Release bundle. Every step uses a folder.
+2. Walks through eight steps, pausing for Return after each. The steps are a folder dragged onto the bundle's icon in a
+   Finder window and a folder dropped on its Dock icon, cold and warm, on the Debug bundle and then on the Release
+   bundle. It reveals each bundle and the folder in Finder first.
 3. After each step, copies the newest `open-event` line into a summary file next to the script.
 
-The Debug and Release bundles both claim `public.folder`, so Open With may list two uniterm entries. Pick the exact
-bundle with Other…, and drag that same bundle to the Dock.
+Drag the same bundle to the Dock that the Finder steps used, so both gestures reach one build.
+
+The first version of the wrapper used Finder's Open With, and the user found that it cannot work. Finder has no Open
+With for folders, and a folder is the only type uniterm declares. A later 2026-11-04 Decision Log entry amends M8's last
+check to the drag onto the app icon, which Finder also sends. The earlier entry's claim that Open With offers uniterm
+for a folder was corrected in place.
 
 Checks:
 - `make fmt-check`, `make lint`, `make check`, and `make test-package` pass.
