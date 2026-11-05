@@ -505,6 +505,45 @@ final class MapFileTests: XCTestCase {
     XCTAssertTrue(applet.filePinsShown.isEmpty)
   }
 
+  /// Catches a Zoom to Fit Pins that misses a pin, is offered with nothing to fit, or is not saved.
+  /// After the user moves away from two loaded pins, the command brings both back into view and the
+  /// pane records the fitted region.
+  func testZoomToFitPinsShowsEveryPinAndIsSaved() async throws {
+    let fit = try XCTUnwrap(MapViewerApplet.commandSet.commands.first { $0.name == "zoom-to-pins" })
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    XCTAssertFalse(fit.isAvailable(applet))
+
+    let scratch = try GeoScratch(self)
+    try await load(
+      applet,
+      try scratch.write(
+        "two.geojson",
+        GeoFixtures.collection([GeoFixtures.point("A", 10, 40), GeoFixtures.point("B", 12, 44)])))
+
+    let away = try XCTUnwrap(
+      GeoRegion(
+        center: GeoCoordinate(latitude: -30, longitude: 150),
+        span: GeoSpan(latitudeDelta: 1, longitudeDelta: 1)))
+    applet.content.onRegionSettled?(away)
+    let changes = host.changes
+
+    XCTAssertTrue(fit.isAvailable(applet))
+    fit.run(applet)
+
+    let saved = try XCTUnwrap(MapViewerDescription.decode(applet.describe()).region)
+
+    for (longitude, latitude) in [(10.0, 40.0), (12.0, 44.0)] {
+      XCTAssertLessThanOrEqual(abs(saved.center.latitude - latitude), saved.span.latitudeDelta / 2)
+      XCTAssertLessThanOrEqual(
+        abs(saved.center.longitude - longitude), saved.span.longitudeDelta / 2)
+    }
+
+    XCTAssertEqual(host.changes, changes + 1)
+  }
+
   /// Catches a declaration that drifts. The map owns GeoJSON.
   func testTheMapOwnsGeoJSON() {
     XCTAssertEqual(

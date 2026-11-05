@@ -230,6 +230,38 @@ final class MapViewerView: NSView, MKMapViewDelegate {
     }
   }
 
+  // MARK: Commands
+
+  /// False in tests, so a command's move lands before the test reads the camera.
+  var animatesCommands = true
+
+  /// Moves the camera closer by `factor`, or away when it is below 1. MapKit clamps the distance
+  /// to the zoom range it allows, so a zoom at either end does nothing.
+  ///
+  /// A zoom is the user's move. Its settle is reported, so the region it shows is saved.
+  func zoom(closerBy factor: Double) {
+    guard let camera = mapView.camera.copy() as? MKMapCamera else { return }
+
+    camera.centerCoordinateDistance /= factor
+    move(to: camera)
+  }
+
+  /// True when the map is turned away from north.
+  var isTurned: Bool { abs(mapView.camera.heading) > 0.5 }
+
+  /// Turns the map back to face north, keeping its center and zoom.
+  func faceNorth() {
+    guard let camera = mapView.camera.copy() as? MKMapCamera else { return }
+
+    camera.heading = 0
+    move(to: camera)
+  }
+
+  private func move(to camera: MKMapCamera) {
+    noteUserGesture()
+    mapView.setCamera(camera, animated: animatesCommands)
+  }
+
   // MARK: Style
 
   func show(style: MapStyle) {
