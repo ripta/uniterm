@@ -32,6 +32,9 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   /// True from the user's first gesture on the map until MapKit reports where it settled. Only a
   /// settle the user caused is reported. MapKit also reports a region after one is set, after a
   /// resize, and for its own default, and none of those belongs in the description.
+  ///
+  /// A gesture can move nothing, such as a click or a keystroke the map ignores. Setting a region
+  /// and resizing the map both clear the mark, so a stale one never claims the report that follows.
   private(set) var userIsMoving = false
   private(set) var style = MapStyle.standard
   private(set) var failure: String?
@@ -110,8 +113,16 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   /// Shows `region`. A map with no size yet takes it at its first layout, since a region set on a
   /// map with no frame is fitted to nothing.
   func show(region: GeoRegion) {
+    userIsMoving = false
     pendingRegion = region
     applyPendingRegion()
+  }
+
+  /// A resize makes MapKit report a region before the layout pass, so the mark clears here.
+  override func setFrameSize(_ newSize: NSSize) {
+    if newSize != frame.size { userIsMoving = false }
+
+    super.setFrameSize(newSize)
   }
 
   override func layout() {
@@ -182,12 +193,15 @@ final class MapViewerView: NSView, MKMapViewDelegate {
     }
   }
 
-  private func observe(_ event: NSEvent) {
+  func observe(_ event: NSEvent) {
     guard let window, event.window === window else { return }
 
     let point = mapView.convert(event.locationInWindow, from: nil)
 
     if event.type == .keyDown {
+      // A command moves nothing on the map. Cmd-O and Cmd-K reach it while the map has focus.
+      if event.modifierFlags.contains(.command) { return }
+
       if let responder = window.firstResponder as? NSView, responder.isDescendant(of: mapView) {
         noteUserGesture()
       }
@@ -238,21 +252,21 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   // MARK: Pins
 
   /// Replaces every pin of `layer` with `pins`. The other layers keep theirs.
-  func replacePins(layer: String, pins: [GeoPin], defaultAccent: ThemeToken) {
+  func replacePins(layer: MapLayer, pins: [GeoPin], defaultAccent: ThemeToken) {
     removePins(layer: layer)
 
     mapView.addAnnotations(
       pins.map { MapPinAnnotation(pin: $0, layer: layer, layerAccent: defaultAccent) })
   }
 
-  func removePins(layer: String) {
+  func removePins(layer: MapLayer) {
     let old = mapView.annotations.filter { ($0 as? MapPinAnnotation)?.layer == layer }
 
     mapView.removeAnnotations(old)
   }
 
   /// The pins of `layer` on the map now.
-  func pins(layer: String) -> [GeoPin] {
+  func pins(layer: MapLayer) -> [GeoPin] {
     mapView.annotations.compactMap { $0 as? MapPinAnnotation }.filter { $0.layer == layer }
       .map(\.pin)
   }

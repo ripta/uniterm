@@ -3,10 +3,28 @@ import GeoData
 import MapKit
 import Theme
 
+/// A set of pins that one source owns and replaces as a whole.
+///
+/// The file layer is its own case. A layer a command names is another case, so no command can name
+/// a layer that collides with the file's.
+enum MapLayer: Hashable {
+  case file
+  case command(String)
+
+  /// The identifier MapKit clusters by. The file's has no prefix and a command's always has one,
+  /// so a command named like the file's identifier still clusters apart from it.
+  var clusteringIdentifier: String {
+    switch self {
+    case .file: return "file"
+    case .command(let name): return "command:\(name)"
+    }
+  }
+}
+
 /// A pin on the map: the model pin, the layer it belongs to, and that layer's default accent.
 final class MapPinAnnotation: NSObject, MKAnnotation {
   let pin: GeoPin
-  let layer: String
+  let layer: MapLayer
   let layerAccent: ThemeToken
 
   @objc dynamic let coordinate: CLLocationCoordinate2D
@@ -14,7 +32,7 @@ final class MapPinAnnotation: NSObject, MKAnnotation {
   /// The label. MapKit shows it in the callout when the pin is selected.
   var title: String? { pin.label }
 
-  init(pin: GeoPin, layer: String, layerAccent: ThemeToken) {
+  init(pin: GeoPin, layer: MapLayer, layerAccent: ThemeToken) {
     self.pin = pin
     self.layer = layer
     self.layerAccent = layerAccent
@@ -187,7 +205,7 @@ final class MapMarkerView: MKAnnotationView {
 
   private func refresh() {
     if let pin = annotation as? MapPinAnnotation {
-      clusteringIdentifier = pin.layer
+      clusteringIdentifier = pin.layer.clusteringIdentifier
       art.art = .of(palette: palette, accent: pin.accent, glyph: pin.pin.glyph)
       setAccessibilityLabel(pin.pin.label)
     } else if let cluster = annotation as? MKClusterAnnotation {

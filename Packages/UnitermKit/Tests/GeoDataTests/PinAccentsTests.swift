@@ -115,4 +115,30 @@ final class GeoRegionFittingTests: XCTestCase {
     XCTAssertLessThanOrEqual(single.center.latitude + single.span.latitudeDelta / 2, 90)
     XCTAssertNil(GeoRegion.fitting([]))
   }
+
+  /// Catches a fit that returns nil at the poles, which would skip the fit of a user's load without
+  /// a word. The center is clamped and the region then re-checks its edges in floating point, so
+  /// every pair of latitudes at or near a pole, at every span, must still fit and stay on the
+  /// globe.
+  func testFittingNeverFailsNearThePoles() throws {
+    let edges = [-90, -89.999999, -89.5, -60.1, -0.01, 0, 0.01, 33.3, 89.5, 89.999999, 90]
+    let spans = [0.0, 0.0001, 0.7, 30.0, 179.9, 180.0]
+
+    for south in edges {
+      for north in edges where north >= south {
+        for span in spans {
+          let points = [
+            GeoCoordinate(latitude: south, longitude: -span),
+            GeoCoordinate(latitude: north, longitude: span),
+          ]
+
+          let region = try XCTUnwrap(
+            GeoRegion.fitting(points), "no fit for \(south) to \(north), span \(span)")
+
+          XCTAssertGreaterThanOrEqual(region.center.latitude - region.span.latitudeDelta / 2, -90)
+          XCTAssertLessThanOrEqual(region.center.latitude + region.span.latitudeDelta / 2, 90)
+        }
+      }
+    }
+  }
 }

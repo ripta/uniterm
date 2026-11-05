@@ -266,7 +266,10 @@ None.
   further bound on MapKit itself.
 - A region is saved only after a user gesture on the map. MapKit also reports a region after one is set, after a resize,
   and for its own default on an empty pane, and none of those is saved, so an untouched pane never rewrites the layout.
-  A local event monitor marks the gesture, and a settle within 0.1% of the stored region is not saved again. The gate
+  A local event monitor marks the gesture, and a settle within 0.1% of the stored region is not saved again. A command
+  key is not a gesture, since Cmd-O and Cmd-K reach the map while it has focus. A gesture can move nothing, so setting a
+  region and resizing the pane both clear the mark. The resize clears it in `setFrameSize`, because MapKit reports the
+  resize before the layout pass. A click followed by a resize or a fit saves nothing. The gate
   was chosen over comparing reports with the applied region, because the default region of an empty pane matches no
   region the pane applied.
 - The registry has no checked state for a command, so the three style commands show titles only. The status bar segment
@@ -323,7 +326,9 @@ None.
 - Reaching a file is shared code. A new `SourceAccess` target holds the path-first, bookmark-second resolver and the
   messages for a missing, protected, non-regular, or unreadable file. The data viewer uses it, and its tests pass
   unchanged. The resolver tests moved with the code. No message says "corrupt".
-- The map has one source-taking entry point, `replaceSource`. The pane-local Open..., a drop of one file, the router's
+- The map has one source-taking entry point, `replaceSource`. It does not throw, since a failed load shows in the pane,
+  and `opening` does not throw either. The file bounds are one constant on the applet, and tests cross them with real
+  files: a sparse file one byte past the size bound, and a file of 10,001 points. The pane-local Open..., a drop of one file, the router's
   factory, and a restore all reach it. It finds the file and parses it off the main thread. A user load fits the map to
   the pins and saves that region. A restore does not move the saved region.
 - The file layer is bounded at 32 MiB and 10,000 points. A file past the size bound is refused whole, because
@@ -348,7 +353,9 @@ None.
   and the glyph is `text`. The ratio is 7.06 in Latte and 12.97 in Mocha. A test renders a pin and a cluster to a bitmap
   in both flavors on all 14 accents and checks at least 4.5 between the sampled disc and glyph pixels.
 - A marker is a circle in the accent with the disc inside it. It has no teardrop tip, so the coordinate is the marker's
-  center and no anchor offset is needed. A theme switch re-tints live markers in place. Clustering uses the layer name.
+  center and no anchor offset is needed. A theme switch re-tints live markers in place. Clustering uses the layer.
+  A layer is a `MapLayer`, either `file` or `command(name)`, so a command's layer cannot collide with the file's by any
+  name. The clustering identifier of a command layer is `command:` followed by its name, and the file's has no prefix.
   The tests cover the identifier and the colors. They cannot cover how MapKit merges markers in a live map.
 - Clearing the file layer is the File > Clear File Pins command. There is no pane control. It drops the stored path and
   bookmark and keeps the layer's accent. A failed load removes the old file pins and keeps the new path, so a restore
