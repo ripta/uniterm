@@ -13,7 +13,7 @@ dependencies, and its milestone carries no `Live after` line. Nothing was held o
 
 | Milestone | Run status | Commit |
 |---|---|---|
-| UTERM-015 M8: Finder sender record | IN PROGRESS | "Read the Finder open sender from the unified log" |
+| UTERM-015 M8: Finder sender record | DONE | "Read the Finder open sender from the unified log", then "Check Finder opens by dragging a folder onto the app icon", then "Mark the Finder sender record done" |
 
 ## Local checks
 
@@ -46,7 +46,8 @@ The approved plan made these guesses before any work began.
 
 Commit: "Read the Finder open sender from the unified log".
 
-M8 stays `IN PROGRESS`, and its queue row stays, by best guess 4. Nothing was measured.
+M8 is `DONE`. The run itself measured nothing, so by best guess 4 it first left M8 in progress. The user then ran the
+record by hand, and the results are under "The hand record" below.
 
 What the run tried:
 - `make build` and `make build CONFIGURATION=Release` both passed, so both bundles exist under
@@ -97,3 +98,31 @@ Review:
 
 The row review and final review cover the same single commit as this review, so the run did not repeat them. The
 milestone review above included the ADR review.
+
+### The hand record
+
+The user ran the corrected wrapper on 2026-11-04 and reported that a terminal opened in the folder on all four Release
+steps. Each step's `open-event` line, reduced to its sender:
+
+| Step | Build | Sender token | Actual-sender token |
+|---|---|---|---|
+| Finder drag, cold | Debug | `com.apple.finder`, opener Finder | `com.apple.coreservices.uiagent` |
+| Finder drag, warm | Debug | `com.apple.finder`, opener Finder | `com.apple.coreservices.uiagent` |
+| Dock drop, cold | Debug | `com.apple.dock`, opener Dock | `com.apple.coreservices.uiagent` |
+| Dock drop, warm | Debug | `com.apple.dock`, opener Dock | `com.apple.coreservices.uiagent` |
+| Finder drag, cold | Release | `com.apple.finder`, opener Finder | `com.apple.coreservices.uiagent` |
+| Finder drag, warm | Release | `com.apple.finder`, opener Finder | `com.apple.coreservices.uiagent` |
+| Dock drop, cold | Release | `com.apple.dock`, opener Dock | `com.apple.coreservices.uiagent` |
+| Dock drop, warm | Release | `com.apple.dock`, opener Dock | `com.apple.coreservices.uiagent` |
+
+Every sender is a platform binary with no team. M2 recorded `open -a` as `com.apple.open` or an exited process, so the
+sender token tells Finder and the Dock apart from `open -a`. "Opens that arrive through Launch Services" stands. The
+actual-sender token is the same in every case, `open -a` included, so it cannot tell senders apart.
+
+The commit "Mark the Finder sender record done" set M8 to `DONE`, wrote its As built block, and added a Decision Log
+entry. That entry says the Launch Services ADR candidate no longer waits on this record and stays Undecided. The commit
+also moved the row from `queue.md` to the end of `history.md`. UTERM-015 stays `accepted`, since M4 to M7 remain.
+
+Open:
+- Spotlight was never measured as a sender. Its identifier comes from the program only.
+- The ADR candidate on which Launch Services senders count as the user's act is ready for a decision.
