@@ -25,3 +25,22 @@ public enum ThemeToken: String, Sendable, CaseIterable {
   case surface2, surface1, surface0
   case base, mantle, crust
 }
+
+extension ThemeToken {
+  /// The closed set of accent tokens a pin may carry, in Catppuccin's order. A pin's color is one
+  /// of these and never a raw value, so it follows the flavor.
+  public static let accents: [ThemeToken] = [
+    .rosewater, .flamingo, .pink, .mauve, .red, .maroon, .peach, .yellow, .green, .teal, .sky,
+    .sapphire, .blue, .lavender,
+  ]
+
+  public var isAccent: Bool { Self.accents.contains(self) }
+
+  /// The accent named `name`, or nil when `name` is not one of the accent tokens. A neutral token
+  /// such as `base` is not an accent.
+  public init?(accent name: String) {
+    guard let token = ThemeToken(rawValue: name), token.isAccent else { return nil }
+
+    self = token
+  }
+}

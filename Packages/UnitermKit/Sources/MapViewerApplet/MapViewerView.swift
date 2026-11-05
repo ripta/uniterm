@@ -16,9 +16,16 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   /// Gets the reason the map could not load.
   var onLoadFailure: ((String) -> Void)?
 
+  /// Gets the files dropped on the pane. Returns false to refuse them.
+  var onDrop: (([URL]) -> Bool)?
+
   let mapView = MKMapView()
   private let banner = NSBox()
   private let bannerLabel = NSTextField(wrappingLabelWithString: "")
+  private let notices = NSBox()
+  private let noticesLabel = NSTextField(wrappingLabelWithString: "")
+  private var markers = NSHashTable<MapMarkerView>.weakObjects()
+  private var palette = ThemePalette.latte
   private var pendingRegion: GeoRegion?
   private var eventMonitor: Any?
 
@@ -56,7 +63,30 @@ final class MapViewerView: NSView, MKMapViewDelegate {
     banner.isHidden = true
     addSubview(banner)
 
+    noticesLabel.translatesAutoresizingMaskIntoConstraints = false
+    noticesLabel.setAccessibilityIdentifier("map-viewer-notices")
+    noticesLabel.maximumNumberOfLines = 0
+
+    notices.boxType = .custom
+    notices.cornerRadius = 8
+    notices.borderWidth = 0
+    notices.contentViewMargins = NSSize(width: 12, height: 8)
+    notices.translatesAutoresizingMaskIntoConstraints = false
+    notices.contentView = noticesLabel
+    notices.isHidden = true
+    addSubview(notices)
+
+    mapView.register(
+      MapMarkerView.self, forAnnotationViewWithReuseIdentifier: MapMarkerView.pinReuse)
+    mapView.register(
+      MapMarkerView.self, forAnnotationViewWithReuseIdentifier: MapMarkerView.clusterReuse)
+    registerForDraggedTypes([.fileURL])
+
     NSLayoutConstraint.activate([
+      notices.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+      notices.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+      notices.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+      notices.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
       mapView.leadingAnchor.constraint(equalTo: leadingAnchor),
       mapView.trailingAnchor.constraint(equalTo: trailingAnchor),
       mapView.topAnchor.constraint(equalTo: topAnchor),
@@ -205,6 +235,79 @@ final class MapViewerView: NSView, MKMapViewDelegate {
     banner.isHidden = true
   }
 
+  // MARK: Pins
+
+  /// Replaces every pin of `layer` with `pins`. The other layers keep theirs.
+  func replacePins(layer: String, pins: [GeoPin], defaultAccent: ThemeToken) {
+    removePins(layer: layer)
+
+    mapView.addAnnotations(
+      pins.map { MapPinAnnotation(pin: $0, layer: layer, layerAccent: defaultAccent) })
+  }
+
+  func removePins(layer: String) {
+    let old = mapView.annotations.filter { ($0 as? MapPinAnnotation)?.layer == layer }
+
+    mapView.removeAnnotations(old)
+  }
+
+  /// The pins of `layer` on the map now.
+  func pins(layer: String) -> [GeoPin] {
+    mapView.annotations.compactMap { $0 as? MapPinAnnotation }.filter { $0.layer == layer }
+      .map(\.pin)
+  }
+
+  func mapView(_ mapView: MKMapView, viewFor annotation: any MKAnnotation) -> MKAnnotationView? {
+    let reuse: String
+
+    if annotation is MKClusterAnnotation {
+      reuse = MapMarkerView.clusterReuse
+    } else if annotation is MapPinAnnotation {
+      reuse = MapMarkerView.pinReuse
+    } else {
+      return nil
+    }
+
+    let view = mapView.dequeueReusableAnnotationView(withIdentifier: reuse, for: annotation)
+
+    if let marker = view as? MapMarkerView {
+      marker.palette = palette
+      markers.add(marker)
+    }
+
+    return view
+  }
+
+  // MARK: Notices
+
+  /// Shows `lines` under the map, or hides the box when there are none.
+  func show(notices lines: [String]) {
+    noticesLabel.stringValue = lines.joined(separator: "\n")
+    notices.isHidden = lines.isEmpty
+  }
+
+  /// The lines under the map now.
+  var noticeLines: [String] {
+    notices.isHidden ? [] : noticesLabel.stringValue.components(separatedBy: "\n")
+  }
+
+  // MARK: Drop
+
+  private func droppedFiles(_ sender: any NSDraggingInfo) -> [URL] {
+    let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+
+    return sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options)
+      as? [URL] ?? []
+  }
+
+  override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+    droppedFiles(sender).isEmpty ? [] : .copy
+  }
+
+  override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+    onDrop?(droppedFiles(sender)) ?? false
+  }
+
   // MARK: Palette
 
   /// Sets the light or dark look from the palette's flavor. A standard or hybrid map follows it.
@@ -212,7 +315,13 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   func apply(_ palette: ThemePalette) {
     appearance = NSAppearance(named: palette.flavor.isDark ? .darkAqua : .aqua)
 
+    self.palette = palette
+
     banner.fillColor = palette[.mantle].nsColor
     bannerLabel.textColor = palette[.text].nsColor
+    notices.fillColor = palette[.mantle].nsColor
+    noticesLabel.textColor = palette[.text].nsColor
+
+    for marker in markers.allObjects { marker.palette = palette }
   }
 }

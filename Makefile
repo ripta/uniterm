@@ -16,7 +16,8 @@ SWIFTPM_SCRATCH ?= .build/swiftpm
 CONFIGURATION ?= Debug
 # Where `make fuzz` keeps its address-sanitized package build, apart from the ordinary one.
 FUZZ_SCRATCH ?= .build/swiftpm-fuzz
-# How many mutated inputs `make fuzz` tries. `make test-package` runs the same fuzzer at a small count.
+# How many mutated inputs each fuzz test of `make fuzz` tries. `make test-package` runs the same
+# fuzzers at a small count.
 FUZZ_ITERATIONS ?= 5000
 # Space-separated Swift paths, relative to the repo root, for fmt-select. Empty formats nothing.
 FILES ?=
@@ -68,9 +69,10 @@ test-package: ghostty ## Run the package tests with swift test
 	cd $(PACKAGE_DIR) && swift test --scratch-path ../../$(SWIFTPM_SCRATCH)
 
 .PHONY: fuzz
-fuzz: ghostty ## Fuzz the table readers under the address sanitizer. Slow, so make ci leaves it out
+fuzz: ghostty ## Fuzz the table and GeoJSON readers under ASan. Slow, so make ci skips it
 	cd $(PACKAGE_DIR) && UNITERM_FUZZ_ITERATIONS=$(FUZZ_ITERATIONS) \
-		swift test --sanitize=address --scratch-path ../../$(FUZZ_SCRATCH) --filter TableFuzzTests
+		swift test --sanitize=address --scratch-path ../../$(FUZZ_SCRATCH) \
+		--filter TableFuzzTests --filter GeoJSONFuzzTests
 
 .PHONY: test-app
 test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission

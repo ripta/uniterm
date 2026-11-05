@@ -23,13 +23,13 @@ public struct ResolvedSource: Sendable, Equatable {
 public enum SourceResolver {
   @concurrent
   public static func resolve(path: String, bookmark: Data?) async -> Result<
-    ResolvedSource, TableLoadError
+    ResolvedSource, SourceAccessError
   > {
     resolveBlocking(path: path, bookmark: bookmark)
   }
 
   public static func resolveBlocking(path: String, bookmark: Data?) -> Result<
-    ResolvedSource, TableLoadError
+    ResolvedSource, SourceAccessError
   > {
     var info = stat()
 

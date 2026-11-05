@@ -1,3 +1,4 @@
+import TableTestSupport
 import XCTest
 
 @testable import TableData

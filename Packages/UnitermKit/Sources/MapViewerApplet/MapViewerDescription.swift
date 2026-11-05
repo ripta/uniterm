@@ -23,6 +23,8 @@ public struct MapViewerDescription: Codable, Equatable, Sendable {
   public var style: MapStyle
 
   /// The palette accent token the file's pins take when they name none. Absent until a file loads.
+  /// A name that is not an accent token reads as the layer's first default, and is stored again
+  /// when a file loads.
   public var fileAccent: String?
 
   /// The file's absolute path, as the user named it.

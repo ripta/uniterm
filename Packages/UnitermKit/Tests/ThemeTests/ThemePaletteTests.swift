@@ -63,3 +63,51 @@ final class ThemeFlavorAppearanceTests: XCTestCase {
     XCTAssertTrue(ThemeFlavor.mocha.isDark)
   }
 }
+
+/// The pin colors. The disc and glyph come from the flavor alone, so one pair per flavor proves
+/// every accent.
+final class PinColorTests: XCTestCase {
+  /// Catches a disc or glyph token swap that drops the glyph below 4.5:1. The pair never depends on
+  /// the accent, so this holds whatever accent sits behind the disc. It cannot prove how the
+  /// glyph renders. The map's render test does.
+  func testGlyphOnDiscReachesFourPointFiveInEveryFlavor() {
+    for flavor in ThemeFlavor.allCases {
+      let palette = ThemePalette(flavor: flavor)
+      let ratio = palette.pinGlyph.contrastRatio(with: palette.pinDisc)
+
+      XCTAssertGreaterThanOrEqual(ratio, 4.5, "\(flavor)")
+    }
+
+    XCTAssertEqual(ThemePalette.latte.pinDisc, ThemePalette.latte[.base])
+    XCTAssertEqual(ThemePalette.mocha.pinDisc, ThemePalette.mocha[.crust])
+  }
+
+  /// Catches a wrong WCAG formula. Black on white is 21, and equal colors are 1.
+  func testContrastRatioMatchesTheWCAGEndpoints() {
+    let black = ThemeColor(hex: 0x000000)
+    let white = ThemeColor(hex: 0xFFFFFF)
+
+    XCTAssertEqual(black.contrastRatio(with: white), 21, accuracy: 0.001)
+    XCTAssertEqual(white.contrastRatio(with: black), 21, accuracy: 0.001)
+    XCTAssertEqual(white.contrastRatio(with: white), 1, accuracy: 0.001)
+  }
+
+  /// Catches an accent set that gains a neutral token or loses a color.
+  func testTheAccentSetIsTheFourteenColors() {
+    XCTAssertEqual(ThemeToken.accents.count, 14)
+    XCTAssertEqual(Set(ThemeToken.accents).count, 14)
+    XCTAssertNil(ThemeToken(accent: "base"))
+    XCTAssertNil(ThemeToken(accent: "chartreuse"))
+    XCTAssertEqual(ThemeToken(accent: "teal"), .teal)
+  }
+
+  /// Catches an OKLab conversion that breaks the distance. Equal colors are at 0, and black to
+  /// white is a lightness step of 1.
+  func testOKLabDistance() {
+    let black = ThemeColor(hex: 0x000000)
+    let white = ThemeColor(hex: 0xFFFFFF)
+
+    XCTAssertEqual(black.oklabDistance(to: black), 0, accuracy: 1e-9)
+    XCTAssertEqual(black.oklabDistance(to: white), 1, accuracy: 0.01)
+  }
+}

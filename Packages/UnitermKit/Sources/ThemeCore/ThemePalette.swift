@@ -26,6 +26,20 @@ public struct ThemePalette: Sendable, Equatable {
     ThemeColor(hex: Self.hex(of: token, in: flavor))
   }
 
+  /// The neutral disc a pin's glyph and a cluster's count sit on. It is `base` in Latte and `crust`
+  /// in Mocha, so the disc is the lightest surface in Latte and the darkest in Mocha.
+  public var pinDisc: ThemeColor {
+    flavor.isDark ? self[.crust] : self[.base]
+  }
+
+  /// The color of a pin's glyph and a cluster's count. It is always `text`.
+  ///
+  /// The disc and the glyph depend on the flavor alone, never on the accent behind the disc, so
+  /// their contrast is one number per flavor and holds for every accent.
+  public var pinGlyph: ThemeColor {
+    self[.text]
+  }
+
   public var terminal: TerminalPalette {
     let ansiTokens: [ThemeToken]
     switch flavor {
