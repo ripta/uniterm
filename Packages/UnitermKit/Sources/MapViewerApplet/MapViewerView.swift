@@ -13,6 +13,9 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   /// Gets the region the map settled on after the user moved it.
   var onRegionSettled: ((GeoRegion) -> Void)?
 
+  /// Gets every region the map settles on, whoever moved it.
+  var onRegionShown: ((GeoRegion) -> Void)?
+
   /// Gets the reason the map could not load.
   var onLoadFailure: ((String) -> Void)?
 
@@ -158,6 +161,8 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   }
 
   func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+    if pendingRegion == nil, let shown = currentRegion { onRegionShown?(shown) }
+
     guard userIsMoving, pendingRegion == nil, let reported = currentRegion else { return }
 
     userIsMoving = false
