@@ -211,8 +211,9 @@ recorded against ADR-07, which is still proposed. Neither is recorded as an ADR 
 
 ## Row review
 
-Range: from the run's base to "Load map pins from GeoJSON files". Commit: "Fix the map's stale gesture mark and keep
-the file layer out of the command namespace".
+Range: from the run's base to "Load map pins from GeoJSON files". Commit: "Fix the map's stale gesture mark and separate the
+file layer". The row then moved from `queue.md` to `history.md` in "Finish the map viewer's file-pins row". UTERM-008
+stays `accepted`, since M3 is still queued.
 
 | Finding | Verdict | Disposition |
 |---|---|---|
