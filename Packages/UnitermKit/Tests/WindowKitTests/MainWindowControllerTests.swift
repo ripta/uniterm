@@ -57,7 +57,7 @@ final class MainWindowControllerTests: XCTestCase {
   func testAppletMessagesPostWithThePaneAsSource() throws {
     let controller = try makeController()
 
-    controller.applet(made[0], post: .info, text: "build finished")
+    made[0].say(.info, "build finished")
 
     let message = controller.statusCenter.history.last
     XCTAssertEqual(message?.text, "build finished")

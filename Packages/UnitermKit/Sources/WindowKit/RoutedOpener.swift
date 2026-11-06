@@ -279,9 +279,9 @@ public final class RoutedOpener {
     }
 
     if let anchor {
-      anchor.controller.statusCenter.post(level: .warning, source: .uniterm, text: text)
+      anchor.controller.statusCenter.post(level: .warning, text: text)
     } else {
-      windows.post(level: .warning, source: .uniterm, text: text)
+      windows.post(level: .warning, text: text)
     }
   }
 }

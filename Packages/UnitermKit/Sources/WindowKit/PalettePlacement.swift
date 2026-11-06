@@ -74,7 +74,7 @@ final class PalettePlacement {
 
     warned = raw
     statusCenter.post(
-      level: .warning, source: .uniterm,
+      level: .warning,
       text:
         "The \(name) \u{201C}\(StatusBarPlacement.quoted(raw))\u{201D} is not valid. Using \(fallback.rawValue)."
     )

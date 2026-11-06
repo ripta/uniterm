@@ -142,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         canQuit: { [weak self] in self?.askingToQuit == false },
         warn: { [weak self] text in
-          self?.windowSet?.post(level: .warning, source: .uniterm, text: text)
+          self?.windowSet?.post(level: .warning, text: text)
         }))
     for set in BuiltInApplets.commandSets {
       commands.register(set)
@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         windows.post(
-          level: .error, source: .uniterm,
+          level: .error,
           text: "The layout folder is not available, so this window's layout is not saved: \(error)"
         )
       } catch {
@@ -318,7 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func postDebugError(to controller: MainWindowController) {
     #if DEBUG
       if let text = debugEnvironment["UNITERM_DEBUG_POST_ERROR"] {
-        controller.statusCenter.post(level: .error, source: .uniterm, text: text)
+        controller.statusCenter.post(level: .error, text: text)
       }
     #endif
   }
@@ -418,7 +418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func paletteDidNotApply(_ error: any Error) {
     logger.error("the terminal palette did not update: \(String(describing: error))")
     windowSet?.post(
-      level: .error, source: .uniterm, text: "The terminal colors did not update: \(error)")
+      level: .error, text: "The terminal colors did not update: \(error)")
   }
 
   /// Says whether a window opened. With `onlyIfNone`, an open window means nothing opens.
@@ -436,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       if let active = windowSet.activeController {
         active.statusCenter.post(
-          level: .error, source: .uniterm, text: "The window did not open: \(error)")
+          level: .error, text: "The window did not open: \(error)")
         return false
       }
 

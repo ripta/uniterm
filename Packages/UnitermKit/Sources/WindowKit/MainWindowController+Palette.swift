@@ -204,7 +204,7 @@ extension MainWindowController {
 
   private func postTabGone(for title: String) {
     statusCenter.post(
-      level: .warning, source: .uniterm,
+      level: .warning,
       text: "\u{201C}\(title)\u{201D} has closed. The list is up to date now.")
   }
 

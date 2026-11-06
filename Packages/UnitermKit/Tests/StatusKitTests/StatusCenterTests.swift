@@ -116,11 +116,41 @@ final class StatusCenterTests: XCTestCase {
 
     center.post(level: .error, source: .uniterm, text: "E")
     XCTAssertTrue(center.hasUnseenError)
-    center.markHistorySeen()
+    center.acknowledge(ids: center.history.map(\.id))
     center.dismissCurrent()
 
     XCTAssertEqual(count, 3)
     XCTAssertFalse(center.hasUnseenError)
     XCTAssertNil(center.display)
+  }
+
+  /// Catches a missed warning that leaves no trace, and an error that times out.
+  ///
+  /// The warning clears at 5 s and the lesser signal stays. The error is still on the bar at 100 s.
+  /// Acknowledging the error's record clears its signal and leaves the warning's.
+  func testAClearedWarningLeavesALesserSignalAndAnErrorNeverTimesOut() {
+    let clock = ManualClock()
+    let scheduler = ManualScheduler()
+    let center = StatusCenter(clock: clock, scheduler: scheduler.schedule)
+
+    center.post(level: .warning, text: "cut")
+    XCTAssertTrue(center.hasUnseenWarning)
+    XCTAssertFalse(center.hasUnseenError)
+
+    clock.now = 5
+    scheduler.fireLast()
+    XCTAssertNil(center.display)
+    XCTAssertTrue(center.hasUnseenWarning)
+
+    clock.now = 6
+    center.post(level: .error, text: "lost")
+    clock.now = 100
+    scheduler.fireLast()
+    XCTAssertEqual(center.display?.message.text, "lost")
+    XCTAssertTrue(center.hasUnseenError)
+
+    center.acknowledge(ids: [center.history[1].id])
+    XCTAssertFalse(center.hasUnseenError)
+    XCTAssertTrue(center.hasUnseenWarning)
   }
 }

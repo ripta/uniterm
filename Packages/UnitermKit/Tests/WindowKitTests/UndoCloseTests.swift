@@ -551,17 +551,17 @@ final class UndoCloseTests: XCTestCase {
     XCTAssertEqual(fixture.controller.ledger.entries.map(\.title), ["Fake 0"])
   }
 
-  /// Catches a message from a closed applet that claims a live pane. Its source names pane 0, which
-  /// no live pane has.
-  func testAMessageFromAClosedAppletNamesNoLivePane() throws {
+  /// Catches a message from a closed applet that loses its pane. The host binds the pane's ID when
+  /// the applet takes the pane, so a late post keeps it and never claims a live pane.
+  func testAMessageFromAClosedAppletKeepsItsPaneID() throws {
     let fixture = try makeFixture()
     fixture.openPanes(2)
     fixture.controller.dispatch(.close)
 
-    fixture.controller.applet(fixture.made[1], post: .info, text: "late")
+    fixture.made[1].say(.info, "late")
 
     XCTAssertEqual(
-      fixture.controller.statusCenter.history.last?.source, .pane(id: 0, name: "Fake 1"))
+      fixture.controller.statusCenter.history.last?.source, .pane(id: 2, name: "Fake 1"))
   }
 
   // MARK: Window lifecycle

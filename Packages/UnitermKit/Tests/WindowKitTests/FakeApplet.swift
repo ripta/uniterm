@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import StatusKit
 import Theme
 
 @testable import WindowKit
@@ -305,5 +306,17 @@ extension CommandID {
 
   static func fakeTab(_ number: Int) -> CommandID {
     CommandID(number == 9 ? "fake.last-tab" : "fake.tab-\(number)")
+  }
+}
+
+extension FakeApplet {
+  /// Posts through the host the window handed this applet, as a real applet does.
+  func say(_ level: StatusLevel, _ text: String) {
+    host?.applet(self, post: level, text: text)
+  }
+
+  /// Records in the history through the host, as a real applet does.
+  func note(_ level: StatusLevel, _ text: String) {
+    host?.applet(self, recordInHistory: level, text: text)
   }
 }

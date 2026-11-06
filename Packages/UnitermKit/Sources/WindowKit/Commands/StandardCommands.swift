@@ -137,6 +137,12 @@ enum StandardCommands {
         context.controller?.toggleHistory()
       },
       Command(
+        .focusMessageHistory, "Focus Message History", scope: .window,
+        menu: MenuPlacement(.view, section: 1)
+      ) { context in
+        context.controller?.focusHistory()
+      },
+      Command(
         .dismissMessage, "Dismiss Message", scope: .window,
         key: KeyChord("\u{8}", commandOption), menu: MenuPlacement(.view, section: 1),
         isAvailable: { $0.controller?.statusCenter.display?.message.level == .error },

@@ -65,7 +65,7 @@ public final class LayoutPersistence {
       onFailure: { error in
         Self.logger.error("the layout was not saved: \(String(describing: error))")
         windows.post(
-          level: .error, source: .uniterm, text: "The layout was not saved: \(error)")
+          level: .error, text: "The layout was not saved: \(error)")
       })
   }
 
@@ -169,7 +169,7 @@ public final class LayoutPersistence {
 
       let copy = kept.map { " A copy of the saved layout was kept as \($0)." } ?? ""
       windows.post(
-        level: .error, source: .uniterm,
+        level: .error,
         text: "\(failures.count) saved window(s) did not reopen: \(failures[0]).\(copy)")
     }
 
@@ -184,7 +184,7 @@ public final class LayoutPersistence {
     }
 
     if let notice {
-      windows.post(level: level, source: .uniterm, text: notice)
+      windows.post(level: level, text: notice)
     }
 
     return outcome

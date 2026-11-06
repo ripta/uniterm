@@ -37,6 +37,7 @@ extension CommandID {
   public static let focusPaneUp: CommandID = "uniterm.focus-pane-up"
   public static let focusPaneDown: CommandID = "uniterm.focus-pane-down"
   public static let toggleMessageHistory: CommandID = "uniterm.toggle-message-history"
+  public static let focusMessageHistory: CommandID = "uniterm.focus-message-history"
   public static let dismissMessage: CommandID = "uniterm.dismiss-message"
   public static let showCommandPalette: CommandID = "uniterm.show-command-palette"
 }

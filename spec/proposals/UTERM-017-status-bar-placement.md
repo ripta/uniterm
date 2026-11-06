@@ -266,13 +266,14 @@ single producer from dominating either pool without multiplying the aggregate li
 
 What level driver stderr posts at. Errors stick and fold together, so stderr as errors would bury real ones.
 
-Decision: raw stderr is info-level diagnostic text. Its text is sanitized and coalesced, never matched
-against words to guess a level. A host-observed driver exit or protocol failure creates a separate typed warning when
-requested content is unavailable, or an error when user work is lost. Its owning feature supplies the pane explanation
-and explicit restart action.
+Decision: raw stderr is info-level diagnostic text. It goes to the history only and takes no turn on the bar. Its text
+is sanitized and coalesced, never matched against words to guess a level. A host-observed driver exit or protocol
+failure creates a separate typed warning when requested content is unavailable, or an error when user work is lost. Its
+owning feature supplies the pane explanation and explicit restart action.
 
 Rationale: stderr is a channel, not a severity. Treating every line as an error would bury loss-of-work errors. This
-changes no driver wire format and promises no lossless per-line history beyond the bounded ingress.
+changes no driver wire format and promises no lossless per-line history beyond the bounded ingress. Amended 2026-11-06;
+see Decision Log.
 
 ### Placement of refusals
 
@@ -387,7 +388,7 @@ None.
 
 ### M2: The queue
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The settled repeat rule holds: a test posts the same message twice and checks the bar and the history
 - Equal pane IDs with different titles still coalesce; different IDs or levels do not
@@ -395,7 +396,8 @@ None.
 - The settled warning signal holds, with a test on a fake clock
 - The history meets the All/pane filter and 100-error/400-other retention rules
 - An info flood from one source cannot evict another pane's error; error floods exercise source-aware eviction
-- All retained, pending, folded, detached, source-index, and summary storage stays bounded in count and bytes
+- All retained, pending, folded, source-index, and summary storage stays bounded in count and bytes. Amended
+  2026-11-06; see Decision Log.
 - Eviction preserves unseen severity and offers a readable loss summary with deliberate acknowledgement
 - Same-name producers and posts after pane close retain distinct host-bound origin identities
 - Filtered-out and offscreen messages remain unseen while the history panel is open
@@ -403,6 +405,23 @@ None.
 - A pane closed between row rendering and Focus Pane activation is never reopened or targeted by a stale ID
 - A synthetic stderr flood never blocks the main thread; actual driver ingress remains UTERM-004
 - Raw stderr remains info regardless of text; typed driver failure retains semantic severity
+
+**As built:**
+
+- The check where the user looks at the expanded history is left to the user: the filter menu, the Focus Pane controls,
+  the loss strip, and keyboard use. Package tests drive the real panel at 500 rows. Only the user's eyes judge its
+  layout.
+- Pane identity binds when an applet takes its pane, including a launcher swap. Other producers get an identity from
+  the status center. The retention, byte, and wording choices are in the Decision Log.
+- Coalescing, the two unseen sets, the two retention pools, and the loss summary work as the settled decisions say.
+  Eviction moves a dropped record's unseen count into the summary, and only the summary's control clears it.
+- The panel reports the rows whose whole line is in view, and only while the window can show them. The window
+  acknowledges exactly those. Reading, filtering, and scrolling never move the keyboard.
+- The synthetic stderr consumer is a bounded ingress plus a producer method. A typed failure posts at its kind's level.
+  Actual driver wiring stays with UTERM-004.
+- A full test run hung once. Window closes in the package tests leave dispatch workers blocked in AppKit's animation
+  loop, so the shared pool had none left for a later test. The leak predates this milestone and is not fixed here. The
+  flood test uses its own threads.
 
 ### M3: Detached panes and restore
 
@@ -416,6 +435,7 @@ None.
   turn
 - Restore origin survives asynchronous completion and a user replacement load never inherits it
 - A launch that restores many panes follows the settled restore rule
+- Detached presentation storage stays bounded in count and bytes. Amended 2026-11-06; see Decision Log.
 
 ## Decision Log
 
@@ -474,6 +494,43 @@ None.
 - 2026-11-06: M1 window state reaches the window set from the layout persistence, which already holds the set, and the
   slot's text lives with the state (work-queue best guess). Applet segments are the only thing a narrow bar hides.
   The window's minimum width, which comes only from the pane tree, is unchanged.
+- 2026-11-06: M2 retention, identity, and panel mechanisms (work-queue best guess). The byte limits are policy
+  constants sized so the count limits bind first: 2,048 bytes per message text, 128 per source label, 128 KiB for the
+  error pool, 256 KiB for the other pool, 64 KiB and 32 entries for waiting messages, 128 KiB and 100 entries for
+  folded errors, and 64 live non-pane producers. Non-pane identity comes from the status center, and the source-taking
+  post is package-only. Raw stderr is recorded to the history without a bar turn, since a flood of info would
+  otherwise take every turn. The loss summary is a strip at the top of the panel, so it stays reachable. Each is a
+  small change to revert.
+- 2026-11-06: Amended M2's bounded-storage check and added a matching M3 check (work-queue best guess). M2's check
+  read "All retained, pending, folded, detached, source-index, and summary storage stays bounded in count and bytes".
+  Detached presentation storage does not exist until M3 builds the detach rule, so M2 cannot bound it. M2 drops the
+  word, and M3 carries the check. M2 exposes the text cut as a shared helper for M3 to use. If M3 builds the storage
+  without a bound, the check fails there.
+- 2026-11-06: Amended "Driver stderr levels" and the matching UTERM-004 text (work-queue best guess). The decision said
+  raw stderr is info, and UTERM-004 said it appears in the status bar. A flood of info lines would take every turn on
+  the bar and bury a real notice, so raw stderr now goes to the history only. UTERM-004's text and check were amended
+  to match. Its driver wiring still owes one hop to the main thread for each drain, never one for each line.
+- 2026-11-06: Non-pane producers read as "name (applet N)" or "name (script N)" in the bar and the history (work-queue
+  best guess). A producer that names itself "uniterm" would otherwise look like the host. Only the host reads as plain
+  "uniterm". The status center also checks an identity's kind, so a script cannot post under an applet's number. A
+  producer that is dropped without retiring frees its slot. A pane that titles itself "uniterm" still reads that way on
+  the bar, as before. Its history rows carry the pane ID.
+- 2026-11-06: Keyboard path for the history (work-queue best guess). The panel refuses first responder until the user
+  runs the Focus Message History command, which has no default key. The command opens the panel and moves the keyboard
+  into its table. The arrow keys move a row cursor, Return runs Focus Pane on that row, Tab reaches the filter and
+  the loss control, and Escape returns the keyboard to the focused pane. Mouse reading and opening never move the
+  keyboard. A default key would need a shortcut decision under UTERM-013, so none is set. If a key is wanted, it is
+  one binding.
+- 2026-11-06: The history acknowledges only whole rows, only in a window that can show them, and never from inside
+  layout (work-queue best guess). A row with a sliver in view has not been read. A minimized or covered window shows
+  nothing, so arrivals stay unseen until it is visible again. The report waits one turn of the main actor when layout
+  asks for it, since refreshing the rows from inside layout lays the panel out again. Each is a small change to
+  revert.
+- 2026-11-06: The set of windows holds at most 32 messages while no window is open (work-queue best guess). Past the
+  limit the oldest info or warning goes first, and an error goes only when every held message is one. The next window
+  shows one message that counts what was lost, at the most severe level lost. The limit is a policy constant.
+- 2026-11-06: ADR candidate (cuts across the system): the host binds a status source's identity at origin, and no
+  producer can claim another's. Undecided. Found in UTERM-017 M2.
 
 ## References
 
