@@ -35,14 +35,7 @@ public struct StatusQueue: Sendable {
   public mutating func post(
     level: StatusLevel, source: StatusSource, text: String, at now: TimeInterval
   ) -> StatusMessage {
-    let message = StatusMessage(
-      id: nextID, level: level, source: source, text: text, postedAt: now)
-    nextID += 1
-
-    history.append(message)
-    if history.count > policy.historyLimit {
-      history.removeFirst(history.count - policy.historyLimit)
-    }
+    let message = admit(level: level, source: source, text: text, at: now)
 
     if level == .error {
       hasUnseenError = true
@@ -51,6 +44,15 @@ public struct StatusQueue: Sendable {
     pending.append(Pending(message: message, folded: []))
     advance(at: now)
     return message
+  }
+
+  /// Admits a message to the history only. It takes no turn on the bar and raises no unseen
+  /// signal. An applet records this way when its own pane already says the same thing.
+  @discardableResult
+  public mutating func record(
+    level: StatusLevel, source: StatusSource, text: String, at now: TimeInterval
+  ) -> StatusMessage {
+    admit(level: level, source: source, text: text, at: now)
   }
 
   /// Applies whatever the passage of time allows. Returns true when the displayed message changed.
@@ -138,6 +140,21 @@ public struct StatusQueue: Sendable {
     }
 
     return nil
+  }
+
+  private mutating func admit(
+    level: StatusLevel, source: StatusSource, text: String, at now: TimeInterval
+  ) -> StatusMessage {
+    let message = StatusMessage(
+      id: nextID, level: level, source: source, text: text, postedAt: now)
+    nextID += 1
+
+    history.append(message)
+    if history.count > policy.historyLimit {
+      history.removeFirst(history.count - policy.historyLimit)
+    }
+
+    return message
   }
 
   private mutating func show(at now: TimeInterval) {

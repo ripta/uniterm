@@ -551,8 +551,11 @@ final class LayoutPersistenceTests: XCTestCase {
 
     let (second, outcome) = try launch()
     XCTAssertEqual(outcome, .secondInstance)
+    XCTAssertEqual(
+      second.windows.windowStates.text(of: .layoutNotSaved), LayoutPersistence.secondInstanceText)
     XCTAssertTrue(
-      second.messages(of: second.first).contains { $0.contains("Another uniterm is running") })
+      second.messages(of: second.first).isEmpty,
+      "the state is a slot now, so it posts no message")
 
     second.first.openPane(.terminalShell, axis: .column)
     second.first.openPane(.terminalShell, axis: .column)
@@ -562,6 +565,53 @@ final class LayoutPersistenceTests: XCTestCase {
     second.persistence.saveForQuit()
 
     XCTAssertEqual(try Data(contentsOf: layoutFile), written)
+  }
+
+  // MARK: Window states
+
+  /// Catches a second instance that says "layout not saved" for five seconds and then forgets. The
+  /// slot shows in the first window and in a window opened later, and stays with no message on
+  /// the bar.
+  func testASecondInstanceShowsTheLayoutSlotInEveryWindow() throws {
+    _ = try launch()
+
+    let (second, outcome) = try launch()
+    XCTAssertEqual(outcome, .secondInstance)
+
+    let later = try second.windows.open()
+
+    for controller in [second.first, later] {
+      let slot = controller.statusBarSegments.first { $0.id == .window(.layoutNotSaved) }
+
+      XCTAssertEqual(slot?.accessibilityLabel, LayoutPersistence.secondInstanceText)
+      XCTAssertEqual(slot?.toolTip, LayoutPersistence.secondInstanceText)
+      XCTAssertNil(slot?.text, "the slot is compact")
+      XCTAssertEqual(controller.statusCenter.history.count, 0)
+    }
+  }
+
+  /// Catches a window state that leaks into the file. The first instance owns the file, so it
+  /// can set every state. The layout it would save, and the bytes on disk after a save, are the
+  /// same with the states set as without them.
+  func testWindowStatesNeverEnterTheLayoutFile() throws {
+    let (fixture, _) = try launch()
+    let before = try LayoutCodec.encode(fixture.windows.savedLayout())
+
+    fixture.windows.setWindowState(.layoutNotSaved, text: "layout-state-marker")
+    fixture.windows.setWindowState(.pendingPermissions, text: "permission-state-marker")
+    fixture.windows.setWindowState(.survivingWork, text: "work-state-marker")
+
+    XCTAssertEqual(try LayoutCodec.encode(fixture.windows.savedLayout()), before)
+
+    fixture.persistence.saveForQuit()
+
+    let written = try String(contentsOf: layoutFile, encoding: .utf8)
+
+    for marker in [
+      "state-marker", "layout-not-saved", "pending-permissions", "surviving-work", "windowStates",
+    ] {
+      XCTAssertFalse(written.contains(marker), marker)
+    }
   }
 
   // MARK: Placement

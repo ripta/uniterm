@@ -57,6 +57,12 @@ public final class StatusCenter {
     didChange()
   }
 
+  /// Records a message in the history without showing it. See `StatusQueue.record`.
+  public func record(level: StatusLevel, source: StatusSource, text: String) {
+    queue.record(level: level, source: source, text: text, at: clock.now)
+    didChange()
+  }
+
   public func dismissCurrent() {
     if queue.dismissCurrent(at: clock.now) {
       didChange()

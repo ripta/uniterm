@@ -509,6 +509,46 @@ final class PinEditSafetyTests: XCTestCase {
     XCTAssertTrue(host.posts.contains { $0.text.hasPrefix("The edit was not applied") })
   }
 
+  /// Catches an edit refusal rated as lost work. A refused edit leaves the earlier unsaved pins
+  /// and the file untouched. Only the undo stack goes, which is history and not work. The notice is
+  /// a warning, because the requested change is what was not applied.
+  func testARefusedEditKeepsEarlierUnsavedPinsAndIsOnlyAWarning() async throws {
+    let (applet, host, _) = try await loaded(try GeoScratch(self))
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await applet.editing?.value
+
+    let edited = applet.document
+
+    applet.replaceDocument(with: Data("not geojson".utf8), registeringUndo: true)
+    await applet.editing?.value
+
+    XCTAssertEqual(applet.document, edited)
+    XCTAssertEqual(applet.filePinsShown.count, 2)
+    XCTAssertTrue(applet.isDirty)
+    XCTAssertFalse(applet.undoManager.canUndo)
+
+    let refused = host.posts.filter { $0.text.hasPrefix("The edit was not applied") }
+    XCTAssertEqual(refused.map(\.level), [.warning])
+  }
+
+  /// Catches a failed save rated below the work it puts at risk. A save that cannot write leaves
+  /// the edits unpersisted, and the user must act or lose them, so it stays an error.
+  func testASaveThatCannotWriteIsAnError() async throws {
+    let scratch = try GeoScratch(self)
+    let (applet, host, _) = try await loaded(scratch)
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await applet.editing?.value
+
+    XCTAssertEqual(chmod(scratch.url.path, 0o500), 0)
+
+    let saved = await applet.save()
+
+    XCTAssertFalse(saved)
+    XCTAssertTrue(applet.isDirty, "the edits are still held")
+    XCTAssertEqual(
+      host.posts.filter { $0.text.contains("could not be saved") }.map(\.level), [.error])
+  }
+
   /// Catches Clear File Pins dropping unsaved pins without asking. Cancel keeps them, and
   /// confirming clears.
   func testClearingWithUnsavedPinsAsksFirst() async throws {

@@ -86,6 +86,12 @@ private final class RecordingHost: AppletHost {
     posts.append((level, text))
   }
 
+  var records: [(StatusLevel, String)] = []
+
+  func applet(_ applet: any Applet, recordInHistory level: StatusLevel, text: String) {
+    records.append((level, text))
+  }
+
   func appletDidExit(_ applet: any Applet) { exited = true }
   func appletDidChange(_ applet: any Applet) { changed += 1 }
   func appletTabsDidChange(_ applet: any Applet) { tabsChanged += 1 }
@@ -266,6 +272,47 @@ final class TerminalAppletTests: XCTestCase {
     XCTAssertFalse(host.posts[0].1.contains("\n"))
     XCTAssertFalse(host.posts[0].1.contains("\u{1B}"))
     XCTAssertEqual(host.posts[0].1, "Build OK: all [31m done")
+  }
+
+  private struct Refused: LocalizedError {
+    var errorDescription: String? { "the shell is missing" }
+  }
+
+  /// Catches a start failure rated as lost work. A shell that cannot start loses nothing the user
+  /// made. It leaves the requested content unshown, which is a warning, for the first shell and
+  /// for a tab opened later.
+  func testASessionThatCannotStartIsAWarning() {
+    let engine = FakeEngine()
+    engine.failure = Refused()
+    let host = RecordingHost()
+    let applet = TerminalApplet(engine: engine, directoryExists: { _ in true })
+    applet.host = host
+    retained.append(applet)
+
+    applet.start()
+
+    XCTAssertEqual(host.posts.map(\.0), [.warning])
+    XCTAssertTrue(host.posts[0].1.hasPrefix("The terminal could not start"))
+    XCTAssertTrue(host.exited)
+
+    let (live, liveEngine, liveHost, _) = makeApplet()
+    liveEngine.failure = Refused()
+    live.openTab()
+
+    XCTAssertEqual(liveHost.posts.map(\.0), [.warning])
+    XCTAssertTrue(liveHost.posts[0].1.hasPrefix("The tab could not open"))
+
+    let programEngine = FakeEngine()
+    let programHost = RecordingHost()
+    let restored = try? restoreProgram(
+      try programDescription(), engine: programEngine, host: programHost)
+    programEngine.failure = Refused()
+
+    let prompt = restored?.view.subviews.compactMap { $0 as? TerminalRunPrompt }.first
+    prompt?.run()
+
+    XCTAssertEqual(programHost.posts.map(\.0), [.warning])
+    XCTAssertTrue(programHost.posts.first?.1.hasPrefix("The program could not start") == true)
   }
 
   func testLongNotificationIsCapped() {

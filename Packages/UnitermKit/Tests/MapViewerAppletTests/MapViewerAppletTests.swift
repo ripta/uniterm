@@ -18,6 +18,13 @@ final class RecordingHost: AppletHost {
     posts.append((level, text))
   }
 
+  /// What the applet recorded in the history without a turn on the bar.
+  var records: [(level: StatusLevel, text: String)] = []
+
+  func applet(_ applet: any Applet, recordInHistory level: StatusLevel, text: String) {
+    records.append((level, text))
+  }
+
   func appletDidExit(_ applet: any Applet) {}
 
   func appletDidChange(_ applet: any Applet) { changes += 1 }
@@ -450,9 +457,11 @@ final class MapViewerAppletTests: XCTestCase {
     }
     let notLoading = { applet.segments.filter { $0.text == "Map not loading" } }
 
+    let before = host.changes
     failing()
     failing()
 
+    XCTAssertEqual(host.changes, before + 1, "the bar was not told the segment changed")
     XCTAssertEqual(host.posts.map(\.level), [.warning])
     XCTAssertTrue(host.posts.first?.text.contains("offline") == true)
     XCTAssertEqual(notLoading().map(\.style), [.warning], "\(applet.segments)")

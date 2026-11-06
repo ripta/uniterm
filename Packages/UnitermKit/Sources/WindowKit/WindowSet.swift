@@ -88,6 +88,30 @@ public final class WindowSet {
   /// Runs when a window opens or closes, and when anything a saved layout holds changes in one.
   public var onLayoutChange: (() -> Void)?
 
+  /// The states that belong to the window rather than to a pane, as the instance sees them.
+  /// Every window shows them, including one that opens later. They live here, above any one
+  /// window, and the set never writes them to the layout file.
+  public private(set) var windowStates = WindowStates()
+
+  /// Marks `kind` as holding in every window of the instance, and in each window that opens
+  /// later.
+  public func setWindowState(_ kind: WindowStateKind, text: String) {
+    windowStates.set(kind, text: text)
+    publishWindowStates()
+  }
+
+  /// Ends `kind` in every window.
+  public func clearWindowState(_ kind: WindowStateKind) {
+    windowStates.clear(kind)
+    publishWindowStates()
+  }
+
+  private func publishWindowStates() {
+    for controller in controllers {
+      controller.windowStates = windowStates
+    }
+  }
+
   /// The visible frame decides where a cascade wraps. It defaults to the window's screen. The
   /// confirmer asks before a quit that would end something running.
   ///
@@ -314,6 +338,7 @@ public final class WindowSet {
       self?.noteKey(controller)
     }
     controller.visibleFrameProvider = visibleFrame
+    controller.windowStates = windowStates
     controller.refreshMinimumSize()
     controllers.append(controller)
   }

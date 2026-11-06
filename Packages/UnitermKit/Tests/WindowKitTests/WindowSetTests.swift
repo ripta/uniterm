@@ -74,6 +74,45 @@ final class WindowSetTests: XCTestCase {
     return fixture
   }
 
+  // MARK: Window states
+
+  /// Catches a window state that reaches only the windows open when it was set, or one that
+  /// outlives its feature. Every open window shows a state at once, a window opened later shows
+  /// it too, and clearing it empties them all. A kind with no producer yet shows when set.
+  func testAWindowStateReachesEveryWindowIncludingLaterOnes() throws {
+    let fixture = makeFixture()
+    let first = try fixture.windows.open()
+
+    func slots(_ controller: MainWindowController) -> [BarSegmentID] {
+      controller.statusBarSegments.map(\.id).filter {
+        if case .window = $0 { return true }
+        return false
+      }
+    }
+
+    XCTAssertTrue(slots(first).isEmpty)
+
+    fixture.windows.setWindowState(.survivingWork, text: "Work is still running.")
+
+    let second = try fixture.windows.open()
+    fixture.windows.setWindowState(.layoutNotSaved, text: "Not saved.")
+
+    for controller in [first, second] {
+      XCTAssertEqual(slots(controller), [.window(.layoutNotSaved), .window(.survivingWork)])
+      XCTAssertEqual(
+        controller.contentController.statusBar.segments.map(\.id).filter {
+          slots(controller).contains($0)
+        },
+        slots(controller), "the bar shows what the window computed")
+    }
+
+    fixture.windows.clearWindowState(.layoutNotSaved)
+    fixture.windows.clearWindowState(.survivingWork)
+
+    XCTAssertTrue(slots(first).isEmpty)
+    XCTAssertTrue(slots(second).isEmpty)
+  }
+
   // MARK: Cascade
 
   /// Catches a cascade that steps the wrong way or the wrong distance.

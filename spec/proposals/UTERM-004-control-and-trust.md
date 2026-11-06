@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-03
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -41,8 +41,11 @@ one program cannot take over panes it has no business touching.
 - **Disconnected (CONTROL-2).** Other programs cannot address the applet through remote control. Host lifecycle
   events and the user's own actions still work.
 - **Exec (CONTROL-3).** Independently of access mode, the applet can attach a program as its driver. Applet events go
-  to the program's stdin. Its stdout drives the applet. Its stderr goes to the status bar. The attached driver is
-  not an ambient remote caller, so disconnected does not sever this explicitly attached channel.
+  to the program's stdin. Its stdout drives the applet. Its stderr goes to the status bar as info-level diagnostic text.
+  The host sanitizes, coalesces, and bounds it before the main-thread queue admits it, and each admitted line enters
+  the window history. A driver exit or protocol failure that the host observes is a separate typed warning, or an error
+  when user work is lost. Level never comes from matching words in stderr. Amended 2026-11-06; see Decision Log. The
+  attached driver is not an ambient remote caller, so disconnected does not sever this explicitly attached channel.
 
 Each applet declares which access-mode and driver combinations it supports. Unsupported combinations are refused
 before anything starts. Window shortcuts reach uniterm before applet events reach a driver, per ADR-04.
@@ -410,8 +413,10 @@ requires a local review before effects. Undeclared effects fail even when the co
   Shared-terminal OSC 52 has no persistent script-specific attribution: it offers once/session terminal approval,
   honestly labelled as covering programs in that session. Ordinary disconnected interactive terminal behavior stays.
 - Permission requests are bounded and coalesced into a host-owned pending indicator. The user opens the local panel;
-  repeated protocol messages cannot spawn repeated modal dialogs. Denial suppresses automatic re-prompting until a
-  local retry. Coalescing cannot widen Allow once into approval of multiple different operations.
+  repeated protocol messages cannot spawn repeated modal dialogs. The indicator is the window's pending-permissions
+  slot, a typed window state that sits before the focused applet's segments. Denial suppresses automatic re-prompting
+  until a local retry. Coalescing cannot widen Allow once into approval of multiple different operations. Amended
+  2026-11-06; see Decision Log.
 - A user's Run action supplies execution intent. A matching policy can supply permissions without a second dialog.
   Saved layout state alone never executes a controller. Remembered permission does not override an existing pane's
   disconnected mode or adopt restored group members. Source enablement and restored-member adoption remain local.
@@ -588,7 +593,9 @@ None.
 - Events emitted with no exec driver attached reach no one and never grow a queue
 - Terminal and REPL panes can still be made remote-controlled, and refuse every applet command
 - The program's stdout drives the applet
-- The program's stderr appears in the status bar
+- The program's stderr appears in the status bar as info, sanitized and coalesced, and in the history. A driver exit or
+  protocol failure is a typed warning or error, never a level guessed from stderr text. Amended 2026-11-06; see
+  Decision Log.
 - Window shortcuts keep working while an exec driver is stalled
 - Old/new protocol and applet schema mismatches in both directions execute no commands
 - Stalled stdin, endless small stdout frames, malformed frames, and partial EOF stay bounded and fail visibly
@@ -767,6 +774,12 @@ None.
 - 2026-11-03: ADR candidate (hard to reverse): every applet command, exec or remote, names its applet schema version,
   and an unsupported version is refused before any effect. Declined: the user judged it does not rise to an ADR.
 - 2026-11-03: Scheduled as UTERM-004 M1-M6 in queue.md.
+- 2026-11-06: Amended driver stderr and the pending-permission indicator (work-queue best guess). "Control modes" said
+  stderr goes to the status bar, and its check said stderr appears there, with no level, no coalescing, and no word on
+  failures. The permission indicator was "host-owned" with no named place. UTERM-017 settles that raw stderr is
+  info-level text, bounded and coalesced before admission, and that host-observed failures are typed warnings or
+  errors. It also gives the indicator a slot, the pending-permissions window state. The slot is built there, and this
+  proposal fills it when its permission panel exists. The driver wire format does not change.
 
 ## References
 

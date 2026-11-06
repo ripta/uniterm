@@ -49,6 +49,91 @@ final class StatusBarTests: XCTestCase {
     fixture.bar.mouseDown(with: event)
   }
 
+  // MARK: Narrow bar
+
+  /// Every segment that shows in the bar, as a frame in the bar's own coordinates.
+  private func shownFrames(_ fixture: WindowFixture) -> [(id: BarSegmentID, frame: NSRect)] {
+    fixture.bar.segments.compactMap { segment in
+      fixture.bar.frame(of: segment.id).map { (segment.id, $0) }
+    }
+  }
+
+  private func activateEverything(_ fixture: WindowFixture) {
+    fixture.log.made[0].segments = [
+      AppletSegment(symbolName: "folder", text: "a-long-working-directory-name"),
+      AppletSegment(symbolName: "tablecells", text: "1,000,000 rows"),
+    ]
+    fixture.controller.appletDidChange(fixture.log.made[0])
+
+    fixture.center.post(level: .error, source: .uniterm, text: "something went badly wrong")
+
+    var states = WindowStates()
+    states.set(.layoutNotSaved, text: "Not saved.")
+    states.set(.pendingPermissions, text: "A program is asking.")
+    states.set(.survivingWork, text: "Work is still running.")
+    fixture.controller.windowStates = states
+  }
+
+  /// Catches a window state that a narrow bar squeezes out, an error message squeezed to nothing,
+  /// and slots that overlap. At the window's real minimum width, every active kind shows inside the
+  /// bar, the message area keeps its least width, and the applet's segments are what left.
+  func testEveryWindowStateStaysDiscoverableAtTheMinimumWidth() throws {
+    let fixture = try makeFixture()
+    let window = try XCTUnwrap(fixture.controller.window)
+    let minimum = window.contentMinSize.width
+
+    window.setContentSize(
+      NSSize(width: minimum, height: window.contentRect(forFrameRect: window.frame).height))
+    activateEverything(fixture)
+    fixture.layout()
+
+    XCTAssertEqual(fixture.bar.bounds.width, minimum, accuracy: 0.5)
+
+    let shown = shownFrames(fixture)
+
+    for kind in WindowStateKind.allCases {
+      let frame = try XCTUnwrap(
+        shown.first { $0.id == .window(kind) }?.frame, "\(kind) is not showing")
+
+      XCTAssertGreaterThan(frame.width, 0)
+      XCTAssertTrue(fixture.bar.bounds.contains(frame), "\(kind) leaves the bar: \(frame)")
+    }
+
+    let message = try XCTUnwrap(shown.first { $0.id == .message }?.frame)
+    XCTAssertGreaterThanOrEqual(message.width, StatusBarView.minimumMessageWidth - 0.5)
+    XCTAssertNotNil(shown.first { $0.id == .dismiss })
+    XCTAssertNotNil(shown.first { $0.id == .unseenError })
+
+    let ordered = shown.map(\.frame).sorted { $0.minX < $1.minX }
+
+    for (left, right) in zip(ordered, ordered.dropFirst()) {
+      XCTAssertLessThanOrEqual(left.maxX, right.minX + 0.5, "\(left) overlaps \(right)")
+    }
+
+    XCTAssertNil(shown.first { $0.id == .applet(1) }, "the last applet segment should leave first")
+  }
+
+  /// Catches a bar that drops applet segments it has room for. At a wide window, every segment
+  /// shows, in the fixed order, and no window slot moves.
+  func testAWideBarShowsEverySegmentInOrder() throws {
+    let fixture = try makeFixture()
+    let window = try XCTUnwrap(fixture.controller.window)
+
+    window.setContentSize(NSSize(width: 960, height: 400))
+    activateEverything(fixture)
+    fixture.layout()
+
+    let shown = shownFrames(fixture)
+
+    XCTAssertEqual(shown.map(\.id), fixture.bar.segments.map(\.id))
+
+    let ordered = shown.map(\.frame)
+
+    for (left, right) in zip(ordered, ordered.dropFirst()) {
+      XCTAssertLessThanOrEqual(left.maxX, right.minX + 0.5)
+    }
+  }
+
   // MARK: Docking
 
   /// Catches a bar that docks on the wrong edge by default.

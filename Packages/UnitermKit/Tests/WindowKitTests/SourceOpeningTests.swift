@@ -105,7 +105,10 @@ final class SourceOpeningTests: XCTestCase {
 
     XCTAssertTrue(applet.replacedSources.isEmpty)
 
-    let text = try XCTUnwrap(fixture.controller.statusCenter.history.last?.text)
+    let last = try XCTUnwrap(fixture.controller.statusCenter.history.last)
+    XCTAssertEqual(last.level, .warning, "a file that did not open is content not shown")
+
+    let text = last.text
     XCTAssertTrue(text.contains("notes.txt"))
     XCTAssertTrue(text.contains("it is not readable"))
   }

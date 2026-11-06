@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-05
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -194,8 +194,9 @@ Decision: this proposal makes no change to the applet contract. Its input and ev
 - The payload holds one number about command layers: how many distinct layers held pins in this launch. The set of
   counted names rides in the undo-only part, so a rerun or a reopen in the same launch does not raise it. Each launch
   starts counting from zero. `start()` reads the stored count only to show, when it is above zero, a notice that that
-  many program layers from the last session were not restored. The notice posts once to the status bar at info level,
-  and nothing is drawn over the map. Amended 2026-11-05; see Decision Log.
+  many program layers from the last session were not restored. The notice comes from a restore, so it enters the
+  history at info level without a turn in the message area, and nothing is drawn over the map. Amended 2026-11-06; see
+  Decision Log.
 - An exec declaration and its desired modes are the host's, saved outside the payload, per UTERM-004 "Saved layouts".
   Restore runs nothing, per ADR-03.
 
@@ -301,8 +302,9 @@ None.
 - Point and MultiPoint features become pins. Other geometry is skipped, and a status bar message gives the count.
   Amended 2026-11-05; see Decision Log.
 - One documented rule picks a feature's label from its properties
-- Parsing runs off the main thread. A malformed, huge, or non-regular file shows a message in the pane and never stalls
-  the UI
+- Parsing runs off the main thread. A malformed, huge, or non-regular file posts one warning to the status bar and
+  shows a failed-file segment while it holds. The pane explains it only when the map has no tiles and no command pins.
+  It never stalls the UI. Amended 2026-11-06; see Decision Log.
 - A fuzzing run with malformed GeoJSON, through the parsing stack as shipped and under a memory-error detector, finds
   no crash and no memory error
 - Loading a second file replaces only the file's layer
@@ -331,11 +333,12 @@ None.
 - Reaching a file is shared code. A new `SourceAccess` target holds the path-first, bookmark-second resolver and the
   messages for a missing, protected, non-regular, or unreadable file. The data viewer uses it, and its tests pass
   unchanged. The resolver tests moved with the code. No message says "corrupt".
-- The map has one source-taking entry point, `replaceSource`. It does not throw, since a failed load shows in the pane,
-  and `opening` does not throw either. The file bounds are one constant on the applet, and tests cross them with real
-  files: a sparse file one byte past the size bound, and a file of 10,001 points. The pane-local Open..., a drop of one
-  file, the router's factory, and a restore all reach it. It finds the file and parses it off the main thread. A user
-  load fits the map to the pins and saves that region. A restore does not move the saved region.
+- The map has one source-taking entry point, `replaceSource`. It does not throw, since a failed load is reported once
+  through the status bar or the pane, and `opening` does not throw either. The file bounds are one constant on the
+  applet, and tests cross them with real files: a sparse file one byte past the size bound, and a file of 10,001
+  points. The pane-local Open..., a drop of one file, the router's factory, and a restore all reach it. It finds the
+  file and parses it off the main thread. A user load fits the map to the pins and saves that region. A restore does
+  not move the saved region. Amended 2026-11-06; see Decision Log.
 - The file layer is bounded at 32 MiB and 10,000 points. A file past the size bound is refused whole, because
   `MKGeoJSONDecoder` cannot stop part way. A file past the point bound loads its first points and says so. Each kind
   of loss posts its own line to the status bar as a warning: points past the bound, shapes that are not points,
@@ -541,6 +544,12 @@ None.
   notice but not its place, and M2's notices had been drawn over the map until the user's review moved them. It is
   info, not a warning, because restore never runs a program by design, so the missing layers are expected. The
   2026-11-03 marker on "The applet contract" is replaced by this one.
+- 2026-11-06: Amended file failures and the relaunch notice to the contract in UTERM-017 (work-queue best guess). The
+  text, and the 2026-11-05 entry about load notices, kept load failures in the pane over a map that still showed
+  tiles or pins. A failed file now posts one warning, shows a failed-file segment while it holds, and keeps the
+  history entry. The pane explains the failure only when no tiles and no command pins show. The relaunch notice for
+  program layers came from the start of a restored pane and posted to the bar. It now follows the restore rule and
+  enters the history only, without a message turn. UTERM-017 M1 shipped the failure change. M3 ships the restore rule.
 
 ## References
 

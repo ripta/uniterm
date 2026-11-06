@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-05
-**Updated:** 2026-11-05
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -64,8 +64,8 @@ explain itself, and the status bar's message may be gone before the user looks.
 ### Notice levels
 
 Decision: a notice that some content is not shown is a warning. A notice that changes nothing on screen, such as a file
-found at a new path, is info. Lost user work is an error. Its message never times out; replacement leaves unseen-error
-attention until acknowledged.
+found at a new path, is info. Lost user work, including work that cannot reach disk, is an error. Its message never
+times out; replacement leaves unseen-error attention until acknowledged. Amended 2026-11-06; see Decision Log.
 
 - Each notice carries its level, so an applet never picks one by matching text.
 
@@ -303,7 +303,7 @@ Decision: apply the content-availability rule to each named case.
 
 M1 implements the map and current notice/history machinery. UTERM-003 and UTERM-005 wire their actual REPL and browser
 paths when built, using the contract here. A requested load or operation not shown is a warning; a benign relocation
-is info; lost user work is an error.
+is info; lost user work, including work that cannot reach disk, is an error. Amended 2026-11-06; see Decision Log.
 
 Rationale: usable content stays unobscured, while an empty pane keeps the explanation the user needs to recover.
 
@@ -349,7 +349,7 @@ None.
 
 ### M1: Shared rules and the window slot
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Every implemented applet's notices carry a level by the settled rule, and its tests check them
 - The map file-failure overlay becomes one warning/history entry and a lasting failed-file segment
@@ -362,6 +362,28 @@ None.
 - The slot is not written to the layout file
 - The user looks at the bar with the slot showing, in both dock positions and a narrow window
 - Every active window-state kind remains discoverable at the supported minimum width, with a usable message area
+
+**As built:**
+
+- The check where the user looks at the bar with the slot showing, in both dock positions and a narrow window, is left
+  to the user. Package tests lay out the real bar at the window's real minimum width, but only the user's eyes judge
+  how it looks. The check includes hovering each window slot for its tooltip, which a headless test could not verify.
+- An empty map is one whose tiles report a failure and whose command layers hold no pin. The map decides on each
+  refresh. A failure that arrives while tiles or pins still show is a warning on the bar. If the tiles fail later, the
+  pane also explains it. If the tiles come back after an empty-pane failure, the history keeps its one entry and the
+  failed-file segment stays.
+- A memory stop that loaded no rows in the data viewer counts as an empty pane. It records one warning in the history
+  and posts nothing.
+- A notice now has a key apart from its text, and the cut-rows notice waits for the load to settle so it posts once
+  with the final count. A sheet switch resets the viewer's notices, because each sheet is a load.
+- Level audit: a terminal that cannot start, a program that cannot start, a tab that cannot open, and a file the
+  viewers cannot open were errors and are warnings now, since nothing the user made is lost. A refused map edit stays a
+  warning. It keeps the file and any earlier unsaved pins and clears only the undo stack. A failed save stays an
+  error, because the rule now names work that cannot reach disk. The drop and open-panel catch blocks for a throwing `replaceSource`
+  are unreachable today, since no applet's `replaceSource` throws. They stay as part of the contract.
+- Window state lives on the window set. The layout persistence publishes the second-instance state there, so the app
+  delegate needs no change. A narrow bar hides applet segments from the last one back, and the window's minimum width
+  is unchanged. See Decision Log.
 
 ### M2: The queue
 
@@ -442,6 +464,16 @@ None.
   including the proposal index's matching status row in the single final commit.
 - 2026-11-05: Accepted at the user's final gate. No ADR created. The three milestones remain unscheduled.
 - 2026-11-05: Scheduled as M1-M3 in queue.md, at the top of the queue.
+- 2026-11-06: M1 level audit (work-queue best guess). Failed terminal starts and failed file opens in the viewers moved
+  from error to warning, because the level rule keeps error for lost user work. A failed save stays an error. The rule
+  now names work that cannot reach disk, which covers it. Reverting is a one-line change per post.
+- 2026-11-06: Amended "Notice levels" and "Placement of refusals" (work-queue best guess). Both said "Lost user work is
+  an error", and a failed save keeps its unsaved edits in memory, so the wording did not literally cover it. Both now
+  say "Lost user work, including work that cannot reach disk, is an error". The AppletNotice doc comment carries the
+  same words.
+- 2026-11-06: M1 window state reaches the window set from the layout persistence, which already holds the set, and the
+  slot's text lives with the state (work-queue best guess). Applet segments are the only thing a narrow bar hides.
+  The window's minimum width, which comes only from the pane tree, is unchanged.
 
 ## References
 

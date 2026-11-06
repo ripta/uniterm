@@ -2,7 +2,7 @@
 
 **Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-02
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -275,6 +275,8 @@ Decision:
 - A window segment shows an unseen-error indicator until the user opens the history.
 - The window owns its segments, such as the message area. The focused pane's applet fills a set of applet segments,
   such as mode or line:col. They change when focus changes.
+
+Superseded in part by UTERM-017; see Decision Log.
 
 Rationale: a plain FIFO cannot show the write-up's "mode", "line:col", or "ok/error". It also falls minutes behind
 when an exec pane floods stderr. A priority field would be set to the maximum by every untrusted poster, so it buys
@@ -1009,6 +1011,7 @@ Added 2026-11-01 by amendment. It can run before or after the user records M9.
 - The applet contract sends start, detach, reattach, and close, and documents each applet's duties per ADR-05
 - The terminal applet pauses no output on detach, since it has none to pause. It holds back notifications until
   reattach, per ADR-05, and that is stated where it implements the contract. Amended 2026-11-01; see Decision Log.
+  Superseded in part by UTERM-017; see Decision Log.
 - Every M7 check that does not depend on keep-alive still holds: placement, the neighbor fallback, Cmd-Z in a text
   control, the working-directory rule, program-mode restore, and the window and quit guards
 
@@ -1283,6 +1286,13 @@ Added 2026-11-01 by amendment. It can run before or after the user records M9.
   Cmd-Shift-T, which reopens the newest closed tab or pane in the window, and limits Cmd-Z to text edits.
 - 2026-11-02: Superseded in part by UTERM-014. M7 and M10 said a pane whose applet exited on its own closes with no
   undo entry. UTERM-014 makes every close reopenable, so an exited pane goes on the reopen list without a question.
+- 2026-11-06: Superseded in part by UTERM-017. "Status message model" said an error stays until a newer message
+  replaces it or the user dismisses it, kept the unseen-error indicator for errors only, set no rule for repeats, and
+  bounded the history only by a 500-message cap. UTERM-017 settles that a message reporting lost work never times
+  out and that a replacing message leaves unseen-error attention until acknowledged. It adds a lesser unseen signal
+  for warnings, coalesced presentation of repeats, and a history of two bounded pools with a pane filter. M10 said the
+  terminal holds back notifications until reattach. UTERM-017 keeps that, and also records each held alert in the
+  history when it occurs, so a close before reattach loses nothing. The queue changes ship in UTERM-017 M2 and M3.
 
 ## References
 

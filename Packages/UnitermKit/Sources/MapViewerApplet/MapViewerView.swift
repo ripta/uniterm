@@ -61,8 +61,8 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   var onDrop: (([URL]) -> Bool)?
 
   let mapView = MKMapView()
-  private let notices = NSBox()
-  private let noticesLabel = NSTextField(wrappingLabelWithString: "")
+  private let explanation = NSBox()
+  private let explanationLabel = NSTextField(wrappingLabelWithString: "")
   private var markers = NSHashTable<MapMarkerView>.weakObjects()
   private var palette = ThemePalette.latte
   private var pendingRegion: GeoRegion?
@@ -90,18 +90,18 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
     mapView.setAccessibilityIdentifier("map-viewer-map")
     addSubview(mapView)
 
-    noticesLabel.translatesAutoresizingMaskIntoConstraints = false
-    noticesLabel.setAccessibilityIdentifier("map-viewer-notices")
-    noticesLabel.maximumNumberOfLines = 0
+    explanationLabel.translatesAutoresizingMaskIntoConstraints = false
+    explanationLabel.setAccessibilityIdentifier("map-viewer-explanation")
+    explanationLabel.maximumNumberOfLines = 0
 
-    notices.boxType = .custom
-    notices.cornerRadius = 8
-    notices.borderWidth = 0
-    notices.contentViewMargins = NSSize(width: 12, height: 8)
-    notices.translatesAutoresizingMaskIntoConstraints = false
-    notices.contentView = noticesLabel
-    notices.isHidden = true
-    addSubview(notices)
+    explanation.boxType = .custom
+    explanation.cornerRadius = 8
+    explanation.borderWidth = 0
+    explanation.contentViewMargins = NSSize(width: 12, height: 8)
+    explanation.translatesAutoresizingMaskIntoConstraints = false
+    explanation.contentView = explanationLabel
+    explanation.isHidden = true
+    addSubview(explanation)
 
     mapView.register(
       MapMarkerView.self, forAnnotationViewWithReuseIdentifier: MapMarkerView.pinReuse)
@@ -110,10 +110,10 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
     registerForDraggedTypes([.fileURL])
 
     NSLayoutConstraint.activate([
-      notices.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      notices.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
-      notices.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
-      notices.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
+      explanation.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+      explanation.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+      explanation.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+      explanation.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
       mapView.leadingAnchor.constraint(equalTo: leadingAnchor),
       mapView.topAnchor.constraint(equalTo: topAnchor),
       mapView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -660,15 +660,22 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
 
   // MARK: Notices
 
-  /// Shows `lines` under the map, or hides the box when there are none.
-  func show(notices lines: [String]) {
-    noticesLabel.stringValue = lines.joined(separator: "\n")
-    notices.isHidden = lines.isEmpty
+  /// Shows `lines` under the map, or hides the box when there are none. The box stands in for
+  /// content the map lacks, so it holds only the wait while a file opens and a failure that leaves
+  /// the map empty.
+  func show(explanation lines: [String]) {
+    explanationLabel.stringValue = lines.joined(separator: "\n")
+    explanation.isHidden = lines.isEmpty
   }
 
   /// The lines under the map now.
-  var noticeLines: [String] {
-    notices.isHidden ? [] : noticesLabel.stringValue.components(separatedBy: "\n")
+  var explanationLines: [String] {
+    explanation.isHidden ? [] : explanationLabel.stringValue.components(separatedBy: "\n")
+  }
+
+  /// True when a layer other than `layer` has a pin on the map.
+  func hasPins(otherThan layer: MapLayer) -> Bool {
+    mapView.annotations.contains { ($0 as? MapPinAnnotation).map { $0.layer != layer } ?? false }
   }
 
   // MARK: Drop
@@ -697,8 +704,8 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
 
     self.palette = palette
 
-    notices.fillColor = palette[.mantle].nsColor
-    noticesLabel.textColor = palette[.text].nsColor
+    explanation.fillColor = palette[.mantle].nsColor
+    explanationLabel.textColor = palette[.text].nsColor
 
     for marker in markers.allObjects { marker.palette = palette }
 

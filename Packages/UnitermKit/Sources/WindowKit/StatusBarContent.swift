@@ -7,6 +7,7 @@ enum BarSegmentID: Hashable, Sendable {
   case message
   case dismiss
   case unseenError
+  case window(WindowStateKind)
   case applet(Int)
 
   var identifier: String {
@@ -14,6 +15,7 @@ enum BarSegmentID: Hashable, Sendable {
     case .message: return "status-message"
     case .dismiss: return "status-dismiss"
     case .unseenError: return "status-unseen-error"
+    case .window(let kind): return "status-window-\(kind.identifier)"
     case .applet(let index): return "status-applet-\(index)"
     }
   }
@@ -34,15 +36,32 @@ struct BarSegment: Sendable, Equatable {
   var text: String?
   var tone: BarTone
   var accessibilityLabel: String?
+
+  /// The full sentence a compact segment shows on hover. Nil for a segment whose text is complete.
+  var toolTip: String?
+
+  init(
+    id: BarSegmentID, symbolName: String?, text: String?, tone: BarTone,
+    accessibilityLabel: String? = nil, toolTip: String? = nil
+  ) {
+    self.id = id
+    self.symbolName = symbolName
+    self.text = text
+    self.tone = tone
+    self.accessibilityLabel = accessibilityLabel
+    self.toolTip = toolTip
+  }
 }
 
 /// Works out what the status bar shows. It is pure, so a test needs no window.
 enum StatusBarContent {
   /// The window's slots in order: the message area, a dismiss control while an error is on the
-  /// bar, the unseen-error indicator, then the focused applet's slots. The message area is always
-  /// there, empty when the bar is idle, so the layout does not jump when a message arrives.
+  /// bar, the unseen-error indicator, one compact slot for each active window state, then the
+  /// focused applet's slots. The message area is always there, empty when the bar is idle, so the
+  /// layout does not jump when a message arrives.
   static func segments(
-    display: StatusDisplay?, hasUnseenError: Bool, applet: [AppletSegment]
+    display: StatusDisplay?, hasUnseenError: Bool, windowStates: WindowStates = WindowStates(),
+    applet: [AppletSegment]
   ) -> [BarSegment] {
     var result = [message(display)]
 
@@ -50,14 +69,21 @@ enum StatusBarContent {
       result.append(
         BarSegment(
           id: .dismiss, symbolName: "xmark.circle", text: nil, tone: .normal,
-          accessibilityLabel: "Dismiss message"))
+          accessibilityLabel: "Dismiss message", toolTip: "Dismiss message"))
     }
 
     if hasUnseenError {
       result.append(
         BarSegment(
           id: .unseenError, symbolName: "exclamationmark.circle.fill", text: nil, tone: .error,
-          accessibilityLabel: "Unseen errors"))
+          accessibilityLabel: "Unseen errors", toolTip: "Unseen errors"))
+    }
+
+    for state in windowStates.active {
+      result.append(
+        BarSegment(
+          id: .window(state.kind), symbolName: state.kind.symbolName, text: nil, tone: .warning,
+          accessibilityLabel: state.text, toolTip: state.text))
     }
 
     for (index, segment) in applet.enumerated() {

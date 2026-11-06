@@ -131,6 +131,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private func selectSheet(_ name: String) {
     record.sheet = name
     describesFromRecord = false
+
+    // A sheet is a load of its own. The old sheet's notices are spent, and the file was found
+    // once already.
+    posted.reset()
+    resolvedNotice = nil
     session.selectSheet(name)
   }
 
@@ -215,7 +220,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     table.onNotice = { [weak self] notice in
       guard let self else { return }
 
-      host?.applet(self, post: notice.level, text: notice.text)
+      host?.applet(self, deliver: notice)
     }
 
     nested = table
@@ -289,7 +294,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return true
     } catch {
       host?.applet(
-        self, post: .error,
+        self, post: Self.failureLevel,
         text:
           "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: \(error.localizedDescription)"
       )
@@ -421,26 +426,34 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return .message("\u{201C}\(title)\u{201D} has no rows.")
 
     case .stoppedAtBudget, .stoppedLowMemory:
-      return .message("Loading stopped because memory is in short supply, so no rows are shown.")
+      return .message(Self.stoppedBeforeAnyRowText)
 
     case .failed:
       return .message("")
     }
   }
 
+  private static let stoppedBeforeAnyRowText =
+    "Loading stopped because memory is in short supply, so no rows are shown."
+
+  /// The level of a load that fails. A viewer holds no edits, so a failed load loses no user
+  /// work. It leaves the requested content unshown, which is a warning.
+  static let failureLevel = StatusLevel.warning
+
   private func failure() -> String? {
     if case .failed(let error) = session.phase {
-      return error.errorDescription
+      return error.errorDescription ?? "The file could not be opened."
     }
 
     return nil
   }
 
-  /// Posts each notice about the load once. The table fills the pane, so the status bar carries
-  /// them, and its history keeps them.
+  /// Delivers each notice about the load once. While a table fills the pane, the status bar
+  /// carries them, and its history keeps them. When the load leaves the pane empty, the pane
+  /// explains itself, and the notice goes to the history only.
   private func postNotices() {
     for notice in posted.unposted(notices()) {
-      host?.applet(self, post: notice.level, text: notice.text)
+      host?.applet(self, deliver: notice)
     }
   }
 
@@ -470,10 +483,20 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       }
     }
 
-    lines += DataViewerNotices.lines(
-      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
-
     var notices = lines.map { AppletNotice(.warning, $0) }
+
+    notices += DataViewerNotices.notices(
+      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows,
+      settled: session.phase != .idle && session.phase != .loading)
+
+    if let failure = failure() {
+      notices.append(AppletNotice(Self.failureLevel, failure, delivery: .historyOnly))
+    }
+
+    if session.stoppedBeforeAnyRow {
+      notices.append(
+        AppletNotice(Self.failureLevel, Self.stoppedBeforeAnyRowText, delivery: .historyOnly))
+    }
 
     if let resolvedNotice {
       notices.append(AppletNotice(.info, resolvedNotice))

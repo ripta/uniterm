@@ -49,6 +49,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// The notices already posted to the status bar for the file shown now.
   private var posted = AppletNotices()
+
+  /// Why the file did not open, while that holds. The failure follows the current load. A new
+  /// load or a clear ends it.
   private var fileFailure: String?
   private var resolvedNotice: String?
   private var tileFailure: String?
@@ -249,11 +252,13 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   // MARK: Source
 
   /// Shows the pins of `file` in place of the file layer's. The pins on the map go at once. The new
-  /// file is found and parsed off the main thread, and a failure shows its message in the pane.
-  /// The map then fits the new pins, and that region is saved with the pane.
+  /// file is found and parsed off the main thread. A failure is a warning on the status bar and a
+  /// segment while it holds. When the map has no tiles and no command pins to show, the pane says
+  /// it instead, and the history keeps one entry. The map then fits the new pins, and that region
+  /// is saved with the pane.
   ///
-  /// `SourceReplacing` lets a viewer throw. This one never does, since every failure shows in the
-  /// pane once the load runs.
+  /// `SourceReplacing` lets a viewer throw. This one never does, since every failure shows once
+  /// the load runs.
   public func replaceSource(with file: URL, startDirectory: String) {
     guard isDirty else {
       load(file, startDirectory: startDirectory)
@@ -352,6 +357,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
         }
       }
     }
+
+    refresh()
+    host?.appletDidChange(self)
   }
 
   private func finishOpen(failure: String?) {
@@ -388,10 +396,17 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   static let changedOnDiskNotice =
     "The file changed on disk. Saving asks before it overwrites the change."
 
-  /// The notices about the file shown now, which go to the status bar. What a read left out is a
-  /// warning. A file found at a new path is info.
+  /// The notices about the file shown now. What a read left out is a warning. A file that did not
+  /// open is a warning too. A file found at a new path is info. They go to the status bar, except
+  /// a failure that leaves the pane empty. The pane says that one, so it goes to the history only.
   var statusNotices: [AppletNotice] {
     var notices = fileNotices.map { AppletNotice(.warning, $0) }
+
+    if let fileFailure {
+      notices.insert(
+        AppletNotice(.warning, fileFailure, delivery: paneIsEmpty ? .historyOnly : .message),
+        at: 0)
+    }
 
     if let resolvedNotice { notices.append(AppletNotice(.info, resolvedNotice)) }
 
@@ -412,6 +427,13 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     tileFailure = failure
     refresh()
+    host?.appletDidChange(self)
+  }
+
+  /// True when the file failed and nothing else is on the map: its tiles do not load and no
+  /// command layer has a pin. The pane has room to explain itself then.
+  private var paneIsEmpty: Bool {
+    fileFailure != nil && tileFailure != nil && !content.hasPins(otherThan: .file)
   }
 
   /// Keeps what a read of the file left out, for the status bar's segment.
@@ -468,6 +490,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     resolvedNotice = nil
     fileFailure = nil
     fileNotices = []
+    hiddenFromFile = 0
+    fileTruncated = false
     filePins = []
     record.path = nil
     record.bookmark = nil
@@ -586,6 +610,12 @@ public final class MapViewerApplet: Applet, SourceReplacing {
           symbolName: "exclamationmark.triangle", text: "Changed on disk", style: .warning))
     }
 
+    if fileFailure != nil {
+      newSegments.append(
+        AppletSegment(
+          symbolName: "exclamationmark.triangle", text: "File not opened", style: .warning))
+    }
+
     if tileFailure != nil {
       newSegments.append(
         AppletSegment(symbolName: "wifi.exclamationmark", text: "Map not loading", style: .warning))
@@ -593,18 +623,19 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     segments = newSegments
 
-    // The pane shows only what stands in for the map's content: a failure, or the wait while a
-    // file opens. Notices about what loaded go to the status bar once, and stay in its history.
+    // The pane says only what stands in for the map's content: a failure when nothing else is
+    // on the map, or the wait while a file opens. Every other notice goes to the status bar once,
+    // and stays in its history.
     var lines: [String] = []
 
-    if let fileFailure { lines.append(fileFailure) }
+    if paneIsEmpty, let fileFailure { lines.append(fileFailure) }
 
     if opening != nil { lines.append("Opening\u{2026}") }
 
-    content.show(notices: lines)
+    content.show(explanation: lines)
 
     for notice in posted.unposted(statusNotices) {
-      host?.applet(self, post: notice.level, text: notice.text)
+      host?.applet(self, deliver: notice)
     }
     content.setAccessibilityValue(accessibilitySummary())
 
