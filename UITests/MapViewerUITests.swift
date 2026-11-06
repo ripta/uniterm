@@ -40,7 +40,8 @@ final class MapViewerUITests: UnitermUITestCase {
 
   /// Catches a launcher without the map viewer, a pane that shows no map, and a style command that
   /// does not reach the pane. Cmd-D shows the launcher, Cmd-4 picks the map viewer, and each style
-  /// in the View menu shows in the status bar and in the map's accessibility value.
+  /// in the View menu shows in the status bar and in the map's accessibility value. Cmd-2 and Cmd-3
+  /// then reach the style commands, not the terminal's tab keys.
   func testLauncherOpensAMapAndTheViewMenuSwitchesItsStyle() throws {
     let app = launchApp()
     let window = mainWindow(in: app)
@@ -65,6 +66,64 @@ final class MapViewerUITests: UnitermUITestCase {
 
     chooseStyle("Standard Map", in: app)
     XCTAssertTrue(waitFor(styleText(in: window), timeout: 10) { $0 == "Standard" })
+
+    app.typeKey("2", modifierFlags: .command)
+    XCTAssertTrue(
+      waitFor(styleText(in: window), timeout: 10) { $0 == "Satellite" },
+      "Cmd-2 did not reach the map's style command")
+
+    app.typeKey("3", modifierFlags: .command)
+    XCTAssertTrue(waitFor(styleText(in: window), timeout: 10) { $0 == "Hybrid" })
+  }
+
+  /// Catches a click on the map that leaves the focus mark on another pane. A map opens beside a
+  /// terminal, a click moves focus to the terminal, and a click on the map brings it back.
+  func testClickingTheMapFocusesItsPane() throws {
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("d", modifierFlags: .command)
+    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    app.typeKey("4", modifierFlags: .command)
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(map(in: window).waitForExistence(timeout: 10), "no map pane")
+
+    let terminalPane = window.groups["pane-1"]
+    let mapPane = window.groups["pane-2"]
+
+    terminalPane.textViews["terminal"].click()
+    XCTAssertTrue(waitFor(terminalPane, timeout: 10) { $0 == "focused" })
+    XCTAssertTrue(waitFor(mapPane, timeout: 10) { $0 == "unfocused" })
+
+    window.descendants(matching: .any)["map-viewer-map"].click()
+    XCTAssertTrue(
+      waitFor(mapPane, timeout: 10) { $0 == "focused" }, "a click on the map left it unfocused")
+  }
+
+  /// Catches a place field the launcher never shows, a Cmd-L that does not reach the map, and a
+  /// search that Escape cannot close. No place is searched, so the test needs no network.
+  func testThePlaceFieldShowsInTheLauncherAndCmdLOpensItOverTheMap() throws {
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("d", modifierFlags: .command)
+    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    app.typeKey("4", modifierFlags: .command)
+
+    let launcherField = launcher(in: window).textFields["place-search-field"]
+    XCTAssertTrue(launcherField.waitForExistence(timeout: 5), "no place field in the launcher")
+
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(map(in: window).waitForExistence(timeout: 10), "no map pane")
+
+    app.typeKey("l", modifierFlags: .command)
+    let search = map(in: window).descendants(matching: .any)["place-search"]
+    XCTAssertTrue(search.waitForExistence(timeout: 5), "Cmd-L showed no place search")
+
+    app.typeKey(.escape, modifierFlags: [])
+    XCTAssertTrue(waitUntilGone(search), "Escape left the place search over the map")
   }
 
   /// Catches a restore that drops the stored style or region. A planted layout names the hybrid

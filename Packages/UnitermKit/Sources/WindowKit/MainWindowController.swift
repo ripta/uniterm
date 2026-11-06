@@ -2,6 +2,7 @@ import AppKit
 import AppletKit
 import LayoutKit
 import PaneModel
+import PlaceSearch
 import Preferences
 import StatusKit
 import Theme
@@ -31,6 +32,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   private let placement: StatusBarPlacement
   private let palettePlacement: PalettePlacement
   private let makeApplet: AppletFactory
+  private let places: PlaceServices
   private let restoreApplet: AppletRestorer
   private var appearanceToken: UUID?
   private var statusToken: UUID?
@@ -131,8 +133,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     restoreApplet: @escaping AppletRestorer = { _ in
       throw AppletRestoreError.unsupported("this window cannot reopen a closed pane")
     },
+    places: PlaceServices = .none,
     makeApplet: @escaping AppletFactory
   ) throws {
+    self.places = places
     self.appearance = appearance
     self.statusCenter = statusCenter
     self.makeApplet = makeApplet
@@ -332,11 +336,14 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   var focusedPane: NodeID { paneArea.focusedPane }
 
-  /// Makes the window the applet's host. A launcher also learns how to open its choice.
+  /// Makes the window the applet's host. A launcher also learns how to open its choice, and gets
+  /// the place search the app gave the window.
   private func adopt(_ applet: any Applet) {
     applet.host = self
 
     if let launcher = applet as? LauncherApplet {
+      launcher.launcher.offerPlaces(places)
+
       launcher.onChoose = { [weak self, weak launcher] choice in
         guard let self, let launcher else { return }
 

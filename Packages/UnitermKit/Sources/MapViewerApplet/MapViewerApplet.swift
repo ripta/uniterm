@@ -1,6 +1,7 @@
 import AppKit
 import AppletKit
 import GeoData
+import PlaceSearch
 import SourceAccess
 import StatusKit
 import Theme
@@ -30,6 +31,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private static let limits = GeoJSONLimits()
 
   let content = MapViewerView()
+  let places: PlaceNamer
+  private let services: PlaceServices
   private var record: MapViewerDescription
   private var closed = false
   private(set) var opening: Task<Void, Never>?
@@ -42,17 +45,33 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
-  public init(startDirectory: String?) {
+  ///
+  /// `region` is where the map starts, such as a place the user picked in the launcher. It is the
+  /// user's choice, so it is saved with the pane.
+  ///
+  /// `places` names the map's center for the palette and backs Go to Place. A pane given none asks
+  /// no one, shows no name, and offers no search.
+  public init(startDirectory: String?, region: GeoRegion? = nil, places: PlaceServices = .none) {
+    self.places = PlaceNamer(lookup: places.names)
+    services = places
     record = MapViewerDescription(startDirectory: startDirectory)
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
     wire()
+
+    if let region {
+      record.region = region
+      content.show(region: region)
+    }
+
     refresh()
   }
 
   /// Restores a pane from its description. The region and style come back with no work on the
   /// disk or the network. A description this build cannot read is refused.
-  public init(restoring description: AppletDescription) throws {
+  public init(restoring description: AppletDescription, places: PlaceServices = .none) throws {
+    self.places = PlaceNamer(lookup: places.names)
+    services = places
     record = try MapViewerDescription.decode(description)
     restoreWaitsForStart = record.path != nil
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
@@ -69,8 +88,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
   /// opens `file`.
-  public static func opening(_ file: URL, startDirectory: String) -> MapViewerApplet {
-    let applet = MapViewerApplet(startDirectory: startDirectory)
+  public static func opening(
+    _ file: URL, startDirectory: String, places: PlaceServices = .none
+  ) -> MapViewerApplet {
+    let applet = MapViewerApplet(startDirectory: startDirectory, places: places)
     applet.replaceSource(with: file, startDirectory: startDirectory)
 
     return applet
@@ -106,6 +127,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
       self.host?.applet(self, post: .warning, text: text)
     }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
+    content.onRegionShown = { [weak self] region in self?.places.regionShown(region) }
+    places.onName = { [weak self] _ in self?.refresh() }
+    content.onPlacePicked = { [weak self] region in self?.goTo(region) }
   }
 
   // MARK: Style
@@ -132,6 +156,36 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     record.region = region
     refresh()
     host?.appletDidChange(self)
+  }
+
+  /// True when the file layer has pins for Zoom to Fit Pins to show.
+  var canFitPins: Bool { !filePins.isEmpty }
+
+  /// Shows every pin of the file layer, as a load does, and saves that region with the pane.
+  func fitPins() {
+    guard let region = GeoRegion.fitting(filePins.map(\.coordinate)) else { return }
+
+    content.show(region: region)
+    regionSettled(region)
+  }
+
+  // MARK: Go to place
+
+  /// True when the pane has a place search to offer.
+  var canGoToPlace: Bool { services.search != nil }
+
+  /// Shows the place search over the map and puts the keyboard in it.
+  func showPlaceSearch() {
+    guard let makeSearcher = services.search else { return }
+
+    content.showPlaceSearch(makeSearcher: makeSearcher)
+  }
+
+  /// Moves the map to a place the user picked. The move is the user's, so it is saved.
+  private func goTo(_ region: GeoRegion) {
+    content.show(region: region)
+    regionSettled(region)
+    content.hidePlaceSearch()
   }
 
   // MARK: Source
@@ -288,6 +342,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.onRegionSettled = nil
     content.onLoadFailure = nil
     content.onDrop = nil
+    content.onRegionShown = nil
+    content.onPlacePicked = nil
+    content.hidePlaceSearch()
+    places.cancel()
     content.stopObserving()
     content.mapView.delegate = nil
   }
@@ -346,10 +404,13 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.setAccessibilityValue(accessibilitySummary())
 
     let newTitle = record.path.map { ($0 as NSString).lastPathComponent } ?? Self.untitled
+    let tab = AppletTab(
+      id: publishedTabs.first.id, title: newTitle, details: places.name.map { [$0] } ?? [])
 
-    if newTitle != title {
-      title = newTitle
-      publishedTabs = AppletTabList(first: AppletTab(id: publishedTabs.first.id, title: newTitle))
+    title = newTitle
+
+    if tab != publishedTabs.first {
+      publishedTabs = AppletTabList(first: tab)
       host?.appletTabsDidChange(self)
     }
   }

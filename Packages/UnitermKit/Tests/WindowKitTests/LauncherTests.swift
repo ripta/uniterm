@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import GeoData
 import LayoutKit
 import PaneModel
 import Preferences
@@ -7,6 +8,7 @@ import StatusKit
 import Theme
 import XCTest
 
+@testable import PlaceSearch
 @testable import WindowKit
 
 /// A view that can hold the keyboard, as a terminal does.
@@ -124,7 +126,7 @@ final class LauncherModelTests: XCTestCase {
     var model = LauncherModel()
     model.select(.mapViewer)
 
-    XCTAssertEqual(try model.choice().get(), .mapViewer)
+    XCTAssertEqual(try model.choice().get(), .mapViewer(region: nil))
     XCTAssertFalse(model.showsCommand)
     XCTAssertEqual(model.focus, .filter)
     XCTAssertEqual(model.selection?.kind.accessibilityIdentifier, "launcher-map-viewer")
@@ -743,4 +745,109 @@ private func unsatisfiedRequiredConstraints(under root: NSView) -> [String] {
   }
 
   return broken
+}
+
+/// A place searcher that answers from the test.
+@MainActor
+private final class FakePlaceSearch: PlaceSearching {
+  var onUpdate: ((Result<[PlaceSuggestion], PlaceSearchFailure>) -> Void)?
+  var region: GeoRegion?
+  private(set) var cancelled = false
+
+  func search(_ query: String) {}
+
+  func region(for suggestion: PlaceSuggestion) async -> Result<GeoRegion, PlaceSearchFailure> {
+    region.map { .success($0) } ?? .failure(.notFound)
+  }
+
+  func cancel() { cancelled = true }
+}
+
+/// The launcher's place field: it shows only for the map viewer, a pick opens the map there, and
+/// the field never traps the keys the launcher needs.
+@MainActor
+final class LauncherPlaceTests: XCTestCase {
+  private let paris = GeoRegion(
+    center: GeoCoordinate(latitude: 48.85, longitude: 2.35),
+    span: GeoSpan(latitudeDelta: 0.2, longitudeDelta: 0.2))!
+
+  private func launcher() -> (LauncherView, FakePlaceSearch, () -> [AppletChoice]) {
+    let view = LauncherView()
+    let search = FakePlaceSearch()
+    var chosen: [AppletChoice] = []
+    view.onChoose = { chosen.append($0) }
+    view.offerPlaces(PlaceServices(search: { search }))
+
+    return (view, search, { chosen })
+  }
+
+  private func key(_ view: LauncherView, _ selector: Selector) {
+    guard let field = view.placeSearch?.field else { return XCTFail("no place field") }
+
+    _ = view.placeSearch?.control(field, textView: NSTextView(), doCommandBy: selector)
+  }
+
+  /// Catches a place field that shows for another entry, or takes the keyboard when the app gave
+  /// no search. Only the map viewer, in a launcher given a search, wants a place.
+  func testThePlaceFieldIsOnlyForTheMapViewer() {
+    var plain = LauncherModel()
+    plain.select(.mapViewer)
+    XCTAssertFalse(plain.showsPlace)
+    XCTAssertEqual(plain.focus, .filter)
+
+    let (view, _, _) = launcher()
+    view.choose(.dataViewer)
+    XCTAssertFalse(view.model.showsPlace)
+    XCTAssertEqual(view.model.focus, .filter)
+
+    view.choose(.mapViewer)
+    XCTAssertTrue(view.model.showsPlace)
+    XCTAssertEqual(view.model.focus, .place)
+  }
+
+  /// Catches a pick that opens the map at its default view, or a map that cannot open without a
+  /// place. A picked place opens the map there. Return on an empty field opens it with no place.
+  func testAPickOpensTheMapThereAndAnEmptyFieldOpensItPlain() async throws {
+    let (view, search, chosen) = launcher()
+    view.choose(.mapViewer)
+
+    key(view, #selector(NSResponder.insertNewline(_:)))
+    XCTAssertEqual(chosen(), [.mapViewer(region: nil)])
+
+    let place = try XCTUnwrap(view.placeSearch)
+    place.setQuery("Paris")
+    search.onUpdate?(.success([PlaceSuggestion(title: "Paris", subtitle: "France", token: 0)]))
+    search.region = paris
+
+    key(view, #selector(NSResponder.insertNewline(_:)))
+    await place.pendingPick?.value
+
+    XCTAssertEqual(chosen(), [.mapViewer(region: nil), .mapViewer(region: paris)])
+  }
+
+  /// Catches a place field that traps the launcher's keys. Up and Down with no suggestions move
+  /// the launcher's selection, and Escape on an empty field goes back to the filter.
+  func testTheLaunchersKeysPassThroughAnEmptyField() {
+    let (view, _, _) = launcher()
+    view.choose(.mapViewer)
+
+    key(view, #selector(NSResponder.moveUp(_:)))
+    XCTAssertEqual(view.model.selection?.kind, .dataViewer)
+
+    view.choose(.mapViewer)
+    key(view, #selector(NSResponder.cancelOperation(_:)))
+    XCTAssertEqual(view.model.selection?.kind, .terminal)
+    XCTAssertEqual(view.model.focus, .filter)
+  }
+
+  /// Catches a search left running after the launcher's pane is replaced or closed.
+  func testClosingTheLauncherStopsItsSearch() {
+    let applet = LauncherApplet(directory: nil)
+    let search = FakePlaceSearch()
+    applet.launcher.offerPlaces(PlaceServices(search: { search }))
+
+    applet.close()
+
+    XCTAssertTrue(search.cancelled)
+  }
 }

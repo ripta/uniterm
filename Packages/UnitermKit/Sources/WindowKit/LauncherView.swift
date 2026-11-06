@@ -1,4 +1,6 @@
 import AppKit
+import GeoData
+import PlaceSearch
 import Theme
 
 /// One row of the launcher: an icon, a name, a detail line, and the key that picks it.
@@ -173,8 +175,9 @@ final class LauncherFieldBox: NSView {
 /// The view owns the model and turns keys and clicks into model changes. It never opens an applet
 /// itself. `onChoose` does, and may throw to refuse. `onExit` asks to close the empty pane.
 ///
-/// The keyboard always belongs to a text field. The filter has it by default, and the command
-/// field has it while the program entry is selected. The arrow keys, Return, and Escape reach the
+/// The keyboard always belongs to a text field. The filter has it by default, the command field has
+/// it while the program entry is selected, and the place field has it while the map viewer is
+/// selected and the launcher was given a place search. The arrow keys, Return, and Escape reach the
 /// model through the fields' delegate.
 ///
 /// Command-1 to Command-9 reach it through `performKeyEquivalent`, which the window asks before
@@ -201,6 +204,10 @@ final class LauncherView: NSView, NSTextFieldDelegate {
   private let errorLabel = NSTextField(wrappingLabelWithString: "")
   private let emptyLabel = NSTextField(labelWithString: "No applet matches.")
   private let commandWrapper = NSView()
+  private let placeWrapper = NSView()
+
+  /// The place field under the map viewer's row, once the launcher has a place search.
+  private(set) var placeSearch: PlaceSearchView?
   private let hintBar = NSView()
   private let hintRule = NSView()
   private let hintLabel = NSTextField(wrappingLabelWithString: LauncherView.hint)
@@ -305,6 +312,11 @@ final class LauncherView: NSView, NSTextFieldDelegate {
 
       if entry.kind == .program {
         list.addArrangedSubview(commandWrapper)
+      }
+
+      if entry.kind == .mapViewer {
+        placeWrapper.isHidden = true
+        list.addArrangedSubview(placeWrapper)
       }
     }
 
@@ -454,6 +466,47 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     }
 
     for row in rows { row.apply(palette) }
+
+    placeSearch?.apply(palette)
+  }
+
+  // MARK: Places
+
+  /// Gives the launcher a place search, so picking the map viewer offers a place to open it at. A
+  /// launcher given no search, or `.none`, opens the map at its own default view.
+  func offerPlaces(_ services: PlaceServices) {
+    guard placeSearch == nil, let makeSearcher = services.search else { return }
+
+    let search = PlaceSearchView(
+      searcher: makeSearcher(), placeholder: "Optional: a city, address, or landmark")
+    search.translatesAutoresizingMaskIntoConstraints = false
+    search.apply(palette)
+    search.onPick = { [weak self] region, _ in self?.open(.mapViewer(region: region)) }
+    search.onSubmitWithoutPlace = { [weak self] in self?.open() }
+    search.onEscapeEmpty = { [weak self] in self?.leaveCommand() }
+    search.onMoveOut = { [weak self] step in
+      self?.moveSelection(by: step)
+      return true
+    }
+
+    placeWrapper.addSubview(search)
+
+    NSLayoutConstraint.activate([
+      search.leadingAnchor.constraint(
+        equalTo: placeWrapper.leadingAnchor, constant: LauncherRowView.textLeading),
+      search.trailingAnchor.constraint(equalTo: placeWrapper.trailingAnchor),
+      search.topAnchor.constraint(equalTo: placeWrapper.topAnchor, constant: 4),
+      search.bottomAnchor.constraint(equalTo: placeWrapper.bottomAnchor, constant: -4),
+    ])
+
+    placeSearch = search
+    model.offersPlace = true
+    render()
+  }
+
+  /// Stops the place search. The launcher's applet calls it when the pane closes.
+  func stop() {
+    placeSearch?.stop()
   }
 
   // MARK: Rendering
@@ -471,6 +524,7 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     }
 
     commandWrapper.isHidden = !model.showsCommand
+    placeWrapper.isHidden = !model.showsPlace
     emptyLabel.isHidden = !visible.isEmpty
 
     errorLabel.stringValue = model.refusal?.reason ?? ""
@@ -504,6 +558,11 @@ final class LauncherView: NSView, NSTextFieldDelegate {
   /// Puts the keyboard in the field the selection calls for, with the caret at the end of its text.
   func focusCurrent() {
     guard let window else { return }
+
+    if model.focus == .place, let placeSearch {
+      placeSearch.focusField()
+      return
+    }
 
     let field = model.focus == .command ? commandField : filterField
 
@@ -553,21 +612,29 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     switch model.choice() {
     case .failure(let refusal):
       model.refusal = refusal
+      render()
+      focusCurrent()
 
     case .success(let choice):
-      do {
-        try onChoose?(choice)
-        return
-      } catch {
-        model.refusal = LauncherRefusal(reason: error.localizedDescription)
-      }
+      open(choice)
+    }
+  }
+
+  /// Opens `choice`, or says why it cannot be opened and keeps the launcher.
+  private func open(_ choice: AppletChoice) {
+    do {
+      try onChoose?(choice)
+      return
+    } catch {
+      model.refusal = LauncherRefusal(reason: error.localizedDescription)
     }
 
     render()
     focusCurrent()
   }
 
-  /// Escape in the command field goes back to the filter with the terminal selected.
+  /// Escape in the command field, or in an empty place field, goes back to the filter with the
+  /// terminal selected.
   func leaveCommand() {
     model.backToTerminal()
     render()

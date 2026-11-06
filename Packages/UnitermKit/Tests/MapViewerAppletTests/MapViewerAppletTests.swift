@@ -22,7 +22,9 @@ final class RecordingHost: AppletHost {
 
   func appletDidChange(_ applet: any Applet) { changes += 1 }
 
-  func appletTabsDidChange(_ applet: any Applet) {}
+  var tabChanges = 0
+
+  func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
 
   func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool { false }
 
@@ -200,6 +202,67 @@ final class MapViewerAppletTests: XCTestCase {
     move(applet, toLatitude: 49.5)
 
     XCTAssertEqual(host.changes, 2)
+  }
+
+  private func command(_ name: String) throws -> AppletCommand {
+    try XCTUnwrap(MapViewerApplet.commandSet.commands.first { $0.name == name }, name)
+  }
+
+  /// Catches a zoom command that moves the wrong way, zooms by a different step each time, or is
+  /// not saved. Zoom In halves the camera's distance and Zoom Out doubles it. The map's settle
+  /// after each one is the user's move, so the layout records it.
+  func testZoomCommandsStepTheCameraAndAreSaved() throws {
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+    applet.content.animatesCommands = false
+
+    layOut(applet)
+    move(applet, toLatitude: 48.85)
+
+    let start = applet.content.mapView.camera.centerCoordinateDistance
+    let startSpan = try XCTUnwrap(MapViewerDescription.decode(applet.describe()).region).span
+
+    try command("zoom-in").run(applet)
+    settle(applet)
+
+    XCTAssertEqual(
+      applet.content.mapView.camera.centerCoordinateDistance, start / 2, accuracy: start * 0.01)
+    XCTAssertEqual(host.changes, 2)
+    XCTAssertLessThan(
+      try XCTUnwrap(MapViewerDescription.decode(applet.describe()).region).span.latitudeDelta,
+      startSpan.latitudeDelta * 0.75)
+
+    try command("zoom-out").run(applet)
+    settle(applet)
+
+    XCTAssertEqual(
+      applet.content.mapView.camera.centerCoordinateDistance, start, accuracy: start * 0.01)
+    XCTAssertEqual(host.changes, 3)
+  }
+
+  /// Catches a Face North that leaves the map turned, or one offered on a map that already faces
+  /// north.
+  func testFaceNorthTurnsTheMapBackAndIsOfferedOnlyWhenTurned() throws {
+    let applet = MapViewerApplet(startDirectory: nil)
+    applet.content.animatesCommands = false
+    let north = try command("face-north")
+
+    layOut(applet)
+    move(applet, toLatitude: 48.85)
+
+    XCTAssertFalse(north.isAvailable(applet))
+
+    let turned = applet.content.mapView.camera.copy() as! MKMapCamera
+    turned.heading = 90
+    applet.content.mapView.setCamera(turned, animated: false)
+
+    XCTAssertTrue(north.isAvailable(applet))
+
+    north.run(applet)
+
+    XCTAssertEqual(applet.content.mapView.camera.heading, 0, accuracy: 0.001)
+    XCTAssertFalse(north.isAvailable(applet))
   }
 
   /// Catches a restore, a resize, or MapKit's own default region that rewrites a pane nobody
