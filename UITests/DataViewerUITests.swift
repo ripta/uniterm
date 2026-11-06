@@ -58,7 +58,8 @@ final class DataViewerUITests: UnitermUITestCase {
     // A path that the field mangled while typing sends the panel nowhere. Say so before Return.
     let typed = goTo.textFields.firstMatch
     XCTAssertTrue(
-      waitFor(typed, timeout: 5) { $0 == file.path }, "the go-to field holds the wrong path")
+      waitFor(typed, timeout: 5) { $0 == file.path },
+      "the go-to field holds \(String(describing: typed.value)), not \(file.path)")
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitUntilGone(goTo, timeout: 5), "the go-to-folder sheet never closed")
