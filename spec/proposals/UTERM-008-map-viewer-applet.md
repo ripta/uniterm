@@ -142,7 +142,7 @@ layer.
 - From a GeoJSON file, a simplestyle `marker-color` maps to the nearest accent. A one- or two-character `marker-symbol`
   becomes the glyph. Maki icon names are ignored. The uniterm-specific properties `uniterm:accent` and `uniterm:glyph`
   name an accent and a glyph directly, and win over the simplestyle keys. Values the map cannot use fall back to the
-  defaults, and one pane message gives their count. A Maki name is ignored without being counted.
+  defaults, and one status bar message gives their count. A Maki name is ignored without being counted.
   Amended 2026-11-05; see Decision Log.
 
 Rationale: a file is always one layer, so per-pin styling is the only way to show a file's own categories. Accent
@@ -194,7 +194,8 @@ Decision: this proposal makes no change to the applet contract. Its input and ev
 - The payload holds one number about command layers: how many distinct layers held pins in this launch. The set of
   counted names rides in the undo-only part, so a rerun or a reopen in the same launch does not raise it. Each launch
   starts counting from zero. `start()` reads the stored count only to show, when it is above zero, a notice that that
-  many program layers from the last session were not restored. Amended 2026-11-03; see Decision Log.
+  many program layers from the last session were not restored. The notice posts once to the status bar at info level,
+  and nothing is drawn over the map. Amended 2026-11-05; see Decision Log.
 - An exec declaration and its desired modes are the host's, saved outside the payload, per UTERM-004 "Saved layouts".
   Restore runs nothing, per ADR-03.
 
@@ -278,8 +279,9 @@ None.
   names the current style. A checked item would need state on `AppletCommand`, which this milestone did not add.
 - `ThemeFlavor.isDark` is the explicit flavor-to-appearance rule. A test covers every flavor against its `base` surface.
   Other callers' flavor checks are unchanged.
-- A failed map load shows a banner over the map and posts a warning. The banner clears when the map loads, and the map
-  stays usable under it.
+- A failed tile load posts one warning to the status bar per outage, and a "Map not loading" warning segment shows
+  until the map loads. MapKit can report one outage many times, and only its first report posts. Nothing is drawn over
+  the map. Amended 2026-11-05; see Decision Log.
 - MapKit needs no entitlement here. The App Sandbox is off and the project has no entitlements file, so nothing limits
   the network access that tile fetching uses. The map does not use Core Location. The app builds and links with the
   hardened runtime on. A tile fetch against the live service was not run in this milestone.
@@ -296,7 +298,8 @@ None.
 - The Open... command with no key opens the panel, and the map declares the system's `public.geojson` type at the owner
   rank, for UTERM-015's router. Amended 2026-11-05; see Decision Log.
 - Selecting a pin shows its label
-- Point and MultiPoint features become pins. Other geometry is skipped, and a message gives the count
+- Point and MultiPoint features become pins. Other geometry is skipped, and a status bar message gives the count.
+  Amended 2026-11-05; see Decision Log.
 - One documented rule picks a feature's label from its properties
 - Parsing runs off the main thread. A malformed, huge, or non-regular file shows a message in the pane and never stalls
   the UI
@@ -319,7 +322,7 @@ None.
 - A theme switch re-tints existing pins and clusters without a reload
 - Pins in one layer cluster when zoomed out, and pins from two layers never share a cluster
 - Reopen and relaunch bring back the file's pins. A file moved after the save is found through its bookmark, and the
-  pane says where. A new file at the stored path wins over the bookmark
+  status bar says where. A new file at the stored path wins over the bookmark. Amended 2026-11-05; see Decision Log.
 - The open panel starts in the pane's `currentDirectory`, never in the panel's remembered one
 - A missing, unreadable, or privacy-protected file shows a message that says which, never "corrupt"
 
@@ -334,9 +337,9 @@ None.
   file, the router's factory, and a restore all reach it. It finds the file and parses it off the main thread. A user
   load fits the map to the pins and saves that region. A restore does not move the saved region.
 - The file layer is bounded at 32 MiB and 10,000 points. A file past the size bound is refused whole, because
-  `MKGeoJSONDecoder` cannot stop part way. A file past the point bound loads its first points and says so. The pane
-  gives each kind of loss its own line: points past the bound, shapes that are not points, coordinates off the globe,
-  and unusable style values.
+  `MKGeoJSONDecoder` cannot stop part way. A file past the point bound loads its first points and says so. Each kind
+  of loss posts its own line to the status bar as a warning: points past the bound, shapes that are not points,
+  coordinates off the globe, and unusable style values. Amended 2026-11-05; see Decision Log.
 - The rules for IDs, labels, accents, and glyphs sit beside their code in `GeoData` and are pinned by tests. An ID is
   the object's ordinal and the point's index, as `3:0`, so it is unique even when GeoJSON `id` is missing or repeats.
   The uniterm property keys are `uniterm:accent` and `uniterm:glyph`. A pure red `marker-color` maps to maroon, since
@@ -521,6 +524,23 @@ None.
 - 2026-11-05: Amended "Where pins come from" for UTERM-016. The user now edits the file's pins by hand and saves them.
   UTERM-016 M4 will let an authorized caller edit the open document's file pins, under the path-reading power. The
   text before said only the user and file loading change the file layer.
+- 2026-11-05: Load notices moved to the status bar at the user's review. M2 put the skipped-shape count and the other
+  load notices in a box over the map, where it covered MapKit's logo and Legal link and could not be dismissed. Each
+  notice now posts once per load to the status bar and stays in its history. A segment counts the hidden shapes while
+  the pane is focused. Load failures and "Opening…" stay in the pane, which has nothing else to show then. The data
+  viewer's load notices moved the same way. M2's checks and As built said the pane gave these notices, and now say the
+  status bar does.
+- 2026-11-05: The tile-load banner moved to the status bar after a status bar audit. M1 drew a banner over the map that
+  could not be dismissed, though pins still showed under it. MapKit's repeated failure reports each posted a warning.
+  One warning now posts per outage, and a "Map not loading" warning segment shows until the map loads.
+- 2026-11-05: One rule now sets a notice's level, for the map and the data viewer alike. A notice that some content is
+  not shown is a warning. A file found at a new path is info. Lost user work is an error, so it stays until seen. The
+  map's load notices were info before, and the data viewer's were warnings. Unsaved pins that cannot come back after a
+  reopen were a warning, which clears in 5 seconds.
+- 2026-11-05: The relaunch notice for program layers posts once to the status bar at info level. The text named the
+  notice but not its place, and M2's notices had been drawn over the map until the user's review moved them. It is
+  info, not a warning, because restore never runs a program by design, so the missing layers are expected. The
+  2026-11-03 marker on "The applet contract" is replaced by this one.
 
 ## References
 

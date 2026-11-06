@@ -434,9 +434,10 @@ final class MapViewerAppletTests: XCTestCase {
 
   // MARK: Failure
 
-  /// Catches a map that fails to load and says nothing. The message shows in the pane and goes to
-  /// the status bar, and a later successful load clears the banner.
-  func testALoadFailureShowsAMessageInThePaneUntilTheMapLoads() {
+  /// Catches a map whose tiles fail to load and says nothing, a banner over the map, and a
+  /// warning posted again on each of MapKit's failure reports. One warning goes to the status bar
+  /// per outage, and a segment says so until the map loads. The next outage posts again.
+  func testATileFailurePostsOnceAndShowsASegmentUntilTheMapLoads() {
     let applet = MapViewerApplet(startDirectory: nil)
     let host = RecordingHost()
     applet.host = host
@@ -444,16 +445,40 @@ final class MapViewerAppletTests: XCTestCase {
     let error = NSError(
       domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet,
       userInfo: [NSLocalizedDescriptionKey: "The Internet connection appears to be offline."])
+    let failing = {
+      applet.content.mapViewDidFailLoadingMap(applet.content.mapView, withError: error)
+    }
+    let notLoading = { applet.segments.filter { $0.text == "Map not loading" } }
 
-    applet.content.mapViewDidFailLoadingMap(applet.content.mapView, withError: error)
+    failing()
+    failing()
 
-    XCTAssertTrue(applet.content.failure?.contains("could not load") == true)
-    XCTAssertTrue(applet.content.failure?.contains("offline") == true)
     XCTAssertEqual(host.posts.map(\.level), [.warning])
+    XCTAssertTrue(host.posts.first?.text.contains("offline") == true)
+    XCTAssertEqual(notLoading().map(\.style), [.warning], "\(applet.segments)")
+    XCTAssertEqual(
+      visibleText(in: applet.content).filter { $0.contains("could not load") }, [],
+      "the failure covers the map")
 
     applet.content.mapViewDidFinishLoadingMap(applet.content.mapView)
 
-    XCTAssertNil(applet.content.failure)
+    XCTAssertEqual(notLoading().count, 0)
+
+    failing()
+
+    XCTAssertEqual(host.posts.count, 2, "a new outage did not post")
+  }
+
+  private func visibleText(in view: NSView) -> [String] {
+    var texts: [String] = []
+
+    if let field = view as? NSTextField, !field.isHiddenOrHasHiddenAncestor {
+      texts.append(field.stringValue)
+    }
+
+    for subview in view.subviews { texts += visibleText(in: subview) }
+
+    return texts
   }
 
   // MARK: Contract

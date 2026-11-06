@@ -193,9 +193,10 @@ command, Cmd-R, re-reads the file on demand.
   editor's write-new-then-rename save are caught. The watch re-arms on the path after a rename or delete.
 - Bursts of change coalesce. The last write is always loaded.
 - A reload loads like a first load, off the main thread or in WebKit, and swaps in only when it succeeds. A failed load
-  keeps the last good render, with a status message. A file that disappears keeps the last render, and the pane says
-  it was moved or deleted. The pane never follows the bookmark while live. When a file reappears at the path, the
-  viewer reloads.
+  keeps the last good render and posts a warning to the status bar. A file that disappears keeps the last render. The
+  status bar says once that it was moved or deleted, and a "Moved or deleted" warning segment shows until the file is
+  back. The pane never follows the bookmark while live. When a file reappears at the path, the viewer reloads.
+  Amended 2026-11-05; see Decision Log.
 - A reload keeps the view state's source anchor, so the reader stays at the same place.
 - While the pane is detached, changes collect and reload once at reattach. The watch stops at close.
 - Reload covers volumes where file events never arrive.
@@ -406,8 +407,8 @@ None.
 - A burst of writes, such as `cmd > file`, ends with the last write shown, and a continuously rewritten file reloads
   at a bounded rate
 - Changes to other files in the folder reload nothing
-- A file that fails to load keeps the last good render with a status message. A moved or deleted file keeps its render
-  and says so
+- A file that fails to load keeps the last good render and posts a status bar warning. A moved or deleted file keeps
+  its render, posts one warning, and shows a warning segment until it reappears. Amended 2026-11-05; see Decision Log.
 - After the file, or its parent folder, is deleted and recreated, the file reloads when it reappears at the path
 - After restore finds a moved file through its bookmark, the watch follows the updated path
 - A detached pane reloads once at reattach, and close stops the watch
@@ -556,6 +557,11 @@ None.
   its pane-local open, and the viewer declares the types it opens. M1's gate on the filing became a check that the
   viewer declares its types. Dependencies, "Control levels", and the opening risk now name UTERM-015.
 - 2026-11-03: Scheduled as UTERM-007 M1-M4 and UTERM-007 M5 in queue.md.
+- 2026-11-05: Live reload notices go to the status bar, after a status bar audit. The render stays on screen in both
+  cases, so the pane has no need to speak. The text said a failed load gets "a status message" and a moved or deleted
+  file is told by "the pane". A failed load now posts a warning. A moved or deleted file posts one warning and shows a
+  "Moved or deleted" warning segment until the file is back. This follows the rule the user set for the map and data
+  viewers: a notice about content still shown posts once, with a segment while it holds.
 
 ## References
 

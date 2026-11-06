@@ -76,7 +76,8 @@ Decision: a save changes only the values an edit names. Every other byte of the 
 - Restyling one member of a MultiPoint moves it out to its own Point feature, with a copy of the properties.
 - A removal cuts the feature, or the member, with its separator. An add appends a feature with the file's separator.
 - A single Feature or bare geometry is wrapped in a FeatureCollection, with its own bytes inside unchanged.
-- A pin inside a GeometryCollection cannot be changed. The edit is refused and says why.
+- A pin inside a GeometryCollection cannot be changed. The edit is refused, and the status bar says why. Amended
+  2026-11-05; see Decision Log.
 
 Rationale: the user chose this over rewriting the document or refusing mixed files. Formatting and version-control
 diffs stay clean, and nothing the map cannot show is lost.
@@ -122,8 +123,9 @@ file stays a user action. No new write power is needed.
 ### A file that changes on disk while open
 
 The map watches its file, and follows an editor that saves by renaming a new file over the old one. A pane with no
-edits reads the file again. A pane with edits keeps them and says the file changed. Save then asks Save As, Cancel,
-Overwrite, or Revert.
+edits reads the file again. A pane with edits keeps them. The status bar says the file changed, and a "Changed on
+disk" segment shows until the next save or read. Save then asks Save As, Cancel, Overwrite, or Revert. Amended
+2026-11-05; see Decision Log.
 
 ### Adding and editing pins
 
@@ -178,7 +180,8 @@ None.
 - Choosing the default accent removes `uniterm:accent`. A file's `marker-color`, when it has one, then sets the color
   again, as the reader's rule says.
 - An edit whose bytes the reader refuses is taken back, and the undo stack is cleared, since it points at those bytes.
-  The pane says the edit was not applied. Save can therefore never write bytes the map could not read.
+  The status bar says the edit was not applied. Save can therefore never write bytes the map could not read.
+  Amended 2026-11-05; see Decision Log.
 - Clear File Pins and opening another file into the pane both ask before they drop unsaved pins.
 - Residuals. Each undo step keeps a whole document, and the stack holds 50 steps. A file near the 32 MiB bound can
   hold over a gigabyte of undo. Save and the disk-change check read the file on the main thread, within the same
@@ -261,6 +264,10 @@ Amended 2026-11-05; see Decision Log.
   offered for editing; a save replaced a symlink with a plain file; an edit held across a renumbering could hit another
   pin; two saves at once could see their own write as a conflict; and the watcher gave up on a file that came back. The
   UI tests now run with place names off, so they send no map center to Apple.
+- 2026-11-05: Edit refusals and the file-changed notice are said in the status bar, not the pane. The text said "the
+  pane says", but the code has posted them to the status bar since M2. A file that changed on disk under edits also
+  shows a "Changed on disk" warning segment. Unsaved pins that cannot come back after a reopen now post an error, under
+  UTERM-008's rule for notice levels.
 
 ## References
 

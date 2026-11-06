@@ -1,4 +1,5 @@
 import AppKit
+import AppletKit
 import TableData
 import Theme
 
@@ -20,6 +21,11 @@ final class NestedTable: NSObject, NSPopoverDelegate {
   private var child: NestedTable?
   private var palette: ThemePalette
   private var closed = false
+  private var posted = AppletNotices()
+
+  /// Gets each notice about the nested table's rows once. The owner posts it to the status bar,
+  /// naming the table, since a popover has no status of its own.
+  var onNotice: ((AppletNotice) -> Void)?
 
   init(
     bytes: [UInt8], title: String, budget: TableBudget, palette: ThemePalette,
@@ -85,6 +91,7 @@ final class NestedTable: NSObject, NSPopoverDelegate {
     let next = NestedTable(
       bytes: request.bytes, title: request.title, budget: budget, palette: palette)
 
+    next.onNotice = onNotice
     child = next
     next.present(relativeTo: request.rect, of: request.anchor)
   }
@@ -92,8 +99,11 @@ final class NestedTable: NSObject, NSPopoverDelegate {
   private func refresh() {
     guard !closed else { return }
 
-    view.show(
-      body(), notices: notices(), filter: session.query.filter, sort: session.query.sort)
+    view.show(body(), filter: session.query.filter, sort: session.query.sort)
+
+    for notice in posted.unposted(notices()) {
+      onNotice?(AppletNotice(notice.level, "In \u{201C}\(title)\u{201D}: \(notice.text)"))
+    }
   }
 
   private func body() -> DataViewerBody {
@@ -120,8 +130,9 @@ final class NestedTable: NSObject, NSPopoverDelegate {
     }
   }
 
-  private func notices() -> [String] {
+  private func notices() -> [AppletNotice] {
     DataViewerNotices.lines(
-      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
+      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows
+    ).map { AppletNotice(.warning, $0) }
   }
 }

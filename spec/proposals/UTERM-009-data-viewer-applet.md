@@ -299,7 +299,7 @@ None.
   the Decision Log entry of 2026-11-04. UTF-32 is not supported. Bytes that are not valid UTF-8 past the first 64 KiB
   of a UTF-8 file show as U+FFFD.
 - Size caps protect the store from a hostile file: a cell keeps 1 MiB, a row 16 MiB and 65,536 cells. A cut row is
-  counted, and the pane says how many rows had cells cut.
+  counted, and the status bar says how many rows had cells cut. Corrected 2026-11-05; see Decision Log.
 - Rows live in sealed pages of about 1 MiB, which reserve their cost from the shared budget as they seal. A page the
   budget refuses is dropped, so the "first N rows" count is page-granular. A memory warning or critical event ends the
   loads running at that moment, and a pane opened afterward loads normally. Numbers and reasons are in the Decision Log
@@ -308,7 +308,8 @@ None.
   pane releases its lease, and a loader that is slow to notice its cancellation is refused from then on. The page being
   filled is not reserved and stays under about 1 MiB for each loading pane.
 - A sort reserves its key memory from the same budget and gives it back when done. A sort the budget refuses leaves the
-  rows in file order, and the pane says so. See the Decision Log entry of 2026-11-04.
+  rows in file order, and the status bar says so. See the Decision Log entry of 2026-11-04. Corrected 2026-11-05; see
+  Decision Log.
 - A header click cycles ascending, descending, then no sort. A sort or filter over a growing table reruns off the main
   thread at most every 250 ms. The view keeps the last finished result until the run over the newer snapshot ends, so
   rows never show out of order.
@@ -685,6 +686,12 @@ None.
   names a different file than the one opened. Undecided. UTERM-006, UTERM-007, and UTERM-008 follow the same rule. The
   description is stored data, so a change needs a version bump and a migration. Settled in "The applet contract". The
   final review lists it.
+- 2026-11-05: Correction of fact: M1's As built said the pane says how many rows had cells cut, and that a refused sort
+  leaves a note in the pane. At the user's review, load notices moved to the status bar. Each posts once per load as a
+  warning and stays in the history. Segments carry "first N rows", "N rows cut", and "Unsorted" while the pane has
+  focus. The pane keeps only load failures and the wait while loading. The prior meaning was a notice line under the
+  filter. The "Large files" check still says the "first N rows" notice stays visible. A segment meets it only while
+  the pane has focus, so that check now reads as the status bar's.
 
 ## References
 

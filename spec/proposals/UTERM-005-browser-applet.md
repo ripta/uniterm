@@ -197,6 +197,9 @@ status bar.
 
 - A file downloads under a temporary name and takes its final, unique name when complete. A failed or cancelled
   download removes its partial file.
+- A finished download posts an info message naming the file. A failed download posts an error naming the file and the
+  reason. One the user cancels posts nothing. The progress segment shows only for the focused pane, and a download can
+  end while its pane is unfocused or detached, so the message is how the user learns the outcome. Amended 2026-11-05; see Decision Log.
 - Each finished file gets quarantine properties naming its origin and data URLs. uniterm does not set
   `LSFileQuarantineEnabled`, which would apply to the whole process and could quarantine files the terminal's shells
   create.
@@ -490,6 +493,8 @@ None.
 - The status bar shows a download's progress, the download keeps going while the pane is detached, and Reveal Latest
   Download shows the focused pane's newest finished file in Finder. It is unavailable with no finished download, and a
   moved or deleted file gets a status message
+- A finished download posts an info message naming it, and a failed one posts an error. A cancelled one posts nothing.
+  Amended 2026-11-05; see Decision Log.
 - A `blob:` or `data:` download from a page saves like any other, with or without a `download` attribute, and a page's
   own `blob:` preview opens in its tab. A page's `file:` link saves nothing, even marked as a download
 - `srcdoc` and `data:` subframes load, while a top-level `data:` page is refused
@@ -598,6 +603,10 @@ Starts after UTERM-004 M6.
   state is never restored. ADR-03 stays unchanged.
 - 2026-11-03: Accepted by the user.
 - 2026-11-03: Scheduled as UTERM-005 M1-M7 and UTERM-005 M8 in queue.md.
+- 2026-11-05: Downloads report their outcome in the status bar, after a status bar audit. The text gave progress a
+  segment and said nothing about the end. A segment shows only for the focused pane, and a download can finish while
+  its pane is unfocused or detached. A finished download now posts info, and a failed one posts an error, each naming
+  the file. A cancelled one posts nothing, since the user chose it.
 
 ## References
 

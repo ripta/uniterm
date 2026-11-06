@@ -4,7 +4,7 @@ import MapKit
 import PlaceSearch
 import Theme
 
-/// The map viewer's body: a map view, and a banner over it that says why the map could not load.
+/// The map viewer's body: a map view, and a box over it that says the file failed or is opening.
 ///
 /// The map belongs to MapKit, which owns pan and zoom. This view hands it a region and a style,
 /// and reports the region the map settles on. It never reads its window's appearance. The owner
@@ -53,14 +53,14 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   private(set) var placeSearch: PlaceSearchView?
 
   /// Gets the reason the map could not load.
-  var onLoadFailure: ((String) -> Void)?
+  /// Called with why the map's tiles fail to load, and with nil once they load. MapKit can
+  /// report the same failure many times.
+  var onTilesChanged: ((String?) -> Void)?
 
   /// Gets the files dropped on the pane. Returns false to refuse them.
   var onDrop: (([URL]) -> Bool)?
 
   let mapView = MKMapView()
-  private let banner = NSBox()
-  private let bannerLabel = NSTextField(wrappingLabelWithString: "")
   private let notices = NSBox()
   private let noticesLabel = NSTextField(wrappingLabelWithString: "")
   private var markers = NSHashTable<MapMarkerView>.weakObjects()
@@ -76,7 +76,6 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   /// and resizing the map both clear the mark, so a stale one never claims the report that follows.
   private(set) var userIsMoving = false
   private(set) var style = MapStyle.standard
-  private(set) var failure: String?
 
   init() {
     super.init(frame: .zero)
@@ -90,20 +89,6 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
     mapView.translatesAutoresizingMaskIntoConstraints = false
     mapView.setAccessibilityIdentifier("map-viewer-map")
     addSubview(mapView)
-
-    bannerLabel.translatesAutoresizingMaskIntoConstraints = false
-    bannerLabel.setAccessibilityIdentifier("map-viewer-message")
-    bannerLabel.maximumNumberOfLines = 0
-    bannerLabel.alignment = .center
-
-    banner.boxType = .custom
-    banner.cornerRadius = 8
-    banner.borderWidth = 0
-    banner.contentViewMargins = NSSize(width: 12, height: 8)
-    banner.translatesAutoresizingMaskIntoConstraints = false
-    banner.contentView = bannerLabel
-    banner.isHidden = true
-    addSubview(banner)
 
     noticesLabel.translatesAutoresizingMaskIntoConstraints = false
     noticesLabel.setAccessibilityIdentifier("map-viewer-notices")
@@ -132,11 +117,6 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
       mapView.leadingAnchor.constraint(equalTo: leadingAnchor),
       mapView.topAnchor.constraint(equalTo: topAnchor),
       mapView.bottomAnchor.constraint(equalTo: bottomAnchor),
-      banner.centerXAnchor.constraint(equalTo: centerXAnchor),
-      banner.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-      banner.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
-      banner.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
-      banner.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
     ])
 
     let trailing = mapView.trailingAnchor.constraint(equalTo: trailingAnchor)
@@ -592,20 +572,16 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   // MARK: Loading
 
   func mapViewDidFailLoadingMap(_ mapView: MKMapView, withError error: any Error) {
-    let reason = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-    let text =
-      "The map could not load: \(reason). "
-      + "The map needs a network connection to fetch its tiles."
+    var reason = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    failure = text
-    bannerLabel.stringValue = text
-    banner.isHidden = false
-    onLoadFailure?(text)
+    while reason.hasSuffix(".") { reason.removeLast() }
+
+    onTilesChanged?(
+      "The map could not load: \(reason). The map needs a network connection to fetch its tiles.")
   }
 
   func mapViewDidFinishLoadingMap(_ mapView: MKMapView) {
-    failure = nil
-    banner.isHidden = true
+    onTilesChanged?(nil)
   }
 
   // MARK: Pins
@@ -721,8 +697,6 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
 
     self.palette = palette
 
-    banner.fillColor = palette[.mantle].nsColor
-    bannerLabel.textColor = palette[.text].nsColor
     notices.fillColor = palette[.mantle].nsColor
     noticesLabel.textColor = palette[.text].nsColor
 

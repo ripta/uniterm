@@ -219,8 +219,8 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertEqual(applet.filePinsShown.count, 2)
     XCTAssertTrue(applet.isDirty)
     XCTAssertTrue(
-      applet.content.noticeLines.contains {
-        $0.hasPrefix("The file changed on disk")
+      applet.statusNotices.contains {
+        $0.level == .warning && $0.text.hasPrefix("The file changed on disk")
       })
   }
 
@@ -271,6 +271,30 @@ final class MapPinEditingTests: XCTestCase {
 
     XCTAssertEqual(reopened.filePinsShown.count, 3)
     XCTAssertTrue(reopened.isDirty)
+  }
+
+  /// Catches lost pins reported as a warning, which clears in seconds. Pins left unsaved at close
+  /// that cannot come back are lost work, so the status bar keeps them as an error.
+  func testUnsavedPinsThatCannotComeBackPostAnError() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try mixedFile(scratch)
+    let applet = MapViewerApplet(startDirectory: nil)
+    await load(applet, file)
+
+    applet.addPin(at: GeoCoordinate(latitude: 7, longitude: 7))
+    await settle(applet)
+
+    let description = applet.describe()
+    try FileManager.default.removeItem(at: file)
+
+    let reopened = try MapViewerApplet(restoring: description)
+    let host = RecordingHost()
+    reopened.host = host
+    reopened.start()
+    await reopened.opening?.value
+
+    let lost = host.posts.filter { $0.text.hasPrefix("The pins left unsaved") }
+    XCTAssertEqual(lost.map(\.level), [.error], "\(host.posts)")
   }
 
   /// Catches a context menu that adds nothing, or adds the pin somewhere other than where the

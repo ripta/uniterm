@@ -31,6 +31,9 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private var opening: Task<Void, Never>?
   private var openGeneration = 0
   private var resolvedNotice: String?
+
+  /// The notices already posted to the status bar for the file shown now.
+  private var posted = AppletNotices()
   private var restoreWaitsForStart: Bool
   private var describesFromRecord: Bool
   private var closed = false
@@ -209,6 +212,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     let table = NestedTable(
       bytes: request.bytes, title: request.title, budget: budget, palette: palette,
       pageTarget: pageTarget)
+    table.onNotice = { [weak self] notice in
+      guard let self else { return }
+
+      host?.applet(self, post: notice.level, text: notice.text)
+    }
 
     nested = table
     table.present(relativeTo: request.rect, of: request.anchor)
@@ -231,6 +239,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     opening?.cancel()
     openGeneration += 1
     resolvedNotice = nil
+    posted.reset()
     nested?.close()
     nested = nil
 
@@ -362,9 +371,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     }
 
     content.show(
-      body(), notices: notices(), filter: query.filter, sort: query.sort, find: findDisplay(),
+      body(), filter: query.filter, sort: query.sort, find: findDisplay(),
       sheets: SheetDisplay(names: session.sheets, selected: session.selectedSheet))
     revealCurrentMatch()
+    postNotices()
 
     let newTitle = fileName ?? Self.untitled
     let newSegments = segmentsForState()
@@ -426,7 +436,19 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     return nil
   }
 
-  private func notices() -> [String] {
+  /// Posts each notice about the load once. The table fills the pane, so the status bar carries
+  /// them, and its history keeps them.
+  private func postNotices() {
+    for notice in posted.unposted(notices()) {
+      host?.applet(self, post: notice.level, text: notice.text)
+    }
+  }
+
+  /// The notices about what loaded.
+  var loadNotices: [AppletNotice] { notices() }
+
+  /// Rows not loaded or not sorted are warnings. A file found at a new path is info.
+  private func notices() -> [AppletNotice] {
     var lines: [String] = []
     let loaded = session.snapshot.rowCount.formatted()
     let whole = session.sheets.isEmpty ? "the file" : "the sheet"
@@ -451,11 +473,13 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     lines += DataViewerNotices.lines(
       sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
 
+    var notices = lines.map { AppletNotice(.warning, $0) }
+
     if let resolvedNotice {
-      lines.append(resolvedNotice)
+      notices.append(AppletNotice(.info, resolvedNotice))
     }
 
-    return lines
+    return notices
   }
 
   private func segmentsForState() -> [AppletSegment] {
@@ -481,7 +505,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
           text: filtered
             ? "\(visible.formatted()) of \(loaded.formatted()) rows"
             : "\(loaded.formatted()) rows")
-      ]
+      ] + cutSegments()
 
     case .stoppedAtBudget, .stoppedLowMemory:
       if session.stoppedBeforeAnyRow {
@@ -498,7 +522,28 @@ public final class DataViewerApplet: Applet, SourceReplacing {
             ? "\(visible.formatted()) of the first \(loaded.formatted()) rows"
             : "The first \(loaded.formatted()) rows",
           style: .warning)
-      ]
+      ] + cutSegments()
     }
+  }
+
+  /// Segments that stay while the pane shows rows the notices said were changed: cells cut to
+  /// size, or rows left in file order because sorting would not fit.
+  private func cutSegments() -> [AppletSegment] {
+    var segments: [AppletSegment] = []
+    let cut = session.progress.truncatedRows
+
+    if cut > 0 {
+      segments.append(
+        AppletSegment(
+          symbolName: "scissors", text: cut == 1 ? "1 row cut" : "\(cut.formatted()) rows cut",
+          style: .warning))
+    }
+
+    if session.sortSkipped {
+      segments.append(
+        AppletSegment(symbolName: "arrow.up.arrow.down", text: "Unsorted", style: .warning))
+    }
+
+    return segments
   }
 }

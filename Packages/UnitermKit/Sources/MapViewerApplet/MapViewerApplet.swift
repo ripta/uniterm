@@ -41,8 +41,17 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private var restoreWaitsForStart = false
   private var filePins: [GeoPin] = []
   private var fileNotices: [String] = []
+
+  /// Points and shapes the file holds that the map does not show, and whether the file passed
+  /// the point bound. The status bar's segment counts them.
+  private var hiddenFromFile = 0
+  private var fileTruncated = false
+
+  /// The notices already posted to the status bar for the file shown now.
+  private var posted = AppletNotices()
   private var fileFailure: String?
   private var resolvedNotice: String?
+  private var tileFailure: String?
 
   /// The file's bytes as the user has edited them. Nil before any file or pin.
   private(set) var document: Data?
@@ -169,11 +178,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   private func wire() {
     content.onRegionSettled = { [weak self] region in self?.regionSettled(region) }
-    content.onLoadFailure = { [weak self] text in
-      guard let self else { return }
-
-      self.host?.applet(self, post: .warning, text: text)
-    }
+    content.onTilesChanged = { [weak self] failure in self?.tilesChanged(failure) }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
     content.onRegionShown = { [weak self] region in self?.places.regionShown(region) }
     places.onName = { [weak self] _ in self?.refresh() }
@@ -290,6 +295,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     resolvedNotice = nil
     fileFailure = nil
     fileNotices = []
+    hiddenFromFile = 0
+    fileTruncated = false
+    posted.reset()
     filePins = []
     content.removePins(layer: .file)
     forgetDocument()
@@ -357,6 +365,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     opening = nil
     filePins = layer.pins
     fileNotices = layer.notices(limit: Self.limits.maxPoints)
+    count(layer)
 
     if layer.pins.isEmpty && layer.skippedShapes == 0 && layer.invalidCoordinates == 0 {
       fileNotices.append("The file has no points to show.")
@@ -374,6 +383,41 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     refresh()
     host?.appletDidChange(self)
+  }
+
+  static let changedOnDiskNotice =
+    "The file changed on disk. Saving asks before it overwrites the change."
+
+  /// The notices about the file shown now, which go to the status bar. What a read left out is a
+  /// warning. A file found at a new path is info.
+  var statusNotices: [AppletNotice] {
+    var notices = fileNotices.map { AppletNotice(.warning, $0) }
+
+    if let resolvedNotice { notices.append(AppletNotice(.info, resolvedNotice)) }
+
+    if changedOnDisk { notices.append(AppletNotice(.warning, Self.changedOnDiskNotice)) }
+
+    return notices
+  }
+
+  /// Keeps why the map's tiles fail to load, for a segment while they do. MapKit can report one
+  /// outage many times, so only the first report of an outage goes to the status bar. The next
+  /// successful load ends the outage.
+  private func tilesChanged(_ failure: String?) {
+    guard failure != tileFailure else { return }
+
+    if let failure, tileFailure == nil {
+      host?.applet(self, post: .warning, text: failure)
+    }
+
+    tileFailure = failure
+    refresh()
+  }
+
+  /// Keeps what a read of the file left out, for the status bar's segment.
+  private func count(_ layer: GeoFileLayer) {
+    hiddenFromFile = layer.skippedShapes + layer.invalidCoordinates
+    fileTruncated = layer.truncated
   }
 
   /// The file layer's default accent: the stored one while it names an accent, else the first of
@@ -470,7 +514,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.closeEditor()
     undoManager.removeAllActions()
     content.onRegionSettled = nil
-    content.onLoadFailure = nil
+    content.onTilesChanged = nil
     content.onDrop = nil
     content.onRegionShown = nil
     content.onPlacePicked = nil
@@ -528,23 +572,40 @@ public final class MapViewerApplet: Applet, SourceReplacing {
           text: filePins.count == 1 ? "1 pin" : "\(filePins.count.formatted()) pins"))
     }
 
+    if fileTruncated {
+      newSegments.append(
+        AppletSegment(symbolName: "eye.slash", text: "Some points hidden", style: .warning))
+    } else if hiddenFromFile > 0 {
+      newSegments.append(
+        AppletSegment(symbolName: "eye.slash", text: "\(hiddenFromFile.formatted()) hidden"))
+    }
+
+    if changedOnDisk {
+      newSegments.append(
+        AppletSegment(
+          symbolName: "exclamationmark.triangle", text: "Changed on disk", style: .warning))
+    }
+
+    if tileFailure != nil {
+      newSegments.append(
+        AppletSegment(symbolName: "wifi.exclamationmark", text: "Map not loading", style: .warning))
+    }
+
     segments = newSegments
 
+    // The pane shows only what stands in for the map's content: a failure, or the wait while a
+    // file opens. Notices about what loaded go to the status bar once, and stay in its history.
     var lines: [String] = []
 
     if let fileFailure { lines.append(fileFailure) }
 
     if opening != nil { lines.append("Opening\u{2026}") }
 
-    lines += fileNotices
-
-    if let resolvedNotice { lines.append(resolvedNotice) }
-
-    if changedOnDisk {
-      lines.append("The file changed on disk. Saving asks before it overwrites the change.")
-    }
-
     content.show(notices: lines)
+
+    for notice in posted.unposted(statusNotices) {
+      host?.applet(self, post: notice.level, text: notice.text)
+    }
     content.setAccessibilityValue(accessibilitySummary())
 
     let newTitle = displayName + (isDirty ? " \u{2014} Edited" : "")
@@ -738,6 +799,7 @@ extension MapViewerApplet {
       case .success(let layer):
         self.filePins = layer.pins
         self.fileNotices = layer.notices(limit: Self.limits.maxPoints)
+        self.count(layer)
         self.editableOrdinals = GeoJSONPatcher.editableOrdinals(in: bytes)
         self.showFilePins()
 
@@ -951,7 +1013,7 @@ extension MapViewerApplet {
 
     unsavedFromUndo = nil
     host?.applet(
-      self, post: .warning,
+      self, post: .error,
       text:
         "The pins left unsaved when this pane closed could not be restored, since their file did not open."
     )

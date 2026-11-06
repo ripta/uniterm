@@ -184,6 +184,32 @@ final class DataViewerAppletTests: XCTestCase {
     XCTAssertTrue(text.contains("a folder"))
   }
 
+  // MARK: Notices
+
+  /// Catches a load notice shown over the table instead of the status bar, or one posted again on
+  /// every refresh. A cut cell posts its notice once, and a segment says rows were cut while the
+  /// table shows them.
+  func testLoadNoticesGoToTheStatusBarOnce() async throws {
+    let scratch = try Scratch(self)
+    let big = String(repeating: "x", count: (1 << 20) + 10)
+    let file = try scratch.write("big.csv", "note\n\(big)\nsmall\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    let host = RecordingHost()
+    applet.host = host
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await loaded(applet)
+
+    let cut = "1 row had an oversized cell cut."
+    XCTAssertEqual(host.posts.filter { $0.text == cut }.count, 1, "\(host.posts)")
+    XCTAssertTrue(applet.segments.contains { $0.text == "1 row cut" }, "\(applet.segments)")
+
+    applet.session.setFilter("small")
+    _ = await eventually { applet.session.visibleCount == 1 }
+
+    XCTAssertEqual(host.posts.filter { $0.text == cut }.count, 1, "the notice posted again")
+  }
+
   // MARK: Drop
 
   /// Catches a drop of several files that replaces the file, or that is silent. The pane keeps what
