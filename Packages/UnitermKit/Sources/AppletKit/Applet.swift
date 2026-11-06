@@ -120,6 +120,16 @@ public protocol Applet: AnyObject {
   /// anything names nothing.
   var runningLabels: [String] { get }
 
+  /// Work a close would lose that saving keeps, such as pin edits not yet written to their file.
+  /// Nil when there is none. Closing the pane, its window, or the app asks Save, Don't Save, or
+  /// Cancel first.
+  var unsavedWork: AppletUnsavedWork? { get }
+
+  /// Saves the unsaved work. It may ask the user where, so it can take a while. True when the work
+  /// is saved. False when the user cancelled or the save failed, which the applet reports itself,
+  /// and the close does not go ahead.
+  func saveUnsavedWork() async -> Bool
+
   var host: (any AppletHost)? { get set }
 
   /// The directory the applet's current work is in, as an absolute local path. A new pane opened
@@ -186,8 +196,23 @@ extension Applet {
 
   public var currentDirectory: String? { nil }
 
+  public var unsavedWork: AppletUnsavedWork? { nil }
+
+  public func saveUnsavedWork() async -> Bool { true }
+
   /// An applet with one part running names itself by its title.
   public var runningLabels: [String] {
     isRunningSomething ? [title] : []
+  }
+}
+
+/// Unsaved work an applet holds, as a close dialog names it.
+public struct AppletUnsavedWork: Sendable, Equatable {
+  /// What the dialog lists, such as the file's name. It is shown as is, so it carries no
+  /// program-supplied text.
+  public let label: String
+
+  public init(label: String) {
+    self.label = label
   }
 }
