@@ -1,33 +1,12 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import StatusKit
 import TableData
 import TableTestSupport
 import XCTest
 
 @testable import DataViewerApplet
-
-/// Collects what an applet tells its pane.
-@MainActor
-final class RecordingHost: AppletHost {
-  var posts: [(level: StatusLevel, text: String)] = []
-  var changes = 0
-  var tabChanges = 0
-
-  func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
-    posts.append((level, text))
-  }
-
-  func appletDidExit(_ applet: any Applet) {}
-
-  func appletDidChange(_ applet: any Applet) { changes += 1 }
-
-  func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
-
-  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool { false }
-
-  func issueCloseStamp() -> UInt64 { 0 }
-}
 
 final class Scratch {
   let url: URL

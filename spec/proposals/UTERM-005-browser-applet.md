@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-03
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -50,11 +50,13 @@ A page may also open its own `blob:` URLs, and a download may come from any sche
   generated PDF preview. WebKit already limits a `blob:` URL to the origin that made it.
 - A navigation WebKit marks as a download proceeds as a download, per "Downloads", whatever its scheme except
   `javascript:`. That keeps `blob:` and `data:` exports working.
-- `file:`, `javascript:`, and a top-level `data:` page are refused. The address bar says why.
+- `file:`, `javascript:`, and a top-level `data:` page are refused. A typed address leaves the page visible, posts one
+  warning that says why, and marks the address input invalid. Amended 2026-11-06; see Decision Log.
 - A link or typed address with another scheme that macOS maps to an app asks first, naming the app and the URL, and
   opens that app only on the user's yes. `mailto:` opens the mail app without asking.
-- A restored tab whose URL is refused shows `about:blank` with a message naming the refused URL. It keeps the stored URL
-  in its description until the user navigates.
+- A restored tab whose URL is refused shows `about:blank` with a durable explanation in the pane that names the refused
+  URL, and the history records one warning. It keeps the stored URL in its description until the user navigates.
+  Amended 2026-11-06; see Decision Log.
 
 Rationale: one rule for typed, restored, and controller input keeps a payload or a controller from reaching what the
 address bar cannot. Dashboard exports and previews are `blob:` and `data:` URLs that exist only inside the page, so the
@@ -197,9 +199,11 @@ status bar.
 
 - A file downloads under a temporary name and takes its final, unique name when complete. A failed or cancelled
   download removes its partial file.
-- A finished download posts an info message naming the file. A failed download posts an error naming the file and the
-  reason. One the user cancels posts nothing. The progress segment shows only for the focused pane, and a download can
-  end while its pane is unfocused or detached, so the message is how the user learns the outcome. Amended 2026-11-05; see Decision Log.
+- A finished download posts an info message naming the file. A failed download posts a warning naming the file and the
+  reason, since no user work is lost. One the user cancels posts nothing. The progress segment shows only for the
+  focused pane, and a download can end while its pane is unfocused or detached, so the message is how the user learns
+  the outcome. A detached pane withholds the message, records the outcome in the history when it happens, and presents
+  it on reattach. Amended 2026-11-06; see Decision Log.
 - Each finished file gets quarantine properties naming its origin and data URLs. uniterm does not set
   `LSFileQuarantineEnabled`, which would apply to the whole process and could quarantine files the terminal's shells
   create.
@@ -456,8 +460,8 @@ None.
 - A scheme-less address whose HTTPS load cannot connect, or whose server does not speak TLS, offers Load over HTTP. A
   certificate failure or an HSTS host never offers it
 - A typed `mailto:` address opens the mail app. A link or typed address for another app asks first, naming the app. A
-  typed `file:`, `javascript:`, or `data:` address loads nothing, and the address bar says why. So does a scheme no app
-  handles
+  typed `file:`, `javascript:`, or `data:` address loads nothing, leaves the page visible, posts one warning that says
+  why, and marks the address input invalid. So does a scheme no app handles. Amended 2026-11-06; see Decision Log.
 - A tab shows at most one pending app-handoff question, and the question never blocks other panes
 - A stored engine that is no longer on the list shows in Settings as replaced by the default
 
@@ -493,8 +497,8 @@ None.
 - The status bar shows a download's progress, the download keeps going while the pane is detached, and Reveal Latest
   Download shows the focused pane's newest finished file in Finder. It is unavailable with no finished download, and a
   moved or deleted file gets a status message
-- A finished download posts an info message naming it, and a failed one posts an error. A cancelled one posts nothing.
-  Amended 2026-11-05; see Decision Log.
+- A finished download posts an info message naming it, and a failed one posts a warning. A cancelled one posts nothing.
+  Amended 2026-11-06; see Decision Log.
 - A `blob:` or `data:` download from a page saves like any other, with or without a `download` attribute, and a page's
   own `blob:` preview opens in its tab. A page's `file:` link saves nothing, even marked as a download
 - `srcdoc` and `data:` subframes load, while a top-level `data:` page is refused
@@ -607,6 +611,14 @@ Starts after UTERM-004 M6.
   segment and said nothing about the end. A segment shows only for the focused pane, and a download can finish while
   its pane is unfocused or detached. A finished download now posts info, and a failed one posts an error, each naming
   the file. A cancelled one posts nothing, since the user chose it.
+- 2026-11-06: Amended refusals and download outcomes to the contract in UTERM-017 (work-queue best guess). The text said
+  a refused `file:`, `javascript:`, or `data:` address makes the address bar say why, with no level and no history. It
+  now leaves the page visible, posts one warning, and marks the input invalid. A restored refusal said "a message",
+  which may clear. It now has a durable pane explanation and one history warning. A failed download was an error. No
+  user work is lost when a remote file does not arrive, so the level rule makes it a warning. A download that ends
+  while the pane is detached was said to rely on the message reaching the user. The pane now withholds the message,
+  records the outcome at once, and presents it on reattach. The profile label keeps its pane-local placement for M5's
+  review.
 
 ## References
 

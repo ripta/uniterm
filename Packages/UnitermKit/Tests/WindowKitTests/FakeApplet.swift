@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import StatusKit
 import Theme
 
 @testable import WindowKit
@@ -177,7 +178,13 @@ final class FakeApplet: Applet {
   var canFind = true
   var finds = 0
 
-  func start() { started = true }
+  func start(origin: StartOrigin) {
+    started = true
+    startOrigin = origin
+  }
+
+  /// What the host said built the applet when it started it.
+  var startOrigin: StartOrigin?
   func close() { closed = true }
   func detach() { detachCount += 1 }
   func reattach() { reattachCount += 1 }
@@ -305,5 +312,28 @@ extension CommandID {
 
   static func fakeTab(_ number: Int) -> CommandID {
     CommandID(number == 9 ? "fake.last-tab" : "fake.tab-\(number)")
+  }
+}
+
+extension FakeApplet {
+  /// Posts through the host the window handed this applet, as a real applet does.
+  func say(_ level: StatusLevel, _ text: String) {
+    host?.applet(self, post: level, text: text)
+  }
+
+  /// Records in the history through the host, as a real applet does.
+  func note(_ level: StatusLevel, _ text: String) {
+    host?.applet(self, recordInHistory: level, text: text)
+  }
+}
+
+extension AppletHost {
+  /// Records `text` in the window's history without a turn on the bar and without an unseen
+  /// signal. Returns the record's ID.
+  @discardableResult
+  func applet(
+    _ applet: any Applet, recordInHistory level: StatusLevel, text: String
+  ) -> StatusRecordID? {
+    self.applet(applet, send: .historyOnly, level: level, text: text, presenting: nil)
   }
 }

@@ -22,7 +22,7 @@ public typealias AppletRestorer = @MainActor (AppletDescription) throws -> any A
 /// standard traffic lights stay. The content area holds a tree of panes, and each pane runs one
 /// applet.
 @MainActor
-public final class MainWindowController: NSWindowController, NSWindowDelegate, AppletHost {
+public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// The window's message queue. Anything in the window may post to it.
   public let statusCenter: StatusCenter
 
@@ -37,8 +37,20 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   private var appearanceToken: UUID?
   private var statusToken: UUID?
   private var started = Set<ObjectIdentifier>()
+
+  /// The applets the launch restore built. Each starts once with the restore origin. Everything
+  /// else starts with the user origin.
+  private var launchRestored = Set<ObjectIdentifier>()
   private var panesClosed = false
   private(set) var historyVisible = false
+
+  private struct HostEntry {
+    weak var applet: (any Applet)?
+    let host: PaneStatusHost
+  }
+
+  /// Each applet's host, keyed by the applet. The applet holds its host weakly.
+  private var hosts: [ObjectIdentifier: HostEntry] = [:]
 
   /// The commands the window runs. One registry serves every window of the app.
   let commands: CommandRegistry
@@ -152,6 +164,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     let panes = try restored.map { try PaneRestoration.restore($0, restorer: restoreApplet) }
 
     if let panes {
+      launchRestored = Set(panes.applets.values.map { ObjectIdentifier($0) })
       paneArea = PaneAreaView(restoring: panes.tree, applets: panes.applets, focus: panes.focus)
     } else if let routed {
       paneArea = PaneAreaView(firstApplet: routed)
@@ -181,7 +194,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     super.init(window: window)
 
     window.delegate = self
+
+    for pane in paneArea.tree.paneIDs {
+      if let applet = paneArea.applet(for: pane) { bindHost(of: applet, to: pane) }
+    }
+
     for applet in paneArea.applets { adopt(applet) }
+
+    paneArea.onAppletPlaced = { [weak self] applet, pane in
+      self?.bindHost(of: applet, to: pane)
+    }
 
     paneArea.onTreeChange = { [weak self] in
       self?.updateMinimumSize()
@@ -202,6 +224,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     }
     contentController.statusBar.onDismiss = { [weak self] in self?.dispatch(.dismissMessage) }
     wireCommandPalette()
+    wireHistory()
     recordFocusedTab()
     placement.onChange = { [weak self] position in
       self?.contentController.move(.statusBar, to: DockEdge(position))
@@ -224,7 +247,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     if let panes, panes.placeholders > 0 {
       let noun = panes.placeholders == 1 ? "pane" : "panes"
       statusCenter.post(
-        level: .warning, source: .uniterm,
+        level: .warning,
         text: "\(panes.placeholders) saved \(noun) could not be restored and kept as they were.")
     }
   }
@@ -260,13 +283,22 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   // MARK: Status bar
 
-  /// The segments the bar shows now. The window owns the message area and the unseen-error
-  /// indicator. The applet of the focused pane fills the rest. The pane model decides which pane
-  /// that is, not the first responder, so the segments stay put while the keyboard is in the
-  /// Settings window or a sheet.
+  /// The window states the bar shows, one compact slot each. The window set owns them and pushes
+  /// each change here.
+  var windowStates = WindowStates() {
+    didSet {
+      if windowStates != oldValue { refreshStatusBar() }
+    }
+  }
+
+  /// The segments the bar shows now. The window owns the message area, the unseen-error
+  /// indicator, and a slot for each window state. The applet of the focused pane fills the rest.
+  /// The pane model decides which pane that is, not the first responder, so the segments stay put
+  /// while the keyboard is in the Settings window or a sheet.
   var statusBarSegments: [BarSegment] {
     StatusBarContent.segments(
       display: statusCenter.display, hasUnseenError: statusCenter.hasUnseenError,
+      hasUnseenWarning: statusCenter.hasUnseenWarning, windowStates: windowStates,
       applet: paneArea.applet(for: paneArea.focusedPane)?.segments ?? [])
   }
 
@@ -275,29 +307,104 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   }
 
   private func statusDidChange() {
-    if historyVisible, statusCenter.hasUnseenError {
-      statusCenter.markHistorySeen()
-      return
-    }
-
     refreshStatusBar()
 
     if historyVisible {
-      contentController.history.show(statusCenter.history)
+      showHistory()
     }
   }
 
-  /// Opens or closes the history. Opening it marks the errors as seen.
+  /// Opens or closes the history. Opening it acknowledges only the rows it shows.
   func setHistoryVisible(_ visible: Bool) {
     guard visible != historyVisible else { return }
 
     historyVisible = visible
+
+    if !visible {
+      contentController.history.releaseKeyboard()
+    }
+
     contentController.setHistoryVisible(visible)
 
     if visible {
-      contentController.history.show(statusCenter.history)
-      statusCenter.markHistorySeen()
+      contentController.view.layoutSubtreeIfNeeded()
+      showHistory()
     }
+  }
+
+  private func showHistory() {
+    contentController.history.show(
+      statusCenter.history, loss: statusCenter.loss,
+      panes: statusCenter.queue.historyPanes())
+  }
+
+  private func wireHistory() {
+    let history = contentController.history
+
+    history.isPaneOpen = { [weak self] id in
+      self?.contains(pane: NodeID(rawValue: id)) ?? false
+    }
+    history.onExposed = { [weak self] ids in
+      self?.statusCenter.acknowledge(ids: ids)
+    }
+    history.onAcknowledgeLoss = { [weak self] in
+      self?.statusCenter.acknowledgeLoss()
+    }
+    history.onFocusPane = { [weak self] id in
+      self?.focusPaneFromHistory(id) ?? false
+    }
+    history.onReleaseKeyboard = { [weak self] in
+      guard let self else { return }
+
+      paneArea.focus(paneArea.focusedPane, keyboard: !isPaletteVisible)
+    }
+    history.isObserved = { [weak self] in
+      self?.windowShowsContent() ?? false
+    }
+
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(windowOcclusionChanged),
+      name: NSWindow.didChangeOcclusionStateNotification, object: window)
+  }
+
+  /// Replaces the window check in tests, which never show their windows.
+  var windowShowsContentOverride: (() -> Bool)?
+
+  /// Says whether the window can show its content to the user. A minimized window and one that
+  /// other windows cover cannot, so the history acknowledges nothing in it.
+  func windowShowsContent() -> Bool {
+    if let windowShowsContentOverride { return windowShowsContentOverride() }
+
+    guard let window else { return false }
+
+    return !window.isMiniaturized && window.occlusionState.contains(.visible)
+  }
+
+  /// A window that becomes visible again shows its history rows, so they count as read now.
+  @objc private func windowOcclusionChanged() {
+    if historyVisible {
+      contentController.history.reportExposure()
+    }
+  }
+
+  /// Opens the history if it is closed, then gives it the keyboard. The user asked for this, so it
+  /// is the one way the panel takes the keyboard from a pane.
+  func focusHistory() {
+    setHistoryVisible(true)
+    contentController.history.engageKeyboard()
+  }
+
+  /// Moves focus to the pane a history row came from. The ID is resolved again here, so a pane that
+  /// closed since the row was drawn is not reached. This never reopens a pane or runs anything.
+  /// Returns false when the pane is gone.
+  @discardableResult
+  func focusPaneFromHistory(_ id: UInt64) -> Bool {
+    let pane = NodeID(rawValue: id)
+
+    guard contains(pane: pane) else { return false }
+
+    paneArea.focus(pane, keyboard: !isPaletteVisible)
+    return true
   }
 
   func refreshMinimumSize() {
@@ -328,7 +435,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   private func startPendingApplets() {
     for applet in paneArea.applets where started.insert(ObjectIdentifier(applet)).inserted {
-      applet.start()
+      applet.start(
+        origin: launchRestored.remove(ObjectIdentifier(applet)) != nil ? .restore : .user)
     }
   }
 
@@ -339,11 +447,23 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   var focusedPane: NodeID { paneArea.focusedPane }
 
-  /// Makes the window the applet's host. A launcher also learns how to open its choice, and gets
+  /// Hands the applet a host bound to its pane, as the pane takes the applet. The host keeps the
+  /// pane's ID for good, so the applet's messages keep their origin after the pane closes. A
+  /// launcher swap gives the new applet a host bound to the same pane.
+  ///
+  /// The window holds each host for as long as its applet lives. Entries for applets that are gone
+  /// are dropped here, so the table stays as small as the applets that can still post.
+  private func bindHost(of applet: any Applet, to pane: NodeID) {
+    hosts = hosts.filter { $0.value.applet != nil }
+
+    let host = PaneStatusHost(pane: pane, applet: applet, window: self)
+    hosts[ObjectIdentifier(applet)] = HostEntry(applet: applet, host: host)
+    applet.host = host
+  }
+
+  /// Makes the applet ready for the window. A launcher also learns how to open its choice, and gets
   /// the place search the app gave the window.
   private func adopt(_ applet: any Applet) {
-    applet.host = self
-
     if let launcher = applet as? LauncherApplet {
       launcher.launcher.offerPlaces(places)
 
@@ -377,7 +497,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
       applet = try makeApplet(choice, directory(of: pane))
     } catch {
       statusCenter.post(
-        level: .error, source: .uniterm,
+        level: .error,
         text: "The pane did not open: \(error.localizedDescription)"
       )
       return nil
@@ -441,6 +561,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
       created = try paneArea.split(pane, axis, adding: applet)
     } catch {
       applet.host = nil
+      hosts[ObjectIdentifier(applet)] = nil
       return nil
     }
 
@@ -510,7 +631,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   private func postNoRoom() {
     statusCenter.post(
-      level: .warning, source: .uniterm, text: "There is not enough room to split this pane.")
+      level: .warning, text: "There is not enough room to split this pane.")
   }
 
   /// A sheet, such as a close question or a clipboard question, holds the window's attention. Pane
@@ -779,7 +900,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
     if restored.isPlaceholder {
       statusCenter.post(
-        level: .warning, source: .uniterm,
+        level: .warning,
         text:
           "The pane \u{201C}\(closed.title)\u{201D} could not be restored. It is kept as it was.")
     }
@@ -863,7 +984,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
     if failures.isEmpty {
       statusCenter.post(
-        level: .info, source: .uniterm, text: "There is no closed tab or pane to reopen.")
+        level: .info, text: "There is no closed tab or pane to reopen.")
     } else {
       postReopenFailures(failures, reopened: nil)
     }
@@ -875,7 +996,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     let outcome = reopened.map { "Reopened the \($0) instead." } ?? "Nothing was reopened."
 
     statusCenter.post(
-      level: .warning, source: .uniterm, text: (failures + [outcome]).joined(separator: " "))
+      level: .warning, text: (failures + [outcome]).joined(separator: " "))
   }
 
   // MARK: Saved layout
@@ -984,13 +1105,6 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   public func issueCloseStamp() -> UInt64 {
     lastCloseStamp += 1
     return lastCloseStamp
-  }
-
-  public func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
-    // An applet may keep bounded, visible work after close and still post. ID 0 never matches a
-    // live pane.
-    let id = paneArea.paneID(for: applet)?.rawValue ?? 0
-    statusCenter.post(level: level, source: .pane(id: id, name: applet.title), text: text)
   }
 
   /// A pane whose applet ended closes, and goes on the reopen list like any other close.

@@ -49,6 +49,22 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// The notices already posted to the status bar for the file shown now.
   private var posted = AppletNotices()
+
+  /// Reaches the status bar for every alert, and holds them back while the pane is detached.
+  private var alerts = AppletAlerts()
+
+  /// The origin of the load that produced the file notices shown now. Each load, and each edit
+  /// that reads pins back, sets its own when it settles. A later user edit never inherits a
+  /// restore.
+  private var fileNoticeOrigin = LoadOrigin.user
+
+  /// What set the changed-on-disk flag. A restore sets it when the unsaved pins were made over
+  /// bytes that differ from the file now. The file watcher sets it when the file changes under
+  /// edits.
+  private var changedOnDiskOrigin = LoadOrigin.reload
+
+  /// Why the file did not open, while that holds. The failure follows the current load. A new
+  /// load or a clear ends it.
   private var fileFailure: String?
   private var resolvedNotice: String?
   private var tileFailure: String?
@@ -249,11 +265,13 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   // MARK: Source
 
   /// Shows the pins of `file` in place of the file layer's. The pins on the map go at once. The new
-  /// file is found and parsed off the main thread, and a failure shows its message in the pane.
-  /// The map then fits the new pins, and that region is saved with the pane.
+  /// file is found and parsed off the main thread. A failure is a warning on the status bar and a
+  /// segment while it holds. When the map has no tiles and no command pins to show, the pane says
+  /// it instead, and the history keeps one entry. The map then fits the new pins, and that region
+  /// is saved with the pane.
   ///
-  /// `SourceReplacing` lets a viewer throw. This one never does, since every failure shows in the
-  /// pane once the load runs.
+  /// `SourceReplacing` lets a viewer throw. This one never does, since every failure shows once
+  /// the load runs.
   public func replaceSource(with file: URL, startDirectory: String) {
     guard isDirty else {
       load(file, startDirectory: startDirectory)
@@ -286,10 +304,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     record.bookmark = nil
     restoreWaitsForStart = false
 
-    open(path: file.path, bookmark: nil, fitsPins: true)
+    open(path: file.path, bookmark: nil, fitsPins: true, origin: .user)
   }
 
-  private func open(path: String, bookmark: Data?, fitsPins: Bool) {
+  private func open(path: String, bookmark: Data?, fitsPins: Bool, origin: LoadOrigin) {
     opening?.cancel()
     openGeneration += 1
     resolvedNotice = nil
@@ -298,6 +316,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     hiddenFromFile = 0
     fileTruncated = false
     posted.reset()
+    alerts.replaceLoad()
     filePins = []
     content.removePins(layer: .file)
     forgetDocument()
@@ -313,7 +332,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
       switch resolved {
       case .failure(let error):
         self.dropUnsavedFromUndo()
-        self.finishOpen(failure: error.errorDescription)
+        self.finishOpen(failure: error.errorDescription, origin: origin)
 
       case .success(let source):
         self.record.bookmark = source.bookmark
@@ -330,14 +349,14 @@ public final class MapViewerApplet: Applet, SourceReplacing {
         switch result {
         case .failure(let error):
           self.dropUnsavedFromUndo()
-          self.finishOpen(failure: error.errorDescription)
+          self.finishOpen(failure: error.errorDescription, origin: origin)
 
         case .success(let read):
           self.document = read.bytes
           self.savedDocument = read.bytes
           self.editableOrdinals = GeoJSONPatcher.editableOrdinals(in: read.bytes)
           self.watch(source.file)
-          self.finishOpen(layer: read.layer, fitsPins: fitsPins)
+          self.finishOpen(layer: read.layer, fitsPins: fitsPins, origin: origin)
 
           // The edits were made over the file as it was at close. Save compares with those
           // bytes, so a file changed since then asks before it is overwritten.
@@ -345,24 +364,30 @@ public final class MapViewerApplet: Applet, SourceReplacing {
             self.unsavedFromUndo = nil
             self.savedDocument = unsaved.base ?? read.bytes
             self.changedOnDisk = self.savedDocument != read.bytes
-            self.replaceDocument(with: unsaved.document, registeringUndo: false)
+            self.changedOnDiskOrigin = origin
+            self.replaceDocument(with: unsaved.document, registeringUndo: false, origin: origin)
           } else {
             self.dropUnsavedFromUndo()
           }
         }
       }
     }
+
+    refresh()
+    host?.appletDidChange(self)
   }
 
-  private func finishOpen(failure: String?) {
+  private func finishOpen(failure: String?, origin: LoadOrigin) {
     opening = nil
+    fileNoticeOrigin = origin
     fileFailure = failure ?? "The file could not be opened."
     refresh()
     host?.appletDidChange(self)
   }
 
-  private func finishOpen(layer: GeoFileLayer, fitsPins: Bool) {
+  private func finishOpen(layer: GeoFileLayer, fitsPins: Bool, origin: LoadOrigin) {
     opening = nil
+    fileNoticeOrigin = origin
     filePins = layer.pins
     fileNotices = layer.notices(limit: Self.limits.maxPoints)
     count(layer)
@@ -388,10 +413,23 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   static let changedOnDiskNotice =
     "The file changed on disk. Saving asks before it overwrites the change."
 
-  /// The notices about the file shown now, which go to the status bar. What a read left out is a
-  /// warning. A file found at a new path is info.
+  /// The origin of a notice. The changed-on-disk notice follows what set the flag. Every other
+  /// notice comes from the load or edit that produced the file notices.
+  private func origin(of notice: AppletNotice) -> LoadOrigin {
+    notice.key == Self.changedOnDiskNotice ? changedOnDiskOrigin : fileNoticeOrigin
+  }
+
+  /// The notices about the file shown now. What a read left out is a warning. A file that did not
+  /// open is a warning too. A file found at a new path is info. They go to the status bar, except
+  /// a failure that leaves the pane empty. The pane says that one, so it goes to the history only.
   var statusNotices: [AppletNotice] {
     var notices = fileNotices.map { AppletNotice(.warning, $0) }
+
+    if let fileFailure {
+      notices.insert(
+        AppletNotice(.warning, fileFailure, delivery: paneIsEmpty ? .historyOnly : .message),
+        at: 0)
+    }
 
     if let resolvedNotice { notices.append(AppletNotice(.info, resolvedNotice)) }
 
@@ -407,11 +445,18 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     guard failure != tileFailure else { return }
 
     if let failure, tileFailure == nil {
-      host?.applet(self, post: .warning, text: failure)
+      alerts.deliver(.warning, failure, from: self, to: host)
     }
 
     tileFailure = failure
     refresh()
+    host?.appletDidChange(self)
+  }
+
+  /// True when the file failed and nothing else is on the map: its tiles do not load and no
+  /// command layer has a pin. The pane has room to explain itself then.
+  private var paneIsEmpty: Bool {
+    fileFailure != nil && tileFailure != nil && !content.hasPins(otherThan: .file)
   }
 
   /// Keeps what a read of the file left out, for the status bar's segment.
@@ -468,6 +513,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     resolvedNotice = nil
     fileFailure = nil
     fileNotices = []
+    hiddenFromFile = 0
+    fileTruncated = false
     filePins = []
     record.path = nil
     record.bookmark = nil
@@ -484,8 +531,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     guard let file = urls.first else { return false }
 
     guard urls.count == 1 else {
-      host?.applet(
-        self, post: .warning, text: "Drop one file at a time. The map shows one file in a pane.")
+      alerts.deliver(
+        .warning, "Drop one file at a time. The map shows one file in a pane.", from: self,
+        to: host)
       return false
     }
 
@@ -496,15 +544,16 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   // MARK: Applet
 
-  public func start() {
+  public func start(origin: StartOrigin) {
     guard restoreWaitsForStart, let path = record.path else { return }
 
     restoreWaitsForStart = false
-    open(path: path, bookmark: record.bookmark, fitsPins: false)
+    open(path: path, bookmark: record.bookmark, fitsPins: false, origin: origin.loadOrigin)
   }
 
   public func close() {
     closed = true
+    alerts.discard()
     opening?.cancel()
     opening = nil
     editing?.cancel()
@@ -524,9 +573,14 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.mapView.delegate = nil
   }
 
-  public func detach() {}
+  /// The map holds back its alerts while detached. See `AppletAlerts`.
+  public func detach() {
+    alerts.detach()
+  }
 
-  public func reattach() {}
+  public func reattach() {
+    alerts.reattach(from: self, to: host)
+  }
 
   public func focus() {
     content.window?.makeFirstResponder(content.mapView)
@@ -586,6 +640,12 @@ public final class MapViewerApplet: Applet, SourceReplacing {
           symbolName: "exclamationmark.triangle", text: "Changed on disk", style: .warning))
     }
 
+    if fileFailure != nil {
+      newSegments.append(
+        AppletSegment(
+          symbolName: "exclamationmark.triangle", text: "File not opened", style: .warning))
+    }
+
     if tileFailure != nil {
       newSegments.append(
         AppletSegment(symbolName: "wifi.exclamationmark", text: "Map not loading", style: .warning))
@@ -593,18 +653,19 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     segments = newSegments
 
-    // The pane shows only what stands in for the map's content: a failure, or the wait while a
-    // file opens. Notices about what loaded go to the status bar once, and stay in its history.
+    // The pane says only what stands in for the map's content: a failure when nothing else is
+    // on the map, or the wait while a file opens. Every other notice goes to the status bar once,
+    // and stays in its history.
     var lines: [String] = []
 
-    if let fileFailure { lines.append(fileFailure) }
+    if paneIsEmpty, let fileFailure { lines.append(fileFailure) }
 
     if opening != nil { lines.append("Opening\u{2026}") }
 
-    content.show(notices: lines)
+    content.show(explanation: lines)
 
     for notice in posted.unposted(statusNotices) {
-      host?.applet(self, post: notice.level, text: notice.text)
+      alerts.deliver(notice, origin: origin(of: notice), from: self, to: host)
     }
     content.setAccessibilityValue(accessibilitySummary())
 
@@ -751,15 +812,17 @@ extension MapViewerApplet {
       replaceDocument(with: next, registeringUndo: true, actionName: action)
     } catch {
       showFilePins()
-      host?.applet(
-        self, post: .warning,
-        text: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+      alerts.deliver(
+        .warning, (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+        from: self, to: host)
     }
   }
 
   /// Makes `next` the document and reads its pins off the main thread. Undo puts back the document
   /// as it was, and redo puts back `next`, through this same path.
-  func replaceDocument(with next: Data?, registeringUndo: Bool, actionName: String = "") {
+  func replaceDocument(
+    with next: Data?, registeringUndo: Bool, actionName: String = "", origin: LoadOrigin = .user
+  ) {
     let previous = document
 
     if registeringUndo {
@@ -792,11 +855,12 @@ extension MapViewerApplet {
 
         let reason = error.errorDescription ?? "the file could not be read back"
 
-        self.host?.applet(
-          self, post: .warning,
-          text: "The edit was not applied, since it made the file unreadable: \(reason)")
+        self.alerts.deliver(
+          .warning, "The edit was not applied, since it made the file unreadable: \(reason)",
+          from: self, to: self.host)
 
       case .success(let layer):
+        self.fileNoticeOrigin = origin
         self.filePins = layer.pins
         self.fileNotices = layer.notices(limit: Self.limits.maxPoints)
         self.count(layer)
@@ -804,11 +868,11 @@ extension MapViewerApplet {
         self.showFilePins()
 
         if actionName == "Add Pin", layer.truncated {
-          self.host?.applet(
-            self, post: .warning,
-            text:
-              "The pin is in the file, past the map's \(Self.limits.maxPoints.formatted())-point limit, "
-              + "so it does not show.")
+          self.alerts.deliver(
+            .warning,
+            "The pin is in the file, past the map's \(Self.limits.maxPoints.formatted())-point limit, "
+              + "so it does not show.",
+            from: self, to: self.host)
         }
       }
 
@@ -908,11 +972,10 @@ extension MapViewerApplet {
       return true
 
     case .failure(let error):
-      host?.applet(
-        self, post: .error,
-        text:
-          "\u{201C}\(url.lastPathComponent)\u{201D} could not be saved: \(error.localizedDescription)"
-      )
+      alerts.deliver(
+        .error,
+        "\u{201C}\(url.lastPathComponent)\u{201D} could not be saved: \(error.localizedDescription)",
+        from: self, to: host)
 
       return false
     }
@@ -946,7 +1009,7 @@ extension MapViewerApplet {
   func revert() {
     guard let path = record.path else { return }
 
-    open(path: path, bookmark: record.bookmark, fitsPins: false)
+    open(path: path, bookmark: record.bookmark, fitsPins: false, origin: .reload)
   }
 
   // MARK: The file on disk
@@ -968,9 +1031,10 @@ extension MapViewerApplet {
 
     if isDirty {
       changedOnDisk = true
+      changedOnDiskOrigin = .reload
       refresh()
     } else {
-      open(path: path, bookmark: record.bookmark, fitsPins: false)
+      open(path: path, bookmark: record.bookmark, fitsPins: false, origin: .reload)
     }
   }
 
@@ -1012,11 +1076,10 @@ extension MapViewerApplet {
     guard unsavedFromUndo != nil else { return }
 
     unsavedFromUndo = nil
-    host?.applet(
-      self, post: .error,
-      text:
-        "The pins left unsaved when this pane closed could not be restored, since their file did not open."
-    )
+    alerts.deliver(
+      .error,
+      "The pins left unsaved when this pane closed could not be restored, since their file did not open.",
+      from: self, to: host)
   }
 
   /// Shows the file layer's pins as the last read gave them. A pin dragged off its place, or one

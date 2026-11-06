@@ -2,7 +2,7 @@
 
 **Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-05
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -165,6 +165,7 @@ it, so it is not written yet. Every applet implements:
 - `detach`, `reattach`, and `close`. uniterm sends these lifecycle events, and each applet owns its response, per
   ADR-05. On detach an applet pauses audio, video, and alerts at once. uniterm keeps no closed applet alive. An applet
   that keeps work going after close owns its bound and a visible indicator.
+  Superseded in part by UTERM-017; see Decision Log.
 - `isRunningSomething` and `runningLabels`. Closing a pane, a window, or the app asks first when an affected pane is
   running something, and the dialog names it.
 - `describe()`, an inert description with a type and a per-type version. Undo and layout restore both rebuild the
@@ -692,6 +693,12 @@ None.
   focus. The pane keeps only load failures and the wait while loading. The prior meaning was a notice line under the
   filter. The "Large files" check still says the "first N rows" notice stays visible. A segment meets it only while
   the pane has focus, so that check now reads as the status bar's.
+- 2026-11-06: Superseded in part by UTERM-017. "The applet contract" said an applet pauses alerts on detach, and the
+  viewer posted its load notices from detached panes as if they were not alerts. UTERM-017 makes load notices alerts.
+  An applet withholds their presentation while detached, records them in the window history when they occur through
+  history-only delivery, and presents the bounded rest on reattach. UTERM-017 also records one history entry when a
+  load failure or a memory stop leaves the pane empty. M1 of UTERM-017 shipped that entry and the history-only
+  delivery, and M3 changes the detached behavior.
 
 ## References
 

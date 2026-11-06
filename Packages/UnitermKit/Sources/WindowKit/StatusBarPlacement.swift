@@ -60,7 +60,7 @@ final class StatusBarPlacement {
 
     warnedRaw = raw
     statusCenter.post(
-      level: .warning, source: .uniterm,
+      level: .warning,
       text:
         "The status bar position \u{201C}\(Self.quoted(raw))\u{201D} is not valid. Using \(fallback.rawValue)."
     )

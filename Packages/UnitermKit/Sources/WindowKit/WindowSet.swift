@@ -76,7 +76,11 @@ public final class WindowSet {
   private var serial = 0
 
   /// Messages posted while no window was open, oldest first.
-  private var held: [(level: StatusLevel, source: StatusSource, text: String)] = []
+  private var held: [(level: StatusLevel, text: String)] = []
+
+  /// What the held list gave up to stay within its limit, and the most severe level among it.
+  private var heldDropped = 0
+  private var heldDroppedLevel = StatusLevel.info
 
   /// Controllers whose windows have closed. The window that is closing still calls into its
   /// controller, so the set keeps it alive until the next turn of the main actor.
@@ -87,6 +91,30 @@ public final class WindowSet {
 
   /// Runs when a window opens or closes, and when anything a saved layout holds changes in one.
   public var onLayoutChange: (() -> Void)?
+
+  /// The states that belong to the window rather than to a pane, as the instance sees them.
+  /// Every window shows them, including one that opens later. They live here, above any one
+  /// window, and the set never writes them to the layout file.
+  public private(set) var windowStates = WindowStates()
+
+  /// Marks `kind` as holding in every window of the instance, and in each window that opens
+  /// later.
+  public func setWindowState(_ kind: WindowStateKind, text: String) {
+    windowStates.set(kind, text: text)
+    publishWindowStates()
+  }
+
+  /// Ends `kind` in every window.
+  public func clearWindowState(_ kind: WindowStateKind) {
+    windowStates.clear(kind)
+    publishWindowStates()
+  }
+
+  private func publishWindowStates() {
+    for controller in controllers {
+      controller.windowStates = windowStates
+    }
+  }
 
   /// The visible frame decides where a cascade wraps. It defaults to the window's screen. The
   /// confirmer asks before a quit that would end something running.
@@ -314,13 +342,22 @@ public final class WindowSet {
       self?.noteKey(controller)
     }
     controller.visibleFrameProvider = visibleFrame
+    controller.windowStates = windowStates
     controller.refreshMinimumSize()
     controllers.append(controller)
   }
 
   private func show(_ controller: MainWindowController) {
+    if heldDropped > 0 {
+      let noun = heldDropped == 1 ? "message was" : "messages were"
+      controller.statusCenter.post(
+        level: heldDroppedLevel, text: "\(heldDropped) \(noun) dropped while no window was open.")
+      heldDropped = 0
+      heldDroppedLevel = .info
+    }
+
     for message in held {
-      controller.statusCenter.post(level: message.level, source: message.source, text: message.text)
+      controller.statusCenter.post(level: message.level, text: message.text)
     }
     held.removeAll()
 
@@ -343,14 +380,35 @@ public final class WindowSet {
   }
 
   /// Posts to the active window. With no window open, the message waits and goes to the next
-  /// window that opens, so an app-level error is never lost.
-  public func post(level: StatusLevel, source: StatusSource, text: String) {
+  /// window that opens. The wait is bounded. Past the limit, the oldest info or warning goes
+  /// first, and an error goes only when every held message is one. What goes is counted, and the
+  /// next window shows one message that says so, at the most severe level lost.
+  ///
+  /// The message carries the host's identity. A caller cannot name another source.
+  public func post(level: StatusLevel, text: String) {
     guard let controller = activeController else {
-      held.append((level, source, text))
+      if held.count >= Self.heldLimit {
+        let index = held.firstIndex { $0.level != .error } ?? 0
+        heldDroppedLevel = max(heldDroppedLevel, held[index].level)
+        heldDropped += 1
+        held.remove(at: index)
+      }
+
+      held.append(
+        (level, StatusText.bounded(text, maximumBytes: StatusPolicy.standard.maximumTextBytes)))
       return
     }
 
-    controller.statusCenter.post(level: level, source: source, text: text)
+    controller.statusCenter.post(level: level, text: text)
+  }
+
+  /// The most messages the set holds while no window is open. The oldest go first.
+  static let heldLimit = 32
+
+  /// Issues a non-pane producer an identity that no other producer shares. The identity belongs to
+  /// the active window's center, so it is not valid in another window.
+  public func issueProducer(kind: StatusProducerKind, name: String) -> StatusProducer? {
+    activeController?.statusCenter.issueProducer(kind: kind, name: name)
   }
 
   private func windowDidClose(_ controller: MainWindowController) {

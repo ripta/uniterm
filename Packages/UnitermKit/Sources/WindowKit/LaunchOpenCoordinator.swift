@@ -80,7 +80,7 @@ public final class LaunchOpenCoordinator {
 
     guard let text = coalescer.note(sender: sender, at: now()) else { return }
 
-    windows.post(level: .warning, source: .uniterm, text: text)
+    windows.post(level: .warning, text: text)
   }
 
   private func drainIfReady() {
@@ -115,7 +115,7 @@ public final class LaunchOpenCoordinator {
 
     if files.count < request.files.count {
       windows.post(
-        level: .warning, source: .uniterm,
+        level: .warning,
         text:
           "\(request.files.count - files.count) item(s) were not local files, "
           + "so they were not opened."

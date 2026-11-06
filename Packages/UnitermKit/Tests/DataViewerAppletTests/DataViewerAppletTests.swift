@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import StatusKit
 import TableData
 import XCTest
@@ -210,6 +211,132 @@ final class DataViewerAppletTests: XCTestCase {
     XCTAssertEqual(host.posts.filter { $0.text == cut }.count, 1, "the notice posted again")
   }
 
+  /// Catches a count that posts again each time it grows. Three rows are cut over several pages.
+  /// The status bar gets the notice once, after the load settles, with the whole count.
+  func testACutRowCountThatGrowsDuringALoadPostsOnceWithTheFinalCount() async throws {
+    let scratch = try Scratch(self)
+    let big = String(repeating: "x", count: (1 << 20) + 10)
+    let file = try scratch.write("big.csv", "note\n\(big)\n\(big)\n\(big)\nsmall\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget(), pageTarget: 1)
+    let host = RecordingHost()
+    applet.host = host
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    let done = await loaded(applet)
+
+    let cuts = host.posts.filter { $0.text.contains("oversized") }
+    XCTAssertTrue(done)
+    XCTAssertEqual(cuts.map(\.text), ["3 rows had oversized cells cut."], "\(host.posts)")
+    XCTAssertEqual(cuts.map(\.level), [.warning])
+  }
+
+  /// Catches a sheet switch that stays quiet because the old sheet's notice looked the same. Each
+  /// sheet is a load of its own, so the notice posts again for the second one.
+  func testSwitchingSheetsPostsTheNewSheetsNoticesAgain() async throws {
+    let scratch = try Scratch(self)
+    let big = String(repeating: "x", count: (1 << 20) + 10)
+    let file = scratch.url.appendingPathComponent("book.xlsx")
+
+    try makeWorkbook([
+      (name: "Sales", rows: [["note"], [big], ["a"]]),
+      (name: "Costs", rows: [["note"], [big], ["b"]]),
+    ]).write(to: file)
+
+    let applet = DataViewerApplet(startDirectory: scratch.url.path, budget: makeBudget())
+    let host = RecordingHost()
+    applet.host = host
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    let first = await loaded(applet)
+    XCTAssertTrue(first)
+
+    let cut = "1 row had an oversized cell cut."
+    XCTAssertEqual(host.posts.filter { $0.text == cut }.count, 1, "\(host.posts)")
+
+    applet.content.sheetPicker.selectItem(at: 1)
+    _ = applet.content.sheetPicker.sendAction(
+      applet.content.sheetPicker.action, to: applet.content.sheetPicker.target)
+
+    let switched = await eventually {
+      applet.session.phase == .loaded && applet.session.selectedSheet == "Costs"
+    }
+
+    XCTAssertTrue(switched)
+    XCTAssertEqual(host.posts.filter { $0.text == cut }.count, 2, "\(host.posts)")
+  }
+
+  // MARK: Empty panes and levels
+
+  /// Catches a failed load that leaves the pane explaining itself and the history empty, or one
+  /// that also takes a turn on the bar. The pane keeps its explanation. The history gets one
+  /// warning, once, and the bar gets nothing, because the pane already says it.
+  func testAFailureThatEmptiesThePaneIsRecordedOnceInTheHistoryOnly() async throws {
+    let scratch = try Scratch(self)
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    let host = RecordingHost()
+    applet.host = host
+
+    try applet.replaceSource(
+      with: scratch.url.appendingPathComponent("gone.csv"), startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase != .idle && applet.session.phase != .loading }
+
+    applet.session.setFilter("x")
+
+    guard case .message(let text) = applet.content.body else { return XCTFail("no message") }
+
+    XCTAssertTrue(text.contains("is missing"), text)
+    XCTAssertTrue(host.posts.isEmpty, "\(host.posts)")
+    XCTAssertEqual(host.records.map(\.level), [.warning])
+    XCTAssertEqual(host.records.map(\.text), [text])
+  }
+
+  /// Catches a memory stop with no rows that is explained only in the pane. It counts as an empty
+  /// pane, so it gets the same one history entry and no turn on the bar.
+  func testAStopBeforeAnyRowIsRecordedOnceInTheHistoryOnly() async throws {
+    let scratch = try Scratch(self)
+    let file = scratch.url.appendingPathComponent("wide.xlsx")
+    try makeWorkbook([("S", [["a", "b"], ["1", "2"]])]).write(to: file)
+
+    let applet = DataViewerApplet(
+      startDirectory: nil, budget: TableBudget(limit: 1, floor: 0), pageTarget: 2_000)
+    let host = RecordingHost()
+    applet.host = host
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase != .loading && applet.session.phase != .idle }
+
+    XCTAssertTrue(applet.session.stoppedBeforeAnyRow)
+    XCTAssertTrue(host.posts.isEmpty, "\(host.posts)")
+    XCTAssertEqual(host.records.map(\.level), [.warning])
+    XCTAssertTrue(host.records.first?.text.contains("memory is in short supply") == true)
+  }
+
+  /// Catches a level that drifts from the rule. A file found at a new path changes nothing on
+  /// screen, so it is info. A failed load shows no content, so it is a warning and never an error,
+  /// because a viewer holds no edits to lose.
+  func testNoticeLevelsFollowTheRule() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "x\n1\n")
+
+    let original = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    try original.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await loaded(original)
+
+    let description = original.describe()
+    let moved = scratch.url.appendingPathComponent("moved.csv")
+    try FileManager.default.moveItem(at: file, to: moved)
+
+    let found = try DataViewerApplet(restoring: description, budget: makeBudget())
+    let host = RecordingHost()
+    found.host = host
+    found.start(origin: .user)
+    _ = await loaded(found)
+
+    XCTAssertEqual(host.posts.map(\.level), [.info], "\(host.posts)")
+    XCTAssertTrue(host.posts.first?.text.hasPrefix("Moved. Found at") == true)
+    XCTAssertEqual(DataViewerApplet.failureLevel, .warning)
+  }
+
   // MARK: Drop
 
   /// Catches a drop of several files that replaces the file, or that is silent. The pane keeps what
@@ -298,7 +425,7 @@ final class DataViewerAppletTests: XCTestCase {
       sort: SortSpec(column: amount, ascending: false), filter: "x")
     let applet = try restore(description)
 
-    applet.start()
+    applet.start(origin: .user)
 
     XCTAssertEqual(try DataViewerDescription.decode(applet.describe()), description)
 
@@ -324,7 +451,7 @@ final class DataViewerAppletTests: XCTestCase {
         startDirectory: scratch.url.path, path: file.path,
         sort: SortSpec(column: .named("gone"), ascending: true)))
 
-    applet.start()
+    applet.start(origin: .user)
     let done = await loaded(applet)
 
     XCTAssertTrue(done)
@@ -345,7 +472,7 @@ final class DataViewerAppletTests: XCTestCase {
 
     let applet = try restore(
       DataViewerDescription(startDirectory: scratch.url.path, path: old.path, bookmark: bookmark))
-    applet.start()
+    applet.start(origin: .user)
 
     let done = await loaded(applet)
     XCTAssertTrue(done)
@@ -366,7 +493,7 @@ final class DataViewerAppletTests: XCTestCase {
     let applet = try restore(
       DataViewerDescription(startDirectory: scratch.url.path, path: file.path, sort: sort))
 
-    applet.start()
+    applet.start(origin: .user)
     _ = await eventually {
       if case .failed = applet.session.phase { return true }
       return false
@@ -532,7 +659,7 @@ final class DataViewerAppletTests: XCTestCase {
 
     XCTAssertEqual(try DataViewerDescription.decode(applet.describe()).sheet, "Costs")
 
-    applet.start()
+    applet.start(origin: .user)
     let done = await loaded(applet)
 
     XCTAssertTrue(done)
@@ -542,7 +669,7 @@ final class DataViewerAppletTests: XCTestCase {
     let gone = try restore(
       DataViewerDescription(startDirectory: scratch.url.path, path: file.path, sheet: "Deleted"))
 
-    gone.start()
+    gone.start(origin: .user)
     let fallback = await loaded(gone)
 
     XCTAssertTrue(fallback)

@@ -40,7 +40,7 @@ extension MainWindowController {
 
   func postPaneGone(for title: String) {
     statusCenter.post(
-      level: .warning, source: .uniterm,
+      level: .warning,
       text:
         "\u{201C}\(title)\u{201D} did not run, because the pane it was aimed at has closed. "
         + "Focus a pane and try again."

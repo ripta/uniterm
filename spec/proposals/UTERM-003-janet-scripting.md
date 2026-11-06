@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-03
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -123,9 +123,11 @@ Decision: one VM per script run and per REPL pane, each in its own process, sepa
     nonzero with the message on stderr.
   - The cap is 1 GiB per helper.
 - An app-wide budget bounds the REPL helpers the app spawned, taken together. It is 4 GiB, or a quarter of physical
-  memory when that is smaller. While their total footprint is over the budget, a new REPL does not start, and the
-  status bar says why. A running REPL is never killed for the total. Since each helper is capped, the total overshoots
-  the budget by at most one cap. `uniterm run` processes do not count, since each is the user's own and is capped.
+  memory when that is smaller. While their total footprint is over the budget, a new REPL does not start. The empty
+  pane says why and offers a retry that only the user can run, and the history records one warning. A restored pane
+  never retries on its own. A running REPL is never killed for the total. Since each helper is capped, the total
+  overshoots the budget by at most one cap. `uniterm run` processes do not count, since each is the user's own and is
+  capped. Amended 2026-11-06; see Decision Log.
 - Neither size is a setting. The budget scales with the machine, and a setting waits until users need other values.
 - Skew: the app and its helpers are two binaries in one bundle, and replacing the bundle on disk while uniterm runs
   pairs an old app with a new helper. Both sides exchange a protocol version when they connect. On a mismatch the
@@ -334,8 +336,9 @@ Leaves undone: nothing.
 - A helper stuck in a C call the interrupt never reaches, such as a long `peg/match`, can still be ended by the user
 - A script that allocates without limit ends with a memory error, and the app keeps running
 - A REPL helper whose footprint passes the cap outside Janet's allocator is killed by the app, and its pane says why
-- While the REPL helpers' total footprint is over the app-wide budget, a new REPL does not start and the status bar
-  says why, and no running REPL is killed for the total
+- While the REPL helpers' total footprint is over the app-wide budget, a new REPL does not start, its pane says why
+  and offers a user-only retry, the history holds one warning, and no running REPL is killed for the total. Amended
+  2026-11-06; see Decision Log.
 - M1 records a helper's resting footprint and startup time in its As built block
 
 ## Decision Log
@@ -401,6 +404,11 @@ Leaves undone: nothing.
 - 2026-11-02: Risks rewritten for helper processes; added protocol skew, UTERM-004 identity exposure, same-user
   control before UTERM-004, and plaintext REPL history (autonomous).
 - 2026-11-03: Scheduled as UTERM-003 M1-M5 in queue.md.
+- 2026-11-06: Amended the app-wide REPL budget refusal and its M-check (work-queue best guess). The text said the status
+  bar says why a new REPL does not start. A status message may clear in 5 seconds and leaves an empty pane with nothing
+  to read. UTERM-017 "Placement of refusals" has the empty pane carry a durable explanation, record one warning in the
+  history, and leave any retry to the user, since ADR-03 forbids a restore from running a program. This proposal's
+  milestone wires it when the REPL is built.
 
 ## References
 

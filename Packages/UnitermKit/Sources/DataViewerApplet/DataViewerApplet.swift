@@ -34,6 +34,19 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
   /// The notices already posted to the status bar for the file shown now.
   private var posted = AppletNotices()
+
+  /// Reaches the status bar for every alert, and holds them back while the pane is detached.
+  private var alerts = AppletAlerts()
+
+  /// The origin of the load shown now. Each load sets its own, so a replacement never inherits
+  /// a restore.
+  private var loadOrigin = LoadOrigin.user
+
+  /// The origin of the sort now in effect. A restored sort carries the restore's origin. A sort
+  /// the user makes sets `user`, so its notice posts normally on a restored pane. A filter does
+  /// not change it, since a filter cannot cause the skip.
+  private var sortOrigin = LoadOrigin.user
+
   private var restoreWaitsForStart: Bool
   private var describesFromRecord: Bool
   private var closed = false
@@ -116,8 +129,13 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
   private func wire() {
     session.onChange = { [weak self] in self?.refresh() }
-    content.onSort = { [weak self] column in self?.session.cycleSort(column) }
-    content.onFilter = { [weak self] text in self?.session.setFilter(text) }
+    content.onSort = { [weak self] column in
+      self?.sortOrigin = .user
+      self?.session.cycleSort(column)
+    }
+    content.onFilter = { [weak self] text in
+      self?.session.setFilter(text)
+    }
     content.onFind = { [weak self] text in self?.session.setFind(text) }
     content.onStep = { [weak self] forward in self?.session.stepMatch(forward: forward) }
     content.onOpen = { [weak self] in self?.showOpenPanel() }
@@ -131,6 +149,14 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private func selectSheet(_ name: String) {
     record.sheet = name
     describesFromRecord = false
+
+    // A sheet is a load of its own. The old sheet's notices are spent, and the file was found
+    // once already.
+    posted.reset()
+    alerts.replaceLoad()
+    resolvedNotice = nil
+    loadOrigin = .user
+    sortOrigin = .user
     session.selectSheet(name)
   }
 
@@ -215,7 +241,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     table.onNotice = { [weak self] notice in
       guard let self else { return }
 
-      host?.applet(self, post: notice.level, text: notice.text)
+      alerts.deliver(notice, origin: .user, ofLoad: false, from: self, to: host)
     }
 
     nested = table
@@ -232,14 +258,20 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     describesFromRecord = false
     restoreWaitsForStart = false
 
-    open(path: file.path, bookmark: nil, restoring: nil, sheet: nil)
+    open(path: file.path, bookmark: nil, restoring: nil, sheet: nil, origin: .user)
   }
 
-  private func open(path: String, bookmark: Data?, restoring query: TableQuery?, sheet: String?) {
+  private func open(
+    path: String, bookmark: Data?, restoring query: TableQuery?, sheet: String?,
+    origin: LoadOrigin
+  ) {
     opening?.cancel()
     openGeneration += 1
+    loadOrigin = origin
+    sortOrigin = origin
     resolvedNotice = nil
     posted.reset()
+    alerts.replaceLoad()
     nested?.close()
     nested = nil
 
@@ -278,9 +310,9 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     guard let file = urls.first else { return false }
 
     guard urls.count == 1 else {
-      host?.applet(
-        self, post: .warning,
-        text: "Drop one file at a time. The data viewer shows one file in a pane.")
+      alerts.deliver(
+        .warning, "Drop one file at a time. The data viewer shows one file in a pane.",
+        from: self, to: host)
       return false
     }
 
@@ -288,11 +320,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       try replaceSource(with: file, startDirectory: SourceStartDirectory.of(file))
       return true
     } catch {
-      host?.applet(
-        self, post: .error,
-        text:
-          "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: \(error.localizedDescription)"
-      )
+      alerts.deliver(
+        Self.failureLevel,
+        "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: \(error.localizedDescription)",
+        from: self, to: host)
       return false
     }
   }
@@ -307,15 +338,18 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
   // MARK: Applet
 
-  public func start() {
+  public func start(origin: StartOrigin) {
     guard restoreWaitsForStart, let path = record.path else { return }
 
     restoreWaitsForStart = false
-    open(path: path, bookmark: record.bookmark, restoring: record.query, sheet: record.sheet)
+    open(
+      path: path, bookmark: record.bookmark, restoring: record.query, sheet: record.sheet,
+      origin: origin.loadOrigin)
   }
 
   public func close() {
     closed = true
+    alerts.discard()
     nested?.close()
     nested = nil
     opening?.cancel()
@@ -324,9 +358,14 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     session.close()
   }
 
-  public func detach() {}
+  /// The data viewer holds back its alerts while detached. See `AppletAlerts`.
+  public func detach() {
+    alerts.detach()
+  }
 
-  public func reattach() {}
+  public func reattach() {
+    alerts.reattach(from: self, to: host)
+  }
 
   public func focus() {
     content.focusBody()
@@ -421,27 +460,41 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return .message("\u{201C}\(title)\u{201D} has no rows.")
 
     case .stoppedAtBudget, .stoppedLowMemory:
-      return .message("Loading stopped because memory is in short supply, so no rows are shown.")
+      return .message(Self.stoppedBeforeAnyRowText)
 
     case .failed:
       return .message("")
     }
   }
 
+  private static let stoppedBeforeAnyRowText =
+    "Loading stopped because memory is in short supply, so no rows are shown."
+
+  /// The level of a load that fails. A viewer holds no edits, so a failed load loses no user
+  /// work. It leaves the requested content unshown, which is a warning.
+  static let failureLevel = StatusLevel.warning
+
   private func failure() -> String? {
     if case .failed(let error) = session.phase {
-      return error.errorDescription
+      return error.errorDescription ?? "The file could not be opened."
     }
 
     return nil
   }
 
-  /// Posts each notice about the load once. The table fills the pane, so the status bar carries
-  /// them, and its history keeps them.
+  /// Delivers each notice about the load once. While a table fills the pane, the status bar
+  /// carries them, and its history keeps them. When the load leaves the pane empty, the pane
+  /// explains itself, and the notice goes to the history only.
   private func postNotices() {
     for notice in posted.unposted(notices()) {
-      host?.applet(self, post: notice.level, text: notice.text)
+      alerts.deliver(notice, origin: origin(of: notice), from: self, to: host)
     }
+  }
+
+  /// The origin of a notice. A skipped sort follows the sort now in effect. Every other notice
+  /// follows the load.
+  private func origin(of notice: AppletNotice) -> LoadOrigin {
+    notice.key == DataViewerNotices.sortSkippedKey ? sortOrigin : loadOrigin
   }
 
   /// The notices about what loaded.
@@ -470,10 +523,20 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       }
     }
 
-    lines += DataViewerNotices.lines(
-      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
-
     var notices = lines.map { AppletNotice(.warning, $0) }
+
+    notices += DataViewerNotices.notices(
+      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows,
+      settled: session.phase != .idle && session.phase != .loading)
+
+    if let failure = failure() {
+      notices.append(AppletNotice(Self.failureLevel, failure, delivery: .historyOnly))
+    }
+
+    if session.stoppedBeforeAnyRow {
+      notices.append(
+        AppletNotice(Self.failureLevel, Self.stoppedBeforeAnyRowText, delivery: .historyOnly))
+    }
 
     if let resolvedNotice {
       notices.append(AppletNotice(.info, resolvedNotice))

@@ -32,6 +32,21 @@ private final class ManualScheduler {
 
 @MainActor
 final class StatusCenterTests: XCTestCase {
+  /// Catches a record that the center keeps from its observers. The history panel redraws from
+  /// the observers, so a record that skips them would show up only after the next post.
+  func testARecordTellsObserversAndLeavesTheBarAlone() {
+    let center = StatusCenter(clock: ManualClock(), scheduler: ManualScheduler().schedule)
+    var calls = 0
+    center.addObserver { calls += 1 }
+
+    center.record(level: .warning, source: .uniterm, text: "kept")
+
+    XCTAssertEqual(calls, 1)
+    XCTAssertEqual(center.history.map(\.text), ["kept"])
+    XCTAssertNil(center.display)
+    XCTAssertFalse(center.hasUnseenError)
+  }
+
   /// Catches a center that never wakes the model, so an info message stays on the bar forever.
   func testWakeClearsInfoAtTheIdleTimeout() {
     let clock = ManualClock()
@@ -101,11 +116,76 @@ final class StatusCenterTests: XCTestCase {
 
     center.post(level: .error, source: .uniterm, text: "E")
     XCTAssertTrue(center.hasUnseenError)
-    center.markHistorySeen()
+    center.acknowledge(ids: center.history.map(\.id))
     center.dismissCurrent()
 
     XCTAssertEqual(count, 3)
     XCTAssertFalse(center.hasUnseenError)
     XCTAssertNil(center.display)
+  }
+
+  /// Catches a missed warning that leaves no trace, and an error that times out.
+  ///
+  /// The warning clears at 5 s and the lesser signal stays. The error is still on the bar at 100 s.
+  /// Acknowledging the error's record clears its signal and leaves the warning's.
+  func testAClearedWarningLeavesALesserSignalAndAnErrorNeverTimesOut() {
+    let clock = ManualClock()
+    let scheduler = ManualScheduler()
+    let center = StatusCenter(clock: clock, scheduler: scheduler.schedule)
+
+    center.post(level: .warning, text: "cut")
+    XCTAssertTrue(center.hasUnseenWarning)
+    XCTAssertFalse(center.hasUnseenError)
+
+    clock.now = 5
+    scheduler.fireLast()
+    XCTAssertNil(center.display)
+    XCTAssertTrue(center.hasUnseenWarning)
+
+    clock.now = 6
+    center.post(level: .error, text: "lost")
+    clock.now = 100
+    scheduler.fireLast()
+    XCTAssertEqual(center.display?.message.text, "lost")
+    XCTAssertTrue(center.hasUnseenError)
+
+    center.acknowledge(ids: [center.history[1].id])
+    XCTAssertFalse(center.hasUnseenError)
+    XCTAssertTrue(center.hasUnseenWarning)
+  }
+
+  /// Catches a delivery that mishandles one of its three ways, or a presented record that
+  /// duplicates its history row. Each way is checked at the center, where hosts call it.
+  func testDeliveryHasThreeWaysAndAPresentedRecordAddsNoRow() throws {
+    let center = StatusCenter(clock: ManualClock(), scheduler: ManualScheduler().schedule)
+    let pane = StatusSource.pane(id: 4, name: "csv")
+
+    let quiet = try XCTUnwrap(
+      center.deliver(.historyOnly, level: .warning, source: pane, text: "a"))
+    XCTAssertNil(center.display)
+    XCTAssertFalse(center.hasUnseenWarning)
+
+    center.deliver(.attention, level: .warning, source: pane, text: "b")
+    XCTAssertNil(center.display)
+    XCTAssertTrue(center.hasUnseenWarning)
+
+    center.deliver(.message, level: .info, source: pane, text: "c")
+    XCTAssertEqual(center.display?.message.text, "c")
+
+    let rows = center.history.count
+    let again = center.deliver(
+      .message, level: .warning, source: pane, text: "a", presenting: quiet)
+
+    XCTAssertEqual(again, quiet)
+    XCTAssertEqual(center.history.count, rows)
+  }
+
+  /// Catches a delivery that lets a producer present under an identity the center never issued.
+  func testDeliveryRefusesAnUnissuedProducer() {
+    let center = StatusCenter(clock: ManualClock(), scheduler: ManualScheduler().schedule)
+
+    XCTAssertNil(
+      center.deliver(.message, level: .info, source: .applet(id: 9, name: "x"), text: "forged"))
+    XCTAssertTrue(center.history.isEmpty)
   }
 }

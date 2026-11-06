@@ -85,9 +85,9 @@ public final class TerminalApplet: Applet {
   /// ride in the description's undo-only part, so a reopened pane brings them back.
   private var closedTabs: [TerminalDescription.ClosedTab] = []
 
-  /// The newest notification that arrived while the applet was detached.
-  private var heldNotification: String?
-  private var detached = false
+  /// Notifications reach the status bar through this. It records them in the history when they
+  /// arrive and holds them back while the applet is detached.
+  private var alerts = AppletAlerts()
 
   /// A shell in one tab, with the launch as given.
   public convenience init(engine: any TerminalEngine, launch: TerminalLaunch) {
@@ -270,7 +270,7 @@ public final class TerminalApplet: Applet {
 
   public var runningLabels: [String] { runningTabLabels }
 
-  public func start() {
+  public func start(origin: StartOrigin) {
     guard !started else { return }
 
     started = true
@@ -286,7 +286,9 @@ public final class TerminalApplet: Applet {
     }
 
     if let failure {
-      host?.applet(self, post: .error, text: "The terminal could not start: \(failure)")
+      alerts.deliver(
+        AppletNotice(.warning, "The terminal could not start: \(failure)"),
+        origin: origin.loadOrigin, from: self, to: host)
     }
 
     let live = tabs.filter { $0.session != nil || $0.awaitingRun }
@@ -308,6 +310,8 @@ public final class TerminalApplet: Applet {
   }
 
   public func close() {
+    alerts.discard()
+
     for tab in tabs {
       tab.session?.view.removeFromSuperview()
       tab.session?.close()
@@ -316,23 +320,19 @@ public final class TerminalApplet: Applet {
   }
 
   /// A terminal makes no sound and plays no video, so it pauses no output. It holds back what the
-  /// user would notice but cannot see: notifications from OSC 9 and OSC 777 are kept instead of
-  /// posted. The bell raises no alert here, so there is nothing to hold. A shell keeps running
-  /// whether or not anyone can see it, as a user expects.
+  /// user would notice but cannot see: notifications from OSC 9 and OSC 777 are recorded in the
+  /// history when they arrive and are not shown. The bell raises no alert here, so there is
+  /// nothing to hold. A shell keeps running whether or not anyone can see it, as a user expects.
   ///
-  /// Only the newest held notification survives, and `reattach` posts it. Older ones are dropped,
-  /// since a burst of stale alerts on return would bury the one that matters.
+  /// The applet keeps a bounded number of held notifications, and `reattach` shows them. When the
+  /// bound drops some, one more message counts them. A pane that closes while detached keeps its
+  /// history records.
   public func detach() {
-    detached = true
+    alerts.detach()
   }
 
   public func reattach() {
-    detached = false
-
-    guard let text = heldNotification else { return }
-
-    heldNotification = nil
-    host?.applet(self, post: .info, text: text)
+    alerts.reattach(from: self, to: host)
   }
 
   public func focus() {
@@ -361,7 +361,7 @@ public final class TerminalApplet: Applet {
     do {
       try startSession(for: tab)
     } catch {
-      host?.applet(self, post: .error, text: "The program could not start: \(error)")
+      alerts.deliver(.warning, "The program could not start: \(error)", from: self, to: host)
       return
     }
 
@@ -423,7 +423,7 @@ public final class TerminalApplet: Applet {
       do {
         try startSession(for: tab)
       } catch {
-        host?.applet(self, post: .error, text: "The tab could not open: \(error)")
+        alerts.deliver(.warning, "The tab could not open: \(error)", from: self, to: host)
         return
       }
     }
@@ -682,11 +682,7 @@ public final class TerminalApplet: Applet {
         separator: ": ")
       guard !text.isEmpty else { return }
 
-      if detached {
-        heldNotification = text
-      } else {
-        host?.applet(self, post: .info, text: text)
-      }
+      alerts.deliver(.info, text, from: self, to: host)
 
     case .clipboardRequest(let request):
       confirm(request)

@@ -1,8 +1,8 @@
 # UTERM-017: Status Bar Placement and Contract
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-05
-**Updated:** 2026-11-05
+**Updated:** 2026-11-06
 
 ## Dependencies
 
@@ -64,8 +64,8 @@ explain itself, and the status bar's message may be gone before the user looks.
 ### Notice levels
 
 Decision: a notice that some content is not shown is a warning. A notice that changes nothing on screen, such as a file
-found at a new path, is info. Lost user work is an error. Its message never times out; replacement leaves unseen-error
-attention until acknowledged.
+found at a new path, is info. Lost user work, including work that cannot reach disk, is an error. Its message never
+times out; replacement leaves unseen-error attention until acknowledged. Amended 2026-11-06; see Decision Log.
 
 - Each notice carries its level, so an applet never picks one by matching text.
 
@@ -266,13 +266,14 @@ single producer from dominating either pool without multiplying the aggregate li
 
 What level driver stderr posts at. Errors stick and fold together, so stderr as errors would bury real ones.
 
-Decision: raw stderr is info-level diagnostic text. Its text is sanitized and coalesced, never matched
-against words to guess a level. A host-observed driver exit or protocol failure creates a separate typed warning when
-requested content is unavailable, or an error when user work is lost. Its owning feature supplies the pane explanation
-and explicit restart action.
+Decision: raw stderr is info-level diagnostic text. It goes to the history only and takes no turn on the bar. Its text
+is sanitized and coalesced, never matched against words to guess a level. A host-observed driver exit or protocol
+failure creates a separate typed warning when requested content is unavailable, or an error when user work is lost. Its
+owning feature supplies the pane explanation and explicit restart action.
 
 Rationale: stderr is a channel, not a severity. Treating every line as an error would bury loss-of-work errors. This
-changes no driver wire format and promises no lossless per-line history beyond the bounded ingress.
+changes no driver wire format and promises no lossless per-line history beyond the bounded ingress. Amended 2026-11-06;
+see Decision Log.
 
 ### Placement of refusals
 
@@ -303,7 +304,7 @@ Decision: apply the content-availability rule to each named case.
 
 M1 implements the map and current notice/history machinery. UTERM-003 and UTERM-005 wire their actual REPL and browser
 paths when built, using the contract here. A requested load or operation not shown is a warning; a benign relocation
-is info; lost user work is an error.
+is info; lost user work, including work that cannot reach disk, is an error. Amended 2026-11-06; see Decision Log.
 
 Rationale: usable content stays unobscured, while an empty pane keeps the explanation the user needs to recover.
 
@@ -349,7 +350,7 @@ None.
 
 ### M1: Shared rules and the window slot
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Every implemented applet's notices carry a level by the settled rule, and its tests check them
 - The map file-failure overlay becomes one warning/history entry and a lasting failed-file segment
@@ -363,9 +364,31 @@ None.
 - The user looks at the bar with the slot showing, in both dock positions and a narrow window
 - Every active window-state kind remains discoverable at the supported minimum width, with a usable message area
 
+**As built:**
+
+- The check where the user looks at the bar with the slot showing, in both dock positions and a narrow window, is left
+  to the user. Package tests lay out the real bar at the window's real minimum width, but only the user's eyes judge
+  how it looks. The check includes hovering each window slot for its tooltip, which a headless test could not verify.
+- An empty map is one whose tiles report a failure and whose command layers hold no pin. The map decides on each
+  refresh. A failure that arrives while tiles or pins still show is a warning on the bar. If the tiles fail later, the
+  pane also explains it. If the tiles come back after an empty-pane failure, the history keeps its one entry and the
+  failed-file segment stays.
+- A memory stop that loaded no rows in the data viewer counts as an empty pane. It records one warning in the history
+  and posts nothing.
+- A notice now has a key apart from its text, and the cut-rows notice waits for the load to settle so it posts once
+  with the final count. A sheet switch resets the viewer's notices, because each sheet is a load.
+- Level audit: a terminal that cannot start, a program that cannot start, a tab that cannot open, and a file the
+  viewers cannot open were errors and are warnings now, since nothing the user made is lost. A refused map edit stays a
+  warning. It keeps the file and any earlier unsaved pins and clears only the undo stack. A failed save stays an
+  error, because the rule now names work that cannot reach disk. The drop and open-panel catch blocks for a throwing
+  `replaceSource` are unreachable today, since no applet's `replaceSource` throws. They stay as part of the contract.
+- Window state lives on the window set. The layout persistence publishes the second-instance state there, so the app
+  delegate needs no change. A narrow bar hides applet segments from the last one back, and the window's minimum width
+  is unchanged. See Decision Log.
+
 ### M2: The queue
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The settled repeat rule holds: a test posts the same message twice and checks the bar and the history
 - Equal pane IDs with different titles still coalesce; different IDs or levels do not
@@ -373,7 +396,8 @@ None.
 - The settled warning signal holds, with a test on a fake clock
 - The history meets the All/pane filter and 100-error/400-other retention rules
 - An info flood from one source cannot evict another pane's error; error floods exercise source-aware eviction
-- All retained, pending, folded, detached, source-index, and summary storage stays bounded in count and bytes
+- All retained, pending, folded, source-index, and summary storage stays bounded in count and bytes. Amended
+  2026-11-06; see Decision Log.
 - Eviction preserves unseen severity and offers a readable loss summary with deliberate acknowledgement
 - Same-name producers and posts after pane close retain distinct host-bound origin identities
 - Filtered-out and offscreen messages remain unseen while the history panel is open
@@ -382,18 +406,62 @@ None.
 - A synthetic stderr flood never blocks the main thread; actual driver ingress remains UTERM-004
 - Raw stderr remains info regardless of text; typed driver failure retains semantic severity
 
+**As built:**
+
+- The check where the user looks at the expanded history is left to the user: the filter menu, the Focus Pane controls,
+  the loss strip, and keyboard use. Package tests drive the real panel at 500 rows. Only the user's eyes judge its
+  layout.
+- Pane identity binds when an applet takes its pane, including a launcher swap. Other producers get an identity from
+  the status center. The retention, byte, and wording choices are in the Decision Log.
+- Coalescing, the two unseen sets, the two retention pools, and the loss summary work as the settled decisions say.
+  Eviction moves a dropped record's unseen count into the summary, and only the summary's control clears it.
+- The panel reports the rows whose whole line is in view, and only while the window can show them. The window
+  acknowledges exactly those. Reading, filtering, and scrolling never move the keyboard.
+- The synthetic stderr consumer is a bounded ingress plus a producer method. A typed failure posts at its kind's level.
+  Actual driver wiring stays with UTERM-004.
+- A full test run hung once. Window closes in the package tests leave dispatch workers blocked in AppKit's animation
+  loop, so the shared pool had none left for a later test. The leak predates this milestone and is not fixed here. The
+  flood test uses its own threads.
+
 ### M3: Detached panes and restore
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The terminal, the map, and the data viewer follow one rule for posting while detached
 - A pane closed while detached keeps its held messages in the history
 - Detached history-only delivery raises no visible message or unseen indicator
-- Reattach presents bounded held alerts without duplicate history; overflow has a count
+- Reattach presents bounded held alerts without duplicate history; overflow has a count. A new load drops the
+  presentation of the replaced load's held notices, and keeps held errors and alerts no load produced. Amended
+  2026-11-06; see Decision Log.
 - A restore-origin warning recorded while detached retains restore policy on reattach: warning attention, no message
   turn
 - Restore origin survives asynchronous completion and a user replacement load never inherits it
 - A launch that restores many panes follows the settled restore rule
+- Detached presentation storage stays bounded in count and bytes. Amended 2026-11-06; see Decision Log.
+
+**As built:**
+
+- Nothing in the host sends `detach` or `reattach` yet, as UTERM-001 M10 intends. The detached behavior therefore has no
+  user path. Package tests call the events directly on each applet. A trigger needs its own proposal.
+- The terminal, the map, and the data viewer share one rule through one helper that each applet owns and calls from its
+  own detach and reattach. The host adds no policy. The terminal now keeps a bounded number of notifications, where it
+  kept only the newest. The test that pinned newest-only changed with the contract.
+- Every terminal post goes through the same helper, including a failed shell start on a launch restore. Its clipboard
+  dialog is a question, not a notice, and still shows while the pane is detached. It is left alone.
+- The window starts each launch-restored applet with the restore origin, and every other applet with the user origin. A
+  file-watcher reload and a revert are a third origin that posts normally. The reasons are in the Decision Log.
+- A tile failure is not a load, so it carries no origin and still posts once per outage.
+- The many-pane launch is proved through the real window, host, and status center with a stand-in applet. The real
+  viewers and the terminal are proved alone. No package test launches real files in many real panes.
+- A pane can present only the history records its own host issued, once each. The queue also refuses an ID it never
+  issued and another source's retained record. The host's ledger keeps an entry while the history keeps its record,
+  so a held alert never falls off it and returns as a duplicate.
+- A new load calls `replaceLoad` on the applet's alert helper. It drops the held notices the replaced load produced.
+  Their history records stay. Held errors stay, and so do alerts no load produced, such as a terminal notification.
+  A notice from a nested table is not a load notice. The map's load, the data viewer's load, and its sheet switch each
+  make the call.
+- UTERM-008's relaunch notice still reads true. Its program-pin producer is unbuilt, so its restore-origin info goes to
+  the history under this rule when it ships.
 
 ## Decision Log
 
@@ -442,6 +510,93 @@ None.
   including the proposal index's matching status row in the single final commit.
 - 2026-11-05: Accepted at the user's final gate. No ADR created. The three milestones remain unscheduled.
 - 2026-11-05: Scheduled as M1-M3 in queue.md, at the top of the queue.
+- 2026-11-06: M1 level audit (work-queue best guess). Failed terminal starts and failed file opens in the viewers moved
+  from error to warning, because the level rule keeps error for lost user work. A failed save stays an error. The rule
+  now names work that cannot reach disk, which covers it. Reverting is a one-line change per post.
+- 2026-11-06: Amended "Notice levels" and "Placement of refusals" (work-queue best guess). Both said "Lost user work is
+  an error", and a failed save keeps its unsaved edits in memory, so the wording did not literally cover it. Both now
+  say "Lost user work, including work that cannot reach disk, is an error". The AppletNotice doc comment carries the
+  same words.
+- 2026-11-06: M1 window state reaches the window set from the layout persistence, which already holds the set, and the
+  slot's text lives with the state (work-queue best guess). Applet segments are the only thing a narrow bar hides.
+  The window's minimum width, which comes only from the pane tree, is unchanged.
+- 2026-11-06: M2 retention, identity, and panel mechanisms (work-queue best guess). The byte limits are policy
+  constants sized so the count limits bind first: 2,048 bytes per message text, 128 per source label, 128 KiB for the
+  error pool, 256 KiB for the other pool, 64 KiB and 32 entries for waiting messages, 128 KiB and 100 entries for
+  folded errors, and 64 live non-pane producers. Non-pane identity comes from the status center, and the source-taking
+  post is package-only. Raw stderr is recorded to the history without a bar turn, since a flood of info would
+  otherwise take every turn. The loss summary is a strip at the top of the panel, so it stays reachable. Each is a
+  small change to revert.
+- 2026-11-06: Amended M2's bounded-storage check and added a matching M3 check (work-queue best guess). M2's check
+  read "All retained, pending, folded, detached, source-index, and summary storage stays bounded in count and bytes".
+  Detached presentation storage does not exist until M3 builds the detach rule, so M2 cannot bound it. M2 drops the
+  word, and M3 carries the check. M2 exposes the text cut as a shared helper for M3 to use. If M3 builds the storage
+  without a bound, the check fails there.
+- 2026-11-06: Amended "Driver stderr levels" and the matching UTERM-004 text (work-queue best guess). The decision said
+  raw stderr is info, and UTERM-004 said it appears in the status bar. A flood of info lines would take every turn on
+  the bar and bury a real notice, so raw stderr now goes to the history only. UTERM-004's text and check were amended
+  to match. Its driver wiring still owes one hop to the main thread for each drain, never one for each line.
+- 2026-11-06: Non-pane producers read as "name (applet N)" or "name (script N)" in the bar and the history (work-queue
+  best guess). A producer that names itself "uniterm" would otherwise look like the host. Only the host reads as plain
+  "uniterm". The status center also checks an identity's kind, so a script cannot post under an applet's number. A
+  producer that is dropped without retiring frees its slot. A pane that titles itself "uniterm" still reads that way on
+  the bar, as before. Its history rows carry the pane ID.
+- 2026-11-06: Keyboard path for the history (work-queue best guess). The panel refuses first responder until the user
+  runs the Focus Message History command, which has no default key. The command opens the panel and moves the keyboard
+  into its table. The arrow keys move a row cursor, Return runs Focus Pane on that row, Tab reaches the filter and
+  the loss control, and Escape returns the keyboard to the focused pane. Mouse reading and opening never move the
+  keyboard. A default key would need a shortcut decision under UTERM-013, so none is set. If a key is wanted, it is
+  one binding.
+- 2026-11-06: The history acknowledges only whole rows, only in a window that can show them, and never from inside
+  layout (work-queue best guess). A row with a sliver in view has not been read. A minimized or covered window shows
+  nothing, so arrivals stay unseen until it is visible again. The report waits one turn of the main actor when layout
+  asks for it, since refreshing the rows from inside layout lays the panel out again. Each is a small change to
+  revert.
+- 2026-11-06: The set of windows holds at most 32 messages while no window is open (work-queue best guess). Past the
+  limit the oldest info or warning goes first, and an error goes only when every held message is one. The next window
+  shows one message that counts what was lost, at the most severe level lost. The limit is a policy constant.
+- 2026-11-06: ADR candidate (cuts across the system): the host binds a status source's identity at origin, and no
+  producer can claim another's. Undecided. Found in UTERM-017 M2.
+- 2026-11-06: M3 host delivery (work-queue best guess). The applet contract has one delivery requirement with three
+  ways: a message, attention with no turn, and history only. It takes an optional record ID. A call with an ID presents
+  that record again and adds no history entry. History-only delivery returns the record ID, so a detached applet keeps
+  it. A record that retention dropped before the pane returned moves its signal to the loss summary. The old post and
+  record calls are conveniences over it. Each is a small change to revert.
+- 2026-11-06: M3 restore marking (work-queue best guess). The start event carries a required origin, restore or user,
+  with no default. The window records which applets the launch restore built and starts each with restore, once. Every
+  other start passes user: a new pane, a pane reopened by undo, and a launcher swap. The first draft added a separate
+  launch-restore call with a default that did nothing. A launch-restored applet could miss it silently, and ADR-05 lists
+  four events. The origin now rides on the start event. It is not set in the restoring initializer, because undo reopen
+  uses the same initializer and is a user action. A file-watcher reload and a revert are a third origin, reload, because
+  neither is the user's new choice or the launch. A sheet switch is a user load. A skipped sort follows the origin of
+  the sort now in effect, and a filter does not change it. The changed-on-disk warning follows what set the flag: the
+  restore, when it compared the unsaved pins' base with the file, or the watcher.
+- 2026-11-06: M3 held-alert bound (work-queue best guess). A detached applet holds at most 8 alerts and 8 KiB, each text
+  cut to the status text bound. Past either, the oldest non-error goes first, and an error goes only when every held
+  alert is one. The loss is counted, and reattach shows one more message naming the count. It takes the most severe
+  level lost and the strongest delivery lost, so a count of restore warnings takes no turn. That message is a new
+  history entry. The limits are policy constants.
+- 2026-11-06: M3 record ownership (work-queue best guess). A pane's host keeps a ledger of the history records it
+  issued, 256 at most, and honors a present call only for its own records and only once. An ID it did not issue is
+  delivered as a new record of that pane. The queue also refuses an ID it never issued and a retained record of another
+  source, because the loss summary would otherwise show an unseen count with no row to clear. The queue cannot tell who
+  made a record that retention dropped, which is why the ledger sits in the host. The limit is a policy constant.
+- 2026-11-06: M3 reaches past load notices (work-queue best guess). The map and the data viewer send every post through
+  the alert helper, not only their load notices. The user's own actions happen while the pane is attached, so those
+  posts are unchanged. A completion that lands while the pane is detached follows the same rule. The terminal sends
+  every post through it, so a failed start on a launch restore takes no turn.
+
+- 2026-11-06: Amended M3's record-ownership entry above (work-queue best guess). It said the host's ledger holds 256
+  records at most. Hundreds of later detached alerts could push a held error off the ledger, and reattach then
+  delivered it as a new record, a second history row. The ledger now keeps an entry exactly while the history keeps its
+  record, so retention has one rule and the limit constant is gone. A record the history dropped is delivered as a new
+  record, which restores it.
+- 2026-11-06: Amended M3's reattach check (work-queue best guess). It let a pane that loaded file A, then file B while
+  detached, replay A's held notices after B's, so a stale "File not opened" turn could follow a successful load. A new
+  load now drops the presentation of the held notices the replaced load produced. Their history records stay, since
+  they were real events. Held errors stay held, because they report lost user work. Alerts no load produced stay held.
+  A notice of the load carries that fact when it is delivered, and the applet calls `replaceLoad` where it resets its
+  posted notices.
 
 ## References
 

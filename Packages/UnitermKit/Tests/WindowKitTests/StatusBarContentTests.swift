@@ -1,3 +1,4 @@
+import AppKit
 import AppletKit
 import Preferences
 import StatusKit
@@ -40,6 +41,57 @@ final class StatusBarContentTests: XCTestCase {
     XCTAssertEqual(segments.map(\.id), [.message, .dismiss, .unseenError, .applet(0)])
   }
 
+  /// Catches window slots in the wrong order, or displaced by an error. The three kinds show in
+  /// their fixed order whatever order they were set in. They sit after the message, dismiss, and
+  /// unseen indicator, and before the applet's segments. Each is compact, and its full sentence is
+  /// both the tooltip and the accessibility label.
+  func testWindowStatesShowInFixedOrderBeforeTheAppletSegments() {
+    var states = WindowStates()
+    states.set(.survivingWork, text: "Work is still running.")
+    states.set(.layoutNotSaved, text: "Not saved.")
+    states.set(.pendingPermissions, text: "A program is asking.")
+
+    let segments = StatusBarContent.segments(
+      display: display(.error, .uniterm, "boom"), hasUnseenError: true, windowStates: states,
+      applet: [AppletSegment(text: "tmp")])
+
+    XCTAssertEqual(
+      segments.map(\.id),
+      [
+        .message, .dismiss, .unseenError, .window(.layoutNotSaved),
+        .window(.pendingPermissions), .window(.survivingWork), .applet(0),
+      ])
+
+    for segment in segments {
+      guard case .window = segment.id else { continue }
+
+      XCTAssertNil(segment.text)
+      XCTAssertNotNil(segment.symbolName)
+      XCTAssertEqual(segment.toolTip, segment.accessibilityLabel)
+    }
+
+    XCTAssertEqual(segments[3].toolTip, "Not saved.")
+    XCTAssertEqual(segments[5].toolTip, "Work is still running.")
+  }
+
+  /// Catches a kind whose symbol name is not a system symbol. The slot would show nothing, and
+  /// the user would see no sign of the state.
+  func testEveryWindowStateKindHasASymbolThatExists() throws {
+    for kind in WindowStateKind.allCases {
+      var states = WindowStates()
+      states.set(kind, text: "x")
+
+      let segment = try XCTUnwrap(
+        StatusBarContent.segments(
+          display: nil, hasUnseenError: false, windowStates: states, applet: []
+        )
+        .first { $0.id == .window(kind) })
+      let name = try XCTUnwrap(segment.symbolName)
+
+      XCTAssertNotNil(NSImage(systemSymbolName: name, accessibilityDescription: nil), name)
+    }
+  }
+
   /// Catches a message shown without its source, or with the wrong icon or tone for its level.
   func testTheMessageAreaShowsSourceTextAndLevelStyle() {
     let info = StatusBarContent.message(display(.info, .pane(id: 7, name: "zsh"), "done"))
@@ -47,15 +99,29 @@ final class StatusBarContentTests: XCTestCase {
     XCTAssertEqual(info.symbolName, "info.circle")
     XCTAssertEqual(info.tone, .normal)
 
-    let warning = StatusBarContent.message(display(.warning, .applet(name: "git"), "dirty"))
-    XCTAssertEqual(warning.text, "git: dirty")
+    let warning = StatusBarContent.message(display(.warning, .applet(id: 1, name: "git"), "dirty"))
+    XCTAssertEqual(warning.text, "git (applet 1): dirty")
     XCTAssertEqual(warning.symbolName, "exclamationmark.triangle")
     XCTAssertEqual(warning.tone, .warning)
 
-    let error = StatusBarContent.message(display(.error, .script(name: "init"), "failed"))
-    XCTAssertEqual(error.text, "init: failed")
+    let error = StatusBarContent.message(display(.error, .script(id: 2, name: "init"), "failed"))
+    XCTAssertEqual(error.text, "init (script 2): failed")
     XCTAssertEqual(error.symbolName, "xmark.octagon")
     XCTAssertEqual(error.tone, .error)
+  }
+
+  /// Catches a producer that passes for the host by taking its name, and two same-named producers
+  /// that read alike. Only the host reads as plain `uniterm`.
+  func testOnlyTheHostReadsAsUniterm() {
+    let host = StatusBarContent.message(display(.info, .uniterm, "ok"))
+    let applet = StatusBarContent.message(display(.info, .applet(id: 4, name: "uniterm"), "ok"))
+    let script = StatusBarContent.message(display(.info, .script(id: 5, name: "uniterm"), "ok"))
+    let twin = StatusBarContent.message(display(.info, .script(id: 6, name: "uniterm"), "ok"))
+
+    XCTAssertEqual(host.text, "uniterm: ok")
+    XCTAssertEqual(applet.text, "uniterm (applet 4): ok")
+    XCTAssertEqual(script.text, "uniterm (script 5): ok")
+    XCTAssertNotEqual(script.text, twin.text)
   }
 
   /// Catches a folded error backlog that loses its count.
@@ -105,13 +171,14 @@ final class StatusBarContentTests: XCTestCase {
     }
   }
 
-  /// Catches history lines that drop the level, or put the source after the text.
+  /// Catches history lines that drop the level, or put the source after the text. A pane's title
+  /// is followed by its stable ID, since two panes can share a title.
   func testHistoryLinesCarryLevelSourceAndText() {
     var queue = StatusQueue()
     let message = queue.post(
       level: .warning, source: .pane(id: 3, name: "vim"), text: "swap file", at: 0)
 
-    XCTAssertEqual(StatusBarContent.historyLine(message), "warning  vim: swap file")
+    XCTAssertEqual(StatusBarContent.historyLine(message), "warning  vim (pane 3): swap file")
   }
 
   // MARK: Regions

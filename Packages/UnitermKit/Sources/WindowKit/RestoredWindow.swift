@@ -25,6 +25,9 @@ struct RestoredPanes {
 enum PaneRestoration {
   /// Builds the tree and the applets. A description that the restorer refuses becomes a
   /// placeholder. Nothing is started.
+  ///
+  /// The window starts these applets with the restore origin. A pane reopened by undo goes through
+  /// `applet(for:restorer:)` alone and starts with the user origin.
   static func restore(
     _ window: RestoredWindow, restorer: AppletRestorer, metrics: PaneMetrics = .standard
   ) throws -> RestoredPanes {

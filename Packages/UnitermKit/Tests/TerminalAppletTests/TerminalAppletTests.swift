@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import StatusKit
 import Theme
 import XCTest
@@ -67,49 +68,6 @@ final class FakeEngine: TerminalEngine {
 }
 
 @MainActor
-private final class RecordingHost: AppletHost {
-  var posts: [(StatusLevel, String)] = []
-  var exited = false
-  var changed = 0
-  var tabsChanged = 0
-  var confirmations: [AppletConfirmation] = []
-  var answer = false
-
-  /// When set, a question waits here until a test answers it.
-  var holdsQuestions = false
-  var pendingAnswer: CheckedContinuation<Bool, Never>?
-
-  /// Signals each question as it is asked, so a test awaits it and never polls.
-  let questions = AsyncStream.makeStream(of: Void.self)
-
-  func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
-    posts.append((level, text))
-  }
-
-  func appletDidExit(_ applet: any Applet) { exited = true }
-  func appletDidChange(_ applet: any Applet) { changed += 1 }
-  func appletTabsDidChange(_ applet: any Applet) { tabsChanged += 1 }
-
-  var lastStamp: UInt64 = 0
-
-  func issueCloseStamp() -> UInt64 {
-    lastStamp += 1
-    return lastStamp
-  }
-
-  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
-    confirmations.append(request)
-    questions.continuation.yield()
-
-    if holdsQuestions {
-      return await withCheckedContinuation { pendingAnswer = $0 }
-    }
-
-    return answer
-  }
-}
-
-@MainActor
 final class TerminalAppletTests: XCTestCase {
   /// A session holds its applet weakly, so a test that drops the applet would drop the handler.
   private var retained: [TerminalApplet] = []
@@ -119,7 +77,7 @@ final class TerminalAppletTests: XCTestCase {
     let host = RecordingHost()
     let applet = TerminalApplet(engine: engine, directoryExists: { _ in true })
     applet.host = host
-    applet.start()
+    applet.start(origin: .user)
     retained.append(applet)
     return (applet, engine, host, engine.sessions[0])
   }
@@ -142,11 +100,11 @@ final class TerminalAppletTests: XCTestCase {
     let restoredShell = try TerminalApplet(
       engine: engine, restoring: applet.describe(), directoryExists: { _ in true })
     retained.append(restoredShell)
-    restoredShell.start()
+    restoredShell.start(origin: .user)
 
     let program = try TerminalApplet(engine: engine, program: "vim")
     retained.append(program)
-    program.start()
+    program.start(origin: .user)
 
     let host = RecordingHost()
     let restoredProgram = try restoreProgram(
@@ -175,7 +133,7 @@ final class TerminalAppletTests: XCTestCase {
     let engine = FakeEngine()
     let applet = TerminalApplet(engine: engine, workingDirectory: "/tmp", home: "/home-x")
     retained.append(applet)
-    applet.start()
+    applet.start(origin: .user)
 
     XCTAssertEqual(applet.currentDirectory, "/tmp")
 
@@ -206,7 +164,7 @@ final class TerminalAppletTests: XCTestCase {
 
       for applet in [shell, program] {
         retained.append(applet)
-        applet.start()
+        applet.start(origin: .user)
       }
 
       XCTAssertEqual(
@@ -221,7 +179,7 @@ final class TerminalAppletTests: XCTestCase {
     let engine = FakeEngine()
     let applet = TerminalApplet(engine: engine, workingDirectory: "/tmp", home: "/home-x")
     retained.append(applet)
-    applet.start()
+    applet.start(origin: .user)
 
     engine.sessions[0].onEvent?(.workingDirectoryChanged("me@host:/srv"))
     applet.openTab()
@@ -266,6 +224,94 @@ final class TerminalAppletTests: XCTestCase {
     XCTAssertFalse(host.posts[0].1.contains("\n"))
     XCTAssertFalse(host.posts[0].1.contains("\u{1B}"))
     XCTAssertEqual(host.posts[0].1, "Build OK: all [31m done")
+  }
+
+  private struct Refused: LocalizedError {
+    var errorDescription: String? { "the shell is missing" }
+  }
+
+  /// Catches a start failure rated as lost work. A shell that cannot start loses nothing the user
+  /// made. It leaves the requested content unshown, which is a warning, for the first shell and
+  /// for a tab opened later.
+  func testASessionThatCannotStartIsAWarning() {
+    let engine = FakeEngine()
+    engine.failure = Refused()
+    let host = RecordingHost()
+    let applet = TerminalApplet(engine: engine, directoryExists: { _ in true })
+    applet.host = host
+    retained.append(applet)
+
+    applet.start(origin: .user)
+
+    XCTAssertEqual(host.posts.map(\.0), [.warning])
+    XCTAssertTrue(host.posts[0].1.hasPrefix("The terminal could not start"))
+    XCTAssertTrue(host.exited)
+
+    let (live, liveEngine, liveHost, _) = makeApplet()
+    liveEngine.failure = Refused()
+    live.openTab()
+
+    XCTAssertEqual(liveHost.posts.map(\.0), [.warning])
+    XCTAssertTrue(liveHost.posts[0].1.hasPrefix("The tab could not open"))
+
+    let programEngine = FakeEngine()
+    let programHost = RecordingHost()
+    let restored = try? restoreProgram(
+      try programDescription(), engine: programEngine, host: programHost)
+    programEngine.failure = Refused()
+
+    let prompt = restored?.view.subviews.compactMap { $0 as? TerminalRunPrompt }.first
+    prompt?.run()
+
+    XCTAssertEqual(programHost.posts.map(\.0), [.warning])
+    XCTAssertTrue(programHost.posts.first?.1.hasPrefix("The program could not start") == true)
+  }
+
+  /// Catches many restored terminals that fail to start and bury the bar. A start failure on a
+  /// launch restore is a warning that raises attention and takes no turn. The same failure on a
+  /// user start takes a turn.
+  func testAStartFailureOnALaunchRestoreRaisesAttentionWithoutATurn() {
+    func failing(_ origin: StartOrigin) -> RecordingHost {
+      let engine = FakeEngine()
+      engine.failure = Refused()
+      let host = RecordingHost()
+      let applet = TerminalApplet(engine: engine, directoryExists: { _ in true })
+      applet.host = host
+      retained.append(applet)
+      applet.start(origin: origin)
+      return host
+    }
+
+    let restored = failing(.restore)
+
+    XCTAssertTrue(restored.posts.isEmpty, "\(restored.posts)")
+    XCTAssertEqual(restored.attentions.map(\.0), [.warning])
+    XCTAssertTrue(restored.attentions[0].1.hasPrefix("The terminal could not start"))
+
+    XCTAssertEqual(failing(.user).posts.map(\.0), [.warning])
+  }
+
+  /// Catches a start failure that shows while the pane is detached. It is recorded at once and
+  /// shown with the restore policy on return.
+  func testAStartFailureWhileDetachedIsRecordedAndShownOnReattach() {
+    let engine = FakeEngine()
+    engine.failure = Refused()
+    let host = RecordingHost()
+    let applet = TerminalApplet(engine: engine, directoryExists: { _ in true })
+    applet.host = host
+    retained.append(applet)
+
+    applet.detach()
+    applet.start(origin: .restore)
+
+    XCTAssertTrue(host.posts.isEmpty)
+    XCTAssertTrue(host.attentions.isEmpty)
+    XCTAssertEqual(host.records.map(\.1).count, 1)
+
+    applet.reattach()
+
+    XCTAssertEqual(host.records.count, 1, "reattach added a history entry")
+    XCTAssertEqual(host.presented.map(\.0), [.attention])
   }
 
   func testLongNotificationIsCapped() {
@@ -319,11 +365,12 @@ final class TerminalAppletTests: XCTestCase {
     XCTAssertEqual(answers.all, [true])
   }
 
-  /// Catches a detached terminal that still posts alerts the user cannot see. Notifications that
-  /// arrive while detached are held, the newest is posted on reattach, and the older one is
-  /// dropped. The session itself stays alive and visible, since a shell has nothing else to pause.
+  /// Catches a detached terminal that still shows alerts the user cannot see, and one that waits
+  /// to record them. Notifications that arrive while detached go to the history at once, with no
+  /// message and no signal. Reattach shows every held one, oldest first, through the records
+  /// already made. The session stays alive and visible, since a shell has nothing else to pause.
   /// It cannot show that the bell is held, since the terminal posts no bell alert at all.
-  func testDetachHoldsBackNotificationsAndReattachPostsTheNewest() {
+  func testDetachRecordsNotificationsAndReattachShowsEachHeldOne() {
     let (applet, engine, host, session) = makeApplet()
 
     applet.detach()
@@ -332,17 +379,60 @@ final class TerminalAppletTests: XCTestCase {
     session.onEvent?(.bell)
 
     XCTAssertTrue(host.posts.isEmpty)
+    XCTAssertTrue(host.attentions.isEmpty)
+    XCTAssertEqual(host.records.map(\.1), ["first", "second"])
     XCTAssertTrue(session.visible)
     XCTAssertFalse(session.closed)
 
     applet.reattach()
 
-    XCTAssertEqual(host.posts.map(\.1), ["second"])
+    XCTAssertEqual(host.records.map(\.1), ["first", "second"], "reattach added history entries")
+    XCTAssertEqual(host.presented.map(\.2), ["first", "second"])
+    XCTAssertEqual(host.presented.map(\.3), [1, 2])
+    XCTAssertEqual(host.presented.map(\.0), [.message, .message])
     XCTAssertEqual(engine.sessions.count, 1)
 
     session.onEvent?(.notification(title: "", body: "live"))
 
-    XCTAssertEqual(host.posts.map(\.1), ["second", "live"])
+    XCTAssertEqual(host.posts.map(\.1), ["live"])
+  }
+
+  /// Catches a pane that closes while detached and loses what it held. The history keeps the
+  /// records made when the notifications arrived. The applet shows nothing after the close.
+  func testAPaneClosedWhileDetachedKeepsItsRecords() {
+    let (applet, _, host, session) = makeApplet()
+
+    applet.detach()
+    session.onEvent?(.notification(title: "", body: "kept"))
+    applet.close()
+    applet.reattach()
+
+    XCTAssertEqual(host.records.map(\.1), ["kept"])
+    XCTAssertTrue(host.posts.isEmpty)
+    XCTAssertTrue(host.presented.isEmpty)
+  }
+
+  /// Catches an unbounded wait for a chatty program. The terminal holds a bounded number, counts
+  /// the rest, and says so on reattach. Every notification is still in the history.
+  func testAFloodOfNotificationsWhileDetachedIsBoundedAndCounted() {
+    let (applet, _, host, session) = makeApplet()
+
+    applet.detach()
+
+    for index in 0..<20 {
+      session.onEvent?(.notification(title: "", body: "n\(index)"))
+    }
+
+    XCTAssertEqual(host.records.count, 20)
+
+    applet.reattach()
+
+    XCTAssertEqual(host.presented.count, 8)
+    XCTAssertEqual(host.records.count, 20)
+    XCTAssertEqual(host.posts.count, 1)
+    XCTAssertEqual(
+      host.posts.first?.1,
+      "12 more alerts arrived while this pane was hidden. The history has them.")
   }
 
   func testRunningStateComesFromTheSession() {
@@ -375,7 +465,7 @@ final class TerminalAppletTests: XCTestCase {
     let restored = try TerminalApplet(
       engine: engine, restoring: description, directoryExists: { _ in true })
     retained.append(restored)
-    restored.start()
+    restored.start(origin: .user)
 
     XCTAssertEqual(engine.sessions.count, 2)
     XCTAssertEqual(engine.sessions[1].launch.workingDirectory, "/var/tmp")
@@ -388,7 +478,7 @@ final class TerminalAppletTests: XCTestCase {
 
     session.onEvent?(.workingDirectoryChanged("/var/tmp"))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "tmp")])
-    XCTAssertEqual(host.changed, 1)
+    XCTAssertEqual(host.changes, 1)
 
     session.onEvent?(.commandFinished(exitCode: 2, duration: .seconds(1)))
     XCTAssertEqual(
@@ -397,11 +487,11 @@ final class TerminalAppletTests: XCTestCase {
         AppletSegment(symbolName: "folder", text: "tmp"),
         AppletSegment(symbolName: "xmark.circle", text: "2", style: .error),
       ])
-    XCTAssertEqual(host.changed, 2)
+    XCTAssertEqual(host.changes, 2)
 
     session.onEvent?(.commandFinished(exitCode: 0, duration: .seconds(1)))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "tmp")])
-    XCTAssertEqual(host.changed, 3)
+    XCTAssertEqual(host.changes, 3)
   }
 
   /// Catches a directory label that shows a long path, or the home folder as its own name.
@@ -427,7 +517,7 @@ final class TerminalAppletTests: XCTestCase {
       engine: engine, restoring: description, directoryExists: { _ in true })
     restored.host = host
     retained.append(restored)
-    restored.start()
+    restored.start(origin: .user)
     return restored
   }
 
@@ -522,7 +612,7 @@ final class TerminalAppletTests: XCTestCase {
       engine: engine, restoring: description, directoryExists: { existing.contains($0) },
       home: "/home/pat")
     retained.append(restored)
-    restored.start()
+    restored.start(origin: .user)
 
     XCTAssertEqual(
       engine.sessions.map { $0.launch.workingDirectory },
@@ -536,7 +626,7 @@ final class TerminalAppletTests: XCTestCase {
     let engine = FakeEngine()
     let applet = TerminalApplet(engine: engine, launch: .loginShell(workingDirectory: "/start"))
     retained.append(applet)
-    applet.start()
+    applet.start(origin: .user)
     engine.sessions[0].onEvent?(.workingDirectoryChanged("/elsewhere"))
 
     let described = try TerminalDescription.decode(applet.describe())
@@ -646,7 +736,7 @@ final class TerminalAppletTests: XCTestCase {
     let engine = FakeEngine()
     let applet = try TerminalApplet(engine: engine, program: "vim -u NONE -N 'my file'")
     retained.append(applet)
-    applet.start()
+    applet.start(origin: .user)
 
     XCTAssertFalse(applet.canOpenTab)
     applet.openTab()
@@ -700,7 +790,7 @@ final class TerminalAppletTests: XCTestCase {
     ] as [(String, String?)] {
       let applet = try TerminalApplet(engine: engine, program: line)
       retained.append(applet)
-      applet.start()
+      applet.start(origin: .user)
 
       XCTAssertEqual(engine.sessions.last?.launch.environment["TERM"], expected, line)
     }
@@ -839,10 +929,10 @@ final class TerminalAppletTests: XCTestCase {
     engine.sessions[1].onEvent?(.workingDirectoryChanged("/Users/x/proj"))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "proj")])
 
-    let changes = host.changed
+    let changes = host.changes
     first.onEvent?(.workingDirectoryChanged("/etc"))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "proj")])
-    XCTAssertGreaterThan(host.changed, changes, "a background directory change was never saved")
+    XCTAssertGreaterThan(host.changes, changes, "a background directory change was never saved")
 
     applet.selectTab(at: 0)
     XCTAssertEqual(
@@ -851,7 +941,7 @@ final class TerminalAppletTests: XCTestCase {
         AppletSegment(symbolName: "folder", text: "etc"),
         AppletSegment(symbolName: "xmark.circle", text: "2", style: .error),
       ])
-    XCTAssertGreaterThan(host.changed, changes)
+    XCTAssertGreaterThan(host.changes, changes)
   }
 
   /// Catches a pane that closes when one of several shells exits, or stays open when the last one
@@ -901,7 +991,7 @@ final class TerminalAppletTests: XCTestCase {
     let restored = try TerminalApplet(
       engine: engine, restoring: description, directoryExists: { _ in true })
     retained.append(restored)
-    restored.start()
+    restored.start(origin: .user)
 
     XCTAssertEqual(engine.sessions.count, 6)
     XCTAssertEqual(
@@ -935,14 +1025,14 @@ final class TerminalAppletTests: XCTestCase {
   func testABackgroundTabsTitleAndDirectoryChangesSignal() {
     let (applet, engine, host, first) = makeApplet()
     applet.openTab()
-    host.tabsChanged = 0
-    host.changed = 0
+    host.tabChanges = 0
+    host.changes = 0
 
     first.onEvent?(.titleChanged("htop"))
-    XCTAssertEqual(host.tabsChanged, 1)
+    XCTAssertEqual(host.tabChanges, 1)
 
     first.onEvent?(.workingDirectoryChanged("/var"))
-    XCTAssertEqual(host.tabsChanged, 2)
+    XCTAssertEqual(host.tabChanges, 2)
 
     XCTAssertEqual(applet.publishedTabs.first.title, "htop")
     XCTAssertEqual(engine.sessions.count, 2)
@@ -951,16 +1041,16 @@ final class TerminalAppletTests: XCTestCase {
   /// Catches opening, selecting, or closing a tab that leaves the palette's list stale.
   func testOpeningSelectingAndClosingATabSignal() async {
     let (applet, _, host, _) = makeApplet()
-    host.tabsChanged = 0
+    host.tabChanges = 0
 
     applet.openTab()
-    XCTAssertEqual(host.tabsChanged, 1)
+    XCTAssertEqual(host.tabChanges, 1)
 
     applet.selectTab(at: 0)
-    XCTAssertEqual(host.tabsChanged, 2)
+    XCTAssertEqual(host.tabChanges, 2)
 
     _ = await applet.closeCurrentTab()
-    XCTAssertEqual(host.tabsChanged, 3)
+    XCTAssertEqual(host.tabChanges, 3)
     XCTAssertEqual(applet.publishedTabs.all.count, 1)
   }
 

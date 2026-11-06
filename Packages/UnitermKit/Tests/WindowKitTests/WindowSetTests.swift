@@ -74,6 +74,45 @@ final class WindowSetTests: XCTestCase {
     return fixture
   }
 
+  // MARK: Window states
+
+  /// Catches a window state that reaches only the windows open when it was set, or one that
+  /// outlives its feature. Every open window shows a state at once, a window opened later shows
+  /// it too, and clearing it empties them all. A kind with no producer yet shows when set.
+  func testAWindowStateReachesEveryWindowIncludingLaterOnes() throws {
+    let fixture = makeFixture()
+    let first = try fixture.windows.open()
+
+    func slots(_ controller: MainWindowController) -> [BarSegmentID] {
+      controller.statusBarSegments.map(\.id).filter {
+        if case .window = $0 { return true }
+        return false
+      }
+    }
+
+    XCTAssertTrue(slots(first).isEmpty)
+
+    fixture.windows.setWindowState(.survivingWork, text: "Work is still running.")
+
+    let second = try fixture.windows.open()
+    fixture.windows.setWindowState(.layoutNotSaved, text: "Not saved.")
+
+    for controller in [first, second] {
+      XCTAssertEqual(slots(controller), [.window(.layoutNotSaved), .window(.survivingWork)])
+      XCTAssertEqual(
+        controller.contentController.statusBar.segments.map(\.id).filter {
+          slots(controller).contains($0)
+        },
+        slots(controller), "the bar shows what the window computed")
+    }
+
+    fixture.windows.clearWindowState(.layoutNotSaved)
+    fixture.windows.clearWindowState(.survivingWork)
+
+    XCTAssertTrue(slots(first).isEmpty)
+    XCTAssertTrue(slots(second).isEmpty)
+  }
+
   // MARK: Cascade
 
   /// Catches a cascade that steps the wrong way or the wrong distance.
@@ -210,7 +249,7 @@ final class WindowSetTests: XCTestCase {
     let second = try fixture.windows.open()
     let secondApplet = fixture.log.made[1]
 
-    second.applet(secondApplet, post: .error, text: "from the second")
+    secondApplet.say(.error, "from the second")
 
     XCTAssertEqual(second.statusCenter.history.map(\.text), ["from the second"])
     XCTAssertEqual(fixture.messageText(second), "Fake: from the second")
@@ -218,7 +257,7 @@ final class WindowSetTests: XCTestCase {
     XCTAssertEqual(fixture.messageText(first), "")
     XCTAssertFalse(first.statusCenter.hasUnseenError)
 
-    first.statusCenter.post(level: .warning, source: .uniterm, text: "from the first")
+    first.statusCenter.post(level: .warning, text: "from the first")
 
     XCTAssertEqual(first.statusCenter.history.map(\.text), ["from the first"])
     XCTAssertEqual(second.statusCenter.history.map(\.text), ["from the second"])
@@ -407,13 +446,65 @@ final class WindowSetTests: XCTestCase {
   func testAMessageWithNoWindowWaitsForTheNextWindow() throws {
     let fixture = makeFixture()
 
-    fixture.windows.post(level: .error, source: .uniterm, text: "colors failed")
+    fixture.windows.post(level: .error, text: "colors failed")
 
     let first = try fixture.windows.open()
     XCTAssertEqual(first.statusCenter.history.map(\.text), ["colors failed"])
 
     let second = try fixture.windows.open()
     XCTAssertTrue(second.statusCenter.history.isEmpty)
+  }
+
+  /// Catches a held list that grows without bound while no window is open. 40 posts leave the
+  /// newest 32 and one message that counts the 8 dropped. The next window gets them as the host's.
+  func testHeldMessagesAreBoundedAndCarryTheHostIdentity() throws {
+    let fixture = makeFixture()
+
+    for index in 0..<40 {
+      fixture.windows.post(level: .info, text: "h\(index)")
+    }
+
+    let first = try fixture.windows.open()
+
+    XCTAssertEqual(first.statusCenter.history.count, 33)
+    XCTAssertEqual(
+      first.statusCenter.history.first?.text, "8 messages were dropped while no window was open.")
+    XCTAssertEqual(first.statusCenter.history.dropFirst().first?.text, "h8")
+    XCTAssertTrue(first.statusCenter.history.allSatisfy { $0.source == .uniterm })
+  }
+
+  /// Catches an error that is lost while info could go instead. An error held first survives 40
+  /// later infos, and a lost info does not raise the summary above info.
+  func testAHeldErrorOutlivesLaterInfosPastTheLimit() throws {
+    let fixture = makeFixture()
+    fixture.windows.post(level: .error, text: "colors failed")
+
+    for index in 0..<40 {
+      fixture.windows.post(level: .info, text: "h\(index)")
+    }
+
+    let first = try fixture.windows.open()
+    let history = first.statusCenter.history
+
+    XCTAssertTrue(history.contains { $0.text == "colors failed" && $0.level == .error })
+    XCTAssertEqual(history.first?.level, .info)
+    XCTAssertEqual(history.count, 33)
+  }
+
+  /// Catches an error that goes with no mark when the held list holds nothing else. The summary
+  /// carries the error level.
+  func testAnErrorLostFromTheHeldListIsCountedAtErrorLevel() throws {
+    let fixture = makeFixture()
+
+    for index in 0..<33 {
+      fixture.windows.post(level: .error, text: "e\(index)")
+    }
+
+    let first = try fixture.windows.open()
+
+    XCTAssertEqual(first.statusCenter.history.first?.level, .error)
+    XCTAssertEqual(
+      first.statusCenter.history.first?.text, "1 message was dropped while no window was open.")
   }
 
   /// Catches a message that is held although a window is open to show it, or that reaches the
@@ -427,7 +518,7 @@ final class WindowSetTests: XCTestCase {
     let active = try XCTUnwrap(fixture.windows.activeController)
     let other = active === first ? second : first
 
-    fixture.windows.post(level: .warning, source: .uniterm, text: "now")
+    fixture.windows.post(level: .warning, text: "now")
 
     XCTAssertEqual(active.statusCenter.history.map(\.text), ["now"])
     XCTAssertTrue(other.statusCenter.history.isEmpty)

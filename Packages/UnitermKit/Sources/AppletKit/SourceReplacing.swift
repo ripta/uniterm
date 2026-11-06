@@ -57,7 +57,7 @@ public enum SourceOpening {
       try target.replaceSource(with: file, startDirectory: SourceStartDirectory.of(file))
     } catch {
       target.host?.applet(
-        target, post: .error,
+        target, post: .warning,
         text:
           "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: "
           + error.localizedDescription)

@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import GeoData
 import MapKit
 import StatusKit
@@ -7,35 +8,6 @@ import Theme
 import XCTest
 
 @testable import MapViewerApplet
-
-/// Collects what an applet tells its pane.
-@MainActor
-final class RecordingHost: AppletHost {
-  var posts: [(level: StatusLevel, text: String)] = []
-  var changes = 0
-
-  func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
-    posts.append((level, text))
-  }
-
-  func appletDidExit(_ applet: any Applet) {}
-
-  func appletDidChange(_ applet: any Applet) { changes += 1 }
-
-  var tabChanges = 0
-
-  func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
-
-  var confirms = false
-  var confirmations: [AppletConfirmation] = []
-
-  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
-    confirmations.append(request)
-    return confirms
-  }
-
-  func issueCloseStamp() -> UInt64 { 0 }
-}
 
 /// The applet through its public contract: styles, palette, region, restore, and describe.
 @MainActor
@@ -450,9 +422,11 @@ final class MapViewerAppletTests: XCTestCase {
     }
     let notLoading = { applet.segments.filter { $0.text == "Map not loading" } }
 
+    let before = host.changes
     failing()
     failing()
 
+    XCTAssertEqual(host.changes, before + 1, "the bar was not told the segment changed")
     XCTAssertEqual(host.posts.map(\.level), [.warning])
     XCTAssertTrue(host.posts.first?.text.contains("offline") == true)
     XCTAssertEqual(notLoading().map(\.style), [.warning], "\(applet.segments)")
@@ -492,7 +466,7 @@ final class MapViewerAppletTests: XCTestCase {
     XCTAssertEqual(applet.typeID, "map-viewer")
     XCTAssertEqual(applet.title, "Map")
 
-    applet.start()
+    applet.start(origin: .user)
     applet.detach()
     applet.reattach()
     applet.close()

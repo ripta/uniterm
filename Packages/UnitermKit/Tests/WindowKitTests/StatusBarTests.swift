@@ -49,6 +49,91 @@ final class StatusBarTests: XCTestCase {
     fixture.bar.mouseDown(with: event)
   }
 
+  // MARK: Narrow bar
+
+  /// Every segment that shows in the bar, as a frame in the bar's own coordinates.
+  private func shownFrames(_ fixture: WindowFixture) -> [(id: BarSegmentID, frame: NSRect)] {
+    fixture.bar.segments.compactMap { segment in
+      fixture.bar.frame(of: segment.id).map { (segment.id, $0) }
+    }
+  }
+
+  private func activateEverything(_ fixture: WindowFixture) {
+    fixture.log.made[0].segments = [
+      AppletSegment(symbolName: "folder", text: "a-long-working-directory-name"),
+      AppletSegment(symbolName: "tablecells", text: "1,000,000 rows"),
+    ]
+    fixture.controller.appletDidChange(fixture.log.made[0])
+
+    fixture.center.post(level: .error, source: .uniterm, text: "something went badly wrong")
+
+    var states = WindowStates()
+    states.set(.layoutNotSaved, text: "Not saved.")
+    states.set(.pendingPermissions, text: "A program is asking.")
+    states.set(.survivingWork, text: "Work is still running.")
+    fixture.controller.windowStates = states
+  }
+
+  /// Catches a window state that a narrow bar squeezes out, an error message squeezed to nothing,
+  /// and slots that overlap. At the window's real minimum width, every active kind shows inside the
+  /// bar, the message area keeps its least width, and the applet's segments are what left.
+  func testEveryWindowStateStaysDiscoverableAtTheMinimumWidth() throws {
+    let fixture = try makeFixture()
+    let window = try XCTUnwrap(fixture.controller.window)
+    let minimum = window.contentMinSize.width
+
+    window.setContentSize(
+      NSSize(width: minimum, height: window.contentRect(forFrameRect: window.frame).height))
+    activateEverything(fixture)
+    fixture.layout()
+
+    XCTAssertEqual(fixture.bar.bounds.width, minimum, accuracy: 0.5)
+
+    let shown = shownFrames(fixture)
+
+    for kind in WindowStateKind.allCases {
+      let frame = try XCTUnwrap(
+        shown.first { $0.id == .window(kind) }?.frame, "\(kind) is not showing")
+
+      XCTAssertGreaterThan(frame.width, 0)
+      XCTAssertTrue(fixture.bar.bounds.contains(frame), "\(kind) leaves the bar: \(frame)")
+    }
+
+    let message = try XCTUnwrap(shown.first { $0.id == .message }?.frame)
+    XCTAssertGreaterThanOrEqual(message.width, StatusBarView.minimumMessageWidth - 0.5)
+    XCTAssertNotNil(shown.first { $0.id == .dismiss })
+    XCTAssertNotNil(shown.first { $0.id == .unseenError })
+
+    let ordered = shown.map(\.frame).sorted { $0.minX < $1.minX }
+
+    for (left, right) in zip(ordered, ordered.dropFirst()) {
+      XCTAssertLessThanOrEqual(left.maxX, right.minX + 0.5, "\(left) overlaps \(right)")
+    }
+
+    XCTAssertNil(shown.first { $0.id == .applet(1) }, "the last applet segment should leave first")
+  }
+
+  /// Catches a bar that drops applet segments it has room for. At a wide window, every segment
+  /// shows, in the fixed order, and no window slot moves.
+  func testAWideBarShowsEverySegmentInOrder() throws {
+    let fixture = try makeFixture()
+    let window = try XCTUnwrap(fixture.controller.window)
+
+    window.setContentSize(NSSize(width: 960, height: 400))
+    activateEverything(fixture)
+    fixture.layout()
+
+    let shown = shownFrames(fixture)
+
+    XCTAssertEqual(shown.map(\.id), fixture.bar.segments.map(\.id))
+
+    let ordered = shown.map(\.frame)
+
+    for (left, right) in zip(ordered, ordered.dropFirst()) {
+      XCTAssertLessThanOrEqual(left.maxX, right.minX + 0.5)
+    }
+  }
+
   // MARK: Docking
 
   /// Catches a bar that docks on the wrong edge by default.
@@ -86,7 +171,7 @@ final class StatusBarTests: XCTestCase {
 
     let before = fixture.bar.segments
     let minimum = fixture.controller.window?.contentMinSize
-    XCTAssertEqual(before.count, 2)
+    XCTAssertEqual(before.count, 3, "the message, the unseen-warning indicator, and the applet's")
 
     fixture.store.set(.top, for: .statusBarPosition)
     let moved = await waitUntil { edge(fixture) == .top }
@@ -302,8 +387,8 @@ final class StatusBarTests: XCTestCase {
     let (one, two) = (fixture.log.made[0], fixture.log.made[1])
 
     fixture.center.post(level: .info, source: .uniterm, text: "first")
-    controller.applet(two, post: .info, text: "from two")
-    controller.applet(one, post: .info, text: "from one")
+    two.say(.info, "from two")
+    one.say(.info, "from one")
     XCTAssertEqual(fixture.center.queue.pendingCount, 2)
 
     controller.dispatch(.close)
@@ -324,7 +409,7 @@ final class StatusBarTests: XCTestCase {
   func testOpeningTheHistoryListsLevelAndSourceAndClearsTheUnseenIndicator() throws {
     let fixture = try makeFixture()
     let controller = fixture.controller
-    controller.applet(fixture.log.made[0], post: .error, text: "boom")
+    fixture.log.made[0].say(.error, "boom")
     fixture.center.post(level: .warning, source: .uniterm, text: "careful")
 
     XCTAssertTrue(fixture.bar.segments.contains { $0.id == .unseenError })
@@ -335,7 +420,7 @@ final class StatusBarTests: XCTestCase {
     XCTAssertFalse(fixture.controller.contentController.history.isHidden)
     XCTAssertEqual(
       fixture.controller.contentController.history.lines,
-      ["warning  uniterm: careful", "error  Fake: boom"])
+      ["warning  uniterm: careful", "error  Fake (pane 1): boom"])
     XCTAssertFalse(fixture.center.hasUnseenError)
     XCTAssertFalse(fixture.bar.segments.contains { $0.id == .unseenError })
 
@@ -356,19 +441,28 @@ final class StatusBarTests: XCTestCase {
 
   /// Catches a history that is not capped on screen, or that drops the newest instead of the oldest.
   ///
-  /// 503 messages leave the 500 newest, listed newest first, so m502 leads and m3 ends.
+  /// 400 infos and 100 errors fill the 500 rows. Three more infos push out the three oldest infos,
+  /// so m3 leads the tail and m402 heads the list.
   func testTheHistoryShowsTheNewest500() throws {
     let fixture = try makeFixture()
 
-    for index in 0..<503 {
-      fixture.center.post(level: .info, source: .uniterm, text: "m\(index)")
+    for index in 0..<400 {
+      fixture.center.post(level: .info, text: "m\(index)")
+    }
+
+    for index in 0..<100 {
+      fixture.center.post(level: .error, text: "e\(index)")
+    }
+
+    for index in 400..<403 {
+      fixture.center.post(level: .info, text: "m\(index)")
     }
 
     fixture.controller.dispatch(.toggleMessageHistory)
     let lines = fixture.controller.contentController.history.lines
 
     XCTAssertEqual(lines.count, 500)
-    XCTAssertEqual(lines.first, "info  uniterm: m502")
+    XCTAssertEqual(lines.first, "info  uniterm: m402")
     XCTAssertEqual(lines.last, "info  uniterm: m3")
   }
 

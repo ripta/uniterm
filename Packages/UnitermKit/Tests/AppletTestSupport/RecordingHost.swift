@@ -1,0 +1,103 @@
+import AppletKit
+import StatusKit
+
+/// Stands in for the pane's host in applet tests. It collects what an applet tells its pane, and it
+/// numbers each history record it admits, so a test can tell a new record from a presented one.
+@MainActor
+public final class RecordingHost: AppletHost {
+  /// One delivery, in the order the applet sent it. `record` is set when the applet presented an
+  /// earlier record again.
+  public struct Sent: Equatable {
+    public var delivery: StatusDelivery
+    public var level: StatusLevel
+    public var text: String
+    public var record: StatusRecordID?
+  }
+
+  public private(set) var sent: [Sent] = []
+
+  public var changes = 0
+  public var tabChanges = 0
+  public var exited = false
+
+  /// The answer to a question, unless `holdsQuestions` is set.
+  public var answer = false
+  public var confirmations: [AppletConfirmation] = []
+
+  /// When set, a question waits here until a test answers it.
+  public var holdsQuestions = false
+  public var pendingAnswer: CheckedContinuation<Bool, Never>?
+
+  /// Signals each question as it is asked, so a test awaits it and never polls.
+  public let questions = AsyncStream.makeStream(of: Void.self)
+
+  public var lastStamp: UInt64 = 0
+
+  private var lastRecord: StatusRecordID = 0
+
+  public init() {}
+
+  /// Forgets what the applet sent so far, so a test reads only what comes after.
+  public func forgetSent() {
+    sent = []
+  }
+
+  /// The deliveries that admitted a history record, as the window's history would hold them.
+  public var admitted: [Sent] { sent.filter { $0.record == nil } }
+
+  /// What the applet delivered with a turn on the bar.
+  public var posts: [(level: StatusLevel, text: String)] { texts(of: .message) }
+
+  /// What the applet recorded in the history without a turn on the bar.
+  public var records: [(level: StatusLevel, text: String)] { texts(of: .historyOnly) }
+
+  /// What the applet delivered with the unseen signal and no turn on the bar.
+  public var attentions: [(level: StatusLevel, text: String)] { texts(of: .attention) }
+
+  /// What the applet presented again from a record it made earlier, without a new history entry.
+  public var presented:
+    [(delivery: StatusDelivery, level: StatusLevel, text: String, record: StatusRecordID)]
+  {
+    sent.compactMap { item in
+      item.record.map { (item.delivery, item.level, item.text, $0) }
+    }
+  }
+
+  private func texts(of delivery: StatusDelivery) -> [(level: StatusLevel, text: String)] {
+    admitted.filter { $0.delivery == delivery }.map { ($0.level, $0.text) }
+  }
+
+  public func applet(
+    _ applet: any Applet, send delivery: StatusDelivery, level: StatusLevel, text: String,
+    presenting record: StatusRecordID?
+  ) -> StatusRecordID? {
+    sent.append(Sent(delivery: delivery, level: level, text: text, record: record))
+
+    if let record { return record }
+
+    lastRecord += 1
+    return lastRecord
+  }
+
+  public func appletDidExit(_ applet: any Applet) { exited = true }
+
+  public func appletDidChange(_ applet: any Applet) { changes += 1 }
+
+  public func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
+
+  public func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
+    confirmations.append(request)
+    questions.continuation.yield()
+
+    if holdsQuestions {
+      return await withCheckedContinuation { pendingAnswer = $0 }
+    }
+
+    return answer
+  }
+
+  public func issueCloseStamp() -> UInt64 {
+    lastStamp += 1
+    return lastStamp
+  }
+}
