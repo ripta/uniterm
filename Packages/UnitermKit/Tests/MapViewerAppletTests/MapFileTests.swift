@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import Foundation
 import GeoData
 import MapKit
@@ -597,7 +598,7 @@ final class MapNoticePlacementTests: XCTestCase {
 
     applet.replaceSource(with: file, startDirectory: scratch.url.path)
     await applet.asking?.value
-    host.confirms = true
+    host.answer = true
     applet.replaceSource(with: file, startDirectory: scratch.url.path)
     await applet.asking?.value
     await applet.opening?.value
@@ -647,7 +648,7 @@ final class MapNoticePlacementTests: XCTestCase {
     applet.host = host
 
     applet.content.onTilesChanged?("The map could not load: offline.")
-    host.posts = []
+    host.forgetSent()
 
     applet.replaceSource(
       with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)

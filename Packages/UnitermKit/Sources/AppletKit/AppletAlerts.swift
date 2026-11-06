@@ -33,6 +33,11 @@ public enum LoadOrigin: Sendable, Equatable {
 /// held alerts through those records, so the history gets no second entry. A pane that closes
 /// while detached keeps its records, since they were made when the events happened.
 ///
+/// A new load replaces the one before it. `replaceLoad` drops the presentation of the held notices
+/// that the replaced load produced, since they describe a file the pane no longer shows. Their
+/// records stay in the history. A held error stays held, since it reports lost user work. An alert
+/// that no load produced, such as a terminal notification, stays held too.
+///
 /// The held alerts are bounded in count and bytes. When the bound drops one, a count of what was
 /// lost goes out on reattach as one more alert, at the most severe level lost.
 @MainActor
@@ -43,6 +48,7 @@ public struct AppletAlerts {
     var text: String
     var delivery: StatusDelivery
     var record: StatusRecordID?
+    var ofLoad: Bool
 
     var bytes: Int { text.utf8.count + 64 }
   }
@@ -67,10 +73,10 @@ public struct AppletAlerts {
   public init() {}
 
   /// How many alerts wait for `reattach`.
-  public var heldCount: Int { held.count }
+  var heldCount: Int { held.count }
 
   /// How many alerts the bound has dropped from the wait.
-  public var overflowCount: Int { overflow }
+  var overflowCount: Int { overflow }
 
   /// How a notice reaches the user while the pane is on screen.
   public static func delivery(of notice: AppletNotice, origin: LoadOrigin) -> StatusDelivery {
@@ -85,9 +91,10 @@ public struct AppletAlerts {
     }
   }
 
-  /// Delivers `notice`, or records and holds it while the applet is detached.
+  /// Delivers `notice`, or records and holds it while the applet is detached. A notice that is
+  /// about the current load passes `ofLoad: true`, so a later load can drop its presentation.
   public mutating func deliver(
-    _ notice: AppletNotice, origin: LoadOrigin, from applet: any Applet,
+    _ notice: AppletNotice, origin: LoadOrigin, ofLoad: Bool = true, from applet: any Applet,
     to host: (any AppletHost)?
   ) {
     let delivery = Self.delivery(of: notice, origin: origin)
@@ -108,14 +115,14 @@ public struct AppletAlerts {
         level: notice.level,
         text: StatusText.bounded(
           notice.text, maximumBytes: StatusPolicy.standard.maximumTextBytes),
-        delivery: delivery, record: record))
+        delivery: delivery, record: record, ofLoad: ofLoad))
   }
 
   /// Delivers an alert that has no load behind it, such as a terminal notification.
   public mutating func deliver(
     _ level: StatusLevel, _ text: String, from applet: any Applet, to host: (any AppletHost)?
   ) {
-    deliver(AppletNotice(level, text), origin: .user, from: applet, to: host)
+    deliver(AppletNotice(level, text), origin: .user, ofLoad: false, from: applet, to: host)
   }
 
   /// The applet left the screen. Alerts from here on are recorded and held.
@@ -153,6 +160,12 @@ public struct AppletAlerts {
         applet, send: alert.delivery, level: alert.level, text: alert.text,
         presenting: alert.record)
     }
+  }
+
+  /// A new load began. The held notices of the load it replaces are no longer worth presenting.
+  /// Errors and alerts that no load produced stay held.
+  public mutating func replaceLoad() {
+    held.removeAll { $0.ofLoad && $0.level != .error }
   }
 
   /// Lets go of whatever waits, as when the applet closes. The records stay in the history.

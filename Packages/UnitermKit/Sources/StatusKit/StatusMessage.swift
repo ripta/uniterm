@@ -220,7 +220,4 @@ public struct StatusPolicy: Sendable, Equatable {
   public static let standard = StatusPolicy()
 
   public init() {}
-
-  /// The most records the history keeps.
-  public var historyLimit: Int { errorHistoryLimit + otherHistoryLimit }
 }

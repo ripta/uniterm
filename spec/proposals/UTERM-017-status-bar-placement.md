@@ -380,8 +380,8 @@ None.
 - Level audit: a terminal that cannot start, a program that cannot start, a tab that cannot open, and a file the
   viewers cannot open were errors and are warnings now, since nothing the user made is lost. A refused map edit stays a
   warning. It keeps the file and any earlier unsaved pins and clears only the undo stack. A failed save stays an
-  error, because the rule now names work that cannot reach disk. The drop and open-panel catch blocks for a throwing `replaceSource`
-  are unreachable today, since no applet's `replaceSource` throws. They stay as part of the contract.
+  error, because the rule now names work that cannot reach disk. The drop and open-panel catch blocks for a throwing
+  `replaceSource` are unreachable today, since no applet's `replaceSource` throws. They stay as part of the contract.
 - Window state lives on the window set. The layout persistence publishes the second-instance state there, so the app
   delegate needs no change. A narrow bar hides applet segments from the last one back, and the window's minimum width
   is unchanged. See Decision Log.
@@ -430,7 +430,9 @@ None.
 - The terminal, the map, and the data viewer follow one rule for posting while detached
 - A pane closed while detached keeps its held messages in the history
 - Detached history-only delivery raises no visible message or unseen indicator
-- Reattach presents bounded held alerts without duplicate history; overflow has a count
+- Reattach presents bounded held alerts without duplicate history; overflow has a count. A new load drops the
+  presentation of the replaced load's held notices, and keeps held errors and alerts no load produced. Amended
+  2026-11-06; see Decision Log.
 - A restore-origin warning recorded while detached retains restore policy on reattach: warning attention, no message
   turn
 - Restore origin survives asynchronous completion and a user replacement load never inherits it
@@ -452,7 +454,12 @@ None.
 - The many-pane launch is proved through the real window, host, and status center with a stand-in applet. The real
   viewers and the terminal are proved alone. No package test launches real files in many real panes.
 - A pane can present only the history records its own host issued, once each. The queue also refuses an ID it never
-  issued and another source's retained record.
+  issued and another source's retained record. The host's ledger keeps an entry while the history keeps its record,
+  so a held alert never falls off it and returns as a duplicate.
+- A new load calls `replaceLoad` on the applet's alert helper. It drops the held notices the replaced load produced.
+  Their history records stay. Held errors stay, and so do alerts no load produced, such as a terminal notification.
+  A notice from a nested table is not a load notice. The map's load, the data viewer's load, and its sheet switch each
+  make the call.
 - UTERM-008's relaunch notice still reads true. Its program-pin producer is unbuilt, so its restore-origin info goes to
   the history under this rule when it ships.
 
@@ -578,6 +585,18 @@ None.
   the alert helper, not only their load notices. The user's own actions happen while the pane is attached, so those
   posts are unchanged. A completion that lands while the pane is detached follows the same rule. The terminal sends
   every post through it, so a failed start on a launch restore takes no turn.
+
+- 2026-11-06: Amended M3's record-ownership entry above (work-queue best guess). It said the host's ledger holds 256
+  records at most. Hundreds of later detached alerts could push a held error off the ledger, and reattach then
+  delivered it as a new record, a second history row. The ledger now keeps an entry exactly while the history keeps its
+  record, so retention has one rule and the limit constant is gone. A record the history dropped is delivered as a new
+  record, which restores it.
+- 2026-11-06: Amended M3's reattach check (work-queue best guess). It let a pane that loaded file A, then file B while
+  detached, replay A's held notices after B's, so a stale "File not opened" turn could follow a successful load. A new
+  load now drops the presentation of the held notices the replaced load produced. Their history records stay, since
+  they were real events. Held errors stay held, because they report lost user work. Alerts no load produced stay held.
+  A notice of the load carries that fact when it is delivered, and the applet calls `replaceLoad` where it resets its
+  posted notices.
 
 ## References
 

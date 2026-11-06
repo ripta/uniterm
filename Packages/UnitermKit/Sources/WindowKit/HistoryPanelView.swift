@@ -343,7 +343,7 @@ final class HistoryPanelView: NSView, NSTableViewDataSource, NSTableViewDelegate
   }
 
   private func menuTitle(_ pane: HistoryPane) -> String {
-    let title = "\(pane.name) (pane \(pane.id))"
+    let title = StatusBarContent.sourceLabel(.pane(id: pane.id, name: pane.name))
     return isPaneOpen(pane.id) ? title : "\(title), closed"
   }
 
@@ -490,8 +490,8 @@ final class HistoryPanelView: NSView, NSTableViewDataSource, NSTableViewDelegate
   }
 }
 
-/// A table that takes the keyboard only after the user engages it. Reading the history must not pull
-/// the keyboard out of a pane.
+/// A table that takes the keyboard only after the user engages it. Reading the history must not
+/// pull the keyboard out of a pane.
 final class HistoryTableView: NSTableView {
   var allowsKeyboard = false
   var onActivate: (() -> Void)?

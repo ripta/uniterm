@@ -25,8 +25,9 @@ public enum DriverFailureKind: Sendable {
 
 /// A producer that is not a pane, such as a script or an applet outside any pane.
 ///
-/// The status center issues the identity, and the producer can post only as itself. Its ID is never
-/// reused, so a retired producer's records stay distinguishable from a later one with the same name.
+/// The status center issues the identity, and the producer can post only as itself. Its ID is
+/// never reused, so a retired producer's records stay distinguishable from a later one with the
+/// same name.
 @MainActor
 public final class StatusProducer {
   public let source: StatusSource

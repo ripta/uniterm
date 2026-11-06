@@ -6,9 +6,9 @@ final class StderrIngressTests: XCTestCase {
   /// Catches an ingress that grows without bound or that loses a line
   /// without counting it.
   ///
-  /// Four threads offer 40,000 lines each while the main thread drains. Every batch stays within the
-  /// bounds. Each line is either counted in a batch or counted as dropped, so the totals match. The
-  /// producers are dedicated threads. Other test classes can leave the shared dispatch pool
+  /// Four threads offer 40,000 lines each while the main thread drains. Every batch stays within
+  /// the bounds. Each line is either counted in a batch or counted as dropped, so the totals match.
+  /// The producers are dedicated threads. Other test classes can leave the shared dispatch pool
   /// without a free worker, and a producer queued there would never run.
   func testAFloodStaysBoundedAndNeverBlocksTheDrainer() {
     let ingress = StderrIngress(maximumLines: 64, maximumBytes: 16 * 1024, maximumLineBytes: 512)

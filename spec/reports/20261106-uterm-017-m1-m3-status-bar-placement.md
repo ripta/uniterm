@@ -260,6 +260,35 @@ Review findings:
 ADR candidates: none added. The delivery modes and `start(origin:)` are mechanisms. The restore-origin rule is part of the notice
 rule the user declined an ADR for on 2026-11-05.
 
+## Row review
+
+Commit: "Close the seams between the status milestones".
+
+The coordinator reran `make test-package`: 1,141 tests, 4 skipped, 21 failures, run `RVTDVM`, the known set by count. The
+implementer ran the other checks, including `make swiftpm-offline-check` since `Package.swift` gained a test-support target. All
+passed, apart from the UTERM-013 finding above.
+
+Findings:
+
+- Traced and confirmed, then fixed: a held record could fall off the host's ledger after more than 256 later alerts, so reattach
+  added a duplicate history row. The test failed on unfixed code. The ledger now keeps an entry exactly while the history keeps
+  its record, so the two retention rules are one.
+- Traced and confirmed, then fixed: a newer load replayed the replaced load's held notices on reattach, so a stale "File not
+  opened" turn could follow a successful load. Tests failed on unfixed code in both viewers. A new load now drops those held
+  info and warning notices. Their history records stay. Errors and alerts no load produced stay held. This is a best guess
+  recorded in the Decision Log, and M3's reattach check is amended.
+- Fixed: comment overruns, a proposal marker mid-bullet in UTERM-004, and the filter menu building its own pane label.
+- Fixed: dead surface. `recordInHistory` moved to test support and an unread policy constant went. `AppletAlerts` counts became
+  internal. `StatusQueue`'s unseen readers stay public, since tests in another module read them.
+- Fixed: the five recording test hosts became one `RecordingHost` in a new `AppletTestSupport` target. No assertion was dropped.
+- Left for the user: a pane closed while detached records a held error in the history, but never raises the unseen signal. This
+  follows the milestone check, and it has no user path yet, since nothing sends `detach`.
+- Left for the user: the UTERM-013 freeze hunk.
+- No action: unseen warnings and window-state slots share one tone. Their symbols differ, and the M1 look covers it.
+- `adr-impact` reported no conflict and no supersession across the row. `start(origin:)` keeps ADR-05's four events.
+
+ADR candidates: none added. The held-load rule and the ledger rule are mechanisms.
+
 ## Status
 
-In progress. M1, M2, and M3 are committed. The row review and final review remain.
+In progress. M1, M2, M3, and the row review's fixes are committed. The final review remains.

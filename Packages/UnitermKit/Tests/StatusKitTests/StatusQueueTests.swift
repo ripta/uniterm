@@ -3,7 +3,8 @@ import XCTest
 @testable import StatusKit
 
 /// Each expected value below is worked out by hand from the stated rules: 1.5 s dwell, 5 s idle
-/// timeout, a backlog limit of 3, and a history of 100 errors and 400 other records. None comes from running the queue.
+/// timeout, a backlog limit of 3, and a history of 100 errors and 400 other records. None comes
+/// from running the queue.
 final class StatusQueueTests: XCTestCase {
   private let source = StatusSource.uniterm
 

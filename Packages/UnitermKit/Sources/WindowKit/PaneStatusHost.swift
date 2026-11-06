@@ -21,17 +21,17 @@ final class PaneStatusHost: AppletHost {
 
   /// A record this host admitted, and whether it has been shown. An applet presents a record by
   /// ID. The host honors only its own records, once each. An ID it did not issue, or one that
-  /// fell off the ledger, is delivered as a new record of this pane instead, so no pane can mark
-  /// or show another's.
+  /// left the history, is delivered as a new record of this pane instead, so no pane can mark or
+  /// show another's.
+  ///
+  /// The ledger keeps an entry exactly while the history keeps its record. Retention has one rule,
+  /// so a record the pane still holds cannot fall off the ledger and come back as a duplicate.
   private struct Issued {
     var id: StatusRecordID
     var presented: Bool
   }
 
   private var ledger: [Issued] = []
-
-  /// The most records the ledger remembers. A policy value with no setting.
-  static let ledgerLimit = 256
 
   init(pane: NodeID, applet: any Applet, window: MainWindowController) {
     self.pane = pane
@@ -67,7 +67,9 @@ final class PaneStatusHost: AppletHost {
     if target == nil, let id {
       ledger.append(Issued(id: id, presented: delivery != .historyOnly))
 
-      if ledger.count > Self.ledgerLimit { ledger.removeFirst() }
+      let retained = Set(window.statusCenter.history.map(\.id))
+
+      ledger.removeAll { !retained.contains($0.id) }
     }
 
     return id

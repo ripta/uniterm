@@ -326,3 +326,14 @@ extension FakeApplet {
     host?.applet(self, recordInHistory: level, text: text)
   }
 }
+
+extension AppletHost {
+  /// Records `text` in the window's history without a turn on the bar and without an unseen
+  /// signal. Returns the record's ID.
+  @discardableResult
+  func applet(
+    _ applet: any Applet, recordInHistory level: StatusLevel, text: String
+  ) -> StatusRecordID? {
+    self.applet(applet, send: .historyOnly, level: level, text: text, presenting: nil)
+  }
+}
