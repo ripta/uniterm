@@ -26,6 +26,7 @@ final class BuiltInAppletsTests: XCTestCase {
         AppletTypeDeclaration(
           typeID: "map-viewer", displayName: "Map Viewer",
           opens: [OpenedType("public.geojson", rank: .owner)]),
+        AppletTypeDeclaration(typeID: "browser", displayName: "Browser", opens: []),
       ])
   }
 

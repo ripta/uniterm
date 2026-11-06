@@ -21,6 +21,18 @@ final class InfoPlistDriftTests: XCTestCase {
 
   private var declarations: [AppletTypeDeclaration] { BuiltInApplets.declarations }
 
+  /// Catches an Info.plist that loses the web-content exception, so plain `http` pages stop loading
+  /// in the browser. It also catches an app-wide exception in its place, which would let
+  /// uniterm's own network traffic fall back to plain HTTP. Loopback is exempt from the transport
+  /// rules already, so no test can show the key's effect on a named host. The plist is the app's
+  /// real one.
+  func testPlainHTTPIsAllowedInWebContentAndNowhereElse() throws {
+    let security = try XCTUnwrap(try loadPlist()["NSAppTransportSecurity"] as? [String: Any])
+
+    XCTAssertEqual(Set(security.keys), ["NSAllowsArbitraryLoadsInWebContent"])
+    XCTAssertEqual(security["NSAllowsArbitraryLoadsInWebContent"] as? Bool, true)
+  }
+
   /// Catches an applet that declares a type the app never registers with Launch Services, a type
   /// registered with no applet behind it, a rank above Alternate that would displace another app,
   /// and a role other than Viewer. The plist is the app's real one.

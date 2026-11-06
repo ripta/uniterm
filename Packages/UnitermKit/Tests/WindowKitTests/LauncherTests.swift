@@ -27,7 +27,8 @@ final class LauncherModelTests: XCTestCase {
   /// would show nothing.
   func testTheFilterMatchesNamesIgnoringCaseAndSpace() {
     var model = LauncherModel()
-    XCTAssertEqual(model.visible.map(\.kind), [.terminal, .program, .dataViewer, .mapViewer])
+    XCTAssertEqual(
+      model.visible.map(\.kind), [.terminal, .program, .dataViewer, .mapViewer, .browser])
 
     model.filter = "RUNNING"
     XCTAssertEqual(model.visible.map(\.kind), [.program])
@@ -72,10 +73,13 @@ final class LauncherModelTests: XCTestCase {
     XCTAssertEqual(model.selection?.kind, .mapViewer)
 
     model.move(by: 1)
+    XCTAssertEqual(model.selection?.kind, .browser)
+
+    model.move(by: 1)
     XCTAssertEqual(model.selection?.kind, .terminal)
 
     model.move(by: -1)
-    XCTAssertEqual(model.selection?.kind, .mapViewer)
+    XCTAssertEqual(model.selection?.kind, .browser)
 
     model.filter = "zzz"
     model.move(by: 1)
@@ -130,6 +134,19 @@ final class LauncherModelTests: XCTestCase {
     XCTAssertFalse(model.showsCommand)
     XCTAssertEqual(model.focus, .filter)
     XCTAssertEqual(model.selection?.kind.accessibilityIdentifier, "launcher-map-viewer")
+  }
+
+  /// Catches a browser row that opens a terminal, or one that asks for a command or a place.
+  func testTheBrowserEntryChoosesTheBrowserWithoutAnyField() throws {
+    var model = LauncherModel()
+    model.offersPlace = true
+    model.select(.browser)
+
+    XCTAssertEqual(try model.choice().get(), .browser)
+    XCTAssertFalse(model.showsCommand)
+    XCTAssertFalse(model.showsPlace)
+    XCTAssertEqual(model.focus, .filter)
+    XCTAssertEqual(model.selection?.kind.accessibilityIdentifier, "launcher-browser")
   }
 
   /// Catches an empty program that opens, and a command that keeps stray space.
@@ -405,8 +422,14 @@ final class LauncherTests: XCTestCase {
     XCTAssertEqual(view.model.selection?.kind, .mapViewer)
 
     send(#selector(NSResponder.moveDown(_:)), from: view.filterField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .browser)
+
+    send(#selector(NSResponder.moveDown(_:)), from: view.filterField, in: view)
     XCTAssertEqual(view.model.selection?.kind, .terminal)
     XCTAssertTrue(view.isFocused(view.filterField))
+
+    send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .browser)
 
     send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
     XCTAssertEqual(view.model.selection?.kind, .mapViewer)
@@ -527,7 +550,7 @@ final class LauncherTests: XCTestCase {
     }
 
     let rows = view.rows.map(frame)
-    XCTAssertEqual(rows.count, 4)
+    XCTAssertEqual(rows.count, LauncherEntry.all.count)
     XCTAssertGreaterThan(rows[0].width, 200)
 
     let filter = frame(view.filterBox)
