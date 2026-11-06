@@ -134,21 +134,24 @@ final class BrowserHarness {
   var records: [(level: StatusLevel, text: String)] { host.recording.records }
 
   static func make(
-    services: BrowserServices = .testing(),
+    services: BrowserServices = .testing(), dataStore: WKWebsiteDataStore = .nonPersistent(),
     handler: @escaping FixtureServer.Handler = { _ in .page(titled: "ok") }
   ) async throws -> BrowserHarness {
     let server = try await FixtureServer.start(handler: handler)
-    let applet = BrowserApplet(dataStore: .nonPersistent(), services: services)
+    let applet = BrowserApplet(dataStore: dataStore, services: services)
 
     return BrowserHarness(server: server, applet: applet)
   }
 
-  init(server: FixtureServer, applet: BrowserApplet) {
+  /// `starting` is false for a test that decides when the pane starts, such as one that detaches
+  /// it first.
+  init(server: FixtureServer, applet: BrowserApplet, starting: Bool = true) {
     self.server = server
     self.applet = applet
 
     applet.host = host
-    applet.start(origin: .user)
+
+    if starting { applet.start(origin: .user) }
   }
 
   func stop() {

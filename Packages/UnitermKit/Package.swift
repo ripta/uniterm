@@ -118,7 +118,10 @@ let package = Package(
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
     .testTarget(
       name: "AppletCatalogTests",
-      dependencies: ["AppletCatalog", "FileRouting", "AppletKit", "WindowKit"]),
+      dependencies: [
+        "AppletCatalog", "FileRouting", "AppletKit", "WindowKit", "BrowserApplet", "Preferences",
+        "BrowserTestSupport",
+      ]),
     // Test support. It builds ZIP archives for the tests of both targets that read workbooks, and
     // holds the seeded generator the table and map fuzzers share.
     .target(name: "TableTestSupport", path: "Tests/TableTestSupport"),

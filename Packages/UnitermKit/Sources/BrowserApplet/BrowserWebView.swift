@@ -12,6 +12,19 @@ final class BrowserWebView: WKWebView {
 
   var onHistoryButton: ((HistoryButton) -> Void)?
 
+  /// How many times the history record was read. A read costs time in step with the history, so a
+  /// test counts them to show that a page's title changes read none.
+  private(set) var interactionStateReads = 0
+
+  override var interactionState: Any? {
+    get {
+      interactionStateReads += 1
+
+      return super.interactionState
+    }
+    set { super.interactionState = newValue }
+  }
+
   /// A real left mouse-up reached the view. Only the view sees one, so this is how the tab tells a
   /// link the user clicked from a link a script clicked.
   var onMouseUp: (() -> Void)?

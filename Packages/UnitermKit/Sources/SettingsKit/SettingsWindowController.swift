@@ -5,7 +5,11 @@ import Preferences
 /// as leaf views.
 @MainActor
 public final class SettingsWindowController: NSWindowController {
-  public init(store: SettingsStore) {
+  /// `clearWebsiteData` removes the browser's stored data. It comes from the host, since this module
+  /// links no web engine. It throws when it cannot finish, and the row says so.
+  public init(
+    store: SettingsStore, clearWebsiteData: @escaping @MainActor () async throws -> Void
+  ) {
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
       styleMask: [.titled, .closable],
@@ -15,7 +19,8 @@ public final class SettingsWindowController: NSWindowController {
     window.isReleasedWhenClosed = false
     window.isRestorable = false
     window.setAccessibilityIdentifier("settings-window")
-    window.contentViewController = SettingsViewController(store: store)
+    window.contentViewController = SettingsViewController(
+      store: store, clearWebsiteData: clearWebsiteData)
     window.center()
 
     super.init(window: window)

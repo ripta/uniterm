@@ -17,8 +17,8 @@ need the user's credentials.
 | UTERM-005 M2: Security indicator | DONE | "Warn in the address bar when a page is not fully secure" |
 | UTERM-005 M3: Tabs | DONE | "Add browser tabs, keys, and a question before resending a form" |
 | UTERM-005 M4: Address bar input | DONE | "Search from the address bar, and offer plain HTTP only by the user's action" |
-| UTERM-005 M5: Website data, restore, and reopen | IN PROGRESS | |
-| UTERM-005 M6: Pop-ups, downloads, and running work | QUEUED | |
+| UTERM-005 M5: Website data, restore, and reopen | DONE | "Give the browser its own website data, and restore tabs lazily" |
+| UTERM-005 M6: Pop-ups, downloads, and running work | IN PROGRESS | |
 | UTERM-005 M7: Web content failure | QUEUED | |
 
 ## Local checks
@@ -315,6 +315,53 @@ An `xctest` crash report at 13:35 local on 2026-11-06 is a trap in a test draft 
 is involved, and the current test uses a stand-in object.
 
 Test cost: `BrowserAddressTests` takes about 1.5 s for 19 tests, and the new model tests take milliseconds.
+
+### M5: Website data, restore, and reopen
+
+Commit: "Give the browser its own website data, and restore tabs lazily".
+
+Checks, on 2026-11-06, with no other UI run on the screen:
+
+- `make test-package`, coordinator's run `287QC0`: 1,338 tests, 4 skipped, 0 failures, 58.2 s.
+- `make test-app`, coordinator's run `WQQ03K`: 109 tests, 0 failures, 875.1 s.
+- `make fmt-check`, `make lint`, `make check`, `make build`, `make swiftpm-offline-check`, and the UI tests' build for testing passed in
+  the implementer's runs. `proposals.py check` reports nothing, and `freeze` reports only the UTERM-013 hunk.
+
+Best guesses from the implementer:
+
+1. A pane's undo part now carries each open tab's history, in `tabStates`. The part held only closed tabs, so a closed pane reopened with
+   no history on any open tab. It stays out of the layout file. If wrong, pane reopen restores addresses only.
+2. A tab with no page returns no history record. A blank tab used to return a useless 137-byte record, and that record replaced a pending
+   one when a reopened, unloaded tab closed again.
+3. WebKit's removal reports no failure, so the only failure Clear Website Data can report is an HTTPS-only list that cannot be emptied. A
+   newer build's file is never rewritten, so that clear reports a partial result.
+4. The profile label reads "Default Profile" at the trailing end of the toolbar, with no selector.
+5. The store is a required initializer argument, so nothing in the app can fall back to WebKit's default store. A debug build's
+   `UNITERM_BROWSER_STORE=memory` gives UI tests a store that keeps nothing. `forIdentifier:` was not tried under UI tests.
+
+Review findings and dispositions:
+
+- Fixed: a page writing `document.title` in a loop made `describe()` read and encode every tab's history on the main thread, per event, and
+  throw it away. Each tab now caches its record, and the applet caches the encoded part, invalidated only by history changes. The test failed
+  first with 24 reads where 0 are expected. A pane close takes the record as of the last history change, so a scroll position can be that
+  old. A tab that closes alone reads live. A page pushing history entries in a loop still costs one read per entry, which WebKit rate-limits.
+- Fixed: a clear, a failed write, then a second clear reported "Cleared." The test failed first.
+- Fixed: the failure line contradicted itself. It now reads "Website data was partly cleared."
+- Fixed: a stored address reached the pane with bidirectional overrides and unbounded combining marks, one test run giving 10,009 bytes.
+  `AddressDisplay.bounded` now cleans and bounds every address shown in a question, pane, or notice. The tests failed first.
+- Fixed: three proposal amendments lacked a marker or a prior meaning. VoiceOver now hears the Settings row's result, and reads the profile
+  label once.
+- Closed test gaps: a tab closed or reopened while detached, no repeat warning on a refused tab, a wrong `tabStates` count, local storage after
+  a clear, and a test that could hang.
+
+Weak proofs, stated plainly: `BrowserLayoutChangeTests` passes on the old code too, so it is a guard, since the window compares with the undo
+part stripped. The local storage assertion was not shown to fail when a clear skips it. The real-relaunch check is left to the user: the
+package test shows only that a second store instance over one identifier sees the cookie within one process.
+
+ADR check: no conflicts. Its ADR-08 advisory is resolved by the cache above. None of the implementer's candidates passes: the UUID and the
+required argument are mechanisms inside one component, and `describe()`'s cost is settled here. The fixed UUID stays a risk in the proposal.
+
+Test cost: the new M5 tests take about 2 s together.
 
 ## Unowned failures
 

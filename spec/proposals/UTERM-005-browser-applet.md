@@ -95,16 +95,19 @@ a Clear Website Data action.
 - Descriptions carry no store reference, and the layout file holds no website data.
 - Clear Website Data removes everything in the browser's store and empties the browser's own list of HTTPS-only
   hosts, per "Local addresses and plain HTTP". It reloads no tab. Settings says that open tabs keep their current
-  session until they are reloaded or closed. Amended 2026-11-06; see Decision Log.
+  session until they are reloaded or closed. It asks nothing, disables its button while a clear runs, and reports the
+  outcome in Settings. A clear that could not empty the list of HTTPS-only hosts says so and never reads as a
+  success. Amended 2026-11-06; see Decision Log.
 - The store's UUID is a constant. Changing it would orphan every login and all site data, since WebKit cannot move data
   between stores. See Risks.
 - Sharing is hidden state flow between panes: logging in in one pane logs in the others. CLAUDE.md asks for that to be
   an explicit decision. The user kept it at the review gate on 2026-11-03.
 - The pane shows its active profile, so the sharing is visible. With one store, every pane shows the default profile,
-  labelled "Default Profile" or similar. Where the label sits, and whether a profile selector appears on the new pane
-  sheet or on the browser pane, are iterated with the user in hands-on review during M5. A second profile would need its
-  own store, and its profile ID would flow through the pane's description, per CLAUDE.md "Applet Attributes". Adding
-  one is a decision for the user, not an implementation detail. Chosen by the user on 2026-11-03.
+  labelled "Default Profile". M5 puts the label at the trailing end of the browser's own toolbar, with no selector. The
+  user confirms the placement in hands-on review, and whether a profile selector appears on the new pane sheet or on
+  the browser pane stays open until then. A second profile would need its own store, and its profile ID would flow
+  through the pane's description, per CLAUDE.md "Applet Attributes". Adding one is a decision for the user, not an
+  implementation detail. Chosen by the user on 2026-11-03. Amended 2026-11-06; see Decision Log.
 - A browser pane a program creates uses the same store. "Control" decides what a controller may do with it.
 
 Rationale: the motivation is docs and dashboards, and they need logins that last. Per-pane stores make every new pane
@@ -131,11 +134,14 @@ Log.
 - The layout payload stores each tab's last committed URL and title, and which tab is selected. It stores a URL only
   when "Schemes" lets a restored tab load it, so a committed `blob:` page is not stored. A URL over 32 KiB is not
   stored, and a title is cut to 512 characters. A tab keeps the value it last stored when a commit is not storable. It
-  never stores back/forward history or form data.
+  never stores back/forward history or form data. A restored URL that "Schemes" refuses stays in the description
+  unchanged until the user navigates, since only a commit writes a URL. Amended 2026-11-06; see Decision Log.
 - Restore loads only the selected tab of each pane, and only while the pane is attached. Other tabs load when first
   selected. A tab that has not loaded shows its stored URL and title.
-- The undo-only part carries each tab's `interactionState`, so Cmd-Shift-T brings back a tab's or a pane's history
-  within the session. The layout file never writes it, per UTERM-013.
+- The undo-only part carries each closed tab's `interactionState` and a record for each open tab, so Cmd-Shift-T
+  brings back a tab's or a pane's history within the session. The layout file never writes it, per UTERM-013. A tab
+  that has loaded nothing carries no record, and one reopened but not yet loaded keeps the record it was given.
+  Amended 2026-11-06; see Decision Log.
 - No restore path resubmits a form or replays a POST. That includes going back or forward through restored history.
 - A restored URL passes the rule in "Schemes".
 - The payload is stored data that every later build reads. ADR-06's per-type version defuses that one-way door: the
@@ -350,10 +356,12 @@ browser pauses media, per ADR-05.
 Decision: the browser needs no change to the applet contract. The host gains what any new applet type needs: a launcher
 entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer. The
 factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
-hosts, and the opener for other apps. Amended 2026-11-06; see Decision Log. Restore is settled in "What restore loads".
+hosts, and the opener for other apps. The host also passes each pane the browser's website data store, with no
+default. Amended 2026-11-06; see Decision Log. Restore is settled in "What restore loads".
 
 - The description payload holds each tab's last committed URL and title, and the selected tab, with its own version per
-  ADR-06. The undo-only part holds each tab's `interactionState` and the closed-tab list.
+  ADR-06. The undo-only part holds a history record for each open tab, and the closed-tab list with each closed tab's
+  `interactionState`.
 - `currentDirectory` is nil. A browser pane has no directory, and a pane split from it starts in the launcher's default.
 - On detach, the browser suspends media playback in every tab and holds back JavaScript alerts and confirmations until
   reattach. Downloads keep going. Reattach resumes nothing on its own: the user starts paused media again.
@@ -685,7 +693,7 @@ None.
 
 ### M5: Website data, restore, and reopen
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Logins carry across browser panes and survive relaunch, in a store separate from WebKit's default store
 - Every browser pane shows its active profile, the default profile, and the user confirms its placement in a hands-on
@@ -695,10 +703,83 @@ None.
 - Layout restore loads only the selected tab of each attached pane. An unselected tab shows its stored URL and title,
   and loads when first selected. A detached pane loads nothing until it is attached. The layout file holds no history
   and no form data
-- A restored tab whose URL has a scheme other than `http`, `https`, or `about:blank` shows `about:blank` and a message
-  naming the URL, and its description keeps that URL until the user navigates
+- A restored tab whose URL has a scheme other than `http`, `https`, or `about:blank` shows `about:blank` and an
+  explanation in the pane naming the URL, with one history warning, and its description keeps that URL until the user
+  navigates. Amended 2026-11-06; see Decision Log.
 - A browser pane reports no current directory, and a pane split from it starts in the launcher's default
 - Going back or forward through reopened history never resubmits a form
+
+**As built:**
+
+- The store is `BrowserWebsiteData` in `BrowserApplet`. Its identifier is a constant with a comment that says it must
+  never change, and a test pins the value. `live` builds `WKWebsiteDataStore(forIdentifier:)`. Neither `BrowserApplet`
+  initializer has a default store any more, so no pane can reach WebKit's default store by omission. The host builds
+  one `BrowserWebsiteData` at launch and passes its store to every pane. A debug build reads `UNITERM_BROWSER_STORE`, and
+  the value `memory` gives a store that keeps nothing. The UI tests set it, so they never reach the user's store, which
+  the app's bundle identifier scopes and a UI test shares. How `forIdentifier:` behaves under UI tests was not tried,
+  since an in-memory store makes the question moot. A persistent test store would leave a folder under the app's
+  container per run, and the UI tests have no way to remove it.
+- Package tests run real web views against the fixture server. A cookie a page sets lands in the test's persistent
+  store and never in `.default()`. Two panes on one store send one another's cookie, and a pane on another store sends
+  none. A second store instance over the same identifier sees the first one's cookie. That runs in one process, so it
+  proves that the identifier names the data. It does not prove that the data survives a relaunch, which is left to the
+  user. Each test uses a throwaway identifier and removes its store in teardown.
+- Clear Website Data is `BrowserWebsiteData.clear`, which removes every website data type since the beginning of time
+  and then empties the list of HTTPS-only hosts. A test proves the cookie is gone, another store's cookie is untouched,
+  the list is empty, and an open tab asked the server nothing and kept its title. `HSTSStore.removeAll` now answers
+  whether the file can still hold hosts. A file from a newer build is never written, so for that file the clear throws
+  after it removed the site data, and a test pins that the file's bytes are unchanged. A clear after a failed write tries
+  the file again, so a second clear cannot report success for a file that still holds hosts. WebKit's own removal reports no
+  failure, so the clear has no other failure to show.
+- A restored address is shown through `AddressDisplay`, which now drops bidirectional controls, turns other control
+  characters into spaces, and cuts by characters and by 480 bytes. A layout file can no longer put a reordering override or
+  a long run of combining marks in a pane, a notice, or a question.
+- Settings holds the action in `ActionSettingRow`, which `SettingsKit` links with no WebKit. The host passes a closure
+  through `SettingsWindowController`, which has no default, and there was no action-row precedent. The button is disabled
+  while a clear runs, a second request is ignored, and the row shows "Cleared." or the error's own line, which the error
+  chooses whole. Each state is announced to VoiceOver. A failure never reads as a
+  success, and a retry replaces it. A standing note says open tabs keep their current session until they are reloaded or
+  closed. Tests hold the closure at a gate to prove the double click, and prove the failure text and the retry.
+- The profile label reads "Default Profile". It sits at the trailing end of the browser's toolbar and is a label with no
+  selector. It carries the identifier `browser-profile` and is read once by assistive technology, by its text. Its
+  placement is left to the user's hands-on review, and so is how it fares in a narrow pane, where it keeps its width
+  and the address bar gives way.
+- A detached pane loads nothing. `start` on a detached pane marks the pane started and loads nothing, and a tab selected
+  or reopened while detached waits. `reattach` loads the selected tab if it never loaded, once. Detach has no host
+  trigger, so the rule is proved by calling the events in tests, as M3 expected. The tab's own load origin survives to
+  the attach, so a restore stays as quiet as at launch.
+- A refused restored address is now a `LoadErrorPage` case, so the pane shows an explanation that names the address and
+  the history records one warning that takes no turn on the bar. The description keeps the address through a save,
+  because only a commit writes a URL and a refusal never commits, so the storable rule does not touch it. A committed
+  `blob:` page is not stored, while a restored `file:` address is kept. The first is the rule for what a commit writes,
+  and the second is what a restore was given. A typed load clears the explanation and the commit replaces the address.
+  Reload on the blank tab warns again and stays refused, as before. Earlier tests that count warnings held without
+  change.
+- Pane reopen lost every open tab's history. The undo-only part held only the closed tabs, so a closed pane rebuilt each
+  tab from its address alone. The part now carries one history record for each open tab, and a restore applies each
+  record at the tab's first load. The layout file never holds it, and a test checks that the encoded layout has no such
+  field. A test closes a pane on a page reached from a form post, rebuilds it, and shows that the history is back, that
+  going back onto the post is refused with a notice and no question, and that the server saw one post.
+- A tab reopened but not yet loaded lost its history when it closed again. A tab whose web view had no page reported an
+  empty record that replaced the record it was given. The tab now hands back the record it holds first, and a tab with
+  no page has none. The regression test failed before the fix with a 137-byte record in place of the 710-byte original.
+  A tab restored and never selected closes with no record and keeps its address and title.
+- `describe()` carries each open tab's history record, and the window calls it at every change an applet reports, at a
+  rate a page chooses. Each tab keeps its last read of the record, and the applet keeps the encoded undo-only part. A
+  commit, a finish, a load, a step, a change of address, or a change of `canGoBack` or `canGoForward` makes the read
+  stale. A title change or a loading toggle never does, so a page that rewrites its title in a loop costs no read. A test
+  sets a title 40 times, describes the pane at every change, and counts reads of the history record: it failed before the
+  change with 24 reads and passes with none. A pane close takes the record as of the last history change, so a scroll
+  position can be as old as that change, and a tab that closes alone reads the live record. A page that pushes history
+  entries in a loop still costs a read for each one, and WebKit rate-limits that. A window-level test shows that a history
+  entry with no new stored address raises no layout change.
+- A pane split from a browser asks the factory for no directory. A test builds a real window around a real browser pane
+  and splits it, and checks that the factory ran. This needed the catalog tests to link the browser and the fixture server, so `Package.swift`
+  changed.
+- Four UI tests are built and not run: the profile label, restoring three tabs with the second selected, a refused
+  restored address, and the Settings action with its note. The coordinator runs them.
+- Left to the user. Whether the profile label's placement is right, and whether logins survive a real relaunch.
+  Reaching `forIdentifier:` store data across two launches needs a persistent store that the UI tests avoid.
 
 ### M6: Pop-ups, downloads, and running work
 
@@ -904,6 +985,22 @@ Starts after UTERM-004 M6.
   read live, and never through the applet reading the settings store or UserDefaults. Waits on the second applet that
   takes a setting, since this one instance cannot yet show whether settings belong in a per-applet bundle or on the applet
   contract. Found in UTERM-005 M4.
+
+- 2026-11-06: M5 as built (work-queue best guess). The pane's undo-only part now carries a history record for each open
+  tab. The text said it carried each tab's record, and M3 built only the closed tabs', so a closed pane came back with
+  each tab's address and no history. A tab holding a pending record keeps it, and a tab with no page carries none.
+  A restored address that "Schemes" refuses stays in the description untouched, since only a commit writes a URL. A
+  committed `blob:` page is not stored and a restored `file:` address is kept. The first is what a commit writes, and the
+  second is what a restore was given, so the two do not conflict. The store reaches each pane as a required argument,
+  where the text named no path. Settings reports a clear's outcome and says so when the list of HTTPS-only hosts could
+  not be emptied, which the text left open. "Website data" named the label "Default Profile" or similar
+  and left its placement to review. It now reads "Default Profile" and sits at the trailing end of the toolbar, as a first
+  placement for the user's review. "What restore loads" said nothing about a refused URL in the description. It now says the
+  description keeps it. M5's fifth check said a refused restored tab shows "a message naming the URL". It now says an
+  explanation in the pane naming the URL, with one history warning. The undo-only part is kept between history changes,
+  so a pane close can carry a scroll position older than the last history change. A debug build reads `UNITERM_BROWSER_STORE=memory` so UI tests never reach the user's store. If
+  wrong, a pane undo that should carry less history costs one description field to drop, and a clear that should ignore
+  a newer HSTS file would report success while the file still holds hosts.
 
 ## References
 

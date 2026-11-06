@@ -234,4 +234,79 @@ final class BrowserUITests: UnitermUITestCase {
     XCTAssertTrue(waitForGone(note), "the note stayed after a valid choice")
     XCTAssertEqual(control.radioButtons["Kagi"].value as? Int, 1)
   }
+
+  /// Catches a browser pane that hides which profile it uses. Every pane shows the default profile
+  /// in its toolbar, with no selector. The user confirms where it sits in a hands-on review.
+  func testEveryBrowserPaneShowsItsProfile() {
+    let app = launchApp()
+    let window = openBrowser(in: app)
+    let profile = window.descendants(matching: .any)["browser-profile"]
+
+    XCTAssertTrue(profile.waitForExistence(timeout: 10), "the pane shows no profile")
+    XCTAssertEqual(profile.value as? String, "Default Profile")
+  }
+
+  /// Catches a layout that restores every tab as the first one, or a selection that is lost. Three
+  /// tabs are planted with the second selected. The bar shows all three and selects the second. No
+  /// page loads from the network.
+  func testALayoutWithSeveralTabsRestoresThemAndTheSelectedOne() throws {
+    try plantBrowser(
+      payload: """
+        {"tabs":[{"url":"about:blank","title":"One"},{"url":"about:blank","title":"Two"},
+        {"url":"about:blank","title":"Three"}],"selected":1}
+        """)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 15), "no browser pane restored")
+    XCTAssertTrue(tab(2, in: window).waitForExistence(timeout: 10), "the third tab is missing")
+    XCTAssertTrue(isSelected(tab(1, in: window)), "the saved selection was lost")
+    XCTAssertFalse(waitFor(tab(0, in: window), timeout: 1) { $0 == "selected" })
+  }
+
+  /// Catches a refused restored address that leaves a blank pane with no word about it. A planted
+  /// `file:` tab shows an explanation that names the address, and no page covers it.
+  func testARestoredFileAddressExplainsItselfInThePane() throws {
+    try plantBrowser(
+      payload: #"{"tabs":[{"url":"file:///etc/hosts","title":"Hosts"}],"selected":0}"#)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 15), "no browser pane restored")
+
+    let detail = window.descendants(matching: .any)["browser-error-detail"]
+
+    XCTAssertTrue(detail.waitForExistence(timeout: 10), "the pane has no explanation")
+    XCTAssertTrue((detail.value as? String ?? "").contains("file:///etc/hosts"))
+  }
+
+  /// Catches a Settings window with no Clear Website Data action, a click that does nothing or
+  /// reports nothing, and a note that leaves out what open tabs keep. The in-memory store of the UI
+  /// tests makes the click safe. The status line says it cleared.
+  func testSettingsClearsWebsiteDataAndSaysOpenTabsKeepTheirSession() {
+    let app = launchApp()
+    XCTAssertTrue(app.windows["main-window"].waitForExistence(timeout: 10))
+
+    app.typeKey(",", modifierFlags: .command)
+    let settings = app.windows["settings-window"]
+    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+
+    let button = settings.buttons["clear-website-data-button"]
+    XCTAssertTrue(button.waitForExistence(timeout: 5), "no Clear Website Data button")
+
+    let note = settings.staticTexts["clear-website-data-note"]
+    XCTAssertTrue(note.waitForExistence(timeout: 5))
+    XCTAssertTrue((note.value as? String ?? "").contains("keep their current session"))
+
+    button.click()
+
+    let status = settings.staticTexts["clear-website-data-status"]
+
+    XCTAssertTrue(status.waitForExistence(timeout: 10), "the click reported nothing")
+    XCTAssertTrue(
+      waitFor(status, timeout: 10) { $0.contains("Cleared") }, "the status never said cleared")
+    XCTAssertTrue(button.isEnabled)
+  }
 }
