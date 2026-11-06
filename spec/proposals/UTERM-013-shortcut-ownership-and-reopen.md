@@ -67,7 +67,8 @@ Chosen by the user on 2026-11-01.
 ### Cmd-Shift-T reopens, and Cmd-Z undoes text edits only
 
 Cmd-Shift-T reopens the newest close in the window, whether a tab or a pane. Amended 2026-11-01 and 2026-11-02; see
-Decision Log. Cmd-Z undoes edits in a focused text field and nothing else.
+Decision Log. Cmd-Z undoes edits in a focused text field and nothing else. Superseded in part by UTERM-016; see
+Decision Log.
 
 - The command is uniterm's `uniterm.reopen-closed`. Its item is in File, beside Close, under the fixed title "Reopen
   Closed Tab or Pane". The title does not change with what the next reopen would be, so an App Shortcuts remap keeps
@@ -589,6 +590,8 @@ pane's usual start error.
 - 2026-11-02: Superseded in part by UTERM-014. M1 kept Clear Screen on Cmd-K as the terminal's key. UTERM-014 gives
   Cmd-K to the palette, so Clear Screen has no default key. M2 said a tab whose shell exited on its own adds no
   closed-tab entry. UTERM-014 makes every close reopenable, so an exited tab is kept like a Cmd-W close.
+- 2026-11-05: Superseded in part by UTERM-016. Cmd-Z also undoes a focused map's pin edits, through an undo stack the
+  focused view keeps apart from the window's. It still never reopens a tab or a pane.
 
 ## References
 

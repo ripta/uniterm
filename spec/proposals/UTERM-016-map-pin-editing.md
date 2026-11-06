@@ -1,26 +1,29 @@
 # UTERM-016: Map Pin Editing
 
-**Status:** draft
+**Status:** accepted
 **Created:** 2026-11-05
 **Updated:** 2026-11-05
 
 ## Dependencies
 
 - UTERM-008 M2: the file layer, its GeoJSON reader, and its pin IDs
+- UTERM-008 M3, and through it UTERM-004 M2 and M3: M4's command target needs the map's command schema and its
+  transport
 - UTERM-015: File > Open routing and the path-reading power
 - UTERM-013: applet commands and their keys
 
 ## Impacts
 
-- UTERM-015 — "Scope": its out-of-scope list says "Editing files. Every viewer is read-only." The map becomes the first
-  applet that writes a user's file. That statement is updated when this proposal settles.
-- UTERM-008 — "Where pins come from": the file layer is changed by the user's edits as well as by loading. The answer to
-  "Scripts and the file layer" may also amend the rule that no command reaches the file layer.
-- UTERM-008 — M3: `pin selected` for a file pin, if scripts gain any access to the file layer.
-- UTERM-013 — "Cmd-Shift-T reopens, and Cmd-Z undoes text edits only": pin edits would be the first non-text edit that
-  Cmd-Z undoes.
-- UTERM-001 — the applet contract: closing a pane, a window, or the app may need to ask about unsaved pins.
-- UTERM-004 — "Permission scopes and approval flow": only if scripts may save, which needs a path-writing power.
+- UTERM-015 — "Scope": its out-of-scope list said every viewer is read-only. The map is the first applet that writes a
+  user's file. Amended there.
+- UTERM-008 — "Where pins come from": the user's edits change the file layer, and M4 gives authorized callers an edit
+  target on it. Amended there.
+- UTERM-008 — M3: `pin selected` for a file pin, once M4 lets a caller that holds the file's read scope see its IDs.
+- UTERM-013 — "Cmd-Shift-T reopens, and Cmd-Z undoes text edits only": superseded in part. Cmd-Z also undoes a
+  focused map's pin edits.
+- UTERM-005 — "Running something" for edited form input: the browser can move its unsent-form warning onto the unsaved
+  work member when it is built. Not amended now.
+- UTERM-001 — the applet contract gains one optional member. Its default changes nothing for other applets.
 
 ## Summary
 
@@ -43,134 +46,141 @@ the user places. Their home is a file the user chose, not the layout.
 ### Pins persist only in GeoJSON files
 
 Hand-placed pins are saved to a GeoJSON file the user names, never to the pane's description. A pane with unsaved pins
-holds them in memory only.
+holds them in memory. A closed pane's unsaved pins ride in the description's undo-only part, so Cmd-Shift-T brings them
+back within the launch. The layout file never holds them.
 
 Rationale: the user asked that pins not be saved with the pane. A file the user chose is visible, portable, and
 deletable. The layout file is none of those.
 
 ### Save and Save As
 
-The map's File menu gains Save and Save As. Save writes the open file. Save As writes a new file the user names in a save
-panel, and the pane then shows that file. A map with hand-placed pins and no file has Save act as Save As.
+The map's File menu gains Save on Cmd-S and Save As on Cmd-Shift-S. Save writes the open file. Save As writes a new
+file the user names in a save panel, and the pane then shows that file. A map with pins and no file has Save act as
+Save As.
 
 Rationale: these are the user's words, and the standard Mac behavior every document app follows.
 
-### Hand editing on the map
+### A save patches the file's bytes
 
-The user adds, moves, and removes pins on the map itself. Selecting a pin offers its label, accent, and glyph for editing.
+Original question: what a save keeps that the map cannot show, such as lines, polygons, unknown properties, foreign
+members, and the author's formatting.
 
-### A sidebar lists the pins
+Decision: a save changes only the values an edit names. Every other byte of the file stays as it was.
 
-A sidebar in the pane lists the pins, so the user can find, select, and remove them without hunting on the map.
+- The patcher reads where values sit in the file and skips everything else. It finds a pin's feature by UTERM-008's
+  pin ID rule.
+- Moving a Point rewrites its coordinates and keeps an altitude. Moving a MultiPoint member rewrites that member.
+- A label replaces the first non-blank of `name`, `title`, and `label`, or adds `name`. A blank label removes it.
+- An accent or a glyph sets `uniterm:accent` or `uniterm:glyph`. The default removes the key, and a simplestyle value
+  then applies again.
+- Restyling one member of a MultiPoint moves it out to its own Point feature, with a copy of the properties.
+- A removal cuts the feature, or the member, with its separator. An add appends a feature with the file's separator.
+- A single Feature or bare geometry is wrapped in a FeatureCollection, with its own bytes inside unchanged.
+- A pin inside a GeometryCollection cannot be changed. The edit is refused and says why.
 
-### The map's script interface is UTERM-008's
+Rationale: the user chose this over rewriting the document or refusing mixed files. Formatting and version-control
+diffs stay clean, and nothing the map cannot show is lost.
 
-UTERM-008 already defines the map's commands, `add`, `remove`, `clear`, `set-layer`, and setting the region. They reach
-the map over UTERM-004's transport and `uniterm/send-command`. This proposal extends that schema where scripts need
-the new features. It defines no second interface.
+### What the map shows is what Save writes
 
-## Design Decisions (Open)
+Every edit produces new bytes first. The map then reads its pins from those bytes with the same reader a load uses.
+The pins on screen are always the pins the file will hold.
 
-### What a save keeps that the map cannot show
+Rationale: a second model of the pins beside the file's bytes could drift from what Save writes. Reading the bytes
+back makes that impossible.
 
-A GeoJSON file can hold lines, polygons, properties the map ignores, foreign members, and the author's formatting. The
-map shows only points. A save must not silently drop the rest.
+### Unsaved work on close and quit
 
-- **A. Patch the file's bytes (recommended).** Re-read the file with TableData's JSON scanner, which reports each
-  token's byte offsets. Replace only the features the user changed, append new ones, and cut removed ones. Every other
-  byte stays as it was, so formatting, key order, and a version-control diff stay clean.
-- **B. Rewrite the whole document.** Keep the parsed document as an order-preserving tree, and serialize it whole. No
-  value is lost, but formatting, whitespace, and number spelling change, so every save shows as a full-file diff.
-- **C. Refuse Save for files the map cannot fully show.** Offer only Save As to a new points-only file. It is safe, but
-  editing a mixed file means making a copy.
+Original question: what closing a pane, a window, or the app does with unsaved pins.
 
-Leaves undone, B: clean diffs. Leaves undone, C: editing a mixed file in place.
+Decision: it asks Save, Don't Save, or Cancel, and names the file. The applet contract gains one optional member,
+`unsavedWork`, and a `saveUnsavedWork()` call. Their defaults report nothing unsaved, so other applets change nothing.
 
-### Unsaved edits on close and quit
+- A pane close, the last pane, the window's close button, and quit each ask first.
+- Save saves each pane in turn. A save the user cancels, or one that fails, stops the close.
+- Unsaved work is asked about before running work. A pane with both asks twice, Save first.
 
-Pins are never saved with the pane, so closing a pane with unsaved edits would lose them.
+Rationale: asking now and loosening it later is the safe direction. Autosave would rewrite the user's files without
+an explicit Save, which cannot be undone, and adding a prompt later would feel like a regression. The member serves
+the one applet with real unsaved work. It is shaped so the browser's unsent-form warning can adopt it later. That
+amendment waits for the browser to be built.
 
-- **A. Ask, as document apps do (recommended).** Closing a pane, a window, or the app asks Save, Don't Save, or Cancel,
-  and names the file. This adds an "unsaved changes" member to the applet contract beside `isRunningSomething`. A
-  closed pane's unsaved pins ride in the undo-only part, so Cmd-Shift-T brings them back within the launch.
-- **B. Reuse the running-something prompt.** It needs no contract change, but the dialog would say the pane is
-  "running" and offer no Save. It leaves undone: a correct prompt, and saving from it.
-- **C. Save automatically.** It writes the user's file without asking, which the user's file-as-storage choice argues
-  against. It leaves undone: the user's control over when their file changes.
+### Cmd-Z undoes pin edits
 
-### Undo for pin edits
+Each add, move, edit, and removal is one undo step in the pane's own undo stack. Cmd-Shift-Z redoes it. The window
+routes Undo to a focused view's own stack after a text field being edited.
 
-UTERM-013 settled that Cmd-Z undoes text edits only, after it moved pane reopen to Cmd-Shift-T.
+Rationale: the user chose undo over a confirmation on remove. Recovery from a mistaken move or edit needs it.
 
-- **A. Cmd-Z undoes pin edits in a focused map (recommended).** Add, move, edit, and remove each make one undo step in
-  the pane's own undo manager. UTERM-013's text gains "and a focused map's pin edits".
-- **B. No undo.** Remove asks for confirmation instead. It leaves undone: recovery from a mistaken move or edit.
+### Scripts may edit the file, and only the user saves
 
-### Scripts and the file layer
-
-UTERM-008 keeps the file layer outside the command namespace. No command can reach the file's pins, and an event never
-reveals a value from the file.
-
-- **A. Scripts edit the open document, and only the user saves (recommended).** A `file` layer target joins the schema
-  for `add`, `remove`, and the move and edit commands. The commands change the pane's unsaved document, as the user's
-  own edits do. A controller may target it only when its scope holds the file under UTERM-015's path-reading power,
-  since the commands and their replies reveal the file's pin IDs. Writing the file stays a user action.
-- **B. Scripts also save.** Add a `save` command. It needs a new path-writing power in UTERM-004, with its own approval.
-  It leaves nothing undone for scripts, at the cost of a write power that no caller has asked for yet.
-- **C. No change.** Scripts write GeoJSON files themselves and open them with `uniterm open`. The map reloads a file
-  that changes on disk. It leaves undone: a script cannot add to the file the user is editing.
+UTERM-008's command schema gains a file-layer target for its edit commands. A command changes the pane's unsaved
+document, as the user's own edits do, and undoes like one. A caller may target the file only when its scope holds the
+file under UTERM-015's path-reading power, since the commands and their replies reveal the file's pin IDs. Writing the
+file stays a user action. No new write power is needed.
 
 ### A file that changes on disk while open
 
-- **A. Reload a clean pane, and ask on a dirty one (recommended).** The map watches the file. With no unsaved edits it
-  reloads quietly. With unsaved edits it shows a notice. Save then asks Overwrite, Save As, or Revert.
-- **B. Check only at Save.** Save compares the file's size, date, and content hash with what was loaded, and asks on a
-  mismatch. It leaves undone: a clean pane goes stale until reopened.
+The map watches its file, and follows an editor that saves by renaming a new file over the old one. A pane with no
+edits reads the file again. A pane with edits keeps them and says the file changed. Save then asks Save As, Cancel,
+Overwrite, or Revert.
 
-### How a pin is added
+### Adding and editing pins
 
-- **A. Right-click "Add Pin Here", and an Add Pin button in the sidebar that drops one at the map's center
-  (recommended).** Neither changes what a plain click on the map does.
-- **B. A pin-drop mode.** A toolbar toggle makes each click add a pin. A forgotten mode adds stray pins.
-- **C. Option-click adds a pin.** It is fast but hidden, so it needs a second, visible way anyway.
+A right-click on the map offers Add Pin Here. A right-click on a file pin offers Edit Pin and Remove Pin. A file pin
+drags to a new place. Its callout has an Edit button, which opens a popover for the label, color, and glyph. The Map
+menu holds Edit Pin and Remove Pin on Cmd-Delete. A plain click on the map still selects and pans, as before.
 
-### The sidebar
+### The pin list
 
-- **A. A pane-local sidebar, toggled from the View menu (recommended).** It lists the file's pins with a filter field,
-  and the program layers read-only with their Clear action. Selecting a row selects and shows the pin.
-- **B. Pins in the command palette only.** The palette lists pins as entries. It has no room for remove or edit.
+View > Show or Hide Pin List, on Cmd-Shift-L, toggles a sidebar at the map's trailing edge. It lists the file's pins in
+file order with a filter. Selecting a row selects the pin and moves the map to it. A double-click edits it. Add Pin
+drops one at the map's center, and Remove removes the selected one. The list's visibility is not saved with the pane.
+
+## Design Decisions (Open)
+
+None.
 
 ## Risks
 
-- **A save destroys or corrupts the user's file** — likelihood: medium, impact: high. Mitigation: never write without
-  an explicit Save. Write to a temporary file and swap it in atomically, keeping the file's permissions and extended
-  attributes. Round-trip tests cover every GeoJSON shape the reader accepts, plus files with content the map cannot
-  show. A fuzz run feeds random edits through save and reload.
-- **The written file is invalid for other tools** — likelihood: low, impact: medium. Mitigation: writes follow RFC 7946.
-  A test re-parses every saved fixture with `MKGeoJSONDecoder` and with a plain JSON parser. Coordinates are written
-  with the shortest text that reads back to the same number.
-- **A contract change ripples to every applet** — likelihood: medium, impact: medium. This applies only if "Unsaved
-  edits on close and quit" picks A. Mitigation: the new member has a default of "nothing unsaved", so other applets
-  change nothing.
+- **A save destroys or corrupts the user's file** — likelihood: medium, impact: high. Mitigation: nothing is written
+  without an explicit Save. The write goes to a file beside the target and is swapped in, keeping the old file's
+  permissions. Byte-exact tests cover every edit kind against files with lines, foreign members, escapes, and odd
+  spacing. The edited bytes are read back by the shipped reader before the map shows them.
+- **The written file is invalid for other tools** — likelihood: low, impact: medium. Mitigation: removals take their
+  separator with them, and tests parse every edited fixture as JSON. Coordinates are written with the shortest text
+  that reads back to the same number.
+- **A contract member every applet carries** — likelihood: low, impact: low. Its defaults report nothing unsaved, so
+  no other applet changed. Accepted.
 
 ## Milestones
 
-Drafted against the recommended options. They change when the open questions settle.
-
 ### M1: An editable document and Save
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The map holds the open file as an editable document, separate from the pins it shows
 - Save writes the file in place, and Save As writes a new one and makes it the pane's file
-- A save keeps every byte the user did not change, and a test proves it on files with lines, polygons, unknown
-  properties, and foreign members
+- A save keeps every byte the user did not change, and a test proves it on files with lines, unknown properties,
+  foreign members, and escapes
 - A save is atomic, and a failed write leaves the old file whole and says why
-- A file changed on disk since load is detected before Save overwrites it
+- A file changed on disk since load is detected before Save overwrites it, and a clean pane reloads it
+
+**As built:**
+
+- The patcher and its span reader live in `GeoData`, with no AppKit or MapKit. The review said the data viewer's JSON
+  scanner would be reused. It is internal to `TableData` and built around table capture caps, so `GeoData` got its own
+  small span reader instead. It checks the syntax it skips and bounds nesting at 512.
+- A save swaps the new file in with `FileManager.replaceItemAt`, which keeps the old file's permissions. A test holds a
+  file at mode 600 across a save.
+- The watcher re-arms after a delete or rename event, so a write-then-rename save by another editor is followed. A
+  change that matches the bytes the map last read or wrote is ignored, so the map's own save does not reload it.
+- Choosing the default accent removes `uniterm:accent`. A file's `marker-color`, when it has one, then sets the color
+  again, as the reader's rule says.
 
 ### M2: Editing pins by hand
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The user adds a pin from the map's context menu and from the sidebar, moves one by dragging, edits its label, accent,
   and glyph, and removes it
@@ -178,13 +188,33 @@ Drafted against the recommended options. They change when the open questions set
 - Closing a pane, a window, or the app with unsaved pins asks Save, Don't Save, or Cancel, and names the file
 - A map with no file accepts pins, and Save asks where to write them
 
+**As built:**
+
+- MapKit's inner views never ask the map view for a menu, so the map's own event monitor takes a right-click on the
+  map and shows the menu. A right-click on the place search is left to it.
+- An edit is refused while the previous edit's pins are still being read. Pin IDs come from file order, and a removal
+  or a split renumbers them. A second edit on stale IDs could hit the wrong pin.
+- A pane closed with unsaved pins carries them in the undo-only part. A reopen shows them as still unsaved.
+- Opening another file into a pane with unsaved pins asks first, through the host's confirmation.
+- The UI test adds a pin by right-click, undoes it, adds another, sees Cmd-W ask, and saves. It checks that the file
+  still holds its line. The drag and the popover are covered in the package tests, since XCUITest cannot drag a map
+  annotation reliably.
+- Left to the user: the look of the popover, the callout's Edit button, and a drag on a live map.
+
 ### M3: The pin sidebar
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The View menu shows and hides a sidebar that lists the pins, with a filter
 - Selecting a row selects the pin and moves the map to it
 - Program layers show read-only, with their Clear action
+
+**As built:**
+
+- No program layers exist until UTERM-008 M3, so the list shows the file's pins only. The read-only program-layer rows
+  move to M4's checks.
+- A pin selected on the map is selected in the list without moving the map back.
+- Left to the user: the sidebar's look in both flavors.
 
 ### M4: Scripts and the file layer
 
@@ -192,12 +222,27 @@ Drafted against the recommended options. They change when the open questions set
 
 - The map's command schema gains a file-layer target for its edit commands, under the path-reading power
 - A command's edit is unsaved until the user saves, and it undoes like the user's own
+- The pin list shows program layers read-only, with their Clear action
 
 ## Decision Log
 
 - 2026-11-05: Drafted after the user's review of UTERM-008. The user asked that pins be added and removed by hand,
   saved to GeoJSON with Save and Save As, never saved with the pane, and reachable through the map's script interface.
-  The settled decisions record those requests. Everything else is open.
+- 2026-11-05: A save patches the file's bytes. The user chose it over rewriting the whole document and over Save As
+  only for mixed files.
+- 2026-11-05: Unsaved work asks Save, Don't Save, or Cancel through one small optional contract member. The user asked
+  whether other applets would use it, and whether a contract should be proven before it is added. The browser's form
+  warning is the only other case, and it is unbuilt. Asking now and loosening later is the safe direction, so the user
+  chose the small member over autosave and over amending UTERM-005 now.
+- 2026-11-05: Cmd-Z undoes pin edits. The user chose it over no undo. UTERM-013 is superseded in part.
+- 2026-11-05: Scripts edit the open document under the path-reading power, and only the user saves. The user chose it
+  over scripts saving and over no change.
+- 2026-11-05: A changed file reloads a clean pane and warns an edited one; pins are added by right-click and from the
+  sidebar; the sidebar toggles from the View menu. These were stated as the plan with the questions above, and the user
+  did not object. (autonomous)
+- 2026-11-05: Accepted when the user asked for every unimplemented part to be built. M1 to M3 built the same day. M4
+  waits on UTERM-008 M3.
+- 2026-11-05: M3's program-layer check moved to M4, since program layers do not exist before UTERM-008 M3.
 
 ## References
 
