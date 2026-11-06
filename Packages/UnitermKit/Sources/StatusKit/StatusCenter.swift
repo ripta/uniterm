@@ -27,6 +27,8 @@ public final class StatusCenter {
   private let scheduler: StatusScheduler
   private var cancelWake: (@MainActor () -> Void)?
   private var observers: [UUID: @MainActor () -> Void] = [:]
+  private var issued: [UInt64: StatusProducerKind] = [:]
+  private var nextProducerID: UInt64 = 1
 
   public init(
     policy: StatusPolicy = .standard,
@@ -50,17 +52,87 @@ public final class StatusCenter {
 
   public var display: StatusDisplay? { queue.current }
   public var history: [StatusMessage] { queue.history }
+  public var loss: RetentionLoss { queue.loss }
   public var hasUnseenError: Bool { queue.hasUnseenError }
+  public var hasUnseenWarning: Bool { queue.hasUnseenWarning }
 
-  public func post(level: StatusLevel, source: StatusSource, text: String) {
+  /// Posts as the host. The host's own messages carry the `uniterm` identity.
+  public func post(level: StatusLevel, text: String) {
+    post(level: level, source: .uniterm, text: text)
+  }
+
+  /// Posts for a source. Pane and host sources are the host's to name, so this is package-only.
+  /// An applet or script source posts only with an ID this center issued, of that kind, and has
+  /// not retired.
+  /// Returns false when the post was refused.
+  @discardableResult
+  package func post(level: StatusLevel, source: StatusSource, text: String) -> Bool {
+    guard isAllowed(source) else { return false }
+
     queue.post(level: level, source: source, text: text, at: clock.now)
     didChange()
+    return true
   }
 
   /// Records a message in the history without showing it. See `StatusQueue.record`.
-  public func record(level: StatusLevel, source: StatusSource, text: String) {
+  @discardableResult
+  package func record(level: StatusLevel, source: StatusSource, text: String) -> Bool {
+    guard isAllowed(source) else { return false }
+
     queue.record(level: level, source: source, text: text, at: clock.now)
     didChange()
+    return true
+  }
+
+  /// Records several messages in the history, and tells observers once. Returns false when the
+  /// source was refused.
+  @discardableResult
+  package func record(
+    entries: [(level: StatusLevel, text: String)], source: StatusSource
+  ) -> Bool {
+    guard isAllowed(source) else { return false }
+    guard !entries.isEmpty else { return true }
+
+    for entry in entries {
+      queue.record(level: entry.level, source: source, text: entry.text, at: clock.now)
+    }
+
+    didChange()
+    return true
+  }
+
+  /// Issues an identity to a producer that is not a pane. Equal names never share one. Returns
+  /// nil at the policy's producer limit, until one retires.
+  public func issueProducer(kind: StatusProducerKind, name: String) -> StatusProducer? {
+    guard issued.count < queue.policy.producerLimit else { return nil }
+
+    let id = nextProducerID
+    nextProducerID += 1
+
+    let source: StatusSource =
+      switch kind {
+      case .applet: .applet(id: id, name: name)
+      case .script: .script(id: id, name: name)
+      }
+
+    issued[id] = kind
+    return StatusProducer(source: source, center: self)
+  }
+
+  /// Frees the slot of a producer. Ending the identity is idempotent.
+  func retire(_ source: StatusSource) {
+    switch source {
+    case .applet(let id, _), .script(let id, _): issued[id] = nil
+    case .pane, .uniterm: break
+    }
+  }
+
+  private func isAllowed(_ source: StatusSource) -> Bool {
+    switch source {
+    case .applet(let id, _): return issued[id] == .applet
+    case .script(let id, _): return issued[id] == .script
+    case .pane, .uniterm: return true
+    }
   }
 
   public func dismissCurrent() {
@@ -76,9 +148,18 @@ public final class StatusCenter {
     }
   }
 
-  public func markHistorySeen() {
-    queue.markHistorySeen()
-    didChange()
+  /// Acknowledges the records the history showed the user. See `StatusQueue.acknowledge`.
+  public func acknowledge(ids: some Sequence<UInt64>) {
+    if queue.acknowledge(ids: ids) {
+      didChange()
+    }
+  }
+
+  /// Acknowledges what retention dropped. See `StatusQueue.acknowledgeLoss`.
+  public func acknowledgeLoss() {
+    if queue.acknowledgeLoss() {
+      didChange()
+    }
   }
 
   @discardableResult

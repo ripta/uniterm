@@ -15,7 +15,7 @@ need the user's credentials.
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-017 M1: Shared rules and the window slot | DONE | "Give every notice one rule and show window state in the status bar" |
-| UTERM-017 M2: The queue | QUEUED | |
+| UTERM-017 M2: The queue | DONE | "Bind status identity at origin and bound the history by severity and source" |
 | UTERM-017 M3: Detached panes and restore | QUEUED | |
 
 ## Local checks
@@ -55,6 +55,9 @@ The approved plan made these guesses before any work began.
 
 - UTERM-017 M1: look at the bar with the slot showing, in both dock positions and a narrow window. Hover each window slot
   for its tooltip, since no headless test can show one.
+- UTERM-017 M2: look at the expanded history: the filter menu, the Focus Pane controls, and the loss strip. Run the Focus
+  Message History command, then try the arrow keys, Return, Tab, and Escape.
+- UTERM-017 M2: run `make test-app` with the screen unlocked, since the UI suite has not run on M2.
 
 ## Edits found but not made
 
@@ -118,6 +121,92 @@ protected that path, so that test pins behaviour rather than covering a bug.
 Open for the user: the `.unavailable` and missing-folder paths also do not save the layout, and they keep their error posts
 rather than a slot.
 
+## UTERM-017 M2
+
+Commit: "Bind status identity at origin and bound the history by severity and source".
+
+Checks, each run on 2026-11-06:
+
+- The implementer ran `make fmt-check`, `make lint`, `make check`, `make build`, the UI tests built with
+  `build-for-testing`, `proposals.py check`, and `proposals.py freeze`. All passed, apart from the UTERM-013 finding above.
+- The coordinator reran `make test-package`: 1,085 tests, 4 skipped, 21 failures, run `EA138P`. All 21 are in
+  `TerminalSessionIntegrationTests`. See "Unowned failures" below.
+- `make test-app` did not run. The runner failed at once with "System authentication is running", which means the screen
+  was locked. So M2's UI tests have not run, including the changed `StatusBarUITests`.
+
+### Unowned failures
+
+Run `EA138P` has 20 `surfaceCreateFailed` failures and one cleanup failure in `testShellCanReadAndWriteHome`, "couldn't be
+removed", all in `TerminalSessionIntegrationTests`.
+
+- Evidence the work did not cause them: `git diff cdd3bcf` shows no change to the `TerminalSurface` sources, its tests, its
+  one local dependency `Theme`, or `Package.swift`. The same tests passed in M1's run, before any hung run existed.
+- Likely cause: four `xctest` processes left by hung runs are still alive, PIDs 14347, 34092, 64115, and 68084. They may
+  hold ptys. The same failure appeared on 2026-11-05.
+- Uncertain: the pty link is not proven. `ps` and `sysctl` are denied, and the base commit was not run. The cleanup failure
+  has no explanation yet.
+- Attempts: the coordinator's `kill` was refused by a cg deny rule, and the rule was not worked around. To settle it, end
+  those processes and rerun `make test-package`.
+
+### The hang and the stalled agents
+
+A full `make test-package` hung, which is a defect in the run's own test, exposed by an older leak.
+
+- Confirmed cause: window closes in the package tests leave GCD workers blocked. 70 of 76 threads were stuck in
+  `-[NSAnimation _runBlocking]`, read in-process with `task_threads` and a frame-pointer walk. Setting
+  `animationBehavior = .none` temporarily made the failing filter pass. The flood test queued its producers on that starved
+  pool, so it never ran them.
+- Fix: the flood test uses four dedicated `Thread`s.
+- Not fixed: the leak itself. The base commit has the same 5 `window?.close()` calls, by reading only. Nothing on the base
+  queued work on the global pool after those classes, so nothing noticed.
+
+Two implementers were stopped and replaced, and a third was stopped and resumed. Each looked hung on a `cg_run` call that
+never started. The cause: `.cg.yaml` allows `proposals.py` only under older plugin hashes, and has no rule for `sample` or
+ad hoc scripts. cg was waiting on an approval prompt. Running `proposals.py` through Bash avoids it. `.cg.yaml` was not
+changed, since that is the user's approval list.
+
+Best guesses made during the milestone:
+
+1. Byte limits: message text 2 KiB, label 128 B, error pool 128 KiB, other pool 256 KiB, pending 64 KiB and 32 entries, folded
+   128 KiB and 100 entries. They rest on "bounded in count and bytes" and ADR-08. Each is one policy constant.
+2. The detached-storage bound moved from M2's check to M3's, with an amendment, since that storage arrives in M3.
+3. Raw stderr goes to the history only, with no bar turn, so an info flood cannot take every turn. "Driver stderr levels" and
+   UTERM-004 are amended to say so.
+4. The loss summary is a strip at the top of the panel, with an Acknowledge button.
+5. Non-pane sources read "name (applet N)" or "name (script N)", so a producer named "uniterm" cannot pass as the host. A pane
+   titled "uniterm" still reads that way on the bar, as it did before. Its history rows carry the pane ID.
+6. Keyboard path: a new Focus Message History command with no default key engages the panel. Arrow keys move a row cursor,
+   Return runs Focus Pane, Tab walks the controls, and Escape returns to the pane. Until then the panel refuses first
+   responder, so opening or reading never moves the keyboard. This command is the guess that most deserves review.
+7. A row counts as exposed only when its whole line is in view, and only while the window can show it. A minimized or occluded
+   window acknowledges nothing. Tests override this gate through the window fixture, since test windows are never shown.
+8. The window set holds 32 messages with no window open. It drops the oldest non-error first, and the next window shows one
+   message counting what was lost.
+
+Review findings:
+
+- Fixed, proposal: M2's check claimed a detached bound it had left to M3. The As built block listed symbols and reasons.
+- Fixed, `CONFIRMED`: a producer released without retiring leaked its slot. The test failed on unfixed code.
+- Fixed, `CONFIRMED`: a producer named "uniterm" rendered like the host, and a forged kind with an issued ID was accepted. The
+  tests failed on unfixed code.
+- Fixed, `CONFIRMED`: closing a pane could requeue past the 32-entry bound. The test failed on unfixed code at 33.
+- Fixed, plan gap: the panel had no keyboard path. The real keyboard path has not been tried in the app.
+- Fixed, tests: wall-clock assertions removed, an inaccurate comment fixed, and direct proof added for the source-index bound.
+- Traced and confirmed, then fixed: per-line observer rounds, with a test failing on unfixed code at 4 rounds; per-chunk work
+  in the stderr ingress, with a test failing on unfixed code; layout re-entry, with a test failing on unfixed code.
+- Traced and confirmed, then fixed, but the new tests never ran on unfixed code: the held-message drop, confirmed by reading,
+  and the exposure edge. The occlusion gate is new, so it has no old behaviour to run against.
+- Left for the user: the UTERM-013 freeze hunk.
+- `adr-impact` reported no conflict and no supersession. Its one `ADVISORY` on ADR-08 is the same as the stderr ingress finding,
+  now fixed.
+
+ADR candidate: the host binds a status source's identity at origin, and no producer can claim another's. It cuts across the
+system, since UTERM-003 and UTERM-004 producers must follow it. It is recorded as `Undecided` in UTERM-017's Decision Log. The
+test rule "windows close with animation off" is a test practice, so it is not a candidate.
+
+Open for the user: the leaked animation workers in the package tests can starve any later test that uses the global queue.
+Setting `animationBehavior = .none` in the test fixtures would close it.
+
 ## Status
 
-In progress. M1 is committed. M2 and M3 remain.
+In progress. M1 and M2 are committed. M3 remains.

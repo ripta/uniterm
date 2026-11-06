@@ -121,6 +121,7 @@ final class WindowFixture {
       return applet
     }
 
+    controller.windowShowsContentOverride = { true }
     controller.window?.contentView?.layoutSubtreeIfNeeded()
   }
 

@@ -99,15 +99,29 @@ final class StatusBarContentTests: XCTestCase {
     XCTAssertEqual(info.symbolName, "info.circle")
     XCTAssertEqual(info.tone, .normal)
 
-    let warning = StatusBarContent.message(display(.warning, .applet(name: "git"), "dirty"))
-    XCTAssertEqual(warning.text, "git: dirty")
+    let warning = StatusBarContent.message(display(.warning, .applet(id: 1, name: "git"), "dirty"))
+    XCTAssertEqual(warning.text, "git (applet 1): dirty")
     XCTAssertEqual(warning.symbolName, "exclamationmark.triangle")
     XCTAssertEqual(warning.tone, .warning)
 
-    let error = StatusBarContent.message(display(.error, .script(name: "init"), "failed"))
-    XCTAssertEqual(error.text, "init: failed")
+    let error = StatusBarContent.message(display(.error, .script(id: 2, name: "init"), "failed"))
+    XCTAssertEqual(error.text, "init (script 2): failed")
     XCTAssertEqual(error.symbolName, "xmark.octagon")
     XCTAssertEqual(error.tone, .error)
+  }
+
+  /// Catches a producer that passes for the host by taking its name, and two same-named producers
+  /// that read alike. Only the host reads as plain `uniterm`.
+  func testOnlyTheHostReadsAsUniterm() {
+    let host = StatusBarContent.message(display(.info, .uniterm, "ok"))
+    let applet = StatusBarContent.message(display(.info, .applet(id: 4, name: "uniterm"), "ok"))
+    let script = StatusBarContent.message(display(.info, .script(id: 5, name: "uniterm"), "ok"))
+    let twin = StatusBarContent.message(display(.info, .script(id: 6, name: "uniterm"), "ok"))
+
+    XCTAssertEqual(host.text, "uniterm: ok")
+    XCTAssertEqual(applet.text, "uniterm (applet 4): ok")
+    XCTAssertEqual(script.text, "uniterm (script 5): ok")
+    XCTAssertNotEqual(script.text, twin.text)
   }
 
   /// Catches a folded error backlog that loses its count.
@@ -157,13 +171,14 @@ final class StatusBarContentTests: XCTestCase {
     }
   }
 
-  /// Catches history lines that drop the level, or put the source after the text.
+  /// Catches history lines that drop the level, or put the source after the text. A pane's title
+  /// is followed by its stable ID, since two panes can share a title.
   func testHistoryLinesCarryLevelSourceAndText() {
     var queue = StatusQueue()
     let message = queue.post(
       level: .warning, source: .pane(id: 3, name: "vim"), text: "swap file", at: 0)
 
-    XCTAssertEqual(StatusBarContent.historyLine(message), "warning  vim: swap file")
+    XCTAssertEqual(StatusBarContent.historyLine(message), "warning  vim (pane 3): swap file")
   }
 
   // MARK: Regions

@@ -3,7 +3,7 @@ import XCTest
 @testable import StatusKit
 
 /// Each expected value below is worked out by hand from the stated rules: 1.5 s dwell, 5 s idle
-/// timeout, a backlog limit of 3, and a history cap of 500. None comes from running the queue.
+/// timeout, a backlog limit of 3, and a history of 100 errors and 400 other records. None comes from running the queue.
 final class StatusQueueTests: XCTestCase {
   private let source = StatusSource.uniterm
 
@@ -32,10 +32,10 @@ final class StatusQueueTests: XCTestCase {
     XCTAssertEqual(queue.history.map(\.id), [1, 2, 3])
   }
 
-  /// Catches a record that skips the history bound. Records and posts share the cap.
+  /// Catches a record that skips the history bound. Records and posts share the pool.
   func testRecordsCountAgainstTheHistoryCap() {
     var policy = StatusPolicy()
-    policy.historyLimit = 3
+    policy.otherHistoryLimit = 3
 
     var queue = StatusQueue(policy: policy)
 
@@ -230,7 +230,7 @@ final class StatusQueueTests: XCTestCase {
     XCTAssertEqual(queue.current?.message.text, "i")
   }
 
-  /// The unseen flag rises with an error and falls only when the history is opened.
+  /// The unseen flag rises with an error and falls only when the error's record is acknowledged.
   func testUnseenErrorFlag() {
     var queue = StatusQueue()
     XCTAssertFalse(queue.hasUnseenError)
@@ -244,19 +244,19 @@ final class StatusQueueTests: XCTestCase {
     queue.dismissCurrent(at: 3)
     XCTAssertTrue(queue.hasUnseenError)
 
-    queue.markHistorySeen()
+    queue.acknowledge(ids: queue.history.map(\.id))
     XCTAssertFalse(queue.hasUnseenError)
   }
 
-  /// 503 posts leave the newest 500, in order, with the 3 oldest dropped.
-  func testHistoryKeepsTheNewest500() {
+  /// 503 info posts from one source leave the newest 400, in order, with the 103 oldest dropped.
+  func testHistoryKeepsTheNewest400Others() {
     var queue = StatusQueue()
     for index in 0..<503 {
       post(&queue, .info, "m\(index)", at: Double(index) * 10)
     }
 
-    XCTAssertEqual(queue.history.count, 500)
-    XCTAssertEqual(queue.history.first?.text, "m3")
+    XCTAssertEqual(queue.history.count, 400)
+    XCTAssertEqual(queue.history.first?.text, "m103")
     XCTAssertEqual(queue.history.last?.text, "m502")
   }
 
@@ -360,8 +360,8 @@ final class StatusQueueTests: XCTestCase {
   func testClosingAPaneLeavesOtherSourcesQueued() {
     var queue = StatusQueue()
     post(&queue, .info, "a", at: 0)
-    queue.post(level: .info, source: .applet(name: "x"), text: "b", at: 0)
-    queue.post(level: .info, source: .script(name: "y"), text: "c", at: 0)
+    queue.post(level: .info, source: .applet(id: 1, name: "x"), text: "b", at: 0)
+    queue.post(level: .info, source: .script(id: 2, name: "y"), text: "c", at: 0)
     post(&queue, .info, "d", at: 0)
 
     XCTAssertFalse(queue.removePending(fromPane: 0))

@@ -73,7 +73,7 @@ final class StatusBarUITests: UnitermUITestCase {
   }
 
   /// Catches an unseen-error indicator that never shows, or one that stays after the history is
-  /// opened with its menu key.
+  /// opened with its menu key and shows the error's row.
   func testAnErrorRaisesTheIndicatorAndOpeningTheHistoryClearsIt() {
     let app = launchApp(environment: ["UNITERM_DEBUG_POST_ERROR": Self.errorText])
     let window = app.windows["main-window"]

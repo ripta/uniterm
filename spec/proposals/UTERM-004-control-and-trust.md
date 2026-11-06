@@ -40,12 +40,12 @@ one program cannot take over panes it has no business touching.
   marker, such as a robot icon.
 - **Disconnected (CONTROL-2).** Other programs cannot address the applet through remote control. Host lifecycle
   events and the user's own actions still work.
-- **Exec (CONTROL-3).** Independently of access mode, the applet can attach a program as its driver. Applet events go
-  to the program's stdin. Its stdout drives the applet. Its stderr goes to the status bar as info-level diagnostic text.
-  The host sanitizes, coalesces, and bounds it before the main-thread queue admits it, and each admitted line enters
-  the window history. A driver exit or protocol failure that the host observes is a separate typed warning, or an error
-  when user work is lost. Level never comes from matching words in stderr. Amended 2026-11-06; see Decision Log. The
-  attached driver is not an ambient remote caller, so disconnected does not sever this explicitly attached channel.
+- **Exec (CONTROL-3).** Independently of access mode, the applet can attach a program as its driver. Applet events go to
+  the program's stdin. Its stdout drives the applet. Its stderr goes to the window history as info-level diagnostic text
+  and takes no turn on the status bar. The host sanitizes, coalesces, and bounds it before the main-thread queue admits
+  it. A driver exit or protocol failure that the host observes is a separate typed warning, or an error when user work
+  is lost. Level never comes from matching words in stderr. Amended 2026-11-06; see Decision Log. The attached driver is
+  not an ambient remote caller, so disconnected does not sever this explicitly attached channel.
 
 Each applet declares which access-mode and driver combinations it supports. Unsupported combinations are refused
 before anything starts. Window shortcuts reach uniterm before applet events reach a driver, per ADR-04.
@@ -593,9 +593,9 @@ None.
 - Events emitted with no exec driver attached reach no one and never grow a queue
 - Terminal and REPL panes can still be made remote-controlled, and refuse every applet command
 - The program's stdout drives the applet
-- The program's stderr appears in the status bar as info, sanitized and coalesced, and in the history. A driver exit or
-  protocol failure is a typed warning or error, never a level guessed from stderr text. Amended 2026-11-06; see
-  Decision Log.
+- The program's stderr appears in the history as info, sanitized and coalesced, and takes no turn on the status bar. A
+  driver exit or protocol failure is a typed warning or error, never a level guessed from stderr text. Amended
+  2026-11-06; see Decision Log.
 - Window shortcuts keep working while an exec driver is stalled
 - Old/new protocol and applet schema mismatches in both directions execute no commands
 - Stalled stdin, endless small stdout frames, malformed frames, and partial EOF stay bounded and fail visibly
@@ -777,9 +777,11 @@ None.
 - 2026-11-06: Amended driver stderr and the pending-permission indicator (work-queue best guess). "Control modes" said
   stderr goes to the status bar, and its check said stderr appears there, with no level, no coalescing, and no word on
   failures. The permission indicator was "host-owned" with no named place. UTERM-017 settles that raw stderr is
-  info-level text, bounded and coalesced before admission, and that host-observed failures are typed warnings or
-  errors. It also gives the indicator a slot, the pending-permissions window state. The slot is built there, and this
-  proposal fills it when its permission panel exists. The driver wire format does not change.
+  info-level text, bounded and coalesced before admission, and that host-observed failures are typed warnings or errors.
+  It also gives the indicator a slot, the pending-permissions window state. The slot is built there, and this proposal
+  fills it when its permission panel exists. The driver wire format does not change. UTERM-017 M2 later settled that
+  stderr goes to the history only, with no turn on the bar, so a flood cannot bury a real notice. The text and check
+  above were amended to match.
 
 ## References
 

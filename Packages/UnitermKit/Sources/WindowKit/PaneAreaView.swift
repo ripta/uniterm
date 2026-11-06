@@ -30,6 +30,12 @@ final class PaneAreaView: NSView {
   /// Runs when the tree changes shape, so the window can follow the new minimum size.
   var onTreeChange: (() -> Void)?
 
+  /// Runs as an applet takes a pane, before anything can start it. The window binds the applet's
+  /// host here, so the pane's identity is fixed at the origin of every message the applet posts.
+  /// The panes the view is built with are placed before a caller can set this, so the window binds
+  /// those itself.
+  var onAppletPlaced: ((any Applet, NodeID) -> Void)?
+
   /// Runs when anything a saved layout holds about the tree changes: its shape, its weights, or
   /// the focused pane.
   var onLayoutChange: (() -> Void)?
@@ -180,6 +186,7 @@ final class PaneAreaView: NSView {
 
     let replaced = view.applet
     view.replaceApplet(applet)
+    onAppletPlaced?(applet, pane)
     changed()
     layoutSubtreeIfNeeded()
     return replaced
@@ -190,6 +197,7 @@ final class PaneAreaView: NSView {
     view.apply(palette)
     paneViews[pane] = view
     addSubview(view)
+    onAppletPlaced?(applet, pane)
   }
 
   private func changed() {

@@ -171,7 +171,7 @@ final class StatusBarTests: XCTestCase {
 
     let before = fixture.bar.segments
     let minimum = fixture.controller.window?.contentMinSize
-    XCTAssertEqual(before.count, 2)
+    XCTAssertEqual(before.count, 3, "the message, the unseen-warning indicator, and the applet's")
 
     fixture.store.set(.top, for: .statusBarPosition)
     let moved = await waitUntil { edge(fixture) == .top }
@@ -387,8 +387,8 @@ final class StatusBarTests: XCTestCase {
     let (one, two) = (fixture.log.made[0], fixture.log.made[1])
 
     fixture.center.post(level: .info, source: .uniterm, text: "first")
-    controller.applet(two, post: .info, text: "from two")
-    controller.applet(one, post: .info, text: "from one")
+    two.say(.info, "from two")
+    one.say(.info, "from one")
     XCTAssertEqual(fixture.center.queue.pendingCount, 2)
 
     controller.dispatch(.close)
@@ -409,7 +409,7 @@ final class StatusBarTests: XCTestCase {
   func testOpeningTheHistoryListsLevelAndSourceAndClearsTheUnseenIndicator() throws {
     let fixture = try makeFixture()
     let controller = fixture.controller
-    controller.applet(fixture.log.made[0], post: .error, text: "boom")
+    fixture.log.made[0].say(.error, "boom")
     fixture.center.post(level: .warning, source: .uniterm, text: "careful")
 
     XCTAssertTrue(fixture.bar.segments.contains { $0.id == .unseenError })
@@ -420,7 +420,7 @@ final class StatusBarTests: XCTestCase {
     XCTAssertFalse(fixture.controller.contentController.history.isHidden)
     XCTAssertEqual(
       fixture.controller.contentController.history.lines,
-      ["warning  uniterm: careful", "error  Fake: boom"])
+      ["warning  uniterm: careful", "error  Fake (pane 1): boom"])
     XCTAssertFalse(fixture.center.hasUnseenError)
     XCTAssertFalse(fixture.bar.segments.contains { $0.id == .unseenError })
 
@@ -441,19 +441,28 @@ final class StatusBarTests: XCTestCase {
 
   /// Catches a history that is not capped on screen, or that drops the newest instead of the oldest.
   ///
-  /// 503 messages leave the 500 newest, listed newest first, so m502 leads and m3 ends.
+  /// 400 infos and 100 errors fill the 500 rows. Three more infos push out the three oldest infos,
+  /// so m3 leads the tail and m402 heads the list.
   func testTheHistoryShowsTheNewest500() throws {
     let fixture = try makeFixture()
 
-    for index in 0..<503 {
-      fixture.center.post(level: .info, source: .uniterm, text: "m\(index)")
+    for index in 0..<400 {
+      fixture.center.post(level: .info, text: "m\(index)")
+    }
+
+    for index in 0..<100 {
+      fixture.center.post(level: .error, text: "e\(index)")
+    }
+
+    for index in 400..<403 {
+      fixture.center.post(level: .info, text: "m\(index)")
     }
 
     fixture.controller.dispatch(.toggleMessageHistory)
     let lines = fixture.controller.contentController.history.lines
 
     XCTAssertEqual(lines.count, 500)
-    XCTAssertEqual(lines.first, "info  uniterm: m502")
+    XCTAssertEqual(lines.first, "info  uniterm: m402")
     XCTAssertEqual(lines.last, "info  uniterm: m3")
   }
 
