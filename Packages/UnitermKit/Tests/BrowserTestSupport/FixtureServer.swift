@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Security
 import Synchronization
 
 /// A local HTTP server for tests, bound to the loopback address on a port the system picks.
@@ -8,13 +9,22 @@ import Synchronization
 /// `requests`. The server answers each request with whatever the handler returns, then closes the
 /// connection. It keeps no state between requests beyond the log.
 ///
-/// The server speaks plain HTTP. A request that does not start like HTTP, such as the opening
-/// bytes of a TLS handshake, is dropped at once. A client that tries HTTPS against it sees a server
-/// that does not speak TLS, not a hang. A TLS mode with a self-signed identity adds a case to
-/// `Mode`, and `parameters(for:)` is the only place that needs to learn it.
+/// In `http` mode the server speaks plain HTTP. A request that does not start like HTTP, such as the
+/// opening bytes of a TLS handshake, is dropped at once. A client that tries HTTPS against it sees a
+/// server that does not speak TLS, not a hang.
+///
+/// In `tls` mode the server speaks HTTPS with a self-signed identity that no client trusts. It
+/// exists to prove a certificate failure. Nothing in the tests overrides trust to get past it.
 public final class FixtureServer: Sendable {
   public enum Mode: Sendable {
     case http
+
+    /// HTTPS with the self-signed identity. A validating client refuses it.
+    case tls
+  }
+
+  public enum StartError: Error {
+    case identityDidNotImport
   }
 
   /// One request as the server read it. Header names are lowercased.
@@ -79,7 +89,7 @@ public final class FixtureServer: Sendable {
   public static func start(
     mode: Mode = .http, handler: @escaping Handler = { _ in .page(titled: "ok") }
   ) async throws -> FixtureServer {
-    let listener = try NWListener(using: parameters(for: mode))
+    let listener = try NWListener(using: try parameters(for: mode))
     let core = Core(handler: handler)
     let queue = DispatchQueue(label: "FixtureServer")
 
@@ -150,9 +160,9 @@ public final class FixtureServer: Sendable {
   /// Everything the server has read, in arrival order.
   public var requests: [Request] { core.requests }
 
-  /// The URL of `path` on this server. The host is `127.0.0.1`.
+  /// The URL of `path` on this server, with the scheme the mode speaks. The host is `127.0.0.1`.
   public func url(_ path: String = "/") -> URL {
-    URL(string: "http://127.0.0.1:\(port)\(path)")!
+    URL(string: "\(mode == .tls ? "https" : "http")://127.0.0.1:\(port)\(path)")!
   }
 
   /// The address as a person types it, with no scheme.
@@ -164,12 +174,22 @@ public final class FixtureServer: Sendable {
     listener.cancel()
   }
 
-  private static func parameters(for mode: Mode) -> NWParameters {
+  private static func parameters(for mode: Mode) throws -> NWParameters {
     let parameters: NWParameters
 
     switch mode {
     case .http:
       parameters = NWParameters.tcp
+
+    case .tls:
+      guard let identity = SelfSignedFixtureIdentity.make(),
+        let secIdentity = sec_identity_create(identity)
+      else { throw StartError.identityDidNotImport }
+
+      let options = NWProtocolTLS.Options()
+      sec_protocol_options_set_local_identity(options.securityProtocolOptions, secIdentity)
+
+      parameters = NWParameters(tls: options)
     }
 
     parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)

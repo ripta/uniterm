@@ -1,7 +1,9 @@
 import AppKit
 import AppletKit
 import AppletTestSupport
+import BrowserModel
 import BrowserTestSupport
+import Preferences
 import StatusKit
 import WebKit
 import XCTest
@@ -77,6 +79,45 @@ final class EventHost: AppletHost {
   }
 }
 
+/// An opener that launches nothing. It says which apps would handle which schemes, and records what
+/// the browser asked it to open.
+@MainActor
+final class FakeOpener: URLOpening {
+  /// The app name for each scheme this fake pretends a user has an app for.
+  var apps: [String: String]
+
+  /// What `open` should answer.
+  var succeeds = true
+
+  private(set) var opened: [URL] = []
+
+  init(apps: [String: String] = ["mailto": "Mail", "ssh": "Terminal"]) {
+    self.apps = apps
+  }
+
+  func applicationName(toOpen url: URL) -> String? {
+    url.scheme.flatMap { apps[$0.lowercased()] }
+  }
+
+  func open(_ url: URL) -> Bool {
+    opened.append(url)
+    return succeeds
+  }
+}
+
+extension BrowserServices {
+  /// Services for a test: an engine the test can change, a list in memory, and an opener that
+  /// launches nothing.
+  @MainActor
+  static func testing(
+    engine: @escaping @MainActor () -> SearchEngine = { .duckDuckGo },
+    hsts: HSTSStore = HSTSStore(), opener: FakeOpener = FakeOpener(),
+    clock: @escaping @Sendable () -> Date = Date.init
+  ) -> BrowserServices {
+    BrowserServices(searchEngine: engine, hsts: hsts, opener: opener, clock: clock)
+  }
+}
+
 /// One applet against one local server, with a private website data store so no test shares
 /// cookies or touches the user's.
 @MainActor
@@ -88,11 +129,16 @@ final class BrowserHarness {
   var tab: BrowserTab { applet.tab }
   var posts: [(level: StatusLevel, text: String)] { host.recording.posts }
 
+  /// The records the applet made without a turn on the bar, such as an explanation the pane
+  /// already shows.
+  var records: [(level: StatusLevel, text: String)] { host.recording.records }
+
   static func make(
+    services: BrowserServices = .testing(),
     handler: @escaping FixtureServer.Handler = { _ in .page(titled: "ok") }
   ) async throws -> BrowserHarness {
     let server = try await FixtureServer.start(handler: handler)
-    let applet = BrowserApplet(dataStore: .nonPersistent())
+    let applet = BrowserApplet(dataStore: .nonPersistent(), services: services)
 
     return BrowserHarness(server: server, applet: applet)
   }

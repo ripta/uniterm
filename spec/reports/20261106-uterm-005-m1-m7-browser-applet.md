@@ -16,8 +16,8 @@ need the user's credentials.
 | UTERM-005 M1: Single-page browser | DONE | "Add a single-page browser applet" |
 | UTERM-005 M2: Security indicator | DONE | "Warn in the address bar when a page is not fully secure" |
 | UTERM-005 M3: Tabs | DONE | "Add browser tabs, keys, and a question before resending a form" |
-| UTERM-005 M4: Address bar input | QUEUED | |
-| UTERM-005 M5: Website data, restore, and reopen | QUEUED | |
+| UTERM-005 M4: Address bar input | DONE | "Search from the address bar, and offer plain HTTP only by the user's action" |
+| UTERM-005 M5: Website data, restore, and reopen | IN PROGRESS | |
 | UTERM-005 M6: Pop-ups, downloads, and running work | QUEUED | |
 | UTERM-005 M7: Web content failure | QUEUED | |
 
@@ -249,6 +249,72 @@ ADR check: no conflicts. The two candidates raised, the shared tab bar and the s
 shape one component's internals.
 
 Test cost: the browser tab tests take about 1.3 s for 13 tests.
+
+### M4: Address bar input
+
+Commit: "Search from the address bar, and offer plain HTTP only by the user's action".
+
+Checks, on 2026-11-06, with no other UI run on the screen:
+
+- `make test-package`, coordinator's run `QSPVA7`: 1,304 tests, 4 skipped, 0 failures, 54.7 s.
+- `make test-app`, coordinator's run `M1FCMR`: 105 tests, 0 failures, 839.7 s.
+- `make fmt-check`, `make lint`, `make check`, `make build`, and the UI tests' build for testing passed in the implementer's runs.
+  `make swiftpm-offline-check` passed in its first round, and `Package.swift` did not change after that. `proposals.py check`
+  reports nothing, and `freeze` reports only the UTERM-013 hunk.
+
+Measured real loads, under `swift test`: a self-signed TLS fixture fails with -1202 with a trust key and `errSSLBadCert` (-9808). A
+plain listener answering HTTPS fails with -1200, no trust key, and `errSSLClosedNoNotify` (-9816). A closed port fails with -1004.
+
+Best guesses from the implementer:
+
+1. Classification. A space beats a trailing `/` and a `word:` prefix, so `note: buy milk` searches. The proposal's "a scheme is
+   always an address" conflicts with "a space is always a search" there, and search was chosen. Text starting `scheme://` stays an
+   address when it holds a space. Only typed text searches. `user@host` searches and `user@host.com` loads. If wrong, spaced
+   `javascript:` text goes to the engine as text and runs nothing.
+2. A certificate failure shows a native pane with no action, for any HTTPS load. An explicit `https://` that fails another way gets
+   the plain warning.
+3. An offer needs the failing URL to be the assumed one, on the same host and port. A timeout does not offer.
+4. Only the selected tab asks about a handoff. A background tab's request is refused with a warning that names the tab.
+5. `BrowserServices` has no default, so every construction site must pass it. It bundles the engine closure, the HSTS store, the
+   opener, and the clock.
+6. The Settings note sits under the control, since Settings has no status bar. A stored value is never rewritten.
+7. HSTS persists to `Application Support/uniterm/Browser/hsts.json`, or `UNITERM_BROWSER_DIR` in a debug build. It holds at most
+   2,048 hosts, and IP literals never record.
+8. A key press on a focused link leaves no mouse-up, so it is refused with a notice. If wrong, a key press on a link meant for an
+   app is refused until the user clicks it. The bound on a real click is 1 s, so a very slow machine may need a second click.
+
+The coordinator's best guesses, for the user's review:
+
+- A link may reach another app only after a real mouse-up in the web view within 1 s, spent once. WebKit reports a script's
+  `a.click()` as `.linkActivated`, so a page could open compose windows with no click and no limit, from a background tab, and could
+  loop the question. M6's check says a script never launches an app silently. A script that runs within 1 s of a real click on the
+  page can still spend that click. It is bounded to one use.
+- The HTTP offer uses an allow-list: -1004, -1005, or -1200 with a closed-connection status, and no certificate sign anywhere in the
+  error chain. Anything unclassified gets the plain warning, so an unknown TLS failure on a later macOS cannot offer HTTP.
+
+Review findings and dispositions:
+
+- Fixed by the decisions above: the `mailto:` path with no gesture, and the question loop. The test failed with the gate neutered.
+- Fixed by the decision above: the offer's deny-list. Six table assertions failed first.
+- Fixed: a newer HSTS file was overwritten. The first test passed for the wrong reason, since its file did not decode. Reading the
+  version alone first fixed that, and the test then failed on the old code, with the file cut from 66 to 35 bytes.
+- Fixed: "Schemes" claimed more than was built, and it now says what ships, with the prior meanings in the Decision Log.
+- Fixed: every HSTS response rewrote the file on the main thread. A move of under an hour on a live entry now records nothing.
+- Fixed: the delegate's one line that feeds the list had no test. A stand-in response object now drives it, with no production seam.
+- Traced and confirmed, then fixed: an offer page outlived a later failure that built no page. A new provisional load clears it.
+- Accepted, recorded in As built: attacker-chosen hosts can evict entries at the 2,048 cap. Impact is low, since WebKit still enforces
+  HSTS.
+
+ADR check: no conflicts. The implementer's candidates fail as written, since the HSTS list and `BrowserServices` are mechanisms. The
+invariant behind the second is in the Decision Log, waiting on the second applet that takes a setting.
+
+Left open: the error pane was never rendered, so its layout needs the user's visual check. The self-signed fixture key is committed
+as published test data in a test-only target, so a secret scanner may flag it.
+
+An `xctest` crash report at 13:35 local on 2026-11-06 is a trap in a test draft that subclassed `WKNavigationResponse`. No product frame
+is involved, and the current test uses a stand-in object.
+
+Test cost: `BrowserAddressTests` takes about 1.5 s for 19 tests, and the new model tests take milliseconds.
 
 ## Unowned failures
 

@@ -8,6 +8,7 @@ final class SettingsViewController: NSViewController {
   private let statusBarPosition: ChoiceSettingRow<StatusBarPosition>
   private let paletteMode: ChoiceSettingRow<PaletteMode>
   private let paletteDockEdge: ChoiceSettingRow<PaletteDockEdge>
+  private let searchEngine: ChoiceSettingRow<SearchEngine>
 
   init(store: SettingsStore) {
     appearance = ChoiceSettingRow(
@@ -50,6 +51,10 @@ final class SettingsViewController: NSViewController {
       }
     }
 
+    searchEngine = ChoiceSettingRow(
+      store: store, key: .searchEngine, caption: "Browser search:",
+      identifier: "search-engine-control", title: \.displayName)
+
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -62,10 +67,11 @@ final class SettingsViewController: NSViewController {
   /// next edge. The window sizes itself to the form plus the standard margin.
   override func loadView() {
     let grid = NSGridView(views: [
-      [appearance.label, appearance.control],
-      [statusBarPosition.label, statusBarPosition.control],
-      [paletteMode.label, paletteMode.control],
-      [paletteDockEdge.label, paletteDockEdge.control],
+      [appearance.label, appearance.cell],
+      [statusBarPosition.label, statusBarPosition.cell],
+      [paletteMode.label, paletteMode.cell],
+      [paletteDockEdge.label, paletteDockEdge.cell],
+      [searchEngine.label, searchEngine.cell],
     ])
     grid.translatesAutoresizingMaskIntoConstraints = false
     grid.rowSpacing = 12

@@ -280,13 +280,14 @@ final class BrowserTabsTests: XCTestCase {
 
     XCTAssertEqual(payload.tabs.count, 1)
 
-    let rebuilt = try BrowserApplet(restoring: described, dataStore: .nonPersistent())
+    let rebuilt = try BrowserApplet(
+      restoring: described, dataStore: .nonPersistent(), services: .testing())
     defer { rebuilt.close() }
 
     XCTAssertEqual(rebuilt.closedTabStamps, harness.applet.closedTabStamps)
 
     let bare = try BrowserApplet(
-      restoring: described.withoutUndoState, dataStore: .nonPersistent())
+      restoring: described.withoutUndoState, dataStore: .nonPersistent(), services: .testing())
     defer { bare.close() }
 
     XCTAssertTrue(bare.closedTabStamps.isEmpty)
@@ -306,7 +307,8 @@ final class BrowserTabsTests: XCTestCase {
       type: BrowserDescription.typeID, version: BrowserDescription.currentVersion,
       payload: try JSONValue(encoding: BrowserDescription(tabs: records, selected: 1)))
 
-    let applet = try BrowserApplet(restoring: description, dataStore: .nonPersistent())
+    let applet = try BrowserApplet(
+      restoring: description, dataStore: .nonPersistent(), services: .testing())
     let harness = BrowserHarness(server: server, applet: applet)
     defer { harness.stop() }
 

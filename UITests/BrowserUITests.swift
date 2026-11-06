@@ -182,4 +182,56 @@ final class BrowserUITests: UnitermUITestCase {
       waitFor(addressField(in: window), timeout: 10) { $0 == "about:blank" },
       "Cmd-L did not focus the address bar")
   }
+
+  /// Catches an address that the browser refuses with no mark on the bar, or a mark that does not
+  /// reach assistive technology or stays after an edit. `file:` never loads, so the page stays,
+  /// the field's label says it is invalid, and typing one more character clears the label.
+  func testARefusedAddressMarksTheAddressBarUntilTheUserEdits() {
+    let app = launchApp()
+    let window = openBrowser(in: app)
+    let address = addressField(in: window)
+
+    app.typeKey("l", modifierFlags: .command)
+    app.typeText("file:///etc/hosts")
+    app.typeKey(.return, modifierFlags: [])
+
+    XCTAssertTrue(
+      waitFor(address, timeout: 10, { _ in address.label == "Address, invalid" }),
+      "a refused address left the bar unmarked")
+    XCTAssertEqual(address.value as? String ?? "", "file:///etc/hosts", "the typed text was lost")
+    XCTAssertTrue(browser(in: window).exists)
+
+    app.typeText("x")
+
+    XCTAssertTrue(
+      waitFor(address, timeout: 10, { _ in address.label == "Address" }),
+      "an edit left the mark on")
+  }
+
+  /// Catches a Settings window with no search engine row, or a stored engine that left the list
+  /// showing as the default with no word about it. The seeded value is not an engine. The row
+  /// selects DuckDuckGo and says the stored one was replaced, and choosing an engine clears that.
+  func testSettingsShowsAStoredSearchEngineThatLeftTheListAsReplaced() {
+    let app = launchApp(settings: ["searchEngine": "altavista"])
+    XCTAssertTrue(app.windows["main-window"].waitForExistence(timeout: 10))
+
+    app.typeKey(",", modifierFlags: .command)
+    let settings = app.windows["settings-window"]
+    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+
+    let control = settings.radioGroups["search-engine-control"]
+    XCTAssertTrue(control.waitForExistence(timeout: 5))
+    XCTAssertEqual(control.radioButtons.count, 5)
+    XCTAssertEqual(control.radioButtons["DuckDuckGo"].value as? Int, 1)
+
+    let note = settings.staticTexts["search-engine-control-note"]
+    XCTAssertTrue(note.waitForExistence(timeout: 5), "no note about the replaced engine")
+    XCTAssertTrue((note.value as? String ?? "").contains("altavista"))
+    XCTAssertTrue((note.value as? String ?? "").contains("DuckDuckGo"))
+
+    control.radioButtons["Kagi"].click()
+
+    XCTAssertTrue(waitForGone(note), "the note stayed after a valid choice")
+    XCTAssertEqual(control.radioButtons["Kagi"].value as? Int, 1)
+  }
 }

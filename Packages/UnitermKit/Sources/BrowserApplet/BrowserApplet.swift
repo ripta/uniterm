@@ -1,6 +1,7 @@
 import AppKit
 import AppletKit
 import BrowserModel
+import Preferences
 import StatusKit
 import Theme
 import WebKit
@@ -42,6 +43,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   private var closedTabs: [BrowserDescription.ClosedTab] = []
 
   private let dataStore: WKWebsiteDataStore
+  private let services: BrowserServices
   private var alerts = AppletAlerts()
   private var started = false
   private var closed = false
@@ -60,18 +62,26 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   /// The selected tab.
   var tab: BrowserTab { tabs[selectedIndex] }
 
-  /// A pane that has loaded nothing. `dataStore` holds the pane's cookies and site data.
-  public convenience init(dataStore: WKWebsiteDataStore = .default()) {
+  /// A pane that has loaded nothing. `dataStore` holds the pane's cookies and site data. The host
+  /// passes the same `services` to every pane it builds, new or restored.
+  public convenience init(
+    dataStore: WKWebsiteDataStore = .default(), services: BrowserServices
+  ) {
     self.init(
-      dataStore: dataStore,
-      tabs: [BrowserTab(id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore)],
+      dataStore: dataStore, services: services,
+      tabs: [
+        BrowserTab(
+          id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore, hsts: services.hsts,
+          clock: services.clock)
+      ],
       selected: 0, closed: [])
   }
 
   /// Restores a pane from its description. Nothing loads until `start`, and then only the selected
   /// tab. A description this build cannot read is refused.
   public convenience init(
-    restoring description: AppletDescription, dataStore: WKWebsiteDataStore = .default()
+    restoring description: AppletDescription, dataStore: WKWebsiteDataStore = .default(),
+    services: BrowserServices
   ) throws {
     guard description.type == BrowserDescription.typeID else {
       throw AppletRestoreError.wrongType(
@@ -105,18 +115,20 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
       ?? []
 
     self.init(
-      dataStore: dataStore,
+      dataStore: dataStore, services: services,
       tabs: decoded.tabs.map {
-        BrowserTab(id: .make(), record: $0, dataStore: dataStore)
+        BrowserTab(
+          id: .make(), record: $0, dataStore: dataStore, hsts: services.hsts, clock: services.clock)
       },
       selected: decoded.selected, closed: carried)
   }
 
   private init(
-    dataStore: WKWebsiteDataStore, tabs: [BrowserTab], selected: Int,
+    dataStore: WKWebsiteDataStore, services: BrowserServices, tabs: [BrowserTab], selected: Int,
     closed: [BrowserDescription.ClosedTab]
   ) {
     self.dataStore = dataStore
+    self.services = services
     self.tabs = tabs
     self.selectedIndex = selected
     self.closedTabs = Array(closed.prefix(BrowserDescription.closedTabDepth))
@@ -138,6 +150,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     content.onForward = { [weak self] in self?.goForward() }
     content.onReload = { [weak self] in self?.reload() }
     content.onSubmit = { [weak self] text in self?.submit(address: text) }
+    content.onLoadOverHTTP = { [weak self] in self?.loadOverHTTP() }
     content.tabBar.onSelect = { [weak self] index in self?.selectTab(at: index) }
     content.tabBar.onClose = { [weak self] index in _ = self?.closeTab(at: index) }
     content.tabBar.onNew = { [weak self] in self?.openTab() }
@@ -153,6 +166,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     content.show(
       canGoBack: tab.canGoBack, canGoForward: tab.canGoForward, isLoading: tab.isLoading)
     content.show(securityWarning: tab.showsSecurityWarning)
+    content.show(error: tab.errorPage)
     content.show(address: Self.address(of: tab), replacingEdit: replacingEdit)
   }
 
@@ -202,6 +216,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     content.onForward = {}
     content.onReload = {}
     content.onSubmit = { _ in }
+    content.onLoadOverHTTP = {}
     content.tabBar.onSelect = nil
     content.tabBar.onClose = nil
     content.tabBar.onNew = nil
@@ -251,25 +266,135 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
 
   // MARK: Navigation
 
-  /// Loads what the user typed, as the address bar's rule reads it. A refused address leaves the
-  /// page visible, posts one warning, and marks the address as invalid.
+  /// Loads what the user typed, as the address bar's rule reads it. Text that is not an address
+  /// searches with the engine Settings names now. A refused address leaves the page visible, posts
+  /// one warning, and marks the address as invalid.
   func submit(address: String) {
     switch AddressPolicy.resolve(address) {
     case .empty:
       return
 
-    case .load(let url, _):
-      content.markAddress(invalid: false)
+    case .load(let url, let assumed):
+      let kept =
+        assumed == .https ? AssumedLoad(url: url, typed: address) : nil
+
+      beginTypedLoad(url, assumed: kept)
+
+    case .search(let query):
+      guard let url = services.searchEngine().searchURL(for: query) else {
+        content.markAddress(invalid: true)
+        tab.loadOrigin = .user
+        post(.warning, SchemeRefusal.notAnAddress.message(for: address), from: tab)
+        return
+      }
+
+      beginTypedLoad(url, assumed: nil)
+
+    case .handoff(let url):
       tab.loadOrigin = .user
-      alerts.replaceLoad()
-      tab.load(url)
-      content.window?.makeFirstResponder(tab.webView)
+      handOff(url, from: tab, typed: true)
 
     case .refused(let refusal):
       content.markAddress(invalid: true)
       tab.loadOrigin = .user
       post(.warning, refusal.message(for: address), from: tab)
     }
+  }
+
+  private func beginTypedLoad(_ url: URL, assumed: AssumedLoad?) {
+    content.markAddress(invalid: false)
+    tab.loadOrigin = .user
+    alerts.replaceLoad()
+    tab.load(url, assumed: assumed)
+    content.window?.makeFirstResponder(tab.webView)
+  }
+
+  /// Load over HTTP, offered by the error page. It resolves what the user typed again with the
+  /// override, so the same function that chose HTTPS now chooses HTTP. Nothing else reaches it.
+  func loadOverHTTP() {
+    guard case .offerHTTP(let host, let typed)? = tab.errorPage,
+      !services.hsts.contains(host: host)
+    else { return }
+
+    guard case .load(let url, _) = AddressPolicy.resolve(typed, overridingToHTTP: true),
+      url.scheme?.lowercased() == "http"
+    else { return }
+
+    beginTypedLoad(url, assumed: nil)
+  }
+
+  /// Opens another app for an address the user typed or a link the user clicked. The tab has
+  /// already refused a link that was not a real click. Every guard comes before any open, `mailto:`
+  /// included: only the selected tab may ask, and a tab shows one question at a time.
+  ///
+  /// `mailto:` then opens at once, since a draft still needs the user to send it. Any other scheme
+  /// asks first, naming the app and the address, and opens only on a yes. A scheme no app handles
+  /// loads nothing.
+  private func handOff(_ url: URL, from source: BrowserTab, typed: Bool) {
+    guard !closed else { return }
+
+    let address = AddressDisplay.bounded(url.absoluteString)
+
+    guard source === tab else {
+      refuseHandOff(
+        "Did not open \(address). Only the page you are looking at can ask to open an app.",
+        from: source, typed: false)
+      return
+    }
+
+    guard !source.isAskingToOpenApp else {
+      refuseHandOff(
+        "Did not open \(address). A question about opening an app is already waiting.",
+        from: source, typed: false)
+      return
+    }
+
+    if AppHandoff.opensWithoutAsking(url) {
+      finishHandOff(url, from: source, typed: typed)
+      return
+    }
+
+    guard let appName = services.opener.applicationName(toOpen: url), let host else {
+      refuseHandOff(AppHandoff.noAppMessage(for: url), from: source, typed: typed)
+      return
+    }
+
+    source.isAskingToOpenApp = true
+
+    let question = AppHandoff.question(appName: appName, url: url)
+    let request = AppletConfirmation(
+      title: question.title, detail: question.detail, confirmTitle: "Open",
+      cancelTitle: "Cancel")
+
+    Task { @MainActor [weak source] in
+      let allowed = await host.applet(self, confirm: request)
+
+      source?.isAskingToOpenApp = false
+
+      guard let source, !closed, allowed else { return }
+
+      finishHandOff(url, from: source, typed: typed)
+    }
+  }
+
+  private func finishHandOff(_ url: URL, from source: BrowserTab, typed: Bool) {
+    if services.opener.open(url) {
+      if typed {
+        content.markAddress(invalid: false)
+        content.show(address: Self.address(of: source), replacingEdit: true)
+      }
+
+      return
+    }
+
+    refuseHandOff(
+      "Could not open \(AddressDisplay.bounded(url.absoluteString)).", from: source, typed: typed)
+  }
+
+  private func refuseHandOff(_ text: String, from source: BrowserTab, typed: Bool) {
+    if typed { content.markAddress(invalid: true) }
+
+    post(.warning, text, from: source)
   }
 
   func goBack() {
@@ -318,7 +443,9 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   func openTab() {
     guard !closed else { return }
 
-    let opened = BrowserTab(id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore)
+    let opened = BrowserTab(
+      id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore, hsts: services.hsts,
+      clock: services.clock)
     opened.delegate = self
 
     let position = min(selectedIndex + 1, tabs.count)
@@ -436,7 +563,9 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     }
 
     let reopened = BrowserTab(
-      id: .make(), record: entry.tab, dataStore: dataStore, restoredState: entry.interactionState)
+      id: .make(), record: entry.tab, dataStore: dataStore, hsts: services.hsts,
+      clock: services.clock,
+      restoredState: entry.interactionState)
     reopened.delegate = self
 
     closedTabs.removeAll { $0.stamp == stamp }
@@ -468,6 +597,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
         isLoading: changed.isLoading)
 
       content.show(securityWarning: changed.showsSecurityWarning)
+      content.show(error: changed.errorPage)
       content.show(address: Self.address(of: changed))
     }
 
@@ -486,6 +616,14 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     return await host.applet(self, confirm: request)
   }
 
+  func tab(_ tab: BrowserTab, explained text: String) {
+    post(.warning, text, from: tab, delivery: .historyOnly)
+  }
+
+  func tab(_ tab: BrowserTab, handOff url: URL) {
+    handOff(url, from: tab, typed: false)
+  }
+
   func tab(_ tab: BrowserTab, historyButton: BrowserWebView.HistoryButton) {
     guard tab === self.tab else { return }
 
@@ -497,14 +635,19 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
 
   /// Delivers a notice with the tab's own load origin. A notice from a tab that is not selected
   /// names the tab, since the user is looking at another page.
-  private func post(_ level: StatusLevel, _ text: String, from source: BrowserTab) {
+  private func post(
+    _ level: StatusLevel, _ text: String, from source: BrowserTab,
+    delivery: AppletNotice.Delivery = .message
+  ) {
     guard !closed else { return }
 
     let named =
       source === tab
       ? text : "In the tab \u{201C}\(Self.title(of: source).prefix(80))\u{201D}: \(text)"
 
-    alerts.deliver(AppletNotice(level, named), origin: source.loadOrigin, from: self, to: host)
+    alerts.deliver(
+      AppletNotice(level, named, delivery: delivery), origin: source.loadOrigin, from: self,
+      to: host)
   }
 
   /// What the address bar shows for a tab. A tab that has not begun loading shows the address it

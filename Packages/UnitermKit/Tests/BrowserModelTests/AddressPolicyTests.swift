@@ -43,7 +43,7 @@ final class AddressPolicyTests: XCTestCase {
       ("127.1", "https://127.1"),
       ("127.0.0.1.example.com", "https://127.0.0.1.example.com"),
       ("localhost.example.com", "https://localhost.example.com"),
-      ("notlocalhost", "https://notlocalhost"),
+      ("notlocalhost.example", "https://notlocalhost.example"),
       ("mylocalhost.com", "https://mylocalhost.com"),
       ("[::2]", "https://[::2]"),
       ("nas.local", "https://nas.local"),
@@ -90,34 +90,99 @@ final class AddressPolicyTests: XCTestCase {
         AddressPolicy.resolve(" \tJAVASCRIPT:alert(1)\n", source: source), .refused(.javascript))
       XCTAssertEqual(
         AddressPolicy.resolve("data:text/html,hi", source: source), .refused(.data))
+
+      if source != .typed {
+        XCTAssertEqual(
+          AddressPolicy.resolve("mailto:a@example.com", source: source),
+          .refused(.unsupported(scheme: "mailto")), "only typed text may hand off to an app")
+      }
+    }
+  }
+
+  /// Catches a typed address for another app that is refused outright, which would leave the user
+  /// no way to open `mailto:`, and a non-typed source that hands off, which would let a stored or
+  /// commanded address reach an app. `about:other` and `blob:` are not apps' to take.
+  func testOnlyTypedTextHandsOffToAnApp() {
+    XCTAssertEqual(
+      AddressPolicy.resolve("mailto:a@example.com"), .handoff(url("mailto:a@example.com")))
+    XCTAssertEqual(
+      AddressPolicy.resolve("ssh://host.example"), .handoff(url("ssh://host.example")))
+    XCTAssertEqual(AddressPolicy.resolve("tel:+15551234"), .handoff(url("tel:+15551234")))
+    XCTAssertEqual(
+      AddressPolicy.resolve("tel:5551234"), .load(url("https://tel:5551234"), assumed: .https),
+      "digits after the colon are a port, whatever the word is")
+
+    XCTAssertEqual(
+      AddressPolicy.resolve("about:config"), .refused(.unsupported(scheme: "about")))
+    XCTAssertEqual(
+      AddressPolicy.resolve("blob:https://example.com/1"),
+      .refused(.unsupported(scheme: "blob")))
+
+    for source in [NavigationSource.restored, .controller, .page] {
       XCTAssertEqual(
-        AddressPolicy.resolve("mailto:a@example.com", source: source),
-        .refused(.unsupported(scheme: "mailto")))
+        AddressPolicy.resolve("ssh://host.example", source: source),
+        .refused(.unsupported(scheme: "ssh")), "\(source)")
     }
   }
 
   /// Catches a `host:port` that reads as a scheme, which would refuse a local dev server, and a real
   /// scheme that reads as a port.
   func testHostAndPortIsNotAScheme() {
-    XCTAssertFalse(AddressPolicy.hasScheme("localhost:3000"))
-    XCTAssertFalse(AddressPolicy.hasScheme("example.com:8080/path"))
-    XCTAssertFalse(AddressPolicy.hasScheme("devbox:8080?x=1"))
-    XCTAssertFalse(AddressPolicy.hasScheme("example.com"))
-    XCTAssertFalse(AddressPolicy.hasScheme("[::1]:3000"))
+    XCTAssertFalse(AddressClassifier.hasScheme("localhost:3000"))
+    XCTAssertFalse(AddressClassifier.hasScheme("example.com:8080/path"))
+    XCTAssertFalse(AddressClassifier.hasScheme("devbox:8080?x=1"))
+    XCTAssertFalse(AddressClassifier.hasScheme("example.com"))
+    XCTAssertFalse(AddressClassifier.hasScheme("[::1]:3000"))
 
-    XCTAssertTrue(AddressPolicy.hasScheme("mailto:a@example.com"))
-    XCTAssertTrue(AddressPolicy.hasScheme("http://example.com"))
-    XCTAssertTrue(AddressPolicy.hasScheme("localhost://x"))
-    XCTAssertTrue(AddressPolicy.hasScheme("javascript:alert(1)"))
+    XCTAssertTrue(AddressClassifier.hasScheme("mailto:a@example.com"))
+    XCTAssertTrue(AddressClassifier.hasScheme("http://example.com"))
+    XCTAssertTrue(AddressClassifier.hasScheme("localhost://x"))
+    XCTAssertTrue(AddressClassifier.hasScheme("javascript:alert(1)"))
   }
 
-  /// Catches empty input that loads something, and text with a space that reads as an address.
-  /// Search for the second arrives with the address bar's classifier.
-  func testEmptyAndSpacedInputLoadNothing() {
+  /// Catches empty input that loads something, and text that is not an address loading or
+  /// searching from a source that never searches. Only typed text searches.
+  func testEmptyInputLoadsNothingAndOnlyTypedTextSearches() {
     XCTAssertEqual(AddressPolicy.resolve(""), .empty)
     XCTAssertEqual(AddressPolicy.resolve(" \n\t "), .empty)
-    XCTAssertEqual(AddressPolicy.resolve("two words"), .refused(.notAnAddress))
-    XCTAssertEqual(AddressPolicy.resolve("example.com/a b"), .refused(.notAnAddress))
+    XCTAssertEqual(AddressPolicy.resolve("two words"), .search("two words"))
+    XCTAssertEqual(AddressPolicy.resolve("example.com/a b"), .search("example.com/a b"))
+    XCTAssertEqual(AddressPolicy.resolve("devbox"), .search("devbox"))
+
+    for source in [NavigationSource.restored, .controller, .page] {
+      XCTAssertEqual(
+        AddressPolicy.resolve("two words", source: source), .refused(.notAnAddress), "\(source)")
+      XCTAssertEqual(
+        AddressPolicy.resolve("devbox", source: source), .refused(.notAnAddress), "\(source)")
+    }
+  }
+
+  /// Catches a bare IPv6 literal that fails to load, or a control character that reaches a search
+  /// or an address. A bare literal is bracketed. Control characters are refused with the same
+  /// mark as any other text that is not an address.
+  func testBareIPv6AndControlCharacters() {
+    XCTAssertEqual(AddressPolicy.resolve("::1"), .load(url("http://[::1]"), assumed: .http))
+    XCTAssertEqual(
+      AddressPolicy.resolve("2001:db8::1"), .load(url("https://[2001:db8::1]"), assumed: .https))
+    XCTAssertEqual(AddressPolicy.resolve("a\u{0}b.com"), .refused(.notAnAddress))
+    XCTAssertEqual(AddressPolicy.resolve("a\u{1B}[0m"), .refused(.notAnAddress))
+  }
+
+  /// Catches Load over HTTP that downgrades an address the user typed with `https://`, or one
+  /// that cannot reach plain HTTP for a scheme-less non-loopback address. The same function
+  /// answers, with the override as its only difference.
+  func testTheOverrideChangesOnlyAnAssumedScheme() {
+    XCTAssertEqual(
+      AddressPolicy.resolve("example.com/p", overridingToHTTP: true),
+      .load(url("http://example.com/p"), assumed: .http))
+    XCTAssertEqual(
+      AddressPolicy.resolve("devbox:8080", overridingToHTTP: true),
+      .load(url("http://devbox:8080"), assumed: .http))
+    XCTAssertEqual(
+      AddressPolicy.resolve("https://example.com", overridingToHTTP: true),
+      .load(url("https://example.com"), assumed: nil), "an explicit https never downgrades")
+    XCTAssertEqual(
+      AddressPolicy.resolve("two words", overridingToHTTP: true), .search("two words"))
   }
 
   func testLoopbackHostsDirectly() {

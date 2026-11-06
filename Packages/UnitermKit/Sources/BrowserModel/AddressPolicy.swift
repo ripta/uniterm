@@ -16,6 +16,12 @@ public enum AddressResolution: Sendable, Equatable {
   /// Load `url`. `assumed` is set when the policy chose the scheme, and nil when the user typed it.
   case load(URL, assumed: AssumedScheme?)
 
+  /// The text is not an address, so it runs a search. Only typed text can search.
+  case search(String)
+
+  /// A typed address for another app. The applet asks the opener which app, if any, takes it.
+  case handoff(URL)
+
   /// The address is one the browser never loads, such as `file:`.
   case refused(SchemeRefusal)
 
@@ -24,21 +30,34 @@ public enum AddressResolution: Sendable, Equatable {
 }
 
 /// Turns typed text, or any other scheme-less address, into the URL to load. One function applies
-/// the rule, so a typed address and a stored one cannot disagree.
+/// the rule, so a typed address, a stored one, and a retry over HTTP cannot disagree.
 ///
-/// `localhost`, `*.localhost`, `127.0.0.0/8`, and `[::1]` default to HTTP. Every other scheme-less
-/// address tries HTTPS. An address with a scheme keeps it, and "Schemes" decides whether it loads.
+/// `AddressClassifier` first says whether the text is an address or a search. `localhost`,
+/// `*.localhost`, `127.0.0.0/8`, and `[::1]` default to HTTP. Every other scheme-less address tries
+/// HTTPS. An address with a scheme keeps it, and "Schemes" decides whether it loads.
 public enum AddressPolicy {
-  public static func resolve(_ input: String, source: NavigationSource = .typed)
-    -> AddressResolution
-  {
-    let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+  /// Resolves `input` for `source`. `overridingToHTTP` is the user's Load over HTTP action. It
+  /// changes only a scheme-less address, so an address typed with `https://` never downgrades.
+  public static func resolve(
+    _ input: String, source: NavigationSource = .typed, overridingToHTTP: Bool = false
+  ) -> AddressResolution {
+    let text: String
 
-    guard !text.isEmpty else { return .empty }
+    switch AddressClassifier.classify(input) {
+    case .empty:
+      return .empty
 
-    guard !text.contains(where: \.isWhitespace) else { return .refused(.notAnAddress) }
+    case .invalid:
+      return .refused(.notAnAddress)
 
-    if hasScheme(text) {
+    case .search(let query):
+      return source == .typed ? .search(query) : .refused(.notAnAddress)
+
+    case .address(let address):
+      text = address
+    }
+
+    if AddressClassifier.hasScheme(text) {
       guard let url = URL(string: text) else { return .refused(.notAnAddress) }
 
       switch SchemePolicy.decide(url, source: source) {
@@ -52,16 +71,26 @@ public enum AddressPolicy {
         return .load(url, assumed: nil)
 
       case .refuse(let refusal):
+        if source == .typed, case .unsupported(let scheme) = refusal,
+          AppHandoff.mayHandOff(scheme: scheme)
+        {
+          return .handoff(url)
+        }
+
         return .refused(refusal)
       }
     }
 
-    guard let host = host(ofSchemeless: text) else { return .refused(.notAnAddress) }
+    let bracketed = AddressClassifier.isBareIPv6(text) ? "[\(text)]" : text
 
-    let assumed: AssumedScheme = isLoopback(host: host) ? .http : .https
+    guard let host = host(ofSchemeless: bracketed) else { return .refused(.notAnAddress) }
+
+    let assumed: AssumedScheme = overridingToHTTP || isLoopback(host: host) ? .http : .https
     let scheme = assumed == .http ? "http" : "https"
 
-    guard let url = URL(string: "\(scheme)://\(text)") else { return .refused(.notAnAddress) }
+    guard let url = URL(string: "\(scheme)://\(bracketed)") else {
+      return .refused(.notAnAddress)
+    }
 
     return .load(url, assumed: assumed)
   }
@@ -103,28 +132,6 @@ public enum AddressPolicy {
     }
 
     return false
-  }
-
-  /// True when the text starts with a scheme. `host:port` is not a scheme, even when the word
-  /// before the colon names one. The text after the colon is a port when it is only digits, up to
-  /// the path, query, or fragment.
-  static func hasScheme(_ text: String) -> Bool {
-    guard let colon = text.firstIndex(of: ":") else { return false }
-
-    let name = text[..<colon]
-
-    guard let first = name.first, first.isASCII, first.isLetter,
-      name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) })
-    else { return false }
-
-    let rest = text[text.index(after: colon)...]
-
-    if rest.hasPrefix("//") { return true }
-
-    let authorityEnd = rest.firstIndex { "/?#".contains($0) } ?? rest.endIndex
-    let port = rest[..<authorityEnd]
-
-    return port.isEmpty || !port.allSatisfy { $0.isASCII && $0.isNumber }
   }
 
   /// The host of an address with no scheme, read the way a URL would after `//`. Nil when there is

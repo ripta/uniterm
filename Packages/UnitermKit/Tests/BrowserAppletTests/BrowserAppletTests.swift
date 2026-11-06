@@ -505,25 +505,27 @@ final class BrowserAppletTests: XCTestCase {
     XCTAssertEqual(harness.count("GET", "/"), 1)
   }
 
-  /// Catches a link on a page that loads a scheme the browser does not open. The navigation is
-  /// cancelled before it starts, the page stays, and one warning names the refused address. WebKit
-  /// blocks a page's own link to `file:` before any delegate sees it, so the page rule is proved
-  /// with a scheme that reaches it.
-  func testALinkToAnUnsupportedSchemeIsRefusedBeforeItLoads() async throws {
+  /// Catches a script that navigates a page to a scheme the browser does not open. The navigation
+  /// is cancelled before it starts, the page stays, and one warning names the refused address. A
+  /// script's navigation is not a link the user followed, so it never asks to open an app. WebKit
+  /// blocks a page's own navigation to `file:` before any delegate sees it, so the page rule is
+  /// proved with a scheme that reaches it.
+  func testAScriptsNavigationToAnUnsupportedSchemeIsRefusedBeforeItLoads() async throws {
     let harness = try await BrowserHarness.make { _ in
-      Self.page("Links", "<a id=l href='ftp://files.example.invalid/x'>x</a>")
+      Self.page("Links")
     }
     defer { harness.stop() }
 
     await harness.load("/", expecting: "Links")
     let shown = harness.tab.webView.url
 
-    await harness.run("document.getElementById('l').click()")
+    await harness.run("location.href = 'ftp://files.example.invalid/x'")
     await harness.host.until("the refusal is reported") { !harness.posts.isEmpty }
 
     XCTAssertEqual(harness.posts.count, 1)
     XCTAssertEqual(harness.posts.first?.level, .warning)
     XCTAssertTrue(harness.posts.first?.text.contains("ftp://files.example.invalid/x") ?? false)
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty, "a script asked to open an app")
     XCTAssertEqual(harness.tab.webView.url, shown)
     XCTAssertEqual(harness.applet.title, "Links")
   }
@@ -554,7 +556,7 @@ final class BrowserAppletTests: XCTestCase {
       encoding: BrowserDescription(tabs: [.init(url: stored, title: "Old")], selected: 0))
     let applet = try BrowserApplet(
       restoring: AppletDescription(type: "browser", version: 1, payload: payload),
-      dataStore: .nonPersistent())
+      dataStore: .nonPersistent(), services: .testing())
     let host = EventHost()
     applet.host = host
     defer { applet.close() }
@@ -581,7 +583,7 @@ final class BrowserAppletTests: XCTestCase {
         tabs: [.init(url: "file:///etc/hosts", title: "Hosts")], selected: 0))
     let applet = try BrowserApplet(
       restoring: AppletDescription(type: "browser", version: 1, payload: payload),
-      dataStore: .nonPersistent())
+      dataStore: .nonPersistent(), services: .testing())
     let host = EventHost()
     applet.host = host
     defer { applet.close() }
@@ -610,7 +612,7 @@ final class BrowserAppletTests: XCTestCase {
         tabs: [.init(url: "blob:https://example.com/1", title: "Blob")], selected: 0))
     let applet = try BrowserApplet(
       restoring: AppletDescription(type: "browser", version: 1, payload: payload),
-      dataStore: .nonPersistent())
+      dataStore: .nonPersistent(), services: .testing())
     let host = EventHost()
     applet.host = host
     defer { applet.close() }
