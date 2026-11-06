@@ -686,15 +686,32 @@ Amended 2026-11-03; see Decision Log. Moved from M2.
 
 ### M8: Finder sender record
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check only the user can run.
+Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milestone is a check only the user can run.
 
 - The sender a cold-launch Finder open, a warm one, and a Dock drop each report is recorded in the As built block,
-  read from the debug log line of a build run directly
+  read from the `open-event` line that `log stream --level debug` shows for the `dev.uniterm.app` subsystem
 - Finder and `open -a` report senders that tell them apart. When they do not, the user rules on the Launch Services
   decision, which reopens
-- Open With in Finder and a drop on the Dock icon open the file, cold and warm, in a release build
+- A folder dragged onto uniterm's icon in a Finder window, and a folder dropped on its Dock icon, each open, cold and
+  warm, in a release build
+
+**As built:**
+
+- The user ran the record by hand on 2026-11-04, Darwin 25.6.0, with a folder. A wrapper streamed
+  `/usr/bin/log stream --level debug` for the `dev.uniterm.app` subsystem and kept each step's `open-event` line.
+- A folder dragged onto the app icon in a Finder window reports sender `com.apple.finder`, a platform binary with no
+  team that matches the Finder opener. That holds cold and warm, in the Debug and the Release build.
+- A folder dropped on the Dock icon reports sender `com.apple.dock`, a platform binary with no team that matches the
+  Dock opener. That holds cold and warm, in both builds.
+- Finder and the Dock are long-lived, so their sender tokens resolved every time. An `open -a` sender is
+  `com.apple.open` or an exited process, per M2's record. The sender token tells them apart, so the Launch Services
+  decision stands.
+- The actual-sender token named `com.apple.coreservices.uiagent` in every step, as it did for `open -a`. It cannot
+  tell the senders apart, which agrees with the decision to read only the sender token.
+- In the Release build, a terminal opened in the folder on all four steps, as the user reported.
+- Spotlight was not measured as a sender. Its identifier is still read from the program only.
 
 ## Decision Log
 
@@ -861,6 +878,19 @@ Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check o
   above 10 files asks first, as Finder's batch does, since the user can pick hundreds of files. The panel's start
   folder falls back to home when the reported folder no longer exists, since the panel would otherwise fall back to
   AppKit's own memory.
+- 2026-11-04: M8 work-queue best guesses (work-queue best guess). Amended M8's first check, which said the sender is
+  "read from the debug log line of a build run directly". When Finder or the Dock launches uniterm cold, no shell owns
+  the process, so its standard error goes nowhere. The same line goes to the unified log at debug level, which is not
+  persisted, so it is read live with `log stream --level debug`. Amended M8's last check, which said the release build
+  opens "the file". `Info.plist` declares only `public.folder`, so the Dock icon accepts only a folder. A file would
+  fail the check for the wrong reason. The run's `osascript` call to drive Finder was denied again, so nothing was
+  measured, and M8 stays in progress.
+- 2026-11-04: Amended M8's last check, which said Open With in Finder opens a folder. Finder has no Open With for
+  folders, and a folder is the only type uniterm declares, so Finder's Open With never offers uniterm today. The check
+  now drags a folder onto uniterm's icon in a Finder window, which Finder also sends.
+- 2026-11-04: M8 done. Finder sends as `com.apple.finder` and the Dock as `com.apple.dock`, cold and warm, and
+  `open -a` never does, so "Opens that arrive through Launch Services" stands as settled. The ADR candidate on which
+  Launch Services senders count as the user's act no longer waits on this record. It stays Undecided.
 
 ## References
 
