@@ -26,7 +26,13 @@ final class RecordingHost: AppletHost {
 
   func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
 
-  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool { false }
+  var confirms = false
+  var confirmations: [AppletConfirmation] = []
+
+  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
+    confirmations.append(request)
+    return confirms
+  }
 
   func issueCloseStamp() -> UInt64 { 0 }
 }

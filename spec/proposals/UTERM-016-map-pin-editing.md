@@ -177,6 +177,13 @@ None.
   change that matches the bytes the map last read or wrote is ignored, so the map's own save does not reload it.
 - Choosing the default accent removes `uniterm:accent`. A file's `marker-color`, when it has one, then sets the color
   again, as the reader's rule says.
+- An edit whose bytes the reader refuses is taken back, and the undo stack is cleared, since it points at those bytes.
+  The pane says the edit was not applied. Save can therefore never write bytes the map could not read.
+- Clear File Pins and opening another file into the pane both ask before they drop unsaved pins.
+- Residuals. Each undo step keeps a whole document, and the stack holds 50 steps. A file near the 32 MiB bound can
+  hold over a gigabyte of undo. Save and the disk-change check read the file on the main thread, within the same
+  bound. A dirty pane's description base64-encodes the whole document each time the host asks for it. None was
+  measured, and each is a candidate for its own change if a large file shows the cost.
 
 ### M2: Editing pins by hand
 
