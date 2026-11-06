@@ -102,7 +102,8 @@ final class MapViewerUITests: UnitermUITestCase {
   }
 
   /// Catches a place field the launcher never shows, a Cmd-L that does not reach the map, and a
-  /// search that Escape cannot close. No place is searched, so the test needs no network.
+  /// search that Escape cannot close. Nothing is typed, so the search sends nothing, and the UI
+  /// tests turn off place names.
   func testThePlaceFieldShowsInTheLauncherAndCmdLOpensItOverTheMap() throws {
     let app = launchApp()
     let window = mainWindow(in: app)
