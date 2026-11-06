@@ -31,6 +31,9 @@ public final class HSTSStore {
   /// Set when the file holds a newer version of the format. The store keeps its list in memory and
   /// never writes, so the newer build's data survives this one, as ADR-06 asks of a description.
   private var holdsNewerFile = false
+
+  /// Set when a write failed, so the file may hold hosts the list no longer does.
+  private var fileMayHoldHosts = false
   private let now: @Sendable () -> Date
 
   /// A store with no file, which forgets everything when it goes away.
@@ -89,11 +92,21 @@ public final class HSTSStore {
     record(host: host, header: header)
   }
 
-  public func removeAll() {
-    guard !list.entries.isEmpty else { return }
+  /// Empties the list. False when the file could still hold hosts afterward, because it came from a
+  /// newer build or the last write failed. The list in memory is empty either way. A clear after a
+  /// failed write tries the file again, so a later success is a real one.
+  @discardableResult
+  public func removeAll() -> Bool {
+    guard !holdsNewerFile else {
+      list.removeAll()
+      return false
+    }
+
+    guard !list.entries.isEmpty || fileMayHoldHosts else { return true }
 
     list.removeAll()
-    persist()
+
+    return persist()
   }
 
   public var count: Int { list.entries.count }
@@ -126,8 +139,11 @@ public final class HSTSStore {
     }
   }
 
-  private func persist() {
-    guard let fileURL, !holdsNewerFile else { return }
+  @discardableResult
+  private func persist() -> Bool {
+    guard !holdsNewerFile else { return false }
+
+    guard let fileURL else { return true }
 
     do {
       let encoder = JSONEncoder()
@@ -138,8 +154,16 @@ public final class HSTSStore {
         at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
       try encoder.encode(File(version: Self.currentVersion, list: list))
         .write(to: fileURL, options: .atomic)
+
+      fileMayHoldHosts = false
+
+      return true
     } catch {
       Self.logger.error("the HSTS list could not be written: \(String(describing: error))")
+
+      fileMayHoldHosts = true
+
+      return false
     }
   }
 }

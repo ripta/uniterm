@@ -14,6 +14,11 @@ enum LoadErrorPage: Equatable {
   /// The server's certificate did not validate. There is no action.
   case certificate(host: String, reason: String)
 
+  /// A restored tab's stored address is one the browser does not load. The tab shows nothing else,
+  /// so the pane says why and names the address. The user's own address replaces it, so there is no
+  /// action.
+  case refusedStoredAddress(address: String, refusal: SchemeRefusal)
+
   var title: String {
     switch self {
     case .offerHTTP(let host, _):
@@ -21,6 +26,20 @@ enum LoadErrorPage: Equatable {
 
     case .certificate(let host, _):
       return "The certificate for \(AddressDisplay.bounded(host)) is not trusted"
+
+    case .refusedStoredAddress:
+      return "This tab was not loaded"
+    }
+  }
+
+  /// What the history records for the page. It names the address, as every refusal does.
+  var historyText: String {
+    switch self {
+    case .refusedStoredAddress(let address, let refusal):
+      return refusal.message(for: address)
+
+    case .offerHTTP, .certificate:
+      return title
     }
   }
 
@@ -36,6 +55,9 @@ enum LoadErrorPage: Equatable {
       return
         "The browser did not connect, because the site could not prove who it is. Someone may "
         + "be answering for it. \(reason)"
+
+    case .refusedStoredAddress:
+      return historyText + " The tab keeps the address until you load another one."
     }
   }
 

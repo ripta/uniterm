@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var commandMenu: CommandMenu?
   private var layoutPersistence: LayoutPersistence?
   private var settingsWindowController: SettingsWindowController?
+  private var browserWebsiteData: BrowserWebsiteData?
   private var askingToQuit = false
 
   /// The `UNITERM_` variables the process started with. The scrub of the inherited environment
@@ -101,6 +102,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
 
     return nil
+  }
+
+  /// UI tests set `UNITERM_BROWSER_STORE` to `memory`, so the browser keeps its cookies and site data
+  /// in memory and never reaches the developer's real store. The app's bundle identifier scopes the
+  /// real store, and a UI test runs under the same one. Only debug builds honor it, for the same
+  /// reason as the other folders.
+  private func browserStoreIsInMemory() -> Bool {
+    #if DEBUG
+      return debugEnvironment["UNITERM_BROWSER_STORE"] == "memory"
+    #else
+      return false
+    #endif
   }
 
   /// UI tests set `UNITERM_LAYOUT_DEBOUNCE` to a long delay in seconds, so only the save on quit can
@@ -177,6 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let browserServices = BrowserServices.live(
       searchEngine: { settings.value(of: .searchEngine) }, directory: browserDirectory())
 
+    // Every browser pane shares this store. It is never WebKit's default store.
+    let websiteData = BrowserWebsiteData.live(
+      services: browserServices, inMemory: browserStoreIsInMemory())
+    browserWebsiteData = websiteData
+
     let restoreApplet: AppletRestorer = { description in
       switch description.type {
       case TerminalDescription.typeID:
@@ -190,7 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           restoring: description, places: places)
 
       case BrowserApplet.descriptionTypeID:
-        return try BrowserApplet(restoring: description, services: browserServices)
+        return try BrowserApplet(
+          restoring: description, dataStore: websiteData.store, services: browserServices)
 
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
@@ -213,7 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           startDirectory: directory, region: region, places: places)
 
       case .browser:
-        return BrowserApplet(services: browserServices)
+        return BrowserApplet(dataStore: websiteData.store, services: browserServices)
       }
     }
 
@@ -475,7 +494,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func presentSettings() {
-    let controller = settingsWindowController ?? SettingsWindowController(store: settings)
+    let controller =
+      settingsWindowController
+      ?? SettingsWindowController(
+        store: settings,
+        clearWebsiteData: { [weak self] in
+          guard let data = self?.browserWebsiteData else {
+            throw BrowserWebsiteData.ClearError.unavailable
+          }
+
+          try await data.clear()
+        })
     settingsWindowController = controller
     controller.present()
   }

@@ -57,12 +57,30 @@ public struct BrowserDescription: Codable, Equatable, Sendable {
     }
   }
 
-  /// The undo-only part of a description: the closed tabs, newest first.
+  /// The undo-only part of a description: the closed tabs, newest first, and WebKit's history record
+  /// for each open tab. A pane that closes and reopens takes its tabs' history back from the second.
+  /// The records line up with `tabs` by index, and nil marks a tab with no history to bring back.
+  /// A layout file never holds either part. The part lives in memory with the window's undo state,
+  /// so it carries no version of its own.
   public struct UndoState: Codable, Equatable, Sendable {
     public var closedTabs: [ClosedTab]
+    public var tabStates: [Data?]
 
-    public init(closedTabs: [ClosedTab]) {
+    public init(closedTabs: [ClosedTab], tabStates: [Data?] = []) {
       self.closedTabs = closedTabs
+      self.tabStates = tabStates
+    }
+
+    public init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+
+      closedTabs = try container.decodeIfPresent([ClosedTab].self, forKey: .closedTabs) ?? []
+      tabStates = try container.decodeIfPresent([Data?].self, forKey: .tabStates) ?? []
+    }
+
+    /// Whether there is nothing to bring back, so the description carries no undo-only part.
+    public var isEmpty: Bool {
+      closedTabs.isEmpty && tabStates.allSatisfy { $0 == nil }
     }
   }
 

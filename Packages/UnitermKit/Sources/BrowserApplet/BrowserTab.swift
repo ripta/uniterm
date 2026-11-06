@@ -182,10 +182,51 @@ final class BrowserTab: NSObject {
 
   var hasLoadedNothing: Bool { !isMaterialized || (webView.url == nil && !isLoading) }
 
-  /// WebKit's record of the tab's history and scroll positions, for a tab that is closing. A tab
-  /// that never loaded hands back the record it was given.
+  /// WebKit's record of the tab's history and scroll positions, for a tab that is closing or a pane
+  /// that is describing itself. A record the tab was given and has not applied yet comes back as it
+  /// was. A web view that holds no page reports an empty record, which would replace it, so a tab
+  /// with no page has none.
+  ///
+  /// The read is kept until something changes the history, since a read costs time in step with the
+  /// history and a page chooses how often the window asks. A scroll position can be as old as the
+  /// last history change. `liveInteractionData` reads past the kept value.
   var interactionData: Data? {
-    isMaterialized ? webView.interactionState as? Data : restoredState
+    if let restoredState { return restoredState }
+
+    if let kept = keptInteraction { return kept }
+
+    return readInteraction()
+  }
+
+  /// The record read now, for a tab that is closing, where a stale scroll position would be lost.
+  var liveInteractionData: Data? {
+    if let restoredState { return restoredState }
+
+    return readInteraction()
+  }
+
+  /// Counts the changes that make the kept record stale. The applet keys its own kept description
+  /// on it, so a change here reaches the applet without a second signal.
+  private(set) var historyVersion = 0
+
+  /// The last record read, or nil when nothing is kept. The inner nil is a tab with no page.
+  private var keptInteraction: Data??
+
+  private func readInteraction() -> Data? {
+    var record: Data?
+
+    if isMaterialized, webView.url != nil { record = webView.interactionState as? Data }
+
+    keptInteraction = .some(record)
+
+    return record
+  }
+
+  /// The history changed: a commit, a finish, a step, a same-document navigation, or a load. A
+  /// title or a loading toggle is not one.
+  private func historyChanged() {
+    keptInteraction = nil
+    historyVersion &+= 1
   }
 
   // MARK: Loading
@@ -196,6 +237,7 @@ final class BrowserTab: NSObject {
   func load(_ url: URL, assumed: AssumedLoad? = nil) {
     hasBegunLoading = true
     restoredState = nil
+    historyChanged()
     errorPage = nil
     failedLoad = nil
     self.assumed = assumed
@@ -205,8 +247,19 @@ final class BrowserTab: NSObject {
   }
 
   /// Records that the stored address was refused, so selecting the tab again does not try it again.
-  func noteRefusedStoredLoad() {
+  /// The pane explains the refusal in place of a page, and the history records it once. The stored
+  /// address stays in the description. The refusal never commits a page, so the rule that limits
+  /// what a commit stores does not touch it. The user's own load clears the explanation.
+  func refuseStoredAddress(_ address: String, _ refusal: SchemeRefusal) {
     hasBegunLoading = true
+
+    let page = LoadErrorPage.refusedStoredAddress(address: address, refusal: refusal)
+
+    errorPage = page
+    failedLoad = nil
+
+    delegate?.tab(self, explained: page.historyText)
+    delegate?.tabDidChange(self)
   }
 
   /// Starts the tab's first load from an address that passed the scheme rule for a restored tab.
@@ -219,6 +272,7 @@ final class BrowserTab: NSObject {
 
     restoredState = nil
     hasBegunLoading = true
+    historyChanged()
     webView.interactionState = state
   }
 
@@ -302,13 +356,22 @@ final class BrowserTab: NSObject {
         MainActor.assumeIsolated { self?.stateChanged() }
       },
       webView.observe(\.canGoBack) { [weak self] _, _ in
-        MainActor.assumeIsolated { self?.stateChanged() }
+        MainActor.assumeIsolated {
+          self?.historyChanged()
+          self?.stateChanged()
+        }
       },
       webView.observe(\.canGoForward) { [weak self] _, _ in
-        MainActor.assumeIsolated { self?.stateChanged() }
+        MainActor.assumeIsolated {
+          self?.historyChanged()
+          self?.stateChanged()
+        }
       },
       webView.observe(\.url) { [weak self] _, _ in
-        MainActor.assumeIsolated { self?.stateChanged() }
+        MainActor.assumeIsolated {
+          self?.historyChanged()
+          self?.stateChanged()
+        }
       },
       webView.observe(\.hasOnlySecureContent) { [weak self] _, _ in
         MainActor.assumeIsolated { self?.stateChanged() }
@@ -339,6 +402,7 @@ final class BrowserTab: NSObject {
   }
 
   private func committed() {
+    historyChanged()
     errorPage = nil
     failedLoad = nil
     assumed = nil
@@ -376,7 +440,7 @@ final class BrowserTab: NSObject {
       errorPage = page
       failedLoad = (failing, assumed)
 
-      delegate?.tab(self, explained: page.title)
+      delegate?.tab(self, explained: page.historyText)
       delegate?.tabDidChange(self)
       return
     }
@@ -646,6 +710,10 @@ extension BrowserTab: WKNavigationDelegate {
     resendIntent = nil
     committed()
     stateChanged()
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    historyChanged()
   }
 
   func webView(

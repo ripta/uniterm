@@ -35,6 +35,7 @@ class UnitermUITestCase: XCTestCase {
     try? FileManager.default.removeItem(atPath: scratch + "-shell")
     try? FileManager.default.removeItem(atPath: scratch + "-terminal")
     try? FileManager.default.removeItem(atPath: scratch + "-layout")
+    try? FileManager.default.removeItem(atPath: scratch + "-browser")
   }
 
   /// The folder the app saves its layout in during this test.
@@ -72,6 +73,7 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UNITERM_TERMINAL_DIR"] = scratch + "-terminal"
     app.launchEnvironment["UNITERM_LAYOUT_DIR"] = scratch + "-layout"
     app.launchEnvironment["UNITERM_BROWSER_DIR"] = scratch + "-browser"
+    app.launchEnvironment["UNITERM_BROWSER_STORE"] = "memory"
     app.launchEnvironment["SHELL"] = "/bin/zsh"
     app.launchEnvironment["ZDOTDIR"] = scratch + "-shell"
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""

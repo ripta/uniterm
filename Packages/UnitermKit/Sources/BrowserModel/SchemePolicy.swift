@@ -117,8 +117,47 @@ public enum SchemePolicy {
 public enum AddressDisplay {
   public static let maximumCharacters = 120
 
+  /// The most UTF-8 bytes a shown address keeps. A run of combining marks is one character, so the
+  /// character bound alone leaves it unbounded.
+  public static let maximumBytes = 480
+
+  /// The address as a question, a pane, or a notice may show it. Bidirectional overrides and
+  /// isolates are dropped, since they reorder the text around them. Every other control character
+  /// becomes a space. The result is cut to `maximumCharacters` characters and `maximumBytes` bytes,
+  /// whichever comes first, with an ellipsis.
   public static func bounded(_ address: String) -> String {
-    address.count > maximumCharacters
-      ? String(address.prefix(maximumCharacters)) + "\u{2026}" : address
+    var kept = String.UnicodeScalarView()
+    var bytes = 0
+    var cut = false
+
+    for scalar in address.unicodeScalars {
+      if isBidirectionalControl(scalar) { continue }
+
+      let size = String(scalar).utf8.count
+
+      guard bytes + size <= maximumBytes else {
+        cut = true
+        break
+      }
+
+      bytes += size
+      kept.append(scalar.properties.generalCategory == .control ? " " : scalar)
+    }
+
+    var text = String(kept).trimmingCharacters(in: .whitespaces)
+
+    if text.count > maximumCharacters {
+      text = String(text.prefix(maximumCharacters))
+      cut = true
+    }
+
+    return cut ? text + "\u{2026}" : text
+  }
+
+  private static func isBidirectionalControl(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x202A...0x202E, 0x2066...0x2069, 0x200E, 0x200F, 0x061C: return true
+    default: return false
+    }
   }
 }

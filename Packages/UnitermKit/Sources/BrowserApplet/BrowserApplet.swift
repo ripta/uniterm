@@ -10,8 +10,9 @@ import WebKit
 ///
 /// WebKit owns the page and its process. The applet owns the tabs, the address bar, the notices,
 /// and the description. The description holds each tab's last committed address and title and the
-/// selected tab, and `describe()` reads memory only. The tab bar, the toolbar, and the page follow
-/// the selected tab.
+/// selected tab. `describe()` also reads WebKit's history record from each open tab for the
+/// undo-only part. That read is synchronous and never reaches the network. The tab bar, the
+/// toolbar, and the page follow the selected tab.
 ///
 /// Every load passes `SchemePolicy` first. A typed address, a restored tab, and a page's own
 /// navigation each have a source, and the policy is the one place that says what that source may
@@ -49,6 +50,19 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   private var closed = false
   private var lastShown: Shown?
 
+  /// What the undo-only part was last built from.
+  private struct UndoKey: Equatable {
+    struct Tab: Equatable {
+      var id: AppletTabID
+      var version: Int
+    }
+
+    var tabs: [Tab]
+    var closed: [UInt64]
+  }
+
+  private var keptUndo: (key: UndoKey, value: JSONValue?)?
+
   /// What the host last heard about, so an unchanged refresh stays quiet.
   private struct Shown: Equatable {
     var title: String
@@ -62,11 +76,11 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   /// The selected tab.
   var tab: BrowserTab { tabs[selectedIndex] }
 
-  /// A pane that has loaded nothing. `dataStore` holds the pane's cookies and site data. The host
-  /// passes the same `services` to every pane it builds, new or restored.
-  public convenience init(
-    dataStore: WKWebsiteDataStore = .default(), services: BrowserServices
-  ) {
+  /// A pane that has loaded nothing. `dataStore` holds the pane's cookies and site data. It has no
+  /// default, so a construction site that forgets it does not compile, and no pane reaches WebKit's
+  /// app-wide store by accident. The host passes the same store and the same `services` to every
+  /// pane it builds, new or restored.
+  public convenience init(dataStore: WKWebsiteDataStore, services: BrowserServices) {
     self.init(
       dataStore: dataStore, services: services,
       tabs: [
@@ -78,9 +92,9 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   }
 
   /// Restores a pane from its description. Nothing loads until `start`, and then only the selected
-  /// tab. A description this build cannot read is refused.
+  /// tab, and only while the pane is attached. A description this build cannot read is refused.
   public convenience init(
-    restoring description: AppletDescription, dataStore: WKWebsiteDataStore = .default(),
+    restoring description: AppletDescription, dataStore: WKWebsiteDataStore,
     services: BrowserServices
   ) throws {
     guard description.type == BrowserDescription.typeID else {
@@ -110,17 +124,22 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
       throw AppletRestoreError.corrupt("browser description: \(error)")
     }
 
-    let carried =
-      (try? description.undoState?.decoded(as: BrowserDescription.UndoState.self))?.closedTabs
-      ?? []
+    let undo = try? description.undoState?.decoded(as: BrowserDescription.UndoState.self)
+
+    // The records line up with the tabs only when the shapes match. Anything else is a description
+    // this pane did not write, and its tabs load fresh.
+    let states =
+      undo?.tabStates.count == decoded.tabs.count
+      ? undo?.tabStates ?? [] : [Data?](repeating: nil, count: decoded.tabs.count)
 
     self.init(
       dataStore: dataStore, services: services,
-      tabs: decoded.tabs.map {
+      tabs: zip(decoded.tabs, states).map { record, state in
         BrowserTab(
-          id: .make(), record: $0, dataStore: dataStore, hsts: services.hsts, clock: services.clock)
+          id: .make(), record: record, dataStore: dataStore, hsts: services.hsts,
+          clock: services.clock, restoredState: state)
       },
-      selected: decoded.selected, closed: carried)
+      selected: decoded.selected, closed: undo?.closedTabs ?? [])
   }
 
   private init(
@@ -179,17 +198,16 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
 
     for tab in tabs { tab.loadOrigin = origin.loadOrigin }
 
-    loadStored(tab)
+    loadIfNeverLoaded()
   }
 
   /// Begins a tab's first load from the address it stores, after the rule for a restored tab. A
-  /// refused address leaves the tab blank and keeps the stored address.
+  /// refused address leaves the tab blank with an explanation, and keeps the stored address.
   private func loadStored(_ tab: BrowserTab) {
     guard let stored = tab.record.url else { return }
 
     guard let url = URL(string: stored) else {
-      tab.noteRefusedStoredLoad()
-      post(.warning, "Did not load the stored address. It is not a valid address.", from: tab)
+      tab.refuseStoredAddress(stored, .notAnAddress)
       return
     }
 
@@ -198,8 +216,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
       tab.loadStored(url)
 
     case .refuse(let refusal):
-      tab.noteRefusedStoredLoad()
-      post(.warning, refusal.message(for: stored), from: tab)
+      tab.refuseStoredAddress(stored, refusal)
     }
   }
 
@@ -226,8 +243,12 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     alerts.detach()
   }
 
+  /// A pane that was detached at `start`, or that selected a tab while detached, loads the selected
+  /// tab now. A tab that already loaded asks nothing new.
   public func reattach() {
     alerts.reattach(from: self, to: host)
+
+    loadIfNeverLoaded()
   }
 
   public func focus() {
@@ -245,9 +266,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   public func describe() -> AppletDescription {
     let description = BrowserDescription(tabs: tabs.map(\.record), selected: selectedIndex)
 
-    let undoState =
-      closedTabs.isEmpty
-      ? nil : try? JSONValue(encoding: BrowserDescription.UndoState(closedTabs: closedTabs))
+    let undoState = undoPart()
 
     // The payload always encodes. The fields are plain values, so a failure is a programming error.
     // A release build falls back to an empty payload, which restores as a blank browser.
@@ -262,6 +281,25 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     return AppletDescription(
       type: BrowserDescription.typeID, version: BrowserDescription.currentVersion,
       payload: .object([:]))
+  }
+
+  /// The undo-only part, encoded once for as long as no tab's history and no closed tab changes.
+  /// The window asks for a description at every change the applet reports, and a page chooses how
+  /// often its title changes. Encoding a history record costs time in step with the history.
+  private func undoPart() -> JSONValue? {
+    let key = UndoKey(
+      tabs: tabs.map { UndoKey.Tab(id: $0.id, version: $0.historyVersion) },
+      closed: closedTabs.map(\.stamp))
+
+    if let kept = keptUndo, kept.key == key { return kept.value }
+
+    let undo = BrowserDescription.UndoState(
+      closedTabs: closedTabs, tabStates: tabs.map(\.interactionData))
+    let value = undo.isEmpty ? nil : try? JSONValue(encoding: undo)
+
+    keptUndo = (key, value)
+
+    return value
   }
 
   // MARK: Navigation
@@ -489,9 +527,10 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     selectTab(at: (selectedIndex + step + tabs.count) % tabs.count)
   }
 
-  /// A restored tab nobody has looked at loads when it is first selected.
+  /// A restored tab nobody has looked at loads when it is first selected, and only while the pane
+  /// is attached. A detached pane is off screen, so it loads nothing until it comes back.
   private func loadIfNeverLoaded() {
-    guard started, !tab.hasBegunLoading else { return }
+    guard started, !closed, !alerts.isDetached, !tab.hasBegunLoading else { return }
 
     loadStored(tab)
   }
@@ -520,7 +559,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     closedTabs.insert(
       BrowserDescription.ClosedTab(
         stamp: host.issueCloseStamp(), index: index, title: Self.title(of: tab), tab: tab.record,
-        interactionState: tab.interactionData),
+        interactionState: tab.liveInteractionData),
       at: 0)
 
     if closedTabs.count > BrowserDescription.closedTabDepth {
@@ -576,7 +615,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
 
     showSelectedTab(replacingEdit: true)
 
-    if started { loadStored(reopened) }
+    loadIfNeverLoaded()
 
     refresh()
     return .reopened(title: entry.title)
