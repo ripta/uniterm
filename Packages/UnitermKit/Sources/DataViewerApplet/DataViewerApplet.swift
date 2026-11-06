@@ -212,10 +212,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     let table = NestedTable(
       bytes: request.bytes, title: request.title, budget: budget, palette: palette,
       pageTarget: pageTarget)
-    table.onNotice = { [weak self] text in
+    table.onNotice = { [weak self] notice in
       guard let self else { return }
 
-      host?.applet(self, post: .warning, text: text)
+      host?.applet(self, post: notice.level, text: notice.text)
     }
 
     nested = table
@@ -439,15 +439,16 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   /// Posts each notice about the load once. The table fills the pane, so the status bar carries
   /// them, and its history keeps them.
   private func postNotices() {
-    for line in posted.unposted(notices()) {
-      host?.applet(self, post: line == resolvedNotice ? .info : .warning, text: line)
+    for notice in posted.unposted(notices()) {
+      host?.applet(self, post: notice.level, text: notice.text)
     }
   }
 
   /// The notices about what loaded.
-  var loadNotices: [String] { notices() }
+  var loadNotices: [AppletNotice] { notices() }
 
-  private func notices() -> [String] {
+  /// Rows not loaded or not sorted are warnings. A file found at a new path is info.
+  private func notices() -> [AppletNotice] {
     var lines: [String] = []
     let loaded = session.snapshot.rowCount.formatted()
     let whole = session.sheets.isEmpty ? "the file" : "the sheet"
@@ -472,11 +473,13 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     lines += DataViewerNotices.lines(
       sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
 
+    var notices = lines.map { AppletNotice(.warning, $0) }
+
     if let resolvedNotice {
-      lines.append(resolvedNotice)
+      notices.append(AppletNotice(.info, resolvedNotice))
     }
 
-    return lines
+    return notices
   }
 
   private func segmentsForState() -> [AppletSegment] {

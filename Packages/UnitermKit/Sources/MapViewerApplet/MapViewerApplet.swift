@@ -51,6 +51,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private var posted = AppletNotices()
   private var fileFailure: String?
   private var resolvedNotice: String?
+  private var tileFailure: String?
 
   /// The file's bytes as the user has edited them. Nil before any file or pin.
   private(set) var document: Data?
@@ -177,11 +178,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   private func wire() {
     content.onRegionSettled = { [weak self] region in self?.regionSettled(region) }
-    content.onLoadFailure = { [weak self] text in
-      guard let self else { return }
-
-      self.host?.applet(self, post: .warning, text: text)
-    }
+    content.onTilesChanged = { [weak self] failure in self?.tilesChanged(failure) }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
     content.onRegionShown = { [weak self] region in self?.places.regionShown(region) }
     places.onName = { [weak self] _ in self?.refresh() }
@@ -391,15 +388,30 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   static let changedOnDiskNotice =
     "The file changed on disk. Saving asks before it overwrites the change."
 
-  /// The notices about the file shown now, which go to the status bar.
-  var statusNotices: [String] {
-    var lines = fileNotices
+  /// The notices about the file shown now, which go to the status bar. What a read left out is a
+  /// warning. A file found at a new path is info.
+  var statusNotices: [AppletNotice] {
+    var notices = fileNotices.map { AppletNotice(.warning, $0) }
 
-    if let resolvedNotice { lines.append(resolvedNotice) }
+    if let resolvedNotice { notices.append(AppletNotice(.info, resolvedNotice)) }
 
-    if changedOnDisk { lines.append(Self.changedOnDiskNotice) }
+    if changedOnDisk { notices.append(AppletNotice(.warning, Self.changedOnDiskNotice)) }
 
-    return lines
+    return notices
+  }
+
+  /// Keeps why the map's tiles fail to load, for a segment while they do. MapKit can report one
+  /// outage many times, so only the first report of an outage goes to the status bar. The next
+  /// successful load ends the outage.
+  private func tilesChanged(_ failure: String?) {
+    guard failure != tileFailure else { return }
+
+    if let failure, tileFailure == nil {
+      host?.applet(self, post: .warning, text: failure)
+    }
+
+    tileFailure = failure
+    refresh()
   }
 
   /// Keeps what a read of the file left out, for the status bar's segment.
@@ -502,7 +514,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.closeEditor()
     undoManager.removeAllActions()
     content.onRegionSettled = nil
-    content.onLoadFailure = nil
+    content.onTilesChanged = nil
     content.onDrop = nil
     content.onRegionShown = nil
     content.onPlacePicked = nil
@@ -574,6 +586,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
           symbolName: "exclamationmark.triangle", text: "Changed on disk", style: .warning))
     }
 
+    if tileFailure != nil {
+      newSegments.append(
+        AppletSegment(symbolName: "wifi.exclamationmark", text: "Map not loading", style: .warning))
+    }
+
     segments = newSegments
 
     // The pane shows only what stands in for the map's content: a failure, or the wait while a
@@ -586,8 +603,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     content.show(notices: lines)
 
-    for line in posted.unposted(statusNotices) {
-      host?.applet(self, post: line == Self.changedOnDiskNotice ? .warning : .info, text: line)
+    for notice in posted.unposted(statusNotices) {
+      host?.applet(self, post: notice.level, text: notice.text)
     }
     content.setAccessibilityValue(accessibilitySummary())
 
@@ -996,7 +1013,7 @@ extension MapViewerApplet {
 
     unsavedFromUndo = nil
     host?.applet(
-      self, post: .warning,
+      self, post: .error,
       text:
         "The pins left unsaved when this pane closed could not be restored, since their file did not open."
     )

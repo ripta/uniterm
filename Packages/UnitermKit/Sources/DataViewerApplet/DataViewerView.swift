@@ -29,8 +29,8 @@ struct NestedRequest {
   let anchor: NSView
 }
 
-/// The data viewer's body: a filter field, a notice line, the table, and a message that stands in
-/// for the table. It takes a dropped file anywhere in the pane, unless it shows a nested value.
+/// The data viewer's body: a filter field, the table, and a message that stands in for it. It
+/// takes a dropped file anywhere in the pane, unless it shows a nested value.
 ///
 /// A double click on a nested cell asks the owner to open it as a table of its own.
 @MainActor

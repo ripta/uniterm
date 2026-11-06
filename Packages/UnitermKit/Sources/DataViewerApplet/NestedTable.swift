@@ -25,7 +25,7 @@ final class NestedTable: NSObject, NSPopoverDelegate {
 
   /// Gets each notice about the nested table's rows once. The owner posts it to the status bar,
   /// naming the table, since a popover has no status of its own.
-  var onNotice: ((String) -> Void)?
+  var onNotice: ((AppletNotice) -> Void)?
 
   init(
     bytes: [UInt8], title: String, budget: TableBudget, palette: ThemePalette,
@@ -101,8 +101,8 @@ final class NestedTable: NSObject, NSPopoverDelegate {
 
     view.show(body(), filter: session.query.filter, sort: session.query.sort)
 
-    for line in posted.unposted(notices()) {
-      onNotice?("In \u{201C}\(title)\u{201D}: \(line)")
+    for notice in posted.unposted(notices()) {
+      onNotice?(AppletNotice(notice.level, "In \u{201C}\(title)\u{201D}: \(notice.text)"))
     }
   }
 
@@ -130,8 +130,9 @@ final class NestedTable: NSObject, NSPopoverDelegate {
     }
   }
 
-  private func notices() -> [String] {
+  private func notices() -> [AppletNotice] {
     DataViewerNotices.lines(
-      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows)
+      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows
+    ).map { AppletNotice(.warning, $0) }
   }
 }
