@@ -53,7 +53,9 @@ final class RestoreNoticeTests: XCTestCase {
     UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
   }
 
-  private func controller(panes: Int) throws -> MainWindowController {
+  private func controller(
+    panes: Int, center: StatusCenter = StatusCenter()
+  ) throws -> MainWindowController {
     let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
 
     let children = (1...panes).map {
@@ -69,7 +71,7 @@ final class RestoreNoticeTests: XCTestCase {
       tree: savedSplit(UInt64(panes + 1), .row, children), focus: 1, mark: UInt64(panes + 1))
 
     return try MainWindowController(
-      appearance: AppearanceController(store: store), settings: store,
+      appearance: AppearanceController(store: store), settings: store, statusCenter: center,
       restoring: RestoredWindow(saved: saved),
       restoreApplet: { description in
         let applet = LoadingApplet()
@@ -222,5 +224,71 @@ final class RestoreNoticeTests: XCTestCase {
 
     XCTAssertEqual(
       center.history.filter { $0.text == "work lost" }.count, 1, "reattach duplicated the record")
+  }
+
+  /// A center whose warning pool holds four records, so a few records from other sources evict a
+  /// held one.
+  private func smallCenter() -> StatusCenter {
+    var policy = StatusPolicy()
+    policy.otherHistoryLimit = 4
+
+    return StatusCenter(policy: policy)
+  }
+
+  /// Evicts the oldest warning record from the history. A full pool drops the oldest row of its
+  /// most represented source, and the oldest source breaks a tie. Every filler row has a source of
+  /// its own, so each source has one row and the held record, being oldest, goes first.
+  private func evict(_ center: StatusCenter) {
+    for number in 0..<4 {
+      center.deliver(
+        .historyOnly, level: .warning, source: .pane(id: 1000 + UInt64(number), name: "other"),
+        text: "other \(number)")
+    }
+  }
+
+  /// Catches a held record that retention evicted while this pane admitted nothing more. The
+  /// ledger must not still honor it, so reattach restores the record as a row of its own. A
+  /// stale ledger entry sent the signal to the loss summary with no row.
+  func testAHeldRecordEvictedWhileThePaneAdmitsNothingComesBackAsARow() throws {
+    let center = smallCenter()
+    let restored = try controller(panes: 1, center: center)
+    defer { restored.window?.close() }
+
+    let applet = try XCTUnwrap(restored.paneArea.applet(for: NodeID(rawValue: 1)))
+
+    var alerts = AppletAlerts()
+
+    alerts.detach()
+    alerts.deliver(.warning, "held warning", from: applet, to: applet.host)
+    evict(center)
+
+    XCTAssertTrue(center.history.filter { $0.text == "held warning" }.isEmpty, "not evicted")
+
+    alerts.reattach(from: applet, to: applet.host)
+
+    XCTAssertEqual(center.history.filter { $0.text == "held warning" }.count, 1)
+  }
+
+  /// Catches the same eviction when the pane admits a later record before it returns. The result
+  /// is the same as when it admits nothing: one row for the held alert.
+  func testAHeldRecordEvictedBeforeALaterAdmitComesBackAsARow() throws {
+    let center = smallCenter()
+    let restored = try controller(panes: 1, center: center)
+    defer { restored.window?.close() }
+
+    let applet = try XCTUnwrap(restored.paneArea.applet(for: NodeID(rawValue: 1)))
+
+    var alerts = AppletAlerts()
+
+    alerts.detach()
+    alerts.deliver(.warning, "held warning", from: applet, to: applet.host)
+    evict(center)
+    applet.host?.applet(applet, send: .historyOnly, level: .info, text: "later", presenting: nil)
+
+    XCTAssertTrue(center.history.filter { $0.text == "held warning" }.isEmpty, "not evicted")
+
+    alerts.reattach(from: applet, to: applet.host)
+
+    XCTAssertEqual(center.history.filter { $0.text == "held warning" }.count, 1)
   }
 }
