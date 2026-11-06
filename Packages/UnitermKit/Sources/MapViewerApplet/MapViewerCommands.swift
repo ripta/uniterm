@@ -9,7 +9,8 @@ extension MapViewerApplet {
     typeID: MapViewerDescription.typeID, displayName: "Map Viewer",
     opens: [OpenedType("public.geojson", rank: .owner)])
 
-  /// The map viewer's own commands. Open has no key, since Cmd-O belongs to the window's File >
+  /// The map viewer's own commands. Save and Save As take the usual document keys. Open has no key,
+  /// since Cmd-O belongs to the window's File >
   /// Open, which routes by type. The three styles sit in the View menu on Cmd-1 to Cmd-3. A map has
   /// no tabs, and the terminal's tab keys are hidden while a map pane has focus.
   ///
@@ -22,6 +23,23 @@ extension MapViewerApplet {
     typeID: MapViewerDescription.typeID, menuTitle: "Map",
     commands: [
       .openSource(),
+      AppletCommand(
+        name: "save", title: "Save", key: KeyChord("s"), home: .file, section: 1,
+        isAvailable: { ($0 as? MapViewerApplet)?.canSave ?? false },
+        run: { applet in
+          guard let map = applet as? MapViewerApplet else { return }
+
+          Task { await map.save() }
+        }),
+      AppletCommand(
+        name: "save-as", title: "Save As\u{2026}", key: KeyChord("s", [.command, .shift]),
+        home: .file, section: 1,
+        isAvailable: { ($0 as? MapViewerApplet)?.document != nil },
+        run: { applet in
+          guard let map = applet as? MapViewerApplet else { return }
+
+          Task { await map.saveAs() }
+        }),
       AppletCommand(
         name: "clear-file", title: "Clear File Pins", home: .file, section: 1,
         isAvailable: { ($0 as? MapViewerApplet)?.canClearFile ?? false },
@@ -45,6 +63,21 @@ extension MapViewerApplet {
         name: "go-to-place", title: "Go to Place\u{2026}", key: KeyChord("l"),
         isAvailable: { $0.canGoToPlace }
       ) { $0.showPlaceSearch() },
+      AppletCommand(
+        name: "edit-pin", title: "Edit Pin\u{2026}", home: .applet, section: 0,
+        isAvailable: { ($0 as? MapViewerApplet)?.hasSelectedPin ?? false },
+        run: { ($0 as? MapViewerApplet)?.editSelectedPin() }),
+      AppletCommand(
+        name: "remove-pin", title: "Remove Pin", key: KeyChord("\u{8}"), home: .applet, section: 0,
+        isAvailable: { applet in
+          guard let map = applet as? MapViewerApplet else { return false }
+
+          return map.hasSelectedPin && map.canEdit && map.content.mapHasKeyboard
+        },
+        run: { ($0 as? MapViewerApplet)?.removeSelectedPin() }),
+      .view(
+        name: "pin-list", title: "Show or Hide Pin List", key: KeyChord("l", [.command, .shift])
+      ) { $0.content.setPinList(visible: !$0.content.showsPinList) },
     ])
 }
 

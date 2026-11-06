@@ -66,6 +66,29 @@ enum GeoJSONFileReader {
     }
   }
 
+  /// Reads the file and keeps its bytes beside the layer, so the map can edit and save it.
+  @concurrent
+  static func readDocument(_ file: URL, limits: GeoJSONLimits = GeoJSONLimits()) async -> Result<
+    (layer: GeoFileLayer, bytes: Data), GeoJSONFileError
+  > {
+    switch bytes(of: file, limit: limits.maxBytes) {
+    case .failure(let error):
+      return .failure(error)
+
+    case .success(let data):
+      return layer(from: data, path: file.path, limits: limits).map { ($0, data) }
+    }
+  }
+
+  /// Builds the layer for bytes the map already holds, such as an edited document, off the main
+  /// thread.
+  @concurrent
+  static func layer(of data: Data, path: String, limits: GeoJSONLimits = GeoJSONLimits()) async
+    -> Result<GeoFileLayer, GeoJSONFileError>
+  {
+    layer(from: data, path: path, limits: limits)
+  }
+
   /// Decodes `data` and builds the layer. The fuzzer calls this to run the decoder as shipped.
   static func layer(from data: Data, path: String, limits: GeoJSONLimits) -> Result<
     GeoFileLayer, GeoJSONFileError
