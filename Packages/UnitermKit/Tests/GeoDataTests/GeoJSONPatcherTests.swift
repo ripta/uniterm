@@ -118,8 +118,8 @@ final class GeoJSONPatcherTests: XCTestCase {
   /// Catches a removal that leaves a stray comma, which would make the file unreadable, in the
   /// middle, at the end, and for the only feature.
   func testRemovalsLeaveValidJSONWhereverTheFeatureSits() throws {
-    for (id, expected) in [("0:0", 2), ("2:0", 3)] {
-      let edited = try apply(.remove(pin(id, 0, 0, "")), to: mixed)
+    for (id, longitude, latitude, expected) in [("0:0", 2.35, 48.85, 2), ("2:0", 10.0, 20.0, 3)] {
+      let edited = try apply(.remove(pin(id, longitude, latitude, "")), to: mixed)
       let object = try JSONSerialization.jsonObject(with: Data(edited.utf8)) as? [String: Any]
 
       XCTAssertEqual((object?["features"] as? [Any])?.count, expected, id)
@@ -243,5 +243,56 @@ final class GeoJSONPatcherTests: XCTestCase {
 
     let deep = String(repeating: "[", count: 5000) + String(repeating: "]", count: 5000)
     XCTAssertThrowsError(try apply(.add(pin("", 1, 2, "")), to: deep))
+  }
+}
+
+/// Review findings: a move must stay a move, and a stale pin must not hit another one.
+final class GeoJSONPatcherMoveTests: XCTestCase {
+  private func unlabeled(_ id: String, _ longitude: Double, _ latitude: Double) -> GeoPin {
+    let coordinate = GeoCoordinate(latitude: latitude, longitude: longitude)
+
+    return GeoPin(
+      id: id, coordinate: coordinate, label: GeoFileLayerBuilder.coordinateText(coordinate))
+  }
+
+  private func apply(_ edit: PinEdit, to text: String) throws -> String {
+    String(decoding: try GeoJSONPatcher.apply(edit, to: Data(text.utf8)), as: UTF8.self)
+  }
+
+  /// Catches a move of an unlabeled pin that also writes properties. Its label is its coordinate,
+  /// so the label changes with the move, and that is not a label edit.
+  func testMovingAnUnlabeledPointChangesOnlyItsCoordinates() throws {
+    for text in [
+      #"{"type":"FeatureCollection","features":[{"type":"Feature","properties":null,"geometry":{"type":"Point","coordinates":[1,2]}}]}"#,
+      #"{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[1,2]}}]}"#,
+    ] {
+      let result = try apply(
+        .update(old: unlabeled("0:0", 1, 2), new: unlabeled("0:0", 3, 4)), to: text)
+
+      XCTAssertEqual(result, text.replacingOccurrences(of: "[1,2]", with: "[3.0,4.0]"))
+    }
+  }
+
+  /// Catches a move of an unlabeled MultiPoint member that splits it out of the MultiPoint.
+  func testMovingAnUnlabeledMultiPointMemberRewritesOnlyThatMember() throws {
+    let text =
+      #"{"type":"FeatureCollection","features":[{"type":"Feature","properties":null,"geometry":{"type":"MultiPoint","coordinates":[[1,2],[3,4]]}}]}"#
+
+    let result = try apply(
+      .update(old: unlabeled("0:1", 3, 4), new: unlabeled("0:1", 5, 6)), to: text)
+
+    XCTAssertEqual(result, text.replacingOccurrences(of: "[3,4]", with: "[5.0,6.0]"))
+  }
+
+  /// Catches an edit held across a renumbering, such as an editor left open over an undo, that
+  /// changes whichever pin now has the ID. A pin whose coordinate no longer matches is refused.
+  func testAStalePinIsRefused() {
+    let text =
+      #"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"B"},"geometry":{"type":"Point","coordinates":[9,9]}}]}"#
+    let stale = GeoPin(id: "0:0", coordinate: GeoCoordinate(latitude: 2, longitude: 1), label: "A")
+
+    XCTAssertThrowsError(try apply(.remove(stale), to: text)) {
+      XCTAssertEqual($0 as? PinEditError, .notFound("0:0"))
+    }
   }
 }
