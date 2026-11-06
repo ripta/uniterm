@@ -50,6 +50,11 @@ final class BrowserTab: NSObject {
   private(set) var canGoBack = false
   private(set) var canGoForward = false
 
+  /// Whether the address bar should warn about the current page. It is recomputed whenever the
+  /// address or WebKit's secure-content flag changes, so it follows a page that loads insecure
+  /// content after commit and a navigation to a page with none.
+  private(set) var showsSecurityWarning = false
+
   /// The method of the main-frame request the policy last saw. A commit that follows it takes it as
   /// the method that produced the page.
   private var lastMainFrameMethod = "GET"
@@ -168,6 +173,9 @@ final class BrowserTab: NSObject {
       webView.observe(\.url) { [weak self] _, _ in
         MainActor.assumeIsolated { self?.stateChanged() }
       },
+      webView.observe(\.hasOnlySecureContent) { [weak self] _, _ in
+        MainActor.assumeIsolated { self?.stateChanged() }
+      },
     ]
   }
 
@@ -187,6 +195,8 @@ final class BrowserTab: NSObject {
     isLoading = webView.isLoading
     canGoBack = webView.canGoBack
     canGoForward = webView.canGoForward
+    showsSecurityWarning = SecurityIndicator.warns(
+      url: webView.url, hasOnlySecureContent: webView.hasOnlySecureContent)
 
     delegate?.tabDidChange(self)
   }

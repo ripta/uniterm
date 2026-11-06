@@ -478,14 +478,39 @@ None.
 
 ### M2: Security indicator
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A page with any insecure content shows a warning icon in the address bar
 - A fully secure page shows no warning
 
+**As built:**
+
+- `SecurityIndicator.warns(url:hasOnlySecureContent:)` in `BrowserModel` is the one rule. A blank page never warns, and
+  neither does an empty tab. `isBlank` reads the address string, so `about:blank#x` and `about:blank?q=1` count as
+  blank, and the address bar's own blank check shares it. An `http` page always warns. Any other page warns when WebKit's
+  `hasOnlySecureContent` is false. A table test pins the rule with no WebKit.
+- WebKit moves `url` to a new page before it updates the flag, and a test measured it. A load from a secure page to a
+  stalled `http` address showed the new address with no warning, because the flag still described the old page. The
+  `http` rule closes that gap. A stalled `https` address after an insecure page warns until its flag arrives.
+- The tab observes `hasOnlySecureContent` beside the address, and recomputes `showsSecurityWarning` on every state
+  change. The applet passes the value to the view, which shows or hides the icon.
+- The icon sits between the Reload button and the address bar, and a test shows that it gives its room back to the
+  address bar while hidden. It carries the identifier `browser-security` and the label "Not secure", and it is tinted with
+  the theme's yellow.
+- Measured under `swift test`. A page loaded from a string with an `https` base address commits as an `https` page and
+  WebKit reports it fully secure, so a test uses it for the secure case: no warning, icon hidden. WebKit blocks or
+  upgrades every mixed-content subresource tried there, namely an iframe, a script, a stylesheet, a fetch, an XHR, a
+  video, and an image, and the flag never flipped. `about:blank` reports the flag as false. A `blob:` page made by an
+  `http` page reports false and warns.
+- What is left to the user. No test makes the flag flip after commit, so the observer on the flag is not pinned by a
+  test, and the check that an HTTPS page which loads insecure content gains the warning is left to the user. A secure page
+  fetched over real TLS, and a `blob:` page made by an `https` page, are also unproven, since the fixture has no trusted
+  HTTPS. The fully secure case is pinned only as far as the string-loaded page goes. The `about:blank` guard in the
+  tab is pinned by the table and by a navigation to `about:blank`. No trust override exists, even for tests.
+
 ### M3: Tabs
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS
 
 - The browser opens, switches, and closes tabs
 - The tab bar is hidden when only one tab is open
@@ -672,6 +697,11 @@ Starts after UTERM-004 M6.
   drops a URL over 32 KiB, and cuts a title to 512 characters. A committed `blob:` page would restore as a refusal at
   every launch, and a page chooses the length of both values, which the layout file holds. A tab keeps its last
   storable value when a commit is not storable.
+- 2026-11-06: Security indicator proof narrowed (work-queue best guess). M2's second check, a fully secure page, is
+  proved only with a page loaded from a string with an `https` base address. Its first check, a page with insecure
+  content, is proved for `http` pages. A page that gains insecure content after commit has no test, and the user checks
+  it by hand. The rest of the checks pass, so M2 is DONE, and As built names what is left to the user. An `http` page
+  warns whatever the flag says, because WebKit updates the address before the flag.
 - 2026-11-06: ADR candidate (cuts across the system): web content hosted anywhere in uniterm may load plain HTTP, with
   no App Transport Security floor, so each applet that hosts a web view owns its own scheme gate. The key is app-wide,
   so the text viewer in UTERM-007 and the canvas in UTERM-010 inherit it. Undecided. Found in UTERM-005 M1.

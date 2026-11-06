@@ -256,6 +256,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     content.show(
       canGoBack: tab.canGoBack, canGoForward: tab.canGoForward, isLoading: tab.isLoading)
 
+    content.show(securityWarning: tab.showsSecurityWarning)
     content.show(address: Self.address(of: tab.currentURL))
     refresh()
   }
@@ -271,7 +272,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   }
 
   private static func address(of url: URL?) -> String {
-    guard let url, url.absoluteString.lowercased() != "about:blank" else { return "" }
+    guard let url, !SecurityIndicator.isBlank(url) else { return "" }
 
     return url.absoluteString
   }

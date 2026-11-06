@@ -17,6 +17,9 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     symbol: "arrow.clockwise", label: "Reload", identifier: "browser-reload")
   let addressField = NSTextField()
 
+  /// Warns that the page is not fully secure. While hidden it takes no room in the toolbar.
+  let securityIcon = NSImageView()
+
   var onBack: () -> Void = {}
   var onForward: () -> Void = {}
   var onReload: () -> Void = {}
@@ -46,6 +49,17 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     addressField.setAccessibilityLabel("Address")
     addressField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+    securityIcon.image = NSImage(
+      systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Not secure")
+    securityIcon.setAccessibilityIdentifier("browser-security")
+    securityIcon.setAccessibilityLabel("Not secure")
+    securityIcon.setAccessibilityHelp("This page is not fully secure.")
+    securityIcon.setAccessibilityElement(true)
+    securityIcon.setAccessibilityRole(.image)
+    securityIcon.toolTip = "Not secure"
+    securityIcon.isHidden = true
+    securityIcon.setContentHuggingPriority(.required, for: .horizontal)
+
     backButton.target = self
     backButton.action = #selector(back)
     forwardButton.target = self
@@ -56,7 +70,8 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     toolbar.orientation = .horizontal
     toolbar.spacing = 6
     toolbar.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
-    toolbar.setViews([backButton, forwardButton, reloadButton, addressField], in: .leading)
+    toolbar.setViews(
+      [backButton, forwardButton, reloadButton, securityIcon, addressField], in: .leading)
     toolbar.translatesAutoresizingMaskIntoConstraints = false
 
     addSubview(toolbar)
@@ -101,6 +116,10 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     reloadButton.toolTip = isLoading ? "Reload, loading" : "Reload"
   }
 
+  func show(securityWarning: Bool) {
+    securityIcon.isHidden = !securityWarning
+  }
+
   /// Shows `address` unless the user is typing in the bar. A page that finishes loading while the
   /// user edits must not overwrite the edit.
   func show(address: String) {
@@ -130,6 +149,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     appearance = NSAppearance(named: palette.flavor.isDark ? .darkAqua : .aqua)
     layer?.backgroundColor = palette[.base].cgColor
     addressField.textColor = addressIsInvalid ? palette[.red].nsColor : palette[.text].nsColor
+    securityIcon.contentTintColor = palette[.yellow].nsColor
   }
 
   var isEditingAddress: Bool {
