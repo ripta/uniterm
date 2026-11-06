@@ -521,6 +521,11 @@ None.
 - 2026-11-05: Amended "Where pins come from" for UTERM-016. The user now edits the file's pins by hand and saves them.
   UTERM-016 M4 will let an authorized caller edit the open document's file pins, under the path-reading power. The
   text before said only the user and file loading change the file layer.
+- 2026-11-05: Load notices moved to the status bar at the user's review. M2 put the skipped-shape count and the other
+  load notices in a box over the map, where it covered MapKit's logo and Legal link and could not be dismissed. Each
+  notice now posts once per load to the status bar and stays in its history. A segment counts the hidden shapes while
+  the pane is focused. Load failures and "Opening…" stay in the pane, which has nothing else to show then. The data
+  viewer's load notices moved the same way.
 
 ## References
 

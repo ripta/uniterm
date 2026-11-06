@@ -61,7 +61,6 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   private let findRow = NSStackView()
   private let header = NSStackView()
   private var findVisible = false
-  private let noticeLabel = NSTextField(wrappingLabelWithString: "")
   private let scrollView = NSScrollView()
   private let tableView = NSTableView()
   private let messageLabel = NSTextField(wrappingLabelWithString: "")
@@ -116,9 +115,6 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     sheetPicker.isHidden = true
     sheetPicker.setAccessibilityIdentifier("data-viewer-sheets")
 
-    noticeLabel.font = .systemFont(ofSize: 11)
-    noticeLabel.setAccessibilityIdentifier("data-viewer-notice\(suffix)")
-
     tableView.dataSource = self
     tableView.delegate = self
     tableView.style = .plain
@@ -161,7 +157,6 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     header.addArrangedSubview(sheetPicker)
     header.addArrangedSubview(filterField)
     header.addArrangedSubview(findRow)
-    header.addArrangedSubview(noticeLabel)
 
     addSubview(header)
     addSubview(scrollView)
@@ -170,7 +165,6 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     NSLayoutConstraint.activate([
       filterField.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
       findRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
-      noticeLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
       header.topAnchor.constraint(equalTo: topAnchor),
       header.leadingAnchor.constraint(equalTo: leadingAnchor),
       header.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -189,7 +183,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     setAccessibilityIdentifier("data-viewer\(suffix)")
     apply(.latte)
     show(
-      .message(""), notices: [], filter: "", sort: nil, find: FindDisplay(), sheets: SheetDisplay())
+      .message(""), filter: "", sort: nil, find: FindDisplay(), sheets: SheetDisplay())
   }
 
   @available(*, unavailable)
@@ -234,9 +228,10 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     tableView.scrollColumnToVisible(column)
   }
 
-  /// Shows the body, the notice lines, and the sort, filter, and find the table carries.
+  /// Shows the body, and the sort, filter, and find the table carries. Notices about what loaded go
+  /// to the status bar, not here.
   func show(
-    _ body: DataViewerBody, notices: [String], filter: String, sort: SortSpec?,
+    _ body: DataViewerBody, filter: String, sort: SortSpec?,
     find: FindDisplay = FindDisplay(), sheets: SheetDisplay = SheetDisplay()
   ) {
     self.body = body
@@ -253,9 +248,6 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     }
 
     showSheets(sheets)
-
-    noticeLabel.stringValue = notices.joined(separator: " ")
-    noticeLabel.isHidden = notices.isEmpty || !showsTable
 
     if filterField.currentEditor() == nil, filterField.stringValue != filter {
       filterField.stringValue = filter
@@ -295,7 +287,6 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     tableView.backgroundColor = palette[.base].nsColor
     tableView.gridColor = palette[.surface0].nsColor
     messageLabel.textColor = palette[.subtext1].nsColor
-    noticeLabel.textColor = palette[.yellow].nsColor
     findCountLabel.textColor = palette[.subtext1].nsColor
     tableView.reloadData()
   }

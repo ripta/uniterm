@@ -41,6 +41,14 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private var restoreWaitsForStart = false
   private var filePins: [GeoPin] = []
   private var fileNotices: [String] = []
+
+  /// Points and shapes the file holds that the map does not show, and whether the file passed
+  /// the point bound. The status bar's segment counts them.
+  private var hiddenFromFile = 0
+  private var fileTruncated = false
+
+  /// The notices already posted to the status bar for the file shown now.
+  private var posted = AppletNotices()
   private var fileFailure: String?
   private var resolvedNotice: String?
 
@@ -290,6 +298,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     resolvedNotice = nil
     fileFailure = nil
     fileNotices = []
+    hiddenFromFile = 0
+    fileTruncated = false
+    posted.reset()
     filePins = []
     content.removePins(layer: .file)
     forgetDocument()
@@ -357,6 +368,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     opening = nil
     filePins = layer.pins
     fileNotices = layer.notices(limit: Self.limits.maxPoints)
+    count(layer)
 
     if layer.pins.isEmpty && layer.skippedShapes == 0 && layer.invalidCoordinates == 0 {
       fileNotices.append("The file has no points to show.")
@@ -374,6 +386,26 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     refresh()
     host?.appletDidChange(self)
+  }
+
+  static let changedOnDiskNotice =
+    "The file changed on disk. Saving asks before it overwrites the change."
+
+  /// The notices about the file shown now, which go to the status bar.
+  var statusNotices: [String] {
+    var lines = fileNotices
+
+    if let resolvedNotice { lines.append(resolvedNotice) }
+
+    if changedOnDisk { lines.append(Self.changedOnDiskNotice) }
+
+    return lines
+  }
+
+  /// Keeps what a read of the file left out, for the status bar's segment.
+  private func count(_ layer: GeoFileLayer) {
+    hiddenFromFile = layer.skippedShapes + layer.invalidCoordinates
+    fileTruncated = layer.truncated
   }
 
   /// The file layer's default accent: the stored one while it names an accent, else the first of
@@ -528,23 +560,35 @@ public final class MapViewerApplet: Applet, SourceReplacing {
           text: filePins.count == 1 ? "1 pin" : "\(filePins.count.formatted()) pins"))
     }
 
+    if fileTruncated {
+      newSegments.append(
+        AppletSegment(symbolName: "eye.slash", text: "Some points hidden", style: .warning))
+    } else if hiddenFromFile > 0 {
+      newSegments.append(
+        AppletSegment(symbolName: "eye.slash", text: "\(hiddenFromFile.formatted()) hidden"))
+    }
+
+    if changedOnDisk {
+      newSegments.append(
+        AppletSegment(
+          symbolName: "exclamationmark.triangle", text: "Changed on disk", style: .warning))
+    }
+
     segments = newSegments
 
+    // The pane shows only what stands in for the map's content: a failure, or the wait while a
+    // file opens. Notices about what loaded go to the status bar once, and stay in its history.
     var lines: [String] = []
 
     if let fileFailure { lines.append(fileFailure) }
 
     if opening != nil { lines.append("Opening\u{2026}") }
 
-    lines += fileNotices
-
-    if let resolvedNotice { lines.append(resolvedNotice) }
-
-    if changedOnDisk {
-      lines.append("The file changed on disk. Saving asks before it overwrites the change.")
-    }
-
     content.show(notices: lines)
+
+    for line in posted.unposted(statusNotices) {
+      host?.applet(self, post: line == Self.changedOnDiskNotice ? .warning : .info, text: line)
+    }
     content.setAccessibilityValue(accessibilitySummary())
 
     let newTitle = displayName + (isDirty ? " \u{2014} Edited" : "")
@@ -738,6 +782,7 @@ extension MapViewerApplet {
       case .success(let layer):
         self.filePins = layer.pins
         self.fileNotices = layer.notices(limit: Self.limits.maxPoints)
+        self.count(layer)
         self.editableOrdinals = GeoJSONPatcher.editableOrdinals(in: bytes)
         self.showFilePins()
 

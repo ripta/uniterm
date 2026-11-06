@@ -219,7 +219,7 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertEqual(applet.filePinsShown.count, 2)
     XCTAssertTrue(applet.isDirty)
     XCTAssertTrue(
-      applet.content.noticeLines.contains {
+      applet.statusNotices.contains {
         $0.hasPrefix("The file changed on disk")
       })
   }
