@@ -10,9 +10,10 @@ extension MapViewerApplet {
     opens: [OpenedType("public.geojson", rank: .owner)])
 
   /// The map viewer's own commands. Save and Save As take the usual document keys. Open has no key,
-  /// since Cmd-O belongs to the window's File >
-  /// Open, which routes by type. The three styles sit in the View menu on Cmd-1 to Cmd-3. A map has
-  /// no tabs, and the terminal's tab keys are hidden while a map pane has focus.
+  /// since Cmd-O belongs to the window's File > Open, which routes by type.
+  ///
+  /// The three styles sit in the View menu on Cmd-1 to Cmd-3. A map has no tabs, and the
+  /// terminal's tab keys are hidden while a map pane has focus.
   ///
   /// Zoom In, Zoom Out, and Zoom to Fit Pins take the keys the terminal uses for its text size,
   /// since each applet's keys apply only while its pane has focus.
