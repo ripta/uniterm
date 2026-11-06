@@ -37,7 +37,9 @@ final class EventHost: AppletHost {
   }
 
   func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
-    await recording.applet(applet, confirm: request)
+    Task { @MainActor [events] in events.continuation.yield() }
+
+    return await recording.applet(applet, confirm: request)
   }
 
   func issueCloseStamp() -> UInt64 { recording.issueCloseStamp() }

@@ -65,23 +65,24 @@ final class BrowserGateTests: XCTestCase {
     }
   }
 
-  /// Catches a resubmit that gets past the button methods: the web view's own Reload, and a
-  /// swipe, reach WebKit directly. The test calls the web view and not the tab, so only the
-  /// navigation delegate can stop the post. One warning says why, and the server sees one post.
-  func testWebKitsOwnReloadAndGoBackCannotResendAForm() async throws {
+  /// Catches a resubmit that gets past the applet's own buttons: the web view's own Reload and a
+  /// swipe reach WebKit directly. The test calls the web view and not the tab, and the host would
+  /// answer yes, so only the gate can stop the post. Each is refused with one warning and no
+  /// question. A swipe cannot be told from a script, so it is refused too.
+  func testWebKitsOwnReloadAndASwipeOntoAPostResultAreRefusedWithANotice() async throws {
     let harness = try await BrowserHarness.make(handler: Self.server())
     defer { harness.stop() }
+
+    harness.host.recording.answer = true
 
     await postResult(in: harness)
     await harness.load("/other", expecting: "Other")
 
     harness.tab.webView.goBack()
-    await harness.host.until("the refusal is reported") { harness.posts.count == 1 }
+    await harness.host.until("the swipe is refused") { harness.posts.count == 1 }
 
-    XCTAssertTrue(
-      harness.posts.first?.text.contains("send the form again") ?? false, "\(harness.posts)")
+    XCTAssertTrue(harness.posts.first?.text.contains("send the form again") ?? false)
 
-    harness.host.recording.forgetSent()
     await harness.load("/form", expecting: "Form")
     await harness.run("document.forms[0].submit()")
     await harness.host.until("the post result shows") {
@@ -90,24 +91,33 @@ final class BrowserGateTests: XCTestCase {
 
     XCTAssertEqual(harness.count("POST", "/result"), 2)
 
+    harness.host.recording.forgetSent()
     harness.tab.webView.reload()
-    await harness.host.until("the refusal is reported") { harness.posts.count == 1 }
+    await harness.host.until("the web view's own reload is refused") { harness.posts.count == 1 }
 
     await harness.load("/barrier", expecting: "Other")
 
     XCTAssertEqual(harness.count("POST", "/result"), 2)
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
   }
 
-  /// Catches a post to an address too long to store being reloadable. The flag that marks a post
-  /// result must not depend on the address being storable.
+  /// Catches a post to an address too long to store being reloaded without a question. The flag that
+  /// marks a post result must not depend on the address being storable.
   func testAPostToAnAddressTooLongToStoreIsStillNeverReloaded() async throws {
     let harness = try await BrowserHarness.make(handler: Self.server())
     defer { harness.stop() }
 
     await postResult(in: harness, from: "/long-form")
 
+    harness.host.recording.answer = false
+    harness.applet.reload()
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
+
+    await harness.load("/barrier", expecting: "Other")
+
     XCTAssertEqual(harness.count("POST", "/result"), 1)
-    XCTAssertEqual(harness.tab.reload(), .refusedResubmit)
   }
 
   /// Catches a same-document step on a post page, such as a fragment link, that gives a history

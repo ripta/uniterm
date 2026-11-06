@@ -76,7 +76,6 @@ final class ReopenClosedTests: XCTestCase {
     XCTAssertEqual(
       lastMessage(fixture),
       "The tab \u{201C}Fake 0 tab 1\u{201D} could not be reopened: the session did not start. "
-        + "Check that the shell can start, then try again. "
         + "Reopened the pane \u{201C}Fake 1\u{201D} instead.")
   }
 
@@ -149,7 +148,7 @@ final class ReopenClosedTests: XCTestCase {
     XCTAssertEqual(
       lastMessage(fixture),
       "The tab \u{201C}Fake 0 tab 2\u{201D} could not be reopened: the session did not start. "
-        + "Check that the shell can start, then try again. Nothing was reopened.")
+        + "Nothing was reopened.")
   }
 
   /// Catches a focused-pane rule. A tab closes in pane 1, then pane 2 closes, and pane 1 has focus.

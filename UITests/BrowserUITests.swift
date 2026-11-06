@@ -2,7 +2,11 @@ import AppKit
 import XCTest
 
 /// Drives the browser in the launched app. Each test proves a contract that needs the real window
-/// server: the launcher entry, and a pane restored from a saved layout by its description type.
+/// server: the launcher entry, a pane restored from a saved layout by its description type, and the
+/// keys that reach the browser's tabs through the menu.
+///
+/// The tab bar exposes each tab as `tab-N` with the value `selected` or `unselected`, as the
+/// terminal's does.
 ///
 /// No test loads a page from the network. A restored `about:blank` is the one address that loads
 /// without a server.
@@ -23,6 +27,38 @@ final class BrowserUITests: UnitermUITestCase {
 
   private func addressField(in window: XCUIElement) -> XCUIElement {
     window.descendants(matching: .any)["browser-address"]
+  }
+
+  private func tab(_ index: Int, in window: XCUIElement) -> XCUIElement {
+    window.descendants(matching: .any)["tab-\(index)"]
+  }
+
+  private func waitForGone(_ element: XCUIElement, timeout: TimeInterval = 15) -> Bool {
+    let gone = NSPredicate(format: "exists == false")
+    return XCTWaiter().wait(
+      for: [XCTNSPredicateExpectation(predicate: gone, object: element)], timeout: timeout)
+      == .completed
+  }
+
+  private func isSelected(_ element: XCUIElement) -> Bool {
+    waitFor(element, timeout: 10) { $0 == "selected" }
+  }
+
+  /// Opens a browser pane from the launcher and waits for it.
+  private func openBrowser(in app: XCUIApplication) -> XCUIElement {
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("d", modifierFlags: .command)
+    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+
+    app.typeKey("5", modifierFlags: .command)
+    app.typeKey(.return, modifierFlags: [])
+
+    XCTAssertTrue(waitUntilGone(launcher(in: window)))
+    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 10), "no browser pane")
+
+    return window
   }
 
   /// Catches a launcher without the browser, a row that opens something else, and a new browser
@@ -80,5 +116,70 @@ final class BrowserUITests: UnitermUITestCase {
 
     XCTAssertTrue(window.waitForExistence(timeout: 15))
     XCTAssertFalse(browser(in: window).waitForExistence(timeout: 3))
+  }
+
+  /// Catches a tab bar that shows for one tab, and tab keys that do not reach the browser through
+  /// the menu. A new pane has no bar. Cmd-T adds a tab and selects it. Cmd-Shift-[ and Cmd-Shift-]
+  /// step through the tabs, Cmd-1 and Cmd-2 pick one, and Cmd-9 picks the last.
+  func testTheTabKeysOpenAndSwitchBrowserTabs() {
+    let app = launchApp()
+    let window = openBrowser(in: app)
+
+    XCTAssertFalse(tab(0, in: window).exists, "a single tab showed the bar")
+
+    app.typeKey("t", modifierFlags: .command)
+
+    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10), "Cmd-T opened no tab")
+    XCTAssertTrue(isSelected(tab(1, in: window)))
+
+    app.typeKey("[", modifierFlags: [.command, .shift])
+    XCTAssertTrue(isSelected(tab(0, in: window)), "Cmd-Shift-[ did not go back")
+
+    app.typeKey("]", modifierFlags: [.command, .shift])
+    XCTAssertTrue(isSelected(tab(1, in: window)), "Cmd-Shift-] did not go forward")
+
+    app.typeKey("1", modifierFlags: .command)
+    XCTAssertTrue(isSelected(tab(0, in: window)), "Cmd-1 did not pick the first tab")
+
+    app.typeKey("9", modifierFlags: .command)
+    XCTAssertTrue(isSelected(tab(1, in: window)), "Cmd-9 did not pick the last tab")
+  }
+
+  /// Catches Cmd-W that closes the pane while the browser has several tabs, and a reopen that loses
+  /// the tab. Cmd-W closes the current tab and hides the bar again. Cmd-Shift-T brings the tab back.
+  func testCommandWClosesTheTabAndCommandShiftTReopensIt() {
+    let app = launchApp()
+    let window = openBrowser(in: app)
+
+    app.typeKey("t", modifierFlags: .command)
+    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10))
+
+    app.typeKey("w", modifierFlags: .command)
+
+    XCTAssertTrue(waitForGone(tab(1, in: window)), "Cmd-W left the second tab")
+    XCTAssertTrue(waitForGone(tab(0, in: window)), "the bar stayed with one tab")
+    XCTAssertTrue(browser(in: window).exists, "Cmd-W closed the pane")
+
+    app.typeKey("t", modifierFlags: [.command, .shift])
+
+    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10), "Cmd-Shift-T brought no tab")
+    XCTAssertTrue(isSelected(tab(1, in: window)))
+  }
+
+  /// Catches Cmd-L that does not reach the address bar. After Cmd-T moves the keyboard to the new
+  /// tab's bar, Cmd-L still focuses it, and typed text lands there.
+  func testCommandLFocusesTheAddressBar() {
+    let app = launchApp()
+    let window = openBrowser(in: app)
+
+    app.typeKey("t", modifierFlags: .command)
+    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10))
+
+    app.typeKey("l", modifierFlags: .command)
+    app.typeText("about:blank")
+
+    XCTAssertTrue(
+      waitFor(addressField(in: window), timeout: 10) { $0 == "about:blank" },
+      "Cmd-L did not focus the address bar")
   }
 }

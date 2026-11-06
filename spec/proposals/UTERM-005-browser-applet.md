@@ -229,8 +229,11 @@ Decision: the browser declares commands for the settled controls in UTERM-002's 
 default key.
 
 - New Tab, Cmd-T, in File. Open Location, Cmd-L, in File, focuses the address bar. Reload, Cmd-R, in View. Reloading
-  the result page of a POST asks before resubmitting. So does the user going back or forward to one. Restore, recovery,
-  and controller commands never resubmit at all.
+  the result page of a POST asks before resubmitting. So does the user going back or forward to one. Only the browser's
+  own Reload, Back, and Forward ask: the toolbar, the Browser menu, the commands, and mouse buttons 4 and 5. They ask
+  only about a post this tab saw a form produce. A page's script, a trackpad swipe, a background tab, and a tab restored
+  or reopened from history are refused with a notice and no question. Restore, recovery, and controller commands never
+  resubmit at all. Amended 2026-11-06; see Decision Log.
 - Select Next Tab, Cmd-Shift-], and Select Previous Tab, Cmd-Shift-[, in Window. Cmd-1 to Cmd-8 select a tab, and
   Cmd-9 is Select Last Tab. The titles match the terminal's, so a user's App Shortcuts remap covers both applets.
 - Back and Forward sit in the applet menu, named Browser, with no default key. The toolbar buttons, trackpad swipes,
@@ -510,7 +513,7 @@ None.
 
 ### M3: Tabs
 
-**Status:** IN PROGRESS
+**Status:** DONE
 
 - The browser opens, switches, and closes tabs
 - The tab bar is hidden when only one tab is open
@@ -519,7 +522,61 @@ None.
 - Back and Forward work from the Browser menu, the toolbar, trackpad swipes, and mouse buttons 4 and 5
 - Cmd-W closes the current tab, and Cmd-Shift-T reopens it in its former place with its history. A pane keeps at most
   20 closed tabs
-- Cmd-R, Back, or Forward onto the result page of a POST asks before resubmitting
+- Cmd-R, Back, or Forward onto the result page of a POST this tab sent asks before resubmitting. Amended 2026-11-06; see
+  Decision Log.
+
+**As built:**
+
+- The tab bar is `AppletTabBar` in `AppletKit`, moved from the terminal with its accessibility identifiers unchanged. The
+  terminal's tab tests are its proof. The browser's view holds the bar above the toolbar, and a hidden bar gives its
+  height back to the toolbar.
+- A tab's web view is built on first use. A restored tab nobody has selected holds no web view and no content process.
+  `start` loads only the selected tab, and a tab loads when it is first selected. A refused stored address is tried
+  once, so selecting that tab again does not warn again. M5 still owns the rule that a detached pane loads nothing.
+- Every tab observes its own web view for its whole life. Only the selected tab drives the toolbar, the address bar, the
+  security icon, and the pane's title. Any tab's title change reaches the palette list through `appletTabsDidChange`.
+  A switch drops an unsent edit in the address bar, since the text belonged to the tab left behind.
+- A new tab opens after the selected one, is selected, and moves the keyboard to the address bar. Closing a tab selects
+  its right neighbour, or the last tab. The last tab answers `.nothingToClose`, so Cmd-W closes the pane. A test pins that
+  a closed tab and its web view are released, so only inert data stays in the closed list.
+- Closed tabs ride in the description's undo-only part with each tab's address, title, and WebKit `interactionState`.
+  The layout payload never holds them. A reopened tab returns to its former index, selected, with its Back history. A
+  reopened tab never fails, so it has no failure text to supply. The host's reopen failure text no longer adds "Check that
+  the shell can start". The terminal's reason carries that sentence itself, so its message reads as before.
+- The resubmit question lives in the navigation delegate, the one gate every resubmit path crosses. The applet's own
+  Reload, Back, and Forward each set a one-shot intent just before they call the web view. The gate takes the intent at the
+  next main-frame decision and clears it, and a commit or a failed load clears it too, so it never carries to a later
+  navigation. A repeat of a post with a matching intent, onto an entry this tab saw a form produce, holds WebKit's decision
+  and asks through `AppletHost.applet(_:confirm:)`. Yes allows that one navigation. No, a second repeat while one question
+  waits, a typed load, and closing the tab each cancel it, and a second repeat is cancelled, not queued. Every other repeat
+  is refused with the M1 warning and no question. That covers a page's script, the web view's own Reload, a trackpad swipe,
+  which cannot be told from a script, a background tab, and a reopened tab. A swipe onto a post result is therefore refused
+  with a notice, and a test calls the web view's `goBack` to stand for it. The button methods no longer pre-check, so
+  `HistoryMove` lost its resubmit case. Measured: reopening a tab on a POST result issues no second POST and shows the
+  stored title with a blank page. A page's `location.reload()` on a post result reaches the server as a GET, so it sends no
+  post and raises no question.
+- WebKit has already made the target the current history entry when the gate runs, for Back, Forward, and Reload alike. The
+  gate therefore keys the set of seen posts on the identity of the current entry. A post to an address this tab never saw
+  cannot borrow the answer for a seen post to the same address, and a test pins that with a reopened tab. WebKit may serve a
+  history step onto a post result from its own cache, so a yes there shows the page and sends no post. No test claims the
+  server's post count after a yes on a history step. A yes on Reload is proved to send one post.
+- A tab keeps its own load origin. A notice from a tab that is not selected names the tab, and is delivered by that tab's
+  origin, so a background tab restored at launch stays as quiet as a restore is. A background tab never asks. The gate
+  refuses its repeats, and the applet answers no to a question from any tab but the selected one.
+- Mouse buttons 4 and 5 are handled by a `WKWebView` subclass, which sends them through the applet's Back and Forward.
+  A test calls the handler with real events built from `CGEvent`. Trackpad swipes use `allowsBackForwardNavigationGestures`
+  and no code of ours. Swipes, a physical mouse, and the UI tests' keys need real hardware or the window server, so the
+  user checks them. The UI tests are built, and the coordinator runs them.
+- The tab commands copy the terminal's titles and keys. The key test sits in `AppletCatalogTests`, since that target
+  already reaches the window's reserved keys, and it checks the browser's keys by hand against them as the terminal's test
+  does. `Package.swift` did not change.
+- The terminal and the browser both declare Cmd-T, Cmd-1 to Cmd-9, and Cmd-Shift-[ and ]. One remap onto such a key
+  dropped it from both, and the registry posted one warning for each applet. The status bar shows the newest message, so
+  the terminal's warning was hidden behind the browser's. A pass now posts one warning that names every applet that lost a
+  key. It lists at most three commands for each applet and counts the rest, so a remap of Cmd-1 stays readable. The
+  warning code is shared by every applet, so the change is not browser work, and no decision text changed.
+- Left for later milestones. A running download or unsent input does not yet make a tab ask before it closes, which is M6.
+  M8's controller commands need no new path. They never set the intent, so they never ask.
 
 ### M4: Address bar input
 
@@ -702,6 +759,17 @@ Starts after UTERM-004 M6.
   content, is proved for `http` pages. A page that gains insecure content after commit has no test, and the user checks
   it by hand. The rest of the checks pass, so M2 is DONE, and As built names what is left to the user. An `http` page
   warns whatever the flag says, because WebKit updates the address before the flag.
+- 2026-11-06: Narrowed who may ask the resubmit question (work-queue best guess). "Browser commands and keys" and M3's last
+  check said that Reload, Back, and Forward onto the result page of a POST ask before resubmitting, and "Browser commands
+  and keys" said restore, recovery, and controller commands never resubmit. The text now says only the browser's own
+  Reload, Back, and Forward ask, and only about a post this tab saw a form produce. Anything else that repeats a post is
+  refused with a notice. The prior text did not say who may ask. WebKit gives no flag for a user-initiated navigation, so
+  a page reached from a post result could call `history.back()` and raise the question in a loop, and a click would
+  repeat the user's earlier order. A tab restored or reopened from history has no record of which entries were posts, and
+  WebKit restores a POST result there as a repeat of the post, so asking there would open a yes path into restored
+  history, which "What restore loads" forbids. The cost is that a trackpad swipe onto a post result is refused with a
+  notice, since a swipe cannot be told from a script. The question lives in the navigation delegate, so the gate stays
+  the one place a form can be sent again.
 - 2026-11-06: ADR candidate (cuts across the system): web content hosted anywhere in uniterm may load plain HTTP, with
   no App Transport Security floor, so each applet that hosts a web view owns its own scheme gate. The key is app-wide,
   so the text viewer in UTERM-007 and the canvas in UTERM-010 inherit it. Undecided. Found in UTERM-005 M1.

@@ -3,7 +3,7 @@ import Theme
 
 /// One tab in the bar: a title, and a control that closes it.
 @MainActor
-final class TerminalTabItem: NSView {
+final class AppletTabItem: NSView {
   private let label = NSTextField(labelWithString: "")
   private let closeButton = NSButton()
   private var palette: ThemePalette = .latte
@@ -104,29 +104,29 @@ final class TerminalTabItem: NSView {
   }
 }
 
-/// The strip of tabs above the terminals. The applet hides it while it has one tab.
+/// The strip of tabs above an applet's content. The applet hides it while it has one tab.
 @MainActor
-final class TerminalTabBar: NSView {
-  static let height: CGFloat = 28
+public final class AppletTabBar: NSView {
+  public static let height: CGFloat = 28
 
   private static let gap: CGFloat = 2
   private static let inset: CGFloat = 4
   private static let narrowest: CGFloat = 80
   private static let widest: CGFloat = 200
 
-  private var items: [TerminalTabItem] = []
+  private var items: [AppletTabItem] = []
   private let newButton = NSButton()
   private var palette: ThemePalette = .latte
 
-  var onSelect: ((Int) -> Void)?
-  var onClose: ((Int) -> Void)?
-  var onNew: (() -> Void)?
+  public var onSelect: ((Int) -> Void)?
+  public var onClose: ((Int) -> Void)?
+  public var onNew: (() -> Void)?
 
-  override var isFlipped: Bool { true }
+  override public var isFlipped: Bool { true }
 
-  override var mouseDownCanMoveWindow: Bool { false }
+  override public var mouseDownCanMoveWindow: Bool { false }
 
-  override init(frame: NSRect) {
+  override public init(frame: NSRect) {
     super.init(frame: frame)
 
     wantsLayer = true
@@ -145,19 +145,19 @@ final class TerminalTabBar: NSView {
   }
 
   @available(*, unavailable)
-  required init?(coder: NSCoder) {
+  public required init?(coder: NSCoder) {
     fatalError("init(coder:) is not supported")
   }
 
   /// Shows one item for each title and marks the selected one. The new-tab control shows only when
   /// the applet can open a tab.
-  func update(titles: [String], selected: Int, canOpenTab: Bool) {
+  public func update(titles: [String], selected: Int, canOpenTab: Bool) {
     while items.count > titles.count {
       items.removeLast().removeFromSuperview()
     }
 
     while items.count < titles.count {
-      let item = TerminalTabItem(frame: .zero)
+      let item = AppletTabItem(frame: .zero)
       item.apply(palette)
       addSubview(item)
       items.append(item)
@@ -175,7 +175,7 @@ final class TerminalTabBar: NSView {
     needsLayout = true
   }
 
-  override func layout() {
+  override public func layout() {
     super.layout()
 
     let side: CGFloat = 22
@@ -202,7 +202,7 @@ final class TerminalTabBar: NSView {
     onNew?()
   }
 
-  func apply(_ palette: ThemePalette) {
+  public func apply(_ palette: ThemePalette) {
     self.palette = palette
 
     for item in items { item.apply(palette) }

@@ -965,9 +965,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
           continue
 
         case .failed(let title, let reason):
-          failures.append(
-            "The tab \u{201C}\(title)\u{201D} could not be reopened: \(reason). "
-              + "Check that the shell can start, then try again.")
+          let ended = reason.hasSuffix(".") ? reason : reason + "."
+          failures.append("The tab \u{201C}\(title)\u{201D} could not be reopened: \(ended)")
         }
 
       case .pane(let closed):

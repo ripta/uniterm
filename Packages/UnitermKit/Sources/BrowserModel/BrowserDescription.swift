@@ -33,6 +33,39 @@ public struct BrowserDescription: Codable, Equatable, Sendable {
     }
   }
 
+  /// The most closed tabs a pane remembers. A policy value with no setting, equal to the window's
+  /// pane undo depth.
+  public static let closedTabDepth = 20
+
+  /// A tab the user closed, as undo needs it. The stamp orders it against every other close in the
+  /// window. The index is where the tab sat. The interaction state is WebKit's opaque history and
+  /// scroll record. It stays in memory with the window's undo state, and a layout file never holds
+  /// it.
+  public struct ClosedTab: Codable, Equatable, Sendable {
+    public var stamp: UInt64
+    public var index: Int
+    public var title: String
+    public var tab: Tab
+    public var interactionState: Data?
+
+    public init(stamp: UInt64, index: Int, title: String, tab: Tab, interactionState: Data?) {
+      self.stamp = stamp
+      self.index = index
+      self.title = title
+      self.tab = tab
+      self.interactionState = interactionState
+    }
+  }
+
+  /// The undo-only part of a description: the closed tabs, newest first.
+  public struct UndoState: Codable, Equatable, Sendable {
+    public var closedTabs: [ClosedTab]
+
+    public init(closedTabs: [ClosedTab]) {
+      self.closedTabs = closedTabs
+    }
+  }
+
   public var tabs: [Tab]
 
   /// The index of the selected tab in `tabs`.
