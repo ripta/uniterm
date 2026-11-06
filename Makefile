@@ -21,6 +21,8 @@ FUZZ_SCRATCH ?= .build/swiftpm-fuzz
 FUZZ_ITERATIONS ?= 5000
 # Space-separated Swift paths, relative to the repo root, for fmt-select. Empty formats nothing.
 FILES ?=
+# Set to 1 to have clean-test-processes list what it would end, without ending it.
+DRY_RUN ?=
 
 PACKAGE_DIR := Packages/UnitermKit
 SWIFT_DIRS := App UITests $(PACKAGE_DIR)/Sources $(PACKAGE_DIR)/Tests $(PACKAGE_DIR)/Package.swift
@@ -54,6 +56,11 @@ run: build ## Build, then run uniterm.app in the foreground
 .PHONY: clean
 clean: ## Remove Xcode and SwiftPM build output. Keeps the Ghostty cache
 	rm -rf .build/DerivedData .build/SourcePackages .build/swiftpm
+
+# A hung package test outlives a cancelled `swift test`, and only this checkout's orphans are ended.
+.PHONY: clean-test-processes
+clean-test-processes: ## End xctest processes orphaned by a hung or cancelled test run, e.g. make clean-test-processes DRY_RUN=1
+	scripts/clean-test-processes.sh $(if $(DRY_RUN),--dry-run) "$(abspath $(SWIFTPM_SCRATCH))" "$(abspath $(FUZZ_SCRATCH))"
 
 ##@ Test
 
