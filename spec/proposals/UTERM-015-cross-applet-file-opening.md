@@ -78,7 +78,8 @@ Out of scope:
 - Byte-stream sources, pipes, and data with no file. UTERM-009's revisit hook keeps them, tied to UTERM-003 and
   UTERM-004.
 - A drawer of open documents in one pane. UTERM-006 and UTERM-009 leave it to its own proposal.
-- Editing files. Every viewer is read-only.
+- Editing files. Every viewer here is read-only. UTERM-016 makes the map viewer write its own GeoJSON file, through
+  its own Save and Save As. Amended 2026-11-05; see Decision Log.
 - Opening anything other than a local file or folder, such as a web URL clicked in the terminal.
 
 Rationale: these are the parts UTERM-006 and UTERM-009 handed to a cross-applet proposal, and no more.
@@ -891,6 +892,8 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
 - 2026-11-04: M8 done. Finder sends as `com.apple.finder` and the Dock as `com.apple.dock`, cold and warm, and
   `open -a` never does, so "Opens that arrive through Launch Services" stands as settled. The ADR candidate on which
   Launch Services senders count as the user's act no longer waits on this record. It stays Undecided.
+- 2026-11-05: Amended "Scope" for UTERM-016. The out-of-scope list said "Every viewer is read-only." The map viewer
+  now edits and saves the GeoJSON file it shows. Opening and routing are unchanged, and no other viewer writes.
 
 ## References
 
