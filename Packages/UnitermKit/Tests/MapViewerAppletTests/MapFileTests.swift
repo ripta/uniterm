@@ -85,7 +85,7 @@ final class MapFileTests: XCTestCase {
 
   /// What the map says about a file: failures in the pane, and notices for the status bar.
   private func notices(_ applet: MapViewerApplet) -> [String] {
-    applet.content.noticeLines + applet.statusNotices
+    applet.content.noticeLines + applet.statusNotices.map(\.text)
   }
 
   // MARK: Loading
@@ -558,8 +558,8 @@ final class MapFileTests: XCTestCase {
 @MainActor
 final class MapNoticePlacementTests: XCTestCase {
   /// Catches a load notice drawn over the map, where it covered MapKit's attribution, and one
-  /// posted again on every refresh. The pane shows nothing, the status bar gets the sentence once,
-  /// and a segment says how many shapes are hidden.
+  /// posted again on every refresh. The pane shows nothing, the status bar gets the sentence once
+  /// as a warning, and a segment says how many shapes are hidden.
   func testLoadNoticesGoToTheStatusBarOnce() async throws {
     let scratch = try GeoScratch(self)
     let file = try scratch.write(
@@ -574,7 +574,9 @@ final class MapNoticePlacementTests: XCTestCase {
 
     let skipped = "Skipped 2 shapes that are not points. The map shows points only."
     XCTAssertEqual(applet.content.noticeLines, [])
-    XCTAssertEqual(host.posts.filter { $0.text == skipped }.count, 1)
+    XCTAssertEqual(
+      host.posts.filter { $0.text == skipped }.map(\.level), [.warning],
+      "shapes the map does not show are a warning")
     XCTAssertTrue(applet.segments.contains { $0.text == "2 hidden" }, "\(applet.segments)")
 
     applet.addPin(at: GeoCoordinate(latitude: 3, longitude: 3))
