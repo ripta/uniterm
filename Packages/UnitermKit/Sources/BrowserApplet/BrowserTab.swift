@@ -19,6 +19,20 @@ protocol BrowserTabDelegate: AnyObject {
 
   /// The user pressed a history button on the mouse over the tab's page.
   func tab(_ tab: BrowserTab, historyButton: BrowserWebView.HistoryButton)
+
+  /// The tab put an explanation in its pane. The history records it, and the status bar stays
+  /// quiet, since the pane already says it.
+  func tab(_ tab: BrowserTab, explained text: String)
+
+  /// The user followed a link to an address that names another app.
+  func tab(_ tab: BrowserTab, handOff url: URL)
+}
+
+/// An address whose scheme the browser chose, kept with the text that produced it. A failure to
+/// connect to it can offer plain HTTP, and Load over HTTP resolves `typed` again.
+struct AssumedLoad: Equatable {
+  var url: URL
+  var typed: String
 }
 
 /// Why a reload, a back, or a forward did not go ahead.
@@ -95,6 +109,23 @@ final class BrowserTab: NSObject {
     case history
   }
 
+  /// What the tab shows in place of a page it could not load, until the next load or commit.
+  private(set) var errorPage: LoadErrorPage?
+
+  /// The load the tab began with an assumed HTTPS scheme, until it commits or another load begins.
+  private var assumed: AssumedLoad?
+
+  /// The address and scheme choice of the load that failed into `errorPage`, so Reload can try it
+  /// again.
+  private var failedLoad: (url: URL, assumed: AssumedLoad?)?
+
+  /// Whether a question about opening another app is waiting. A tab holds at most one.
+  var isAskingToOpenApp = false
+
+  /// The note of a real mouse-up in this tab's web view, taken by the next link decision.
+  private var gesture = LinkGesture()
+  private let clock: @Sendable () -> Date
+
   /// The history WebKit handed back when a closed tab reopened. It applies at the first load.
   private var restoredState: Data?
 
@@ -102,15 +133,18 @@ final class BrowserTab: NSObject {
   private(set) var hasBegunLoading = false
 
   private let dataStore: WKWebsiteDataStore
+  private let hsts: HSTSStore
   private var observations: [NSKeyValueObservation] = []
 
   init(
     id: AppletTabID, record: BrowserDescription.Tab, dataStore: WKWebsiteDataStore,
-    restoredState: Data? = nil
+    hsts: HSTSStore, clock: @escaping @Sendable () -> Date = Date.init, restoredState: Data? = nil
   ) {
     self.id = id
     self.record = record
     self.dataStore = dataStore
+    self.hsts = hsts
+    self.clock = clock
     self.restoredState = restoredState
 
     super.init()
@@ -128,6 +162,7 @@ final class BrowserTab: NSObject {
     view.uiDelegate = self
     view.allowsBackForwardNavigationGestures = true
     view.setAccessibilityIdentifier("browser-web")
+    view.onMouseUp = { [weak self] in self?.noteMouseUp() }
     view.onHistoryButton = { [weak self] button in
       guard let self else { return }
 
@@ -137,6 +172,12 @@ final class BrowserTab: NSObject {
     observe(view)
 
     return view
+  }
+
+  /// A real left mouse-up reached the web view. A tab's next link decision may count as followed by
+  /// the user, once, within the bound.
+  func noteMouseUp() {
+    gesture.noteMouseUp(at: clock())
   }
 
   var hasLoadedNothing: Bool { !isMaterialized || (webView.url == nil && !isLoading) }
@@ -150,10 +191,14 @@ final class BrowserTab: NSObject {
   // MARK: Loading
 
   /// Loads an address that already passed the scheme rule for its source. The caller checks it,
-  /// since a refusal is the caller's to present.
-  func load(_ url: URL) {
+  /// since a refusal is the caller's to present. `assumed` is set when the policy chose HTTPS for
+  /// a scheme-less address, which is the one load that can offer plain HTTP when it fails.
+  func load(_ url: URL, assumed: AssumedLoad? = nil) {
     hasBegunLoading = true
     restoredState = nil
+    errorPage = nil
+    failedLoad = nil
+    self.assumed = assumed
     pendingResend?.resolve(.cancel)
     pendingResend = nil
     webView.load(URLRequest(url: url))
@@ -178,6 +223,11 @@ final class BrowserTab: NSObject {
   }
 
   func reload() -> HistoryMove {
+    if errorPage != nil, let failed = failedLoad {
+      load(failed.url, assumed: failed.assumed)
+      return .moved
+    }
+
     guard isMaterialized, webView.url != nil else {
       guard let address = record.url else { return .unavailable }
 
@@ -226,6 +276,9 @@ final class BrowserTab: NSObject {
     pendingResend?.resolve(.cancel)
     pendingResend = nil
     restoredState = nil
+    errorPage = nil
+    failedLoad = nil
+    assumed = nil
     observations = []
 
     guard isMaterialized else { return }
@@ -234,6 +287,7 @@ final class BrowserTab: NSObject {
     webView.navigationDelegate = nil
     webView.uiDelegate = nil
     (webView as? BrowserWebView)?.onHistoryButton = nil
+    (webView as? BrowserWebView)?.onMouseUp = nil
     webView.removeFromSuperview()
   }
 
@@ -285,6 +339,10 @@ final class BrowserTab: NSObject {
   }
 
   private func committed() {
+    errorPage = nil
+    failedLoad = nil
+    assumed = nil
+
     if let item = webView.backForwardList.currentItem {
       postResults.setObject(NSNumber(value: lastMainFrameMethod == "POST"), forKey: item)
     }
@@ -295,27 +353,70 @@ final class BrowserTab: NSObject {
     record.title = BrowserDescription.boundedTitle(webView.title)
   }
 
-  private func report(_ error: any Error, for url: URL?) {
+  /// `isProvisional` is true for a load that failed before the page committed. Only those can put
+  /// an error page in the pane. A failure after commit leaves the page that did load.
+  private func report(_ error: any Error, for url: URL?, isProvisional: Bool = false) {
     let failure = error as NSError
 
     if failure.domain == NSURLErrorDomain, failure.code == NSURLErrorCancelled { return }
 
-    let failing = (failure.userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
+    let failing = (failure.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
 
     // WebKit reports an interrupted load, code 102, for every load a policy decision ended. A
     // decision of this tab has already told the user, so its own address stays quiet. Any other
     // interruption is a failure the user has not heard about.
-    if failure.domain == "WebKitErrorDomain", failure.code == 102, let failing,
-      failing == cancelledAddress
+    if failure.domain == "WebKitErrorDomain", failure.code == 102,
+      let failing = failing?.absoluteString, failing == cancelledAddress
     {
       cancelledAddress = nil
       return
     }
 
-    let address = AddressDisplay.bounded(failing ?? url?.absoluteString ?? "the page")
+    if isProvisional, let failing, let page = loadErrorPage(for: failure, failing: failing) {
+      errorPage = page
+      failedLoad = (failing, assumed)
+
+      delegate?.tab(self, explained: page.title)
+      delegate?.tabDidChange(self)
+      return
+    }
+
+    let address = AddressDisplay.bounded(
+      failing?.absoluteString ?? url?.absoluteString ?? "the page")
 
     delegate?.tab(
       self, notice: .warning, text: "Could not load \(address). \(failure.localizedDescription)")
+  }
+
+  /// The page for a failed HTTPS load. A certificate failure always gets one, and never an action.
+  /// A connection failure gets the offer only for the address whose HTTPS the browser assumed,
+  /// and never for a host under HSTS.
+  private func loadErrorPage(for error: NSError, failing: URL) -> LoadErrorPage? {
+    guard failing.scheme?.lowercased() == "https",
+      let host = failing.host(percentEncoded: false)
+    else { return nil }
+
+    switch LoadFailure(error).kind {
+    case .certificate:
+      return .certificate(host: host, reason: error.localizedDescription)
+
+    case .unreachable:
+      guard let assumed, isSameServer(failing, assumed.url), !hsts.contains(host: host) else {
+        return nil
+      }
+
+      return .offerHTTP(host: host, typed: assumed.typed)
+
+    case .other:
+      return nil
+    }
+  }
+
+  /// Whether two HTTPS addresses name the same host and port. A redirect to another host is not
+  /// the address the user typed, so it never earns the offer.
+  private func isSameServer(_ a: URL, _ b: URL) -> Bool {
+    a.host(percentEncoded: false)?.lowercased() == b.host(percentEncoded: false)?.lowercased()
+      && (a.port ?? 443) == (b.port ?? 443)
   }
 }
 
@@ -331,11 +432,32 @@ extension BrowserTab: WKNavigationDelegate {
 
     let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
 
+    // WebKit reports a script's click as a followed link, so only a real mouse-up seen in the view
+    // makes a link the user's. Every link decision takes the note, whatever it loads, so a click
+    // on one link cannot be spent on another.
+    let followedByUser =
+      navigationAction.navigationType == .linkActivated && gesture.consume(at: clock())
+
     switch SchemePolicy.decide(url, source: .page, isMainFrame: isMainFrame) {
     case .allow:
       break
 
     case .refuse(let refusal):
+      if navigationAction.navigationType == .linkActivated,
+        case .unsupported(let scheme) = refusal, AppHandoff.mayHandOff(scheme: scheme)
+      {
+        cancelledAddress = url.absoluteString
+        decisionHandler(.cancel)
+
+        if followedByUser {
+          delegate?.tab(self, handOff: url)
+        } else {
+          delegate?.tab(self, notice: .warning, text: Self.unattendedHandOff(url))
+        }
+
+        return
+      }
+
       cancel(url, notice: refusal.message(for: url.absoluteString), decisionHandler)
       return
     }
@@ -376,6 +498,11 @@ extension BrowserTab: WKNavigationDelegate {
       decisionHandler(.allow)
       return
     }
+
+    hsts.noteResponse(
+      from: url,
+      header: (navigationResponse.response as? HTTPURLResponse)?
+        .value(forHTTPHeaderField: "Strict-Transport-Security"))
 
     let disposition = (navigationResponse.response as? HTTPURLResponse)?
       .value(forHTTPHeaderField: "Content-Disposition")?
@@ -495,8 +622,24 @@ extension BrowserTab: WKNavigationDelegate {
     decisionHandler(.cancel)
   }
 
+  private static func unattendedHandOff(_ url: URL) -> String {
+    "Did not open \(AddressDisplay.bounded(url.absoluteString)). A page can open another app only "
+      + "from a click on its link, and this was not one."
+  }
+
   private static func noDownloads(_ url: URL) -> String {
     "Did not download \(AddressDisplay.bounded(url.absoluteString)). Downloads are not available yet."
+  }
+
+  /// A new load began, so an earlier error page no longer describes the pane. A failure of this
+  /// load builds its own page when it earns one. Without this, a failed Back or a failed page
+  /// navigation that builds none would leave the old offer over the pane.
+  func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    guard errorPage != nil else { return }
+
+    errorPage = nil
+    failedLoad = nil
+    delegate?.tabDidChange(self)
   }
 
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -510,7 +653,7 @@ extension BrowserTab: WKNavigationDelegate {
     withError error: any Error
   ) {
     resendIntent = nil
-    report(error, for: nil)
+    report(error, for: nil, isProvisional: true)
   }
 
   func webView(

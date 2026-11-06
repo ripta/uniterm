@@ -90,6 +90,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return try LayoutPersistence.defaultDirectory()
   }
 
+  /// UI tests set `UNITERM_BROWSER_DIR` so the browser's own files stay out of the developer's
+  /// Application Support folder. Only debug builds honor it, for the same reason as the layout
+  /// folder. Nil means the default folder.
+  private func browserDirectory() -> URL? {
+    #if DEBUG
+      if let path = debugEnvironment["UNITERM_BROWSER_DIR"] {
+        return URL(fileURLWithPath: path, isDirectory: true)
+      }
+    #endif
+
+    return nil
+  }
+
   /// UI tests set `UNITERM_LAYOUT_DEBOUNCE` to a long delay in seconds, so only the save on quit can
   /// write the layout. Only debug builds honor it.
   private func layoutDebounce() -> TimeInterval {
@@ -159,6 +172,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       ProcessInfo.processInfo.environment["UNITERM_PLACE_NAMES"] == "off"
       ? PlaceServices(search: PlaceServices.apple.search) : PlaceServices.apple
 
+    // Every browser pane, new or restored, gets these. The engine is read at each search, so a
+    // change in Settings applies to the next search in every open pane.
+    let browserServices = BrowserServices.live(
+      searchEngine: { settings.value(of: .searchEngine) }, directory: browserDirectory())
+
     let restoreApplet: AppletRestorer = { description in
       switch description.type {
       case TerminalDescription.typeID:
@@ -172,7 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           restoring: description, places: places)
 
       case BrowserApplet.descriptionTypeID:
-        return try BrowserApplet(restoring: description)
+        return try BrowserApplet(restoring: description, services: browserServices)
 
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
@@ -195,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           startDirectory: directory, region: region, places: places)
 
       case .browser:
-        return BrowserApplet()
+        return BrowserApplet(services: browserServices)
       }
     }
 

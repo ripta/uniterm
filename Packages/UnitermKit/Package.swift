@@ -108,7 +108,7 @@ let package = Package(
     .target(name: "BrowserModel"),
     .target(
       name: "BrowserApplet",
-      dependencies: ["AppletKit", "BrowserModel", "StatusKit", "Theme"]),
+      dependencies: ["AppletKit", "BrowserModel", "Preferences", "StatusKit", "Theme"]),
     .target(
       name: "AppletCatalog",
       dependencies: [
@@ -149,8 +149,8 @@ let package = Package(
     .testTarget(
       name: "BrowserAppletTests",
       dependencies: [
-        "BrowserApplet", "BrowserModel", "AppletKit", "StatusKit", "Theme", "BrowserTestSupport",
-        "AppletTestSupport",
+        "BrowserApplet", "BrowserModel", "AppletKit", "Preferences", "StatusKit", "Theme",
+        "BrowserTestSupport", "AppletTestSupport",
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit", "AppletTestSupport"]),

@@ -71,6 +71,7 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UNITERM_DEFAULTS_PATH"] = scratch
     app.launchEnvironment["UNITERM_TERMINAL_DIR"] = scratch + "-terminal"
     app.launchEnvironment["UNITERM_LAYOUT_DIR"] = scratch + "-layout"
+    app.launchEnvironment["UNITERM_BROWSER_DIR"] = scratch + "-browser"
     app.launchEnvironment["SHELL"] = "/bin/zsh"
     app.launchEnvironment["ZDOTDIR"] = scratch + "-shell"
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""

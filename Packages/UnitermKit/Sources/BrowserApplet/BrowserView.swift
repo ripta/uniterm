@@ -28,6 +28,12 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   /// The user pressed Return in the address bar with this text.
   var onSubmit: (String) -> Void = { _ in }
 
+  /// Covers the page when the tab could not load one. It sits above whichever web view shows.
+  let errorPage = BrowserErrorView()
+
+  /// The user chose Load over HTTP on the error page.
+  var onLoadOverHTTP: () -> Void = {}
+
   /// The strip of tabs above the toolbar. The applet hides it while it has one tab.
   let tabBar = AppletTabBar()
 
@@ -82,6 +88,9 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     tabBar.translatesAutoresizingMaskIntoConstraints = false
     tabBar.isHidden = true
 
+    errorPage.translatesAutoresizingMaskIntoConstraints = false
+    errorPage.onLoadOverHTTP = { [weak self] in self?.onLoadOverHTTP() }
+
     addSubview(tabBar)
     addSubview(toolbar)
 
@@ -123,6 +132,21 @@ final class BrowserView: NSView, NSTextFieldDelegate {
       webView.trailingAnchor.constraint(equalTo: trailingAnchor),
       webView.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
+
+    errorPage.removeFromSuperview()
+    addSubview(errorPage, positioned: .above, relativeTo: webView)
+
+    NSLayoutConstraint.activate([
+      errorPage.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+      errorPage.leadingAnchor.constraint(equalTo: leadingAnchor),
+      errorPage.trailingAnchor.constraint(equalTo: trailingAnchor),
+      errorPage.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+  }
+
+  /// Covers the page with what went wrong, or uncovers it.
+  func show(error: LoadErrorPage?) {
+    errorPage.show(error)
   }
 
   /// Shows one item for each title. The bar takes no room while there is one tab.
@@ -168,6 +192,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     addressIsInvalid = invalid
 
     addressField.textColor = invalid ? palette[.red].nsColor : palette[.text].nsColor
+    addressField.setAccessibilityLabel(invalid ? "Address, invalid" : "Address")
     addressField.setAccessibilityHelp(invalid ? "This address cannot be loaded." : nil)
   }
 
@@ -177,6 +202,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     appearance = NSAppearance(named: palette.flavor.isDark ? .darkAqua : .aqua)
     layer?.backgroundColor = palette[.base].cgColor
     tabBar.apply(palette)
+    errorPage.apply(palette)
     addressField.textColor = addressIsInvalid ? palette[.red].nsColor : palette[.text].nsColor
     securityIcon.contentTintColor = palette[.yellow].nsColor
   }

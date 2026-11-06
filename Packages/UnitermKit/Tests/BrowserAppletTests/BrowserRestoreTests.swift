@@ -11,7 +11,7 @@ final class BrowserRestoreTests: XCTestCase {
   private func restore(version: Int = 1, type: String = "browser", payload: JSONValue) throws {
     _ = try BrowserApplet(
       restoring: AppletDescription(type: type, version: version, payload: payload),
-      dataStore: .nonPersistent())
+      dataStore: .nonPersistent(), services: .testing())
   }
 
   private func valid() throws -> JSONValue {
@@ -64,7 +64,7 @@ final class BrowserRestoreTests: XCTestCase {
   /// Catches a description that stops round-tripping through the applet: a blank pane describes as
   /// one empty tab, and a restored pane describes what it was given.
   func testTheDescriptionRoundTrips() throws {
-    let blank = BrowserApplet(dataStore: .nonPersistent())
+    let blank = BrowserApplet(dataStore: .nonPersistent(), services: .testing())
     defer { blank.close() }
 
     XCTAssertEqual(blank.describe().payload, try valid())
@@ -75,7 +75,7 @@ final class BrowserRestoreTests: XCTestCase {
     let payload = try JSONValue(encoding: given)
     let restored = try BrowserApplet(
       restoring: AppletDescription(type: "browser", version: 1, payload: payload),
-      dataStore: .nonPersistent())
+      dataStore: .nonPersistent(), services: .testing())
     defer { restored.close() }
 
     XCTAssertEqual(restored.describe().payload, payload)
@@ -86,7 +86,7 @@ final class BrowserRestoreTests: XCTestCase {
   /// a tab that has loaded nothing never does. A new pane and a restored pane both start with Back
   /// and Forward off.
   func testBackAndForwardStartOffBeforeAnythingLoads() throws {
-    let blank = BrowserApplet(dataStore: .nonPersistent())
+    let blank = BrowserApplet(dataStore: .nonPersistent(), services: .testing())
     defer { blank.close() }
 
     XCTAssertFalse(blank.content.backButton.isEnabled)
@@ -94,7 +94,7 @@ final class BrowserRestoreTests: XCTestCase {
 
     let restored = try BrowserApplet(
       restoring: AppletDescription(type: "browser", version: 1, payload: try valid()),
-      dataStore: .nonPersistent())
+      dataStore: .nonPersistent(), services: .testing())
     defer { restored.close() }
 
     XCTAssertFalse(restored.content.backButton.isEnabled)

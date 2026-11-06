@@ -53,7 +53,15 @@ A page may also open its own `blob:` URLs, and a download may come from any sche
 - `file:`, `javascript:`, and a top-level `data:` page are refused. A typed address leaves the page visible, posts one
   warning that says why, and marks the address input invalid. Amended 2026-11-06; see Decision Log.
 - A link or typed address with another scheme that macOS maps to an app asks first, naming the app and the URL, and
-  opens that app only on the user's yes. `mailto:` opens the mail app without asking.
+  opens that app only on the user's yes. `mailto:` opens the mail app without asking. A scheme no app handles loads
+  nothing, posts one warning, and marks a typed address invalid.
+- Only an address the user typed, or a link the user really clicked, may open an app or ask. A click counts when the web
+  view saw a real mouse-up within one second before the navigation was decided, and each mouse-up is used once. WebKit
+  reports a script's click as a followed link, so the navigation type alone proves nothing. A script's click, a
+  script's navigation, a redirect, an iframe, and a key press that activates a focused link are refused with a warning
+  and never open an app or ask. The same guards cover `mailto:`. A tab shows at most one question, and only the
+  selected tab asks or opens. A second request while one waits is refused with a warning. The question goes through
+  the host's confirmation, so it never blocks another pane.
 - A restored tab whose URL is refused shows `about:blank` with a durable explanation in the pane that names the refused
   URL, and the history records one warning. It keeps the stored URL in its description until the user navigates.
   Amended 2026-11-06; see Decision Log.
@@ -85,8 +93,9 @@ a Clear Website Data action.
   browser's logins nor lose their data when it is cleared.
 - Every tab in every browser pane uses it. Logins carry across panes and survive relaunch.
 - Descriptions carry no store reference, and the layout file holds no website data.
-- Clear Website Data removes everything in the browser's store. It reloads no tab. Settings says that open tabs keep
-  their current session until they are reloaded or closed.
+- Clear Website Data removes everything in the browser's store and empties the browser's own list of HTTPS-only
+  hosts, per "Local addresses and plain HTTP". It reloads no tab. Settings says that open tabs keep their current
+  session until they are reloaded or closed. Amended 2026-11-06; see Decision Log.
 - The store's UUID is a constant. Changing it would orphan every login and all site data, since WebKit cannot move data
   between stores. See Risks.
 - Sharing is hidden state flow between panes: logging in in one pane logs in the others. CLAUDE.md asks for that to be
@@ -146,6 +155,15 @@ Decision: input that is not an address runs a search. Settings picks the engine 
 
 - Input with a scheme, or ending in `/`, is always an address. Input with a space is always a search. Other input is
   an address when it holds a dot, is `localhost`, is an IP address, or has a `host:port` form. Anything else searches.
+  Amended 2026-11-06; see Decision Log.
+- A space wins over a trailing `/` and over a `word:` prefix, so `note: buy milk` and `my notes/` search. Only text that
+  starts with `scheme://` stays an address when it holds a space. Text after the colon that is only digits is a port,
+  even when an app registered the word as a scheme. `localhost` is read by its host part, so `localhost/app` is an
+  address. A bare IPv6 address loads in brackets. Text with a control character other than whitespace is refused, not
+  searched. Runs of whitespace collapse to one space in a query. Only typed text searches. A restored or commanded
+  address that is not an address is refused.
+- A query is percent-encoded as UTF-8, with only unreserved characters left bare, so `&`, `=`, `+`, `#`, and `%` stay
+  inside the one query parameter.
 - The list is DuckDuckGo, the default, then Google, Bing, Ecosia, and Kagi. It is an enum-backed setting key.
 - The browser factory passes the applet a read-only view of this setting at construction. The applet reads the current
   engine each time it builds a search URL, so a change applies to the next search in every open pane. This is the first
@@ -166,7 +184,17 @@ by the user's action.
 - Any other scheme-less load tries HTTPS. When it cannot connect, or the server does not speak TLS, the error page
   offers Load over HTTP and says the connection will be unencrypted. Nothing downgrades without that action.
 - A certificate validation failure shows the certificate error, never the HTTP offer. A host under HSTS never shows it.
-- One function applies this rule, for typed input and for any other scheme-less address.
+  Amended 2026-11-06; see Decision Log.
+- The offer shows only when the load that failed is the address whose HTTPS the browser assumed, so a redirect to
+  another host never earns it. It shows for a refused or lost connection and for a server that does not speak TLS. It
+  never shows for a certificate failure, however WebKit words the error. The pane shows the failure natively, so no
+  page's script can reach the action. An explicit `https://` that fails shows a plain warning.
+- WebKit has no public way to ask whether a host is under HSTS. The browser records `Strict-Transport-Security` from
+  main-frame HTTPS responses in its own list, which honours `max-age`, `max-age=0` removal, and `includeSubDomains`,
+  and which survives relaunch. A listed host never shows the offer. A host WebKit has preloaded but the browser has
+  not seen can still show it, and the load stays HTTPS, since WebKit upgrades it, so nothing downgrades.
+- One function applies this rule, for typed input and for any other scheme-less address. Load over HTTP resolves the
+  typed text again through it, with HTTP as the only difference.
 
 Rationale: local dev servers are part of the motivation, and they almost never serve TLS on loopback. Loopback traffic
 never leaves the machine. Defaulting private ranges or single-label names to HTTP would send a router password across a
@@ -321,8 +349,8 @@ browser pauses media, per ADR-05.
 
 Decision: the browser needs no change to the applet contract. The host gains what any new applet type needs: a launcher
 entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer. The
-factory also passes the browser the search engine setting, per "Search from the address bar". Restore is settled in
-"What restore loads".
+factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
+hosts, and the opener for other apps. Amended 2026-11-06; see Decision Log. Restore is settled in "What restore loads".
 
 - The description payload holds each tab's last committed URL and title, and the selected tab, with its own version per
   ADR-06. The undo-only part holds each tab's `interactionState` and the closed-tab list.
@@ -580,7 +608,7 @@ None.
 
 ### M4: Address bar input
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Non-address input searches with the engine chosen in Settings, and a change applies to the next search in every open
   pane
@@ -588,12 +616,72 @@ None.
   colon is only digits is `host:port`, even when an app has registered that word as a URL scheme
 - A scheme-less loopback address, `*.localhost` included, loads over HTTP
 - A scheme-less address whose HTTPS load cannot connect, or whose server does not speak TLS, offers Load over HTTP. A
-  certificate failure or an HSTS host never offers it
-- A typed `mailto:` address opens the mail app. A link or typed address for another app asks first, naming the app. A
+  certificate failure or an HSTS host never offers it. A host is under HSTS when it sent the header over HTTPS to this
+  browser.
+- A typed `mailto:` address opens the mail app, and so does a real click on a `mailto:` link in the selected tab, with no
+  question. A page's script never opens an app. A real click on a link, or a typed address, for another app asks first,
+  naming the app. A
   typed `file:`, `javascript:`, or `data:` address loads nothing, leaves the page visible, posts one warning that says
   why, and marks the address input invalid. So does a scheme no app handles. Amended 2026-11-06; see Decision Log.
 - A tab shows at most one pending app-handoff question, and the question never blocks other panes
 - A stored engine that is no longer on the list shows in Settings as replaced by the default
+
+**As built:**
+
+- The address rule is `AddressClassifier` in `BrowserModel`, and `AddressPolicy.resolve` applies it. A table test holds
+  every example in the milestone text and every edge the plan named: `[::1]:8080`, `user@host`, a trailing dot,
+  `http:` alone, percent-encoded text, whitespace at the edges and inside, internationalized names, an IP with a port,
+  `*.localhost`, and control characters. The refinements it needed are in the Decision Log entry of 2026-11-06 on the
+  classification. `user@host` searches and `user@host.com` loads, since the dot and the port decide, as for any text.
+- `SearchEngine` and its setting key live in `Preferences`. The Settings row is a `ChoiceSettingRow`, which now takes a
+  note under its control. A stored engine that left the list shows the default selected and a note that names the stored
+  text. Settings has no status bar, so the note stands where `PalettePlacement` posts its warning. The stored text is
+  never rewritten. Search addresses are built by hand-encoding every byte outside the unreserved set, and tests hold
+  independently written expected addresses.
+- The factory passes `BrowserServices` at both construction sites. It holds the engine as a read-only closure, the shared
+  HSTS list, and the opener for other apps. The parameter has no default, so a construction site that forgets it does not
+  compile. The applet reads the closure at each search. A test runs two panes on one closure and changes the engine
+  between searches. `BrowserApplet` depends on `Preferences` for the enum only. `BrowserServices.live` builds the list,
+  so the app target needs no `BrowserModel` product.
+- Load over HTTP. The pure rule is `LoadFailure` in `BrowserModel`. Measured under `swift test`, against the fixture's
+  two modes and a closed port: a self-signed server is `-1202` with a failed trust and an underlying `errSSLBadCert`, a
+  plain listener answering HTTPS is `-1200` with `errSSLClosedNoNotify`, and a closed port is `-1004`. `-1200` is
+  ambiguous, so the rule also reads the failed trust and the underlying TLS statuses through every nested error, and a
+  certificate sign wins. The rule is an allow-list. Only `-1004`, `-1005`, and a `-1200` whose status says the peer closed
+  the connection can offer, and anything unclassified gets the plain warning. The
+  fixture gained a TLS mode whose self-signed identity is published test data with an obvious name. No delegate
+  overrides trust, so the handshake fails. A real load proves each case: the plain listener offers, the self-signed
+  server shows the certificate error with no action, and the server sees no request in either until the user chooses.
+  The loopback fixture stands in for a remote host, so the tests build the load the way the address bar builds it for
+  one. `-1005` also offers, which the milestone text did not say. A timeout does not.
+- The pane shows the failure in a native view over the page, so no page's script can reach the action. A failure that
+  leaves nothing to show explains itself there, and the history records one warning with no turn on the bar. Reload on
+  that view repeats the same load. A new load clears the view when it starts, so a later failure that builds no page of its
+  own, such as a failed Back, leaves no stale offer over the pane. The offer is tied to the load whose scheme the browser assumed, so a failure at
+  another server gets a plain warning.
+- HSTS. WebKit's public headers have no HSTS query, which was confirmed first. The browser keeps its own list in a file in
+  the browser's folder, and `UNITERM_BROWSER_DIR` moves it for debug builds and UI tests. Header parsing, the list, and the
+  file are proved at the pure layer with an injected clock, since a self-signed response never reaches the delegate. The
+  call in the navigation delegate is covered by a test that hands the delegate a stand-in response, cast to the WebKit
+  type, with no production seam. A `localhost` entry proves that a listed host gets no
+  offer in a real load, and an unlisted control shows that the test would fail if the list were ignored. A file from a
+  newer build is never overwritten, since the store reads only its version and then keeps its list in memory. A header
+  that moves a live entry's expiry by under an hour records nothing, so a busy site does not rewrite the file on the main
+  thread with every response. A site that serves many host names can push entries out at the 2,048 cap. The impact is low,
+  since WebKit still enforces HSTS and the list only hides an offer. The list is not yet emptied by anything. Clear
+  Website Data empties it in M5.
+- Handoff. A typed `mailto:` opens at once. A typed address for another app, and a link the user followed, ask first
+  through the host's confirmation, naming the app and the address, with an injected opener so no test launches an app. A
+  scheme no app handles posts one warning and marks a typed address. A script's or redirect's navigation to such a
+  scheme stays refused, which keeps M6's script and iframe check open. WebKit reports a script's `a.click()` as a followed
+  link, so the tab trusts only a real left mouse-up that `BrowserWebView` sees, with an injected clock and a one-second
+  bound, spent by the first link decision. A test drives the view's own mouse-up handler with an event built from
+  `CGEvent`, so a real click on the screen is left to the user. A key press that activates a focused link leaves no
+  mouse-up, so it is refused with a notice, which is the choice made. A clicked `mailto:` link in the selected tab
+  opens without a question, as the Schemes text says, after the same selected-tab and one-question guards as any app.
+  The invalid mark already existed from M1. It now also changes the field's accessibility label to
+  "Address, invalid", and tests pin that, its red text, and its clearing on edit.
+- Two UI tests are built and not run: the Settings row with a replaced engine, and a refused address's mark.
 
 ### M5: Website data, restore, and reopen
 
@@ -602,8 +690,8 @@ None.
 - Logins carry across browser panes and survive relaunch, in a store separate from WebKit's default store
 - Every browser pane shows its active profile, the default profile, and the user confirms its placement in a hands-on
   review
-- Clear Website Data removes the browser's stored data and reloads no tab, and Settings says open tabs keep their
-  session until reloaded or closed
+- Clear Website Data removes the browser's stored data and the browser's list of HTTPS-only hosts, and reloads no tab,
+  and Settings says open tabs keep their session until reloaded or closed. Amended 2026-11-06; see Decision Log.
 - Layout restore loads only the selected tab of each attached pane. An unselected tab shows its stored URL and title,
   and loads when first selected. A detached pane loads nothing until it is attached. The layout file holds no history
   and no form data
@@ -770,9 +858,52 @@ Starts after UTERM-004 M6.
   history, which "What restore loads" forbids. The cost is that a trackpad swipe onto a post result is refused with a
   notice, since a swipe cannot be told from a script. The question lives in the navigation delegate, so the gate stays
   the one place a form can be sent again.
+- 2026-11-06: HSTS is the browser's own list (work-queue best guess). M4's check and "Local addresses and plain HTTP" said a
+  host under HSTS never shows the offer, and no text said how the browser knows. WebKit has no public query, so the browser
+  records `Strict-Transport-Security` from main-frame HTTPS responses. It honours `max-age`, removal by `max-age=0`, and
+  `includeSubDomains`, and it keeps the list in a file. A host WebKit preloaded but the browser never saw can still show the
+  offer, and WebKit upgrades the load, so nothing downgrades. Clear Website Data empties the list, which amends "Website
+  data" and M5's check. If wrong, the offer could show for a host that is under HSTS in WebKit, and the user's click would
+  meet an upgraded load that fails again.
+- 2026-11-06: Address classification refined (work-queue best guess). "Search from the address bar" said input with a space is
+  always a search and input with a scheme is always an address, which conflicts for `note: buy milk` and for `file:` paths
+  with a space. A space now wins, except for text that starts with `scheme://`. A bare IPv6 address is an address, and
+  `localhost` is read by its host part so `localhost/app` loads. Text with a control character is refused. Whitespace in a
+  query collapses. Only typed text searches. If wrong, a spaced `javascript:` text searches where it was refused, which sends
+  the text to the engine and runs nothing.
+- 2026-11-06: Load over HTTP and handoff mechanics (work-queue best guess). The offer needs the failing load to be the one whose
+  HTTPS the browser assumed, so a redirect never earns it. `-1005` offers beside `-1200` and `-1004`, and a timeout does not.
+  A certificate sign, a failed trust or an underlying certificate status, wins over `-1200`. A followed link to another app
+  asks, and a followed `mailto:` link opens without asking, per "Schemes", both only after a real click, per the entry
+  below. A script's or redirect's navigation never asks. The factory passes the browser three things, not one. If wrong,
+  the offer could miss a host that resets the handshake.
+- 2026-11-06: Handoff to other apps tightened (work-queue best guess). The first build counted any navigation WebKit calls a
+  followed link as the user's. The prior rules: a followed link for another app asked, a followed `mailto:` link opened with
+  no check, and the selected-tab and one-question guards came after the `mailto:` check. WebKit reports a script's
+  `a.click()` that way, so a page could open the mail app with no gesture, from a background tab, and could loop the
+  question. Now a link is the user's only when the web view saw a real mouse-up within one second before the decision,
+  each mouse-up is used once, and every guard comes before `mailto:`. A script's click, a script's navigation, a redirect,
+  an iframe, and a key press on a focused link are refused with a warning. A real click on `mailto:` in the selected tab
+  still opens with no question. Amends "Schemes" and M4's check. If wrong, a key press on a link that should open an app is
+  refused until the user clicks it.
+- 2026-11-06: Offer rule made an allow-list (work-queue best guess). The prior rule offered for `-1004`, `-1005`, and any
+  `-1200` that showed no certificate sign, which would offer for a `-1200` nobody understood. Now only `-1004`, `-1005`, and
+  a `-1200` with a closed-connection status offer, and the walk covers every nested error. A certificate failure cannot
+  reach the offer by construction. If wrong, the offer misses a server whose closed connection reports a status not on the
+  list.
+- 2026-11-06: HSTS file and error page lifetime (work-queue best guess). The prior rules: a file from a newer build started
+  an empty list and was overwritten by the next change. Any move of an entry's expiry rewrote the file. An error page lasted
+  until a commit or a load of the tab's own, so a failed Back or a page's failed navigation left an old offer live over the
+  pane. Now a newer file is never written, a move of under an hour on a live entry records nothing, and a new provisional
+  load clears the page. If wrong, a newer file's hosts are forgotten by this build until the file is replaced, and an entry
+  can lag a renewal by an hour.
 - 2026-11-06: ADR candidate (cuts across the system): web content hosted anywhere in uniterm may load plain HTTP, with
   no App Transport Security floor, so each applet that hosts a web view owns its own scheme gate. The key is app-wide,
   so the text viewer in UTERM-007 and the canvas in UTERM-010 inherit it. Undecided. Found in UTERM-005 M1.
+- 2026-11-06: ADR candidate (cuts across the system): a setting reaches an applet only through its factory, explicit and
+  read live, and never through the applet reading the settings store or UserDefaults. Waits on the second applet that
+  takes a setting, since this one instance cannot yet show whether settings belong in a per-applet bundle or on the applet
+  contract. Found in UTERM-005 M4.
 
 ## References
 

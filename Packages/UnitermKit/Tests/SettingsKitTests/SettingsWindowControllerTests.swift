@@ -89,6 +89,50 @@ final class SettingsWindowControllerTests: XCTestCase {
     XCTAssertEqual(store.value(of: .appearance), .dark)
   }
 
+  private func note(_ identifier: String, in window: NSWindow) -> NSTextField? {
+    subviews(of: NSTextField.self, in: window.contentView!)
+      .first { $0.accessibilityIdentifier() == identifier }
+  }
+
+  /// Catches a Settings window with no search engine row, a row that lists the wrong engines, or
+  /// one that does not write the setting.
+  func testSearchEngineRowListsTheEnginesAndWritesTheSetting() throws {
+    let store = makeStore()
+    let window = try XCTUnwrap(SettingsWindowController(store: store).window)
+    let row = try XCTUnwrap(control("search-engine-control", in: window))
+
+    XCTAssertEqual(
+      (0..<row.segmentCount).map { row.label(forSegment: $0) ?? "" },
+      ["DuckDuckGo", "Google", "Bing", "Ecosia", "Kagi"])
+    XCTAssertEqual(row.selectedSegment, 0, "the default is DuckDuckGo")
+    XCTAssertEqual(
+      note("search-engine-control-note", in: window)?.isHidden, true,
+      "a known value showed a note")
+
+    row.selectedSegment = 4
+    _ = row.sendAction(row.action, to: row.target)
+
+    XCTAssertEqual(store.reading(of: .searchEngine), .valid(.kagi))
+  }
+
+  /// Catches a stored engine that is no longer on the list showing as the default with no word
+  /// about it, or a row that writes the default over the stored text. The note names the stored
+  /// text and the engine in use.
+  func testAStoredEngineThatLeftTheListShowsAsReplacedByTheDefault() throws {
+    let store = makeStore(seed: ["searchEngine": "altavista"])
+    let window = try XCTUnwrap(SettingsWindowController(store: store).window)
+    let row = try XCTUnwrap(control("search-engine-control", in: window))
+    let note = try XCTUnwrap(note("search-engine-control-note", in: window))
+
+    XCTAssertEqual(row.selectedSegment, 0)
+    XCTAssertFalse(note.isHidden)
+    XCTAssertEqual(
+      note.stringValue,
+      "\u{201C}altavista\u{201D} is not a choice this version has. Using DuckDuckGo.")
+    XCTAssertEqual(
+      store.reading(of: .searchEngine), .invalid(raw: "altavista", fallback: .duckDuckGo))
+  }
+
   private func subviews<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
     var found: [T] = []
 
