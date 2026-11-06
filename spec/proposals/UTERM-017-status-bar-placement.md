@@ -1,6 +1,6 @@
 # UTERM-017: Status Bar Placement and Contract
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-05
 **Updated:** 2026-11-06
 

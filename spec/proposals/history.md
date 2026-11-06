@@ -11,3 +11,4 @@
 | UTERM-009 M1-M4 | None | |
 | UTERM-008 M1-M2 | None | Split at M2: M3 needs the exec driver and applet command hook from UTERM-004 M3 |
 | UTERM-016 M1-M3 | None | Built from the map review outside the queue. M4 waits on UTERM-008 M3 |
+| UTERM-017 M1-M3 | None | Sets the notice contract the queued viewers and UTERM-004 build on. M2 lands before UTERM-004 adds driver stderr |
