@@ -27,7 +27,9 @@ final class MapPinAnnotation: NSObject, MKAnnotation {
   let layer: MapLayer
   let layerAccent: ThemeToken
 
-  @objc dynamic let coordinate: CLLocationCoordinate2D
+  /// Settable so MapKit can move a dragged file pin. The pin itself keeps the coordinate the file
+  /// holds until the drag ends and the edit lands.
+  @objc dynamic var coordinate: CLLocationCoordinate2D
 
   /// The label. MapKit shows it in the callout when the pin is selected.
   var title: String? { pin.label }
@@ -41,6 +43,9 @@ final class MapPinAnnotation: NSObject, MKAnnotation {
   }
 
   var accent: ThemeToken { pin.accent ?? layerAccent }
+
+  /// True for a pin the user can change: one from the file.
+  var isEditable: Bool { layer == .file }
 }
 
 /// What a marker draws: a body in the accent, a neutral disc inside it, and a glyph or a count on
@@ -170,6 +175,10 @@ final class MapMarkerView: MKAnnotationView {
   static let clusterSide = 32.0
 
   private let art = MarkerArtView()
+  private let editButton = NSButton(title: "Edit", target: nil, action: nil)
+
+  /// Gets a press of the callout's Edit button.
+  var onEdit: ((MapPinAnnotation) -> Void)?
 
   var palette = ThemePalette.latte {
     didSet { refresh() }
@@ -191,7 +200,20 @@ final class MapMarkerView: MKAnnotationView {
 
     canShowCallout = reuseIdentifier == Self.pinReuse
     collisionMode = .circle
+
+    editButton.bezelStyle = .inline
+    editButton.controlSize = .small
+    editButton.target = self
+    editButton.action = #selector(edit)
+    editButton.setAccessibilityIdentifier("map-pin-edit")
+
     refresh()
+  }
+
+  @objc private func edit() {
+    guard let pin = annotation as? MapPinAnnotation else { return }
+
+    onEdit?(pin)
   }
 
   @available(*, unavailable)
@@ -208,6 +230,8 @@ final class MapMarkerView: MKAnnotationView {
       clusteringIdentifier = pin.layer.clusteringIdentifier
       art.art = .of(palette: palette, accent: pin.accent, glyph: pin.pin.glyph)
       setAccessibilityLabel(pin.pin.label)
+      isDraggable = pin.isEditable
+      rightCalloutAccessoryView = pin.isEditable ? editButton : nil
     } else if let cluster = annotation as? MKClusterAnnotation {
       let members = cluster.memberAnnotations.compactMap { $0 as? MapPinAnnotation }
       let accent = members.first?.layerAccent ?? .blue
