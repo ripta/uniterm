@@ -14,8 +14,8 @@ need the user's credentials.
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-005 M1: Single-page browser | DONE | "Add a single-page browser applet" |
-| UTERM-005 M2: Security indicator | IN PROGRESS | |
-| UTERM-005 M3: Tabs | QUEUED | |
+| UTERM-005 M2: Security indicator | DONE | "Warn in the address bar when a page is not fully secure" |
+| UTERM-005 M3: Tabs | IN PROGRESS | |
 | UTERM-005 M4: Address bar input | QUEUED | |
 | UTERM-005 M5: Website data, restore, and reopen | QUEUED | |
 | UTERM-005 M6: Pop-ups, downloads, and running work | QUEUED | |
@@ -155,6 +155,55 @@ Failures and restarts:
 
 Test cost: the browser applet tests take about 1 s together, and the model tests take milliseconds. The fixture binds a
 loopback port the system picks, so no two tests overlap on ports. The project has no `make test-cost` target.
+
+### M2: Security indicator
+
+Commit: "Warn in the address bar when a page is not fully secure".
+
+Checks, on 2026-11-06:
+
+- `make test-package`, coordinator's run `2KT50Y`: 1,201 tests, 4 skipped, 0 failures.
+- `make fmt-check`, `make lint`, `make check`, `make build`, and the UI tests' build for testing passed in the implementer's
+  runs. `proposals.py check` reports nothing, and `freeze` reports only the UTERM-013 hunk.
+- `make test-app`, coordinator's run `WWM5Y9`: not a usable result. See "Unowned failures".
+- A filtered UI run, `ZEBEFA`, of `BrowserUITests` and three tests that had failed: 6 tests, 0 failures.
+
+Best guesses from the implementer:
+
+1. The stale-flag fix sits in the rule, not in state captured at commit. Capture at commit would still show the new address
+   with no warning. If wrong, the tab changes and one table row goes.
+2. The brief warning on an `https` address loading after an insecure page is accepted, since it errs on the safe side. It is
+   recorded in As built only.
+3. The icon sits between Reload and the address field, in theme yellow, as `exclamationmark.triangle.fill`. This is for the
+   user's visual check.
+
+Review findings and dispositions:
+
+- Traced and confirmed, then fixed: WebKit moves `url` to the new address before it updates `hasOnlySecureContent`. A stalled
+  `http` load from a secure page showed the address with no warning. An `http` URL now always warns. The test failed first.
+- Traced and confirmed, then fixed: `about:blank#x` was not treated as blank. One definition now serves the rule and the
+  address bar.
+- Traced and not confirmed: WebKit reports the flag false for a `blob:` page made by an `http` page, so it warns. A `blob:`
+  page made by an `https` page could not be measured. The diagnosis stays unresolved for that case.
+- Fixed by narrowing the claim: nothing could flip the flag after commit, so the observer is untested. As built and the test's
+  doc comment say so. No test-only seam was added.
+- Fixed: a test now asserts the hidden icon takes no room. The Decision Log entry now says which check is left to the user.
+  Two comments were reworded.
+- Dismissed: posting a VoiceOver announcement when the warning appears. No decision or check asks for it. The icon is reachable
+  as an image with a label while shown.
+
+The ADR check found no conflicts, and no new candidate.
+
+Test cost: the security test class takes about 0.6 s.
+
+## Unowned failures
+
+`make test-app` run `WWM5Y9` on 2026-11-06, 11:38 to 11:58 local, failed 22 tests with scattered focus and input errors, such as
+a typed path arriving as `unite0rm-data` and the app leaving the foreground. The runner restarted three times. Another session's
+`make ci`, run `38KZFC`, drove the same screen from 11:35 to 11:56, and reported a matching pattern. M2 touches only the browser,
+and none of the 22 is a browser test. A filtered rerun of 6 tests passed. No crash report for uniterm appeared. The cause is
+collision by correlation and by the other session's report, and is not proved by a clean full run yet. The full suite reruns when
+the other session says the screen is free.
 
 ## Edits found and not made
 
