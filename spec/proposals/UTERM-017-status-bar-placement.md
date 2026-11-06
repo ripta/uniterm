@@ -441,6 +441,7 @@ None.
 - 2026-11-05: Review gate: kept all decisions, including the Focus Pane addition; nothing reopened. The user approved
   including the proposal index's matching status row in the single final commit.
 - 2026-11-05: Accepted at the user's final gate. No ADR created. The three milestones remain unscheduled.
+- 2026-11-05: Scheduled as M1-M3 in queue.md, at the top of the queue.
 
 ## References
 
