@@ -76,7 +76,11 @@ final class GlyphPickerController: NSViewController, NSSearchFieldDelegate, NSTe
   let characterField = NSTextField()
   let characterViewerButton = NSButton(title: "Emoji & Symbols\u{2026}", target: nil, action: nil)
   private let symbolPane = NSStackView()
-  private let groupsStack = NSStackView()
+
+  /// The scrolling area that holds the symbol groups. Its height is set once, for the whole
+  /// catalog, so a filter removes tiles in place and the popover never changes size.
+  let symbolArea = NSScrollView()
+  let groupsStack = NSStackView()
   private let characterPane = NSStackView()
   private let usedRow = NSStackView()
   private let current: PinGlyph?
@@ -118,9 +122,31 @@ final class GlyphPickerController: NSViewController, NSSearchFieldDelegate, NSTe
     groupsStack.alignment = .leading
     groupsStack.spacing = 10
 
+    let document = FlippedView()
+    document.translatesAutoresizingMaskIntoConstraints = false
+    groupsStack.translatesAutoresizingMaskIntoConstraints = false
+    document.addSubview(groupsStack)
+
+    symbolArea.documentView = document
+    symbolArea.hasVerticalScroller = true
+    symbolArea.drawsBackground = false
+    symbolArea.borderType = .noBorder
+    symbolArea.translatesAutoresizingMaskIntoConstraints = false
+
+    NSLayoutConstraint.activate([
+      groupsStack.topAnchor.constraint(equalTo: document.topAnchor),
+      groupsStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+      groupsStack.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor),
+      groupsStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+      document.topAnchor.constraint(equalTo: symbolArea.contentView.topAnchor),
+      document.leadingAnchor.constraint(equalTo: symbolArea.contentView.leadingAnchor),
+      document.trailingAnchor.constraint(equalTo: symbolArea.contentView.trailingAnchor),
+    ])
+
     symbolPane.orientation = .vertical
     symbolPane.alignment = .leading
-    symbolPane.addArrangedSubview(groupsStack)
+    symbolPane.addArrangedSubview(symbolArea)
+    symbolArea.widthAnchor.constraint(equalTo: symbolPane.widthAnchor).isActive = true
 
     buildCharacterPane()
 
@@ -150,8 +176,15 @@ final class GlyphPickerController: NSViewController, NSSearchFieldDelegate, NSTe
 
     if case .text = current { startsOnCharacters = true } else { startsOnCharacters = false }
 
-    tabs.selectedSegment = startsOnCharacters ? 1 : 0
     renderSymbols()
+
+    // The full catalog sets the area's height, so later filters only empty it.
+    groupsStack.layoutSubtreeIfNeeded()
+    symbolArea.heightAnchor.constraint(equalToConstant: groupsStack.fittingSize.height).isActive =
+      true
+    symbolPane.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+    tabs.selectedSegment = startsOnCharacters ? 1 : 0
     showPane()
   }
 
@@ -326,6 +359,9 @@ final class GlyphPickerController: NSViewController, NSSearchFieldDelegate, NSTe
     characterPane.isHidden = symbols
 
     if !symbols { view.window?.makeFirstResponder(characterField) }
+
+    view.layoutSubtreeIfNeeded()
+    preferredContentSize = view.fittingSize
   }
 
   /// Shows the Characters tab, as a click on it does. A test calls it.
@@ -333,4 +369,9 @@ final class GlyphPickerController: NSViewController, NSSearchFieldDelegate, NSTe
     tabs.selectedSegment = 1
     showPane()
   }
+}
+
+/// A view whose origin is at its top, so a scroll view's content starts at the top.
+private final class FlippedView: NSView {
+  override var isFlipped: Bool { true }
 }
