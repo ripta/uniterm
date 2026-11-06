@@ -265,7 +265,7 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertNil(description.withoutUndoState.undoState)
 
     let reopened = try MapViewerApplet(restoring: description)
-    reopened.start()
+    reopened.start(origin: .user)
     await reopened.opening?.value
     await settle(reopened)
 
@@ -290,7 +290,7 @@ final class MapPinEditingTests: XCTestCase {
     let reopened = try MapViewerApplet(restoring: description)
     let host = RecordingHost()
     reopened.host = host
-    reopened.start()
+    reopened.start(origin: .user)
     await reopened.opening?.value
 
     let lost = host.posts.filter { $0.text.hasPrefix("The pins left unsaved") }
@@ -609,7 +609,7 @@ final class PinEditReviewTests: XCTestCase {
     try FileManager.default.removeItem(at: first)
 
     let reopened = try MapViewerApplet(restoring: description)
-    reopened.start()
+    reopened.start(origin: .user)
     await reopened.opening?.value
 
     let second = try scratch.write(

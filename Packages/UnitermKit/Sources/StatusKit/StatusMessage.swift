@@ -11,6 +11,24 @@ public enum StatusLevel: Int, Sendable, Comparable {
   }
 }
 
+/// How a message reaches the user. Every delivery enters the history, or presents a record that
+/// is already there.
+public enum StatusDelivery: Sendable, Equatable {
+  /// A turn on the bar, and the unseen signal of its level.
+  case message
+
+  /// The unseen signal of its level, with no turn on the bar. A warning that restore found on a
+  /// pane that is on screen arrives this way.
+  case attention
+
+  /// The history alone. It raises no signal, makes no sound, and takes no turn.
+  case historyOnly
+}
+
+/// The ID of a record in the window's history. A caller that recorded an alert keeps it to
+/// present that same record later.
+public typealias StatusRecordID = UInt64
+
 /// Who posted a message. The bar and the history show it, so an untrusted program cannot pass its
 /// text off as uniterm's own.
 ///

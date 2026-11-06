@@ -41,19 +41,6 @@ public struct AppletNotice: Hashable, Sendable {
   }
 }
 
-extension AppletHost {
-  /// Delivers `notice` the way it says, as a message or to the history only.
-  public func applet(_ applet: any Applet, deliver notice: AppletNotice) {
-    switch notice.delivery {
-    case .message:
-      self.applet(applet, post: notice.level, text: notice.text)
-
-    case .historyOnly:
-      self.applet(applet, recordInHistory: notice.level, text: notice.text)
-    }
-  }
-}
-
 /// The notices an applet has posted to the status bar for what it shows now, so each is posted
 /// once.
 ///

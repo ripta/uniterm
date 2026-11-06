@@ -302,7 +302,7 @@ final class MapFileTests: XCTestCase {
     XCTAssertEqual(stored.fileAccent, "blue")
 
     let rebuilt = try MapViewerApplet(restoring: applet.describe())
-    rebuilt.start()
+    rebuilt.start(origin: .user)
     await rebuilt.opening?.value
 
     XCTAssertTrue(rebuilt.filePinsShown.isEmpty)
@@ -344,7 +344,7 @@ final class MapFileTests: XCTestCase {
     XCTAssertTrue(restored.filePinsShown.isEmpty)
     XCTAssertEqual(restored.describe(), description)
 
-    restored.start()
+    restored.start(origin: .user)
     await restored.opening?.value
 
     XCTAssertEqual(restored.filePinsShown.map(\.label), ["A"])
@@ -370,7 +370,7 @@ final class MapFileTests: XCTestCase {
     let found = try MapViewerApplet(restoring: description)
     let host = RecordingHost()
     found.host = host
-    found.start()
+    found.start(origin: .user)
     await found.opening?.value
 
     XCTAssertEqual(found.filePinsShown.map(\.label), ["Old"])
@@ -387,7 +387,7 @@ final class MapFileTests: XCTestCase {
       "old.geojson", GeoFixtures.collection([GeoFixtures.point("Fresh", 2, 2)]))
 
     let wins = try MapViewerApplet(restoring: description)
-    wins.start()
+    wins.start(origin: .user)
     await wins.opening?.value
 
     XCTAssertEqual(wins.filePinsShown.map(\.label), ["Fresh"])
@@ -401,7 +401,7 @@ final class MapFileTests: XCTestCase {
     let description = try MapViewerDescription(path: path).appletDescription()
 
     let applet = try MapViewerApplet(restoring: description)
-    applet.start()
+    applet.start(origin: .user)
     await applet.opening?.value
 
     XCTAssertTrue(notices(applet).joined().contains("is missing"))

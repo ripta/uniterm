@@ -425,7 +425,7 @@ None.
 
 ### M3: Detached panes and restore
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The terminal, the map, and the data viewer follow one rule for posting while detached
 - A pane closed while detached keeps its held messages in the history
@@ -436,6 +436,25 @@ None.
 - Restore origin survives asynchronous completion and a user replacement load never inherits it
 - A launch that restores many panes follows the settled restore rule
 - Detached presentation storage stays bounded in count and bytes. Amended 2026-11-06; see Decision Log.
+
+**As built:**
+
+- Nothing in the host sends `detach` or `reattach` yet, as UTERM-001 M10 intends. The detached behavior therefore has no
+  user path. Package tests call the events directly on each applet. A trigger needs its own proposal.
+- The terminal, the map, and the data viewer share one rule through one helper that each applet owns and calls from its
+  own detach and reattach. The host adds no policy. The terminal now keeps a bounded number of notifications, where it
+  kept only the newest. The test that pinned newest-only changed with the contract.
+- Every terminal post goes through the same helper, including a failed shell start on a launch restore. Its clipboard
+  dialog is a question, not a notice, and still shows while the pane is detached. It is left alone.
+- The window starts each launch-restored applet with the restore origin, and every other applet with the user origin. A
+  file-watcher reload and a revert are a third origin that posts normally. The reasons are in the Decision Log.
+- A tile failure is not a load, so it carries no origin and still posts once per outage.
+- The many-pane launch is proved through the real window, host, and status center with a stand-in applet. The real
+  viewers and the terminal are proved alone. No package test launches real files in many real panes.
+- A pane can present only the history records its own host issued, once each. The queue also refuses an ID it never
+  issued and another source's retained record.
+- UTERM-008's relaunch notice still reads true. Its program-pin producer is unbuilt, so its restore-origin info goes to
+  the history under this rule when it ships.
 
 ## Decision Log
 
@@ -531,6 +550,34 @@ None.
   shows one message that counts what was lost, at the most severe level lost. The limit is a policy constant.
 - 2026-11-06: ADR candidate (cuts across the system): the host binds a status source's identity at origin, and no
   producer can claim another's. Undecided. Found in UTERM-017 M2.
+- 2026-11-06: M3 host delivery (work-queue best guess). The applet contract has one delivery requirement with three
+  ways: a message, attention with no turn, and history only. It takes an optional record ID. A call with an ID presents
+  that record again and adds no history entry. History-only delivery returns the record ID, so a detached applet keeps
+  it. A record that retention dropped before the pane returned moves its signal to the loss summary. The old post and
+  record calls are conveniences over it. Each is a small change to revert.
+- 2026-11-06: M3 restore marking (work-queue best guess). The start event carries a required origin, restore or user,
+  with no default. The window records which applets the launch restore built and starts each with restore, once. Every
+  other start passes user: a new pane, a pane reopened by undo, and a launcher swap. The first draft added a separate
+  launch-restore call with a default that did nothing. A launch-restored applet could miss it silently, and ADR-05 lists
+  four events. The origin now rides on the start event. It is not set in the restoring initializer, because undo reopen
+  uses the same initializer and is a user action. A file-watcher reload and a revert are a third origin, reload, because
+  neither is the user's new choice or the launch. A sheet switch is a user load. A skipped sort follows the origin of
+  the sort now in effect, and a filter does not change it. The changed-on-disk warning follows what set the flag: the
+  restore, when it compared the unsaved pins' base with the file, or the watcher.
+- 2026-11-06: M3 held-alert bound (work-queue best guess). A detached applet holds at most 8 alerts and 8 KiB, each text
+  cut to the status text bound. Past either, the oldest non-error goes first, and an error goes only when every held
+  alert is one. The loss is counted, and reattach shows one more message naming the count. It takes the most severe
+  level lost and the strongest delivery lost, so a count of restore warnings takes no turn. That message is a new
+  history entry. The limits are policy constants.
+- 2026-11-06: M3 record ownership (work-queue best guess). A pane's host keeps a ledger of the history records it
+  issued, 256 at most, and honors a present call only for its own records and only once. An ID it did not issue is
+  delivered as a new record of that pane. The queue also refuses an ID it never issued and a retained record of another
+  source, because the loss summary would otherwise show an unseen count with no row to clear. The queue cannot tell who
+  made a record that retention dropped, which is why the ledger sits in the host. The limit is a policy constant.
+- 2026-11-06: M3 reaches past load notices (work-queue best guess). The map and the data viewer send every post through
+  the alert helper, not only their load notices. The user's own actions happen while the pane is attached, so those
+  posts are unchanged. A completion that lands while the pane is detached follows the same rule. The terminal sends
+  every post through it, so a failed start on a launch restore takes no turn.
 
 ## References
 

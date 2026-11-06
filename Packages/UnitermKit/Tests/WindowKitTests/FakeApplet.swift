@@ -178,7 +178,13 @@ final class FakeApplet: Applet {
   var canFind = true
   var finds = 0
 
-  func start() { started = true }
+  func start(origin: StartOrigin) {
+    started = true
+    startOrigin = origin
+  }
+
+  /// What the host said built the applet when it started it.
+  var startOrigin: StartOrigin?
   func close() { closed = true }
   func detach() { detachCount += 1 }
   func reattach() { reattachCount += 1 }

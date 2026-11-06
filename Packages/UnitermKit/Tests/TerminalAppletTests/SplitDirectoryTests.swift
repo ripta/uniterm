@@ -21,7 +21,7 @@ private final class DirectoryApplet: Applet {
 
   init(directory: String?) { currentDirectory = directory }
 
-  func start() {}
+  func start(origin: StartOrigin) {}
   func close() {}
   func detach() {}
   func reattach() {}

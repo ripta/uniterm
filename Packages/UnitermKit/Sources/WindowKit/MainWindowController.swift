@@ -37,6 +37,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   private var appearanceToken: UUID?
   private var statusToken: UUID?
   private var started = Set<ObjectIdentifier>()
+
+  /// The applets the launch restore built. Each starts once with the restore origin. Everything
+  /// else starts with the user origin.
+  private var launchRestored = Set<ObjectIdentifier>()
   private var panesClosed = false
   private(set) var historyVisible = false
 
@@ -160,6 +164,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     let panes = try restored.map { try PaneRestoration.restore($0, restorer: restoreApplet) }
 
     if let panes {
+      launchRestored = Set(panes.applets.values.map { ObjectIdentifier($0) })
       paneArea = PaneAreaView(restoring: panes.tree, applets: panes.applets, focus: panes.focus)
     } else if let routed {
       paneArea = PaneAreaView(firstApplet: routed)
@@ -430,7 +435,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   private func startPendingApplets() {
     for applet in paneArea.applets where started.insert(ObjectIdentifier(applet)).inserted {
-      applet.start()
+      applet.start(
+        origin: launchRestored.remove(ObjectIdentifier(applet)) != nil ? .restore : .user)
     }
   }
 

@@ -304,7 +304,7 @@ final class LauncherTests: XCTestCase {
       let publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: "Quiet"))
       let isRunningSomething = false
       weak var host: (any AppletHost)?
-      func start() {}
+      func start(origin: StartOrigin) {}
       func close() {}
       func detach() {}
       func reattach() {}

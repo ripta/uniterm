@@ -8,6 +8,10 @@ enum DataViewerNotices {
   /// be its identity.
   static let cutRowsKey = "cut-rows"
 
+  /// The identity of the notice that sorting was skipped. A restored sort and a sort the user
+  /// makes later are both this notice, so the applet tells them apart by origin.
+  static let sortSkippedKey = "sort-skipped"
+
   /// The notices for a table. The count of cut rows is final only once the load has settled, so
   /// the cut-rows notice waits for that. It then posts once, with the whole count. A segment
   /// shows the count while the load runs.
@@ -18,7 +22,8 @@ enum DataViewerNotices {
       notices.append(
         AppletNotice(
           .warning,
-          "There is not enough memory to sort this many rows, so they show in file order."))
+          "There is not enough memory to sort this many rows, so they show in file order.",
+          key: sortSkippedKey))
     }
 
     if truncatedRows > 0, settled {

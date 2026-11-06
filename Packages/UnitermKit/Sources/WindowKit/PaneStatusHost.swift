@@ -19,6 +19,20 @@ final class PaneStatusHost: AppletHost {
   private weak var bound: (any Applet)?
   private var lastTitle: String
 
+  /// A record this host admitted, and whether it has been shown. An applet presents a record by
+  /// ID. The host honors only its own records, once each. An ID it did not issue, or one that
+  /// fell off the ledger, is delivered as a new record of this pane instead, so no pane can mark
+  /// or show another's.
+  private struct Issued {
+    var id: StatusRecordID
+    var presented: Bool
+  }
+
+  private var ledger: [Issued] = []
+
+  /// The most records the ledger remembers. A policy value with no setting.
+  static let ledgerLimit = 256
+
   init(pane: NodeID, applet: any Applet, window: MainWindowController) {
     self.pane = pane
     self.window = window
@@ -32,12 +46,31 @@ final class PaneStatusHost: AppletHost {
     return .pane(id: pane.rawValue, name: lastTitle)
   }
 
-  func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
-    window?.statusCenter.post(level: level, source: source, text: text)
-  }
+  func applet(
+    _ applet: any Applet, send delivery: StatusDelivery, level: StatusLevel, text: String,
+    presenting record: StatusRecordID?
+  ) -> StatusRecordID? {
+    guard let window else { return nil }
 
-  func applet(_ applet: any Applet, recordInHistory level: StatusLevel, text: String) {
-    window?.statusCenter.record(level: level, source: source, text: text)
+    var target: StatusRecordID?
+
+    if let record, let index = ledger.firstIndex(where: { $0.id == record }) {
+      guard !ledger[index].presented else { return record }
+
+      ledger[index].presented = true
+      target = record
+    }
+
+    let id = window.statusCenter.deliver(
+      delivery, level: level, source: source, text: text, presenting: target)
+
+    if target == nil, let id {
+      ledger.append(Issued(id: id, presented: delivery != .historyOnly))
+
+      if ledger.count > Self.ledgerLimit { ledger.removeFirst() }
+    }
+
+    return id
   }
 
   func appletDidExit(_ applet: any Applet) {
