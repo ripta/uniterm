@@ -1,8 +1,8 @@
 # UTERM-009: Data Viewer Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-03
+**Updated:** 2026-11-05
 
 ## Dependencies
 
@@ -43,12 +43,13 @@ Decision: files open from inside the pane now. Pipe and script input is deferred
   the pane. A drop accepts file URLs only.
 - A pane shows one file. Opening another file replaces it: the old load is cancelled, and the new file starts with no
   sort or filter. The open panel selects one file. A drop of several files is refused with a message asking for one
-  file, and the pane keeps what it showed. Amended 2026-11-03; see Decision Log.
+  file, and the pane keeps what it showed.
 - A drawer of open documents beside the table, as Preview has, is an idea for later. This proposal does not commit to
   it. Building it needs its own proposal, since it changes what a pane and its description hold.
-- All loading goes through one internal entry point that takes a source. Today the only source is a file URL. A
-  byte-stream source is added when its first caller lands. It spools to a file when a format needs random access, as
-  `.xlsx` does.
+- All loading goes through one internal entry point that takes a source. A source is a file URL, or a nested JSON value
+  that a cell holds, which loads from memory with no file behind it. A byte-stream source is added when its first
+  caller lands. It spools to a file when a format needs random access, as `.xlsx` does. Amended 2026-11-05; see
+  Decision Log.
 - App-level opening belongs to UTERM-015, the cross-applet proposal this decision committed to. Its File > Open on
   Cmd-O routes files here by type, and this Open... is the pane-local open it keeps. The data viewer declares CSV,
   `public.json`, and `.xlsx` at the owner rank. A GeoJSON file goes to the map, whose type is more specific. The data
@@ -109,6 +110,17 @@ Decision: flatten nested objects into columns, and show arrays as cells that ope
   JSON Lines.
 - A missing key and an explicit `null` display differently.
 - Numbers display their original text, so a large integer or a long decimal is never rounded.
+- A nested object with more than 64 members is a map keyed by data, such as IDs as keys. It is one expandable cell in
+  place of that many columns. Objects flatten to six key segments, and what lies below is an expandable cell.
+- A table holds at most 1,000 columns. Keys past that fold into one last expandable cell, so no value is lost.
+- Duplicate keys in one object keep every value. The nth repeat of a key path in a row fills the path's nth column, by
+  the same occurrence that separates repeated CSV headers.
+- A nested table opens in a popover over its cell, within the pane, and a cell in it can open one more.
+- A scalar on its own and a syntax error show a message and no rows. An empty array shows a message.
+- Sorting a mixed column follows one order. Numbers come first, then text, booleans, nested cells, null, and missing.
+  Descending reverses all but null and missing, which stay last.
+
+Amended 2026-11-04; see Decision Log.
 
 Rationale: common API fields become columns the user can sort and filter, and array contents stay tables instead of
 text. Rejecting nested JSON would fail on most API output. Naming columns by segment list keeps two different values
@@ -125,8 +137,10 @@ Decision: rows stream off the main thread into memory, under one memory budget.
   the load.
 - Rows live in a compact in-memory store. The loaded rows are a snapshot, so a later change to the file cannot corrupt
   the view.
-- One memory budget covers every data viewer pane together, and a memory-pressure warning stops loading early. When
-  loading stops, the pane says it shows the first N rows of the file.
+- One memory budget covers every data viewer pane together. Each pane keeps a floor of 32 MiB even when the budget is
+  spent, so the app holds at most the budget plus one floor for each pane beyond it. A memory-pressure warning stops
+  loading early. When loading stops, the pane says it shows the first N rows of the file, or of the sheet for a
+  workbook. Amended 2026-11-05; see Decision Log.
 - Sorting, filtering, and search run off the main thread on an immutable snapshot. A newer request cancels an older
   one, and results swap in when done.
 - Loading is not running work. Reopen and relaunch read the file again, so closing a loading pane does not ask.
@@ -170,6 +184,12 @@ file.
   Find Previous (Cmd-Shift-G), and Focus Filter with no key. The filter field and the open panel need no key. The data
   viewer has no tabs, so its description has no undo-only part. Cmd-Shift-T reopens a closed data viewer pane from its
   description.
+- All four sit in Edit > Find, a submenu of the Edit menu that an applet fills through a menu home of its own. The
+  submenu shows only while the focused applet has such commands. The fixed edit actions stay as they were. The commands
+  are off until a table shows. They run against the pane, so they work while the filter or find field has focus.
+- The find query belongs to the pane. It is apart from the filter. Search marks cells among the rows the filter shows,
+  numbered as shown, and runs again when the filter, the sort, or the loaded rows change. The query is not in the
+  description, and the viewer never reads or writes the system find pasteboard. Amended 2026-11-04; see Decision Log.
 
 - The payload holds the file's absolute path, a macOS bookmark of the file, the selected `.xlsx` sheet, the sort as a
   column identity and a direction, and the filter text. It has its own version, per ADR-06.
@@ -184,7 +204,7 @@ file.
   a restored sort lands on the right one.
 - The bookmark is created at load, and remade when an open, a restore included, finds a different file than the
   bookmark names. Resolution runs in `start()`, off the main thread, without UI and without mounting volumes.
-  `describe()` never touches the disk. Amended 2026-11-03; see Decision Log.
+  `describe()` never touches the disk.
 
 Rationale: the path is what the user named, so it wins while a file is there. The bookmark recovers a file that was
 moved or renamed. Bookmark-first resolution follows the file ID, which would show a rotated-away backup instead of the
@@ -230,7 +250,7 @@ None.
 
 ### M1: CSV table
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A pane can run the data viewer and open a CSV file as a table, from an open panel or by dropping a file on the pane
 - Every load goes through the one source-taking entry point
@@ -273,9 +293,46 @@ None.
 - Clicking a column header sorts by that column
 - A filter field hides rows that do not match
 
+**As built:**
+
+- The CSV rule is documented in the doc comment of the CSV rule type, beside its code. Best guesses behind it are in
+  the Decision Log entry of 2026-11-04. UTF-32 is not supported. Bytes that are not valid UTF-8 past the first 64 KiB
+  of a UTF-8 file show as U+FFFD.
+- Size caps protect the store from a hostile file: a cell keeps 1 MiB, a row 16 MiB and 65,536 cells. A cut row is
+  counted, and the pane says how many rows had cells cut.
+- Rows live in sealed pages of about 1 MiB, which reserve their cost from the shared budget as they seal. A page the
+  budget refuses is dropped, so the "first N rows" count is page-granular. A memory warning or critical event ends the
+  loads running at that moment, and a pane opened afterward loads normally. Numbers and reasons are in the Decision Log
+  entry of 2026-11-04.
+- Sealed pages are copied into exact-size arrays, so a page holds what the budget charged for. A closed or replaced
+  pane releases its lease, and a loader that is slow to notice its cancellation is refused from then on. The page being
+  filled is not reserved and stays under about 1 MiB for each loading pane.
+- A sort reserves its key memory from the same budget and gives it back when done. A sort the budget refuses leaves the
+  rows in file order, and the pane says so. See the Decision Log entry of 2026-11-04.
+- A header click cycles ascending, descending, then no sort. A sort or filter over a growing table reruns off the main
+  thread at most every 250 ms. The view keeps the last finished result until the run over the newer snapshot ends, so
+  rows never show out of order.
+- The extension picks the reader. CSV, TSV, and TAB load. JSON, JSON Lines, and GeoJSON files load as JSON. The
+  spreadsheet extensions go to the workbook reader, which decides by content, and any other extension is named and
+  refused. The router declares CSV, JSON, and `.xlsx`, so a TSV or `.xlsm` file opens through the pane's own Open or a
+  drop. Amended 2026-11-04; see Decision Log.
+- The bookmark is made at open, kept when it still names the file that opened, and made again otherwise. Resolution
+  runs off the main thread, and `describe()` returns the restored payload until it ends.
+- Fuzzing: a seeded mutation fuzzer runs the loader, the store, and the sort and filter on mutated files. `make fuzz`
+  builds the whole package under the address sanitizer in its own scratch folder, which links against the prebuilt
+  GhosttyKit, then runs only the fuzzer. 5000 iterations at the default seed found no crash and no memory error.
+  `make test-package` runs it at 300 iterations without the sanitizer, and `make ci` does not run `make fuzz`. The
+  sanitizer does not instrument libxml2 or zlib, so M4's fuzzing covers their heap use only as the interceptors see it.
+- A drop of several files is refused on the applet's drop entry point, and the package tests prove it. XCUITest cannot
+  start a drag from Finder, so no UI test drives it.
+- The visual check is left to the user. The run's screenshot of the running app was denied by its permission check.
+  The UI suite drives the launcher, the open panel, Cmd-O routing, and restore. Things to look at in the visual check:
+  the table's layout, the status segments, and the File menu. The menu shows two items titled "Open..." when a data
+  viewer has focus, the window's routed Open and the pane-local one, and the pane-local one sits in its own section.
+
 ### M2: JSON
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - An array of JSON objects opens as a table, one column per flattened key path
 - Nested values follow the settled JSON shapes rule
@@ -290,18 +347,78 @@ None.
   finds no crash and no memory error
 - A large top-level array of objects streams within the memory budget, without parsing the whole document first
 
+**As built:**
+
+- The JSON rules are documented beside their code. The shapes, nesting, map, column cap, duplicate-key, and JSON Lines
+  rules are in the doc comment of the JSON rule type. The mixed-type sort order is in the doc comment of the query
+  engine. The numbers behind them, and the reasons, are in the Decision Log entry of 2026-11-04 that amends "JSON
+  shapes".
+- The reader is a streaming scanner in Swift. It takes chunks of any size, keeps each number's original text, and
+  copies one array element or object member at a time, up to 16 MiB. A second pass flattens that element. So memory
+  follows the budget and one element, and a file bigger than the budget stops after the first chunks it reads.
+- Caps: nesting 256 levels, a string 1 MiB, a key 4 KiB, a nested cell 1 MiB, and 65,536 cells in a row. A string is
+  cut. A number past 64 KiB, and a nested value past its cap, show a note in place of the value, since a cut number reads
+  as a different value. A cut value, or a row that dropped cells, is counted in the same notice as a cut CSV cell. A
+  repeat of a key costs the same however many came before it, and a long element checks for a cancel as rows pass.
+- The row store gained typed pages for JSON. A cell carries a kind, and a row holds only the cells it has, found by
+  binary search on column. So a missing key and `null` differ, and a sort can tell the string `"12"` from the number 12.
+  CSV pages are unchanged.
+- A syntax error, or nesting past the cap, ends the load with a message that names the line. The rows read before it
+  are not shown. See the Decision Log entry of 2026-11-04.
+- A nested cell shows its compact JSON after a marker, in the table's accent color. A double click opens it in a
+  popover that holds its own table, sort, and filter, under the shared budget. A package test proves the load and the
+  release of its rows. A UI test drives the double click, and it has not run. The coordinator's `make test-app` runs it.
+- Fuzzing: the JSON corpus joined the existing fuzz class, with mutated files, random read splits, and an open of every
+  nested cell. 5000 iterations at the default seed found no crash and no memory error under the address sanitizer.
+  The sanitizer does not instrument the system libraries, but this reader uses none.
+- A GeoJSON file opens as key and value rows. A large `features` member shows the too-large note, so a FeatureCollection
+  is not browsable here. That is a known limit of loading GeoJSON as JSON. The router still sends GeoJSON to the map.
+- The column registry is not charged to the budget. Its bound is 1,001 columns. Each holds at most 6 key segments of
+  4 KiB, and a title of the same size, so the worst case is about 50 MiB for a hostile file and kilobytes for a real
+  one. Each open nested popover also takes one more 32 MiB floor beyond the limit, as "Large files" allows.
+- The visual check is left to the user. Things to look at: the nested-cell marker and color, the popover's size and
+  position over a cell, `null` in a muted color, and a wide table's `(more keys)` column.
+
 ### M3: Search
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Searching highlights matching cells and steps between them
 - Find, Find Next, Find Previous, and Focus Filter are registry commands the data viewer declares, with menu items, and
   none of their keys is a reserved window key
 - The Find items sit in Edit > Find, work while focus is in the filter field, and are disabled when no file is loaded
 
+**As built:**
+
+- Edit > Find is shared contract. An applet command names the new `editFind` menu home, and the menu builds the submenu
+  below Select All. The rule that this home takes find commands only is a convention. Its doc comment states it, and
+  the code does not enforce it. The submenu and its separator hide unless the focused applet type owns an item in it. Availability,
+  the hidden-under-another-applet rule, the disabled-under-a-sheet rule, and the key reservation are the registry's
+  and are unchanged. A command on a reserved key in this home loses the key and warns like any other. See the Decision
+  Log entry of 2026-11-04.
+- Find opens a find bar under the filter field with a match count. Return steps forward, Shift-Return steps back, and
+  Escape closes the bar and clears the query. Find Next with no query opens the bar. Focus Filter is in the same
+  submenu, in its own section.
+- The keys work from a focused text field because the window routes a Command key to the menu before any view sees it.
+  Find reaches the pane, not the field. A package test types the key into a real field editor, and the UI tests drive
+  the same path in the app.
+- Search runs in the session on the snapshot and the rows shown, off the main thread. Each new query or new rows
+  cancel the older run. It matches ignoring case, as the filter does, and keeps at most 1,000,000 matches. A cut list
+  reads "1,000,000+" in the count.
+- The current match keeps its cell, by row of the file and column, when a filter, a sort, or new rows change what is
+  shown. When that cell no longer matches, the first match after it takes over. Adding or deleting letters of the same
+  word keeps the place. Any other query, and a cleared bar, starts at the first match. The view scrolls to the current
+  match only for a new query or a step, so a reload of rows never pulls back a view the user scrolled.
+- The count reads "X of N matches". It adds "in the first N rows" when the load stopped at the budget, and "in X of N
+  rows" when a filter hides rows. Both together read "in X of the first N rows".
+- A match is a tinted cell, and the current one is tinted more. The UI tests check the count line, not the colors. The
+  visual check is left to the user. Things to look at: the two tints on both palettes, the find bar under the filter,
+  and the scroll to the current match in a wide table.
+- No change to table parsing, so `make fuzz` did not run.
+
 ### M4: Spreadsheets
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - An `.xlsx` file opens as a table, and a workbook with several sheets offers a sheet picker
 - The viewer declares `.xlsx` at the owner rank, for UTERM-015's router
@@ -318,6 +435,76 @@ None.
 - The selected sheet survives reopen and relaunch
 - ZIPFoundation is pinned exactly, `Package.resolved` is committed, its license notice is collected, and the
   offline-build check either covers SwiftPM fetches or states that it covers Ghostty only
+
+**As built:**
+
+- ZIPFoundation 0.9.20 is pinned with `exact:` in the package manifest. It is the newest release, and its tag was
+  published 2025-09-24. Both `Package.resolved` files are committed, and both name revision
+  `22787ffb59de99e5dc1fbfe80b19c97a904ad48d`, the commit that tag points to. Only the table target depends on it. The
+  license script collects a notice for every package the resolved file pins. It checks the checkouts before it wipes
+  anything, and refuses one that is not at the pinned revision. The notice is in `Licenses/swift-packages`, with a line in `Licenses/README.txt`.
+- The offline check covers SwiftPM fetches, the complete one of the two options. `make swiftpm-offline-check` runs in
+  `make ci`. It fills a kept cache at `.cache/swiftpm` from the committed pins, shows with a control that a dead proxy
+  stops both `swift` and `xcodebuild` from fetching, then resolves into empty folders from the kept cache alone. It builds
+  the table target with automatic resolution off, and fails if a resolve rewrites either `Package.resolved`. CI keeps
+  only `.cache/ghostty`, so a CI run fetches the package once, in the check's first step. That is accepted. See the
+  Decision Log entry of 2026-11-04.
+- The reader inflates a part on a second thread and hands it to `XMLParser` through a bound stream pair. The parser runs
+  on the loader's thread and takes rows as they arrive. No part is ever held whole. A package test cancels a load of a
+  sheet that inflates to about 5 MB after its first rows, and shows that under 1 MiB was inflated. A reader that gathered
+  the part first fails it. Another test shows that no chunk is larger than the 64 KiB pipe. Caps count the
+  bytes the inflating thread produced, never a size in the archive. A test gives a stored entry a lying size, and another
+  inflates a sheet past a cap that its directory says is far smaller. Numbers and the reasons for them are in the Decision
+  Log entry of 2026-11-04.
+- Entity declarations are refused outright, not only bounded. The inflating thread stops at `<!DOCTYPE` or `<!ENTITY`
+  before the parser sees the bytes, and the parser's own declaration callbacks stop the rest. External entities are off.
+  A billion-laughs payload and an external-entity payload both end with a message and expand nothing.
+- Aborting an `XMLParser` parse does not stop it. The parser reads and discards the rest of the stream,
+  and a write to a closed pipe does not fail, so the inflating thread would inflate the whole part for nothing. The
+  handler tells the inflating thread to stop at the moment it aborts. ZIPFoundation has two traps that the loader guards. It finds the end record by stepping back through the whole file one
+  byte at a time, so a file with no end record in its last 64 KiB is refused first. A stored entry that claims more bytes
+  than the file holds makes it call the consumer forever with empty chunks, so a second empty chunk ends the read. The
+  archive opens through the descriptor the loader already checked, so a path swapped for a pipe after the check cannot
+  block the pane. The checksum of each part is verified after its last chunk, and a mismatch fails the load with a
+  message that says the data is corrupt, since the format is right and the bytes are wrong.
+- Cells land by reference, so sparse and out-of-order cells keep their columns, and a cell with no reference follows the
+  one before it. A reference whose letters run past the last column is cut and counted, not placed. A formula with no cached result shows "not computed" in a muted color, and holds no text, so a filter
+  or a search never finds it. A number in a date style shows as `yyyy-MM-dd`, with the time when the format has one.
+  Serial 60 shows 1900-02-29, serial 0 shows 1900-01-00, and the 1904 flag shifts every date. The time of day rounds to
+  the millisecond and then cuts to whole seconds, as Excel does, so 23:59:59.6 stays on its day. A number outside what the
+  system can show keeps its stored text. A percent or a currency format shows the stored number, since the viewer
+  applies no number format but dates. Booleans keep their own kind, and error values show their code.
+- The first row that holds anything is the header when every cell in it is text. A column with no header is named by its
+  position, and repeated headers keep separate identities. A row with no cells that hold anything is dropped, so a blank
+  row inside a table is not kept. Hidden sheets are left out of the picker, unless every sheet is hidden. A sheet name used twice gets a number, as in
+  `Sheet (2)`, so each can be picked, and that name is what the description stores.
+- The picker is a pop-up beside the filter. It shows for two or more sheets, and stays up beside a message, so a sheet
+  with no rows never traps the user on it. Choosing a sheet loads it with no sort or filter. The chosen sheet is in the
+  description from that moment, so a reopen or a relaunch brings it back, and a stored sheet the workbook no longer has
+  falls back to the first. The sheet field was in the payload from its first version, so there is no version bump.
+- `.xls`, `.xlsb`, a password-protected workbook, and another old Office file each show a message that names what the
+  file is and what to do. They are told apart by content. A compound file's directory is read, and a walk that does
+  not reach the end of the chain reads as `.xls`. An `.xlsb` is a ZIP archive whose workbook part is binary. A file with a spreadsheet
+  extension that is none of these says it is not a ZIP archive. An `.xlsm` opens, and its macro part is never read.
+- Fuzzing: the workbook corpus joined the existing fuzz class. It mutates the XML of each part before zipping, and the
+  archive's own bytes. Its seeds are plain, rich-text, wide, deeply nested, entity, huge shared-strings, zip-bomb, broken
+  package, and compound-file workbooks. The limits shrink for most iterations, so small files reach every cap. 5000
+  iterations at the default seed found no crash and no memory error under the address sanitizer. ASan does not
+  instrument libxml2 or zlib. It sees their heap use only through its allocator and memory-function interceptors, so an
+  overflow inside their own code can go unseen. A clean run is weaker evidence for this reader than for the Swift readers.
+  The walk of cells in the fuzz invariants covers a bounded part of a wide sheet, so the run stays linear.
+- Known limits. `XMLParser` builds an attribute dictionary for every element, so a sheet of millions of cells loads at
+  roughly the speed of a few hundred thousand elements a second. The sheet cap of 4 GiB inflated bounds the time, and a
+  cancel is seen at the next row. Shared strings are charged to the budget while the sheet loads, and are given back at
+  the end. A budget refusal while they load ends the load as a budget stop, or a memory-pressure stop, and never as a
+  hostile file. Only a real size cap says the workbook may not expand. A row counts in the "oversized cells cut" notice
+  when it holds a cut cell, and a cell that shows a cut shared string is a cut cell, so the unit is rows, as in CSV and
+  JSON. A stop that leaves columns and no rows shows the memory message in place of an empty table.
+- The tests of both packages that read workbooks build archives with one writer, in the `TableTestSupport` test-support
+  target. The UI-test target cannot import the package, so it keeps a copy of the writer and says so.
+- The visual check is left to the user, and the UI tests have not run. The coordinator's `make test-app` runs them. The UI
+  tests open a workbook through Cmd-O, switch sheets through the picker, and restore a stored sheet. Things to look at:
+  the picker's place above the filter, "not computed" cells, and a workbook with a date column.
 
 ## Decision Log
 
@@ -354,11 +541,12 @@ None.
 - 2026-11-02: Review gate: kept all. The user chose the open panel's explicit `currentDirectory` over AppKit's
   remembered folder, as CLAUDE.md asks for hidden state flow.
 - 2026-11-02: ADR candidate (cuts across the system): untrusted files are parsed in-process only through Swift and
-  OS-maintained C libraries, and a third-party C parser is rejected. Waits on M4's fuzzing results and the
-  untrusted-file risk's revisit hook, either of which may move parsing into a sandboxed helper.
+  OS-maintained C libraries, and a third-party C parser is rejected. Undecided on 2026-11-04. M4's fuzzing found no
+  crash and no memory error, and the untrusted-file risk's revisit hook has not fired. The sanitizer does not instrument
+  libxml2 or zlib, so the run is weaker evidence than for the Swift readers. The final review lists it.
 - 2026-11-02: ADR candidate (cuts across the system): every third-party Swift package is pinned to an exact version,
-  with `Package.resolved` committed and its license collected. Waits on M4, which settles whether the offline-build
-  check covers SwiftPM fetches.
+  with `Package.resolved` committed and its license collected. Undecided on 2026-11-04. M4 settled that the offline-build
+  check covers SwiftPM fetches. The final review lists it.
 - 2026-11-02: Accepted by the user after the review.
 - 2026-11-03: Amended "The applet contract": the bookmark is remade when an open finds a different file than the
   bookmark names. Before, it was created once at load and refreshed only when resolution reported it stale. So after
@@ -374,6 +562,129 @@ None.
   committed to filing. UTERM-015 is that proposal, now accepted. The viewer gains an Open... command with no key and
   declares CSV, JSON, and `.xlsx` as owner. Revisit-hook audit: act on the filing clause, which is done and removed.
   The byte-stream clause stays.
+
+- 2026-11-04: Amended "Large files": each pane keeps a 32 MiB floor of the budget, so the app holds at most the budget
+  plus one floor for each pane beyond it. Before, the text said one budget covered every pane and gave no floor, while
+  the milestone asks that a pane opened last still loads a minimum of rows. Both cannot hold without a floor.
+  (work-queue best guess)
+- 2026-11-04: CSV rule picked in M1. Encoding: a byte-order mark wins, then valid UTF-8 in the first 64 KiB, then
+  Windows-1252. Delimiter: `.tsv` and `.tab` mean tab, otherwise the first 64 KiB is tried with comma, semicolon, tab,
+  and pipe, and the most consistent field count above one wins, with ties to comma. Header: the first row is the header
+  unless a cell is a number, and an empty header cell is named by position. The rule rests on this proposal's "The
+  applet contract" and M1 text, which say only that one documented rule exists. (work-queue best guess)
+- 2026-11-04: Budget numbers picked in M1: the smaller of 1 GiB and a quarter of physical memory, a 32 MiB floor for
+  each pane, and pages of about 1 MiB. "Large files" names no number. Only constants change if they are wrong.
+  (work-queue best guess)
+- 2026-11-04: Readers are picked by file extension, and a declared type the viewer cannot read yet shows a "not
+  supported yet" message. Any other extension is refused with its name, so `.txt` does not open as CSV. TSV is not
+  declared to the router, which keeps to the CSV and JSON declarations in "Input sources". (work-queue best guess)
+- 2026-11-04: The fuzzer is an in-repo seeded mutator under the address sanitizer, not libFuzzer, and `make fuzz` stays
+  out of `make ci`. The risk text asks for a fuzzing run per reader, not a CI gate. (work-queue best guess)
+- 2026-11-04: A sort reserves its key memory from the shared budget, and a sort the budget refuses leaves the filtered
+  rows in file order with a notice. The keys scale with the rows, which already fill the budget, so an unbounded sort
+  could double the app's use. "Large files" says only that sort runs off the main thread on a snapshot.
+  (work-queue best guess)
+- 2026-11-04: A header click cycles ascending, descending, then no sort. Numbers sort before text when ascending, text
+  sorts by its lowercased form, and empty cells come last in both directions. "Clicking a column header sorts by that
+  column" fixes none of this. (work-queue best guess)
+- 2026-11-04: Amended "JSON shapes". The decision named the flattening, the nested-table cells, and the top-level shapes,
+  and gave no numbers or rules for width, repeats, or sorting. The text now holds them. A nested object with more than
+  64 members is a map. Objects flatten to six key segments. A table holds 1,000 columns, and the keys past that fold
+  into one last cell. Duplicate keys keep every value, in occurrence columns, as repeated CSV headers do. A nested
+  table opens in a popover in the same pane. A scalar on its own, and a syntax error, show a message. The numbers are
+  constants. The map threshold and the depth would change if real files flatten badly, and a user-facing setting is not
+  warranted until someone needs one. (work-queue best guess)
+- 2026-11-04: JSON Lines is told from a single value by the file name, then by the first 64 KiB. A name ending in
+  `.jsonl` or `.ndjson` is JSON Lines. Any other name is JSON Lines when the sample holds a whole first value and a
+  second one. A value longer than the sample is one value, and data after it is an error. The milestone asks only for
+  "told apart". (work-queue best guess)
+- 2026-11-04: The mixed-type sort order is numbers, text, booleans, nested cells, null, then missing. Descending reverses
+  the first four, and null and missing stay last in both directions, as empty cells already did in M1. A JSON string
+  sorts as text even when it looks like a number, and a number compares as a double. M1 left the full order to M2.
+  (work-queue best guess)
+- 2026-11-04: A syntax error or a nesting past the cap fails the load and shows no rows, even when rows were read first.
+  The alternative keeps the rows with an error notice, and needs a new end state in the session, the phase, the notices,
+  and the status segment. "Deeply nested input shows an error" allows either. (work-queue best guess)
+- 2026-11-04: Amended M1's As built note on readers. A GeoJSON file is JSON, so it loads as JSON in place of showing
+  "not supported yet". Before, M1 listed it with the formats that waited for a later reader. The router still sends
+  GeoJSON to the map. (work-queue best guess)
+
+- 2026-11-04: Edit > Find as an applet menu home (work-queue best guess). "The applet contract" named the find commands
+  and no menu. M3 and UTERM-007 name Edit > Find. Applets could not place a command in Edit, so the menu gained an
+  `editFind` home. It builds a Find submenu below the fixed edit actions, shown only while the focused applet has
+  commands in it. UTERM-013 keeps the standard edit actions as fixed uniterm items. This adds nothing to them, and the
+  home takes find commands only. UTERM-007's viewer uses the same home. Focus Filter sits in the same submenu, in its
+  own section. All four are off until a table shows. Amended "The applet contract" with the placement. Before, it
+  named the commands and not the menu, and it said nothing of the find query. The decision carries one marker, so the
+  marker moved here from the bookmark bullet. The 2026-11-03 entry above still records that change.
+- 2026-11-04: The find query is pane state, apart from the filter, and not in the description (work-queue best
+  guess). Search covers the rows the filter shows, numbered as shown, and reruns when the filter, sort, or loaded rows
+  change. Searching the whole file and showing hits in filtered-out rows was weighed. It needs a second row space and a
+  way to show hidden hits. The query is left out of the payload so it needs no version bump, and a restored pane starts
+  with the find bar closed. UTERM-007 already says its find query belongs to the pane and never touches the system find
+  pasteboard, so this follows it.
+- 2026-11-04: Search matches ignoring case, in every column, and keeps at most 1,000,000 matches (work-queue best
+  guess). The matches live outside the budget, at 8 bytes each. A search with more is not a way to find a cell, and the
+  count says so with a plus sign. "Large files" says only that search runs off the main thread on a snapshot.
+
+- 2026-11-04: ZIPFoundation 0.9.20 is the pin (work-queue best guess). It is the newest release at least two weeks old,
+  published 2025-09-24. The proposal says only "an exact version". The check is `exact:` in the package manifest and a
+  matching revision in both `Package.resolved` files. A newer release needs a deliberate edit.
+- 2026-11-04: The offline check covers SwiftPM fetches (work-queue best guess). M4's check allowed either that or a
+  statement that it covers Ghostty only. A sibling script is added in place of growing the Ghostty one, since the two
+  share nothing but the dead proxy and the control. It uses a kept cache at `.cache/swiftpm` that it fills first from
+  the committed pins, and it covers both `swift` and `xcodebuild`. If the control cannot cut the network on a machine,
+  the script fails and says so, and the fallback is to state that the check covers Ghostty only.
+- 2026-11-04: Spreadsheet caps and rules picked in M4 (work-queue best guess). Inflated bytes: 32 MiB for each small
+  part, 64 MiB for the shared strings table, which is also charged to the memory budget, and 4 GiB for the sheet. An
+  archive holds at most 100,000 entries and XML nests 64 deep. A cell keeps 1 MiB, a row 16 MiB and 65,536 cells, and a
+  sheet 16,384 columns. A DOCTYPE or an entity declaration is refused outright, which is stronger than bounding
+  expansion, since no workbook holds one. The first row that holds anything is the header when all of it is text, rows
+  with no content are dropped, hidden sheets are not listed, and only date formats change how a number shows. "Spreadsheet
+  formats" and M4 name none of these. Only constants and the header rule change if they are wrong.
+- 2026-11-04: Choosing a sheet clears the sort and the filter (work-queue best guess). The columns of another sheet are
+  not the old sheet's, so a stored sort could land on a wrong column. The description holds one sort and one filter, not
+  one for each sheet. Remembering a query for each sheet was weighed and needs a payload change.
+- 2026-11-04: A formula with no cached value shows the text "not computed" and holds no bytes (work-queue best
+  guess). "Spreadsheet formats" says it shows as empty, marked as not computed. The cell is empty in the store, so a
+  filter and a search never match it, and it sorts with null. The view draws the marker.
+- 2026-11-04: Amended M1's As built note on readers. The spreadsheet extensions now go to the workbook reader, and the
+  router also declares `.xlsx`. Before, spreadsheet files showed a "not supported yet" message, and the router declared
+  CSV and JSON only. (work-queue best guess)
+
+- 2026-11-04: Two more spreadsheet rules (work-queue best guess). A sheet name used twice is numbered, as in `Sheet (2)`,
+  and the description stores the numbered name. A time of day rounds to the millisecond and then cuts to whole seconds,
+  as Excel shows it, so a date-only style never rolls into the next day from rounding to the second.
+
+- 2026-11-05: Amended "Input sources": a source is a file URL, or a nested JSON value that a cell holds, which loads from
+  memory with no file behind it. Before, the text said all loading goes through one entry point that takes a source, and
+  that the only source today is a file URL. The nested-table work added the in-memory source to that same entry point
+  and not to a second one, so the entry point stays single and its text was out of date. The marker on the one-file
+  bullet moved here, since a decision carries one marker; the 2026-11-03 entries above still record that change.
+- 2026-11-05: Amended "Large files": the stop notice says "of the sheet" for a workbook and "of the file" otherwise
+  (work-queue best guess). Before, it said "of the file" for every format. The count text already read "X of the first
+  N rows" in both cases, so it is unchanged. "Sheet" follows the sheet picker's own word. If the guess is wrong, only
+  the notice string changes.
+- 2026-11-05: A budget or memory-pressure refusal while a workbook's shared strings load ends the load as a budget stop
+  or a memory-pressure stop (work-queue best guess). Before, it failed the load with the "limits how far a workbook may
+  expand, so a hostile file cannot use all memory" message, which is false for a normal workbook that other panes
+  crowd out. The shared strings table is the first thing a workbook charges to the budget, so a refusal there leaves no
+  rows, and the pane says so in the words it uses for a CSV file. The hostile-file wording stays on the real caps.
+  A stop that leaves columns and no rows now shows the same message as a stop with no columns, in place of an empty
+  table under a "first 0 rows" notice.
+- 2026-11-05: The "oversized cells cut" notice counts rows that hold a cut cell, for a workbook too (work-queue best
+  guess). Before, a workbook counted the shared strings that were cut, so a long string used in many rows counted once
+  and a long string used in none counted at all. A cell that shows a cut shared string is now a cut cell, so the unit
+  matches CSV and JSON.
+- 2026-11-05: Correction of fact: the 2026-11-05 "Large files" entry above moved that decision's "Amended" marker from
+  the 2026-11-04 "Large files" entry, and did not say so. A decision carries one marker, so the 2026-11-04 entry still
+  records its own change. The prior meaning is that the 2026-11-05 "Input sources" entry was the only one of the two
+  that named a moved marker. No As built text changes.
+- 2026-11-05: ADR candidate (cuts across the system, hard to reverse): a file-backed viewer's description holds a path
+  and a bookmark, never file contents. The path wins while a regular file is there, and the bookmark is remade when it
+  names a different file than the one opened. Undecided. UTERM-006, UTERM-007, and UTERM-008 follow the same rule. The
+  description is stored data, so a change needs a version bump and a migration. Settled in "The applet contract". The
+  final review lists it.
 
 ## References
 

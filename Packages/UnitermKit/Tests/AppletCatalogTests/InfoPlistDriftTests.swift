@@ -59,9 +59,13 @@ final class InfoPlistDriftTests: XCTestCase {
     return entry
   }
 
+  private var allDeclared: [String] {
+    declarations.flatMap { $0.opens.map(\.identifier) }
+  }
+
   func testAnOwnerRankIsReported() {
     let plist: [String: Any] = [
-      "CFBundleDocumentTypes": [entry(types: ["public.folder"], rank: "Owner")]
+      "CFBundleDocumentTypes": [entry(types: allDeclared, rank: "Owner")]
     ]
 
     XCTAssertEqual(
@@ -71,7 +75,7 @@ final class InfoPlistDriftTests: XCTestCase {
 
   func testAMissingRankIsReported() {
     let plist: [String: Any] = [
-      "CFBundleDocumentTypes": [entry(types: ["public.folder"], rank: nil)]
+      "CFBundleDocumentTypes": [entry(types: allDeclared, rank: nil)]
     ]
 
     XCTAssertEqual(
@@ -81,18 +85,27 @@ final class InfoPlistDriftTests: XCTestCase {
 
   func testADeclaredTypeWithNoEntryAndAnEntryWithNoApplet() {
     let plist: [String: Any] = [
-      "CFBundleDocumentTypes": [entry(types: ["public.json"], rank: "Alternate")]
+      "CFBundleDocumentTypes": [entry(types: ["public.png"], rank: "Alternate")]
     ]
 
     XCTAssertEqual(
       DocumentTypeManifest.problems(in: plist, declarations: declarations),
-      [.undeclared(type: "public.folder"), .unclaimed(type: "public.json")])
+      [
+        .undeclared(type: "org.openxmlformats.spreadsheetml.sheet"),
+        .undeclared(type: "public.comma-separated-values-text"),
+        .undeclared(type: "public.folder"), .undeclared(type: "public.json"),
+        .unclaimed(type: "public.png"),
+      ])
   }
 
   func testAPlistWithNoDocumentTypesReportsEveryDeclaredType() {
     XCTAssertEqual(
       DocumentTypeManifest.problems(in: [:], declarations: declarations),
-      [.undeclared(type: "public.folder")])
+      [
+        .undeclared(type: "org.openxmlformats.spreadsheetml.sheet"),
+        .undeclared(type: "public.comma-separated-values-text"),
+        .undeclared(type: "public.folder"), .undeclared(type: "public.json"),
+      ])
   }
 
   /// Catches an import read wrongly. The table maps each imported identifier to its conformances.

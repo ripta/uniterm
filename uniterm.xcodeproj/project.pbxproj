@@ -17,6 +17,7 @@
 		7A0000000000000000000033 /* AppletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000037 /* AppletKit */; };
 		7A0000000000000000000040 /* FileRouting in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000042 /* FileRouting */; };
 		7A0000000000000000000041 /* AppletCatalog in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000043 /* AppletCatalog */; };
+		7A0000000000000000000044 /* DataViewerApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000045 /* DataViewerApplet */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +76,7 @@
 				7A0000000000000000000033 /* AppletKit in Frameworks */,
 				7A0000000000000000000040 /* FileRouting in Frameworks */,
 				7A0000000000000000000041 /* AppletCatalog in Frameworks */,
+				7A0000000000000000000044 /* DataViewerApplet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -138,6 +140,7 @@
 				7A0000000000000000000037 /* AppletKit */,
 				7A0000000000000000000042 /* FileRouting */,
 				7A0000000000000000000043 /* AppletCatalog */,
+				7A0000000000000000000045 /* DataViewerApplet */,
 			);
 			productName = uniterm;
 			productReference = 7A0000000000000000000006 /* uniterm.app */;
@@ -491,6 +494,10 @@
 		7A0000000000000000000043 /* AppletCatalog */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AppletCatalog;
+		};
+		7A0000000000000000000045 /* DataViewerApplet */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DataViewerApplet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

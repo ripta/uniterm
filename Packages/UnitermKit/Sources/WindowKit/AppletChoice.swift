@@ -7,4 +7,7 @@ public enum AppletChoice: Sendable, Equatable {
 
   /// A terminal that runs one program, given as a command line.
   case terminalProgram(command: String)
+
+  /// A data viewer with nothing open, started in the pane's directory.
+  case dataViewer
 }

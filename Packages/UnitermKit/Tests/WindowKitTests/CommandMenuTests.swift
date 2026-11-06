@@ -84,7 +84,8 @@ final class CommandMenuTests: XCTestCase {
     XCTAssertTrue(keys.contains("Paste v false"), "\(keys)")
     XCTAssertFalse(edit.items.contains { $0 is CommandMenuItem }, "edit actions are commands")
 
-    let actions = Dictionary(uniqueKeysWithValues: edit.items.map { ($0.title, $0.action) })
+    let actions = Dictionary(
+      uniqueKeysWithValues: edit.items.filter { !$0.isSeparatorItem }.map { ($0.title, $0.action) })
     XCTAssertEqual(actions["Copy"], #selector(NSText.copy(_:)), "the terminal view answers copy:")
     XCTAssertEqual(actions["Paste"], #selector(NSText.paste(_:)))
     XCTAssertEqual(actions["Select All"], #selector(NSText.selectAll(_:)))
@@ -131,6 +132,92 @@ final class CommandMenuTests: XCTestCase {
   }
 
   private func made(_ index: Int) -> FakeApplet { fixture.log.made[index] }
+
+  // MARK: Find
+
+  /// Catches a Find home that does not land in Edit > Find, or that disturbs the fixed edit items.
+  /// The applet's Find item sits in a Find submenu below Select All, and it holds its key.
+  func testAnAppletFindCommandLandsInTheEditFindSubmenu() throws {
+    let menu = CommandMenu(
+      registry: controller.commands, activeController: { [controller] in controller })
+    menu.keyController = { [controller] in controller }
+    menu.install()
+    defer { NSApp.mainMenu = savedMenu }
+
+    let edit = try XCTUnwrap(topMenu("Edit", in: menu)?.submenu)
+    let find = try item(.fakeFind, in: menu)
+
+    XCTAssertEqual(find.menu?.title, "Find")
+    XCTAssertEqual(find.keyEquivalent, "f")
+    XCTAssertEqual(edit.items.last?.submenu?.title, "Find")
+    XCTAssertEqual(edit.items[6].title, "Select All")
+  }
+
+  /// Catches a Find submenu that stays under another applet or the launcher, with its key live.
+  /// It shows only while the focused pane runs the applet type that declared it, and the item is
+  /// disabled with no file to search.
+  func testTheFindSubmenuFollowsTheFocusedAppletAndItsAvailability() throws {
+    let menu = CommandMenu(
+      registry: controller.commands, activeController: { [controller] in controller })
+    menu.keyController = { [controller] in controller }
+    menu.sync()
+
+    let edit = try XCTUnwrap(topMenu("Edit", in: menu)?.submenu)
+    let submenu = try XCTUnwrap(edit.items.last)
+
+    XCTAssertFalse(submenu.isHidden)
+    XCTAssertTrue(menu.validateMenuItem(try item(.fakeFind, in: menu)))
+
+    made(0).canFind = false
+    XCTAssertFalse(menu.validateMenuItem(try item(.fakeFind, in: menu)))
+
+    controller.openLauncher(axis: .row)
+    menu.sync()
+
+    XCTAssertTrue(submenu.isHidden)
+    XCTAssertTrue(edit.items[edit.items.count - 2].isHidden, "the separator hides with it")
+
+    menu.keyController = { nil }
+    XCTAssertFalse(menu.validateMenuItem(try item(.fakeFind, in: menu)))
+  }
+
+  /// Catches a Find key that reaches the applet only when a view is not editing text. The window
+  /// routes the key to the menu before any view, so a focused text field does not swallow it.
+  func testTheFindKeyRunsWhileATextFieldIsBeingEdited() throws {
+    installed = install()
+    let window = try XCTUnwrap(controller.window)
+    window.orderFrontRegardless()
+    defer { window.close() }
+
+    let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 100, height: 22))
+    window.contentView?.addSubview(field)
+    XCTAssertTrue(window.makeFirstResponder(field))
+    XCTAssertTrue(window.firstResponder is NSText, "the field is not being edited")
+
+    XCTAssertTrue(window.performKeyEquivalent(with: try key("f", .command)))
+    XCTAssertEqual(made(0).finds, 1)
+  }
+
+  /// Catches a Find command on a key uniterm reserves that keeps it. The item registers without the
+  /// key, stays in Edit > Find, and one warning names it, as for any applet command.
+  func testAFindCommandOnAReservedKeyLosesItLikeAnyOther() throws {
+    let greedy = AppletCommandSet(
+      typeID: "greedy", menuTitle: "Greedy",
+      commands: [
+        AppletCommand(name: "find", title: "Find It", key: KeyChord("v"), home: .editFind) { _ in },
+        AppletCommand(name: "next", title: "Next It", key: KeyChord("x"), home: .editFind) { _ in },
+      ])
+    let registry = registry(extra: [greedy])
+    let menu = CommandMenu(registry: registry, activeController: { nil })
+    menu.refreshKeys()
+
+    let find = try item(CommandRegistry.commandID(typeID: "greedy", name: "find"), in: menu)
+    XCTAssertEqual(find.keyEquivalent, "")
+    XCTAssertEqual(find.menu?.title, "Find")
+    XCTAssertEqual(warnings.count, 1, "\(warnings)")
+    XCTAssertTrue(warnings[0].contains("Find It"))
+    XCTAssertTrue(warnings[0].contains("Next It"))
+  }
 
   // MARK: Keys
 

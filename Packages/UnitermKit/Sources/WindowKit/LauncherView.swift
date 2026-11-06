@@ -93,7 +93,7 @@ final class LauncherRowView: NSView {
     setAccessibilityElement(true)
     setAccessibilityRole(.button)
     setAccessibilityLabel(entry.name)
-    setAccessibilityIdentifier(entry.kind == .terminal ? "launcher-terminal" : "launcher-program")
+    setAccessibilityIdentifier(entry.kind.accessibilityIdentifier)
     restyle()
   }
 

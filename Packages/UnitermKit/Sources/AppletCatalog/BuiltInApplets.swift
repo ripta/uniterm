@@ -1,4 +1,5 @@
 import AppletKit
+import DataViewerApplet
 import TerminalApplet
 
 /// The applet types this build ships, with the content types each opens. A new applet type adds
@@ -6,13 +7,14 @@ import TerminalApplet
 /// router.
 public enum BuiltInApplets {
   public static let declarations: [AppletTypeDeclaration] = [
-    TerminalApplet.typeDeclaration
+    TerminalApplet.typeDeclaration,
+    DataViewerApplet.typeDeclaration,
   ]
 
   /// The commands each built-in applet type registers. The app registers exactly this list, so a
   /// test over it covers every applet the app ships.
   @MainActor
   public static var commandSets: [AppletCommandSet] {
-    [TerminalApplet.commandSet]
+    [TerminalApplet.commandSet, DataViewerApplet.commandSet]
   }
 }

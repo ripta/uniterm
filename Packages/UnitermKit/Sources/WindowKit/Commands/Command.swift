@@ -54,6 +54,9 @@ enum MenuHome {
   case view
   case window
 
+  /// The Find submenu of Edit.
+  case editFind
+
   /// The menu named for the owning applet type.
   case applet
 }
@@ -160,6 +163,7 @@ extension AppletMenuHome {
     case .file: return .file
     case .view: return .view
     case .window: return .window
+    case .editFind: return .editFind
     case .applet: return .applet
     }
   }

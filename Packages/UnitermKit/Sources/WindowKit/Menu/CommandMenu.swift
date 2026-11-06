@@ -41,7 +41,7 @@ final class CommandMenuItem: NSMenuItem {
 /// have fixed homes. An applet's commands go where the applet says. Items for an applet type are
 /// hidden unless the key window's focused pane runs that type, and they are disabled while a sheet
 /// or the Settings window is key. The Edit menu holds the standard edit actions, which stay on the
-/// responder chain.
+/// responder chain. Below them it holds a Find submenu for applets that declare find commands.
 ///
 /// The menu keeps the keys of the applet items in step with the keys uniterm reserves. It reads the
 /// reserved keys from the live items, so a user's App Shortcuts remap of a uniterm item takes its
@@ -56,6 +56,7 @@ public final class CommandMenu: NSObject, NSMenuItemValidation {
   private let activeController: @MainActor () -> MainWindowController?
   private var appletItems: [CommandMenuItem] = []
   private var appletMenus: [String: NSMenuItem] = [:]
+  private var findMenu: (separator: NSMenuItem, find: NSMenuItem)?
   private var windowMenu = NSMenu(title: "Window")
   private var lastReserved: Set<KeyChord>?
   private var observers: [any NSObjectProtocol] = []
@@ -204,6 +205,19 @@ public final class CommandMenu: NSObject, NSMenuItemValidation {
     edit.addItem(
       withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
+    let findCommands = commands(for: .editFind)
+
+    if !findCommands.isEmpty {
+      let separator = NSMenuItem.separator()
+      let find = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+      find.submenu = NSMenu(title: "Find")
+      fill(find.submenu, with: findCommands)
+
+      edit.addItem(separator)
+      edit.addItem(find)
+      findMenu = (separator: separator, find: find)
+    }
+
     item.submenu = edit
     return item
   }
@@ -285,6 +299,17 @@ public final class CommandMenu: NSObject, NSMenuItemValidation {
       let hidden = typeID != shown
 
       if item.isHidden != hidden { item.isHidden = hidden }
+    }
+
+    if let findMenu {
+      let hidden = !(findMenu.find.submenu?.items ?? []).contains {
+        ($0 as? CommandMenuItem)?.ownerTypeID == shown
+      }
+
+      if findMenu.find.isHidden != hidden {
+        findMenu.find.isHidden = hidden
+        findMenu.separator.isHidden = hidden
+      }
     }
 
     if reservedKeys() != lastReserved {

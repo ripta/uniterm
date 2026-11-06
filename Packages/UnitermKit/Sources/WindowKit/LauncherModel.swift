@@ -5,6 +5,7 @@ struct LauncherEntry: Equatable {
   enum Kind: Equatable {
     case terminal
     case program
+    case dataViewer
   }
 
   let kind: Kind
@@ -22,6 +23,9 @@ struct LauncherEntry: Equatable {
     LauncherEntry(
       kind: .program, name: "Terminal running a program",
       detail: "Runs one command, such as htop", symbol: "play.fill"),
+    LauncherEntry(
+      kind: .dataViewer, name: "Data viewer",
+      detail: "Shows a CSV, JSON, or Excel file as a table", symbol: "tablecells"),
   ]
 }
 
@@ -126,8 +130,21 @@ struct LauncherModel: Equatable {
 
       return .success(.terminalProgram(command: trimmed))
 
+    case .dataViewer:
+      return .success(.dataViewer)
+
     case nil:
       return .failure(LauncherRefusal(reason: "No applet matches."))
+    }
+  }
+}
+
+extension LauncherEntry.Kind {
+  var accessibilityIdentifier: String {
+    switch self {
+    case .terminal: return "launcher-terminal"
+    case .program: return "launcher-program"
+    case .dataViewer: return "launcher-data-viewer"
     }
   }
 }

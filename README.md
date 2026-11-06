@@ -12,8 +12,9 @@ Each window also has a status bar and a command palette. Both can be docked in d
 
 Early development. The terminal applet runs through libghostty, with tabs and a program mode. A window holds splits that
 can be resized, and the app opens several windows. It has a status bar with message history, undo for a closed pane, and
-close guards for running programs. Every window's layout is saved and restored across launches. The other applets and
-the command palette are not built yet.
+close guards for running programs. Every window's layout is saved and restored across launches. A data viewer opens
+CSV, JSON, and `.xlsx` files as tables that sort, filter, and search. The other applets and the command palette are not
+built yet.
 
 ## Stack
 
@@ -21,6 +22,8 @@ the command palette are not built yet.
 - SwiftUI for small views, such as status bar segments.
 - [libghostty](https://ghostty.org) for terminal emulation.
 - [Janet](https://janet-lang.org) for scripting.
+- [ZIPFoundation](https://github.com/weichsel/ZIPFoundation) for the ZIP container of `.xlsx` files. It is the only
+  third-party Swift package. It is pinned to an exact version, and its notice ships in `Licenses/`.
 
 ## Building
 
@@ -38,9 +41,15 @@ Commands:
 - `make run` builds, then runs the app in the foreground, so its logs and any crash show in the terminal.
 - `make test` runs the CI gating checks, package tests, and app UI tests. UI tests need a logged-in desktop session
   and Accessibility permission for the terminal. `make test-ci` runs just the CI gating checks, without Xcode or Zig.
+- `make fuzz` runs the table readers' fuzzer under the address sanitizer, in its own build folder. It tries
+  `FUZZ_ITERATIONS` mutated inputs, 5000 by default. `make test-package` runs the same fuzzer at a small count. `make ci`
+  does not run `make fuzz`.
 - `make fmt`, `make fmt-check`, `make lint`, and `make check` format and check the sources.
 - `make ghostty-offline-check` proves that the pinned libghostty rebuilds with the network off. It takes about four
   minutes, and `make ci` runs it.
+- `make swiftpm-offline-check` proves that the Swift packages resolve and build with the network off. The versions come
+  from the committed `Package.resolved` files and the sources from `.cache/swiftpm`. It takes under a minute, and
+  `make ci` runs it. CI does not keep `.cache/swiftpm`, so a CI run fetches the packages once before the offline step.
 - `make help` lists every target.
 
 GitHub CI skips the macOS SDK and build/test jobs when all changed files are root-level Markdown or Markdown under

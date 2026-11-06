@@ -29,6 +29,13 @@ let package = Package(
     .library(name: "TerminalApplet", targets: ["TerminalApplet"]),
     .library(name: "FileRouting", targets: ["FileRouting"]),
     .library(name: "AppletCatalog", targets: ["AppletCatalog"]),
+    .library(name: "TableData", targets: ["TableData"]),
+    .library(name: "DataViewerApplet", targets: ["DataViewerApplet"]),
+  ],
+  dependencies: [
+    // The first third-party Swift package. Only TableData uses it. The version is exact, and
+    // Package.resolved is committed beside this file and in the Xcode workspace.
+    .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20")
   ],
   targets: [
     .target(name: "Theme"),
@@ -65,12 +72,25 @@ let package = Package(
       ]),
     .target(
       name: "TerminalApplet", dependencies: ["AppletKit", "StatusKit", "TerminalSurface", "Theme"]),
-    .target(name: "AppletCatalog", dependencies: ["AppletKit", "TerminalApplet"]),
+    .target(
+      name: "TableData", dependencies: [.product(name: "ZIPFoundation", package: "ZIPFoundation")]),
+    .target(
+      name: "DataViewerApplet", dependencies: ["AppletKit", "StatusKit", "TableData", "Theme"]),
+    .target(
+      name: "AppletCatalog", dependencies: ["AppletKit", "DataViewerApplet", "TerminalApplet"]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
     .testTarget(
       name: "AppletCatalogTests",
       dependencies: ["AppletCatalog", "FileRouting", "AppletKit", "WindowKit"]),
+    // Test support. It builds ZIP archives for the tests of both targets that read workbooks.
+    .target(name: "TableTestSupport", path: "Tests/TableTestSupport"),
+    .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
+    .testTarget(
+      name: "DataViewerAppletTests",
+      dependencies: [
+        "DataViewerApplet", "TableData", "AppletKit", "StatusKit", "Theme", "TableTestSupport",
+      ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit"]),
     .testTarget(name: "LayoutKitTests", dependencies: ["LayoutKit", "AppletKit", "PaneModel"]),
