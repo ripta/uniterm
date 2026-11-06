@@ -50,8 +50,13 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// The file's bytes as they are on disk, as of the last load or save.
   private(set) var savedDocument: Data?
 
-  /// The pane's own undo stack, for pin edits. Cmd-Z reaches it while the map has focus.
-  let undoManager = UndoManager()
+  /// The pane's own undo stack, for pin edits. Cmd-Z reaches it while the map has focus. Each step
+  /// keeps a whole document, so the stack is bounded.
+  let undoManager: UndoManager = {
+    let manager = UndoManager()
+    manager.levelsOfUndo = 50
+    return manager
+  }()
 
   /// The read of an edited document's pins, while it runs.
   private(set) var editing: Task<Void, Never>?
@@ -59,6 +64,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private var watcher: FileWatcher?
   private var changedOnDisk = false
   private var unsavedFromUndo: Data?
+
+  /// A question about unsaved edits, while it is open.
+  private(set) var asking: Task<Void, Never>?
 
   /// Asks where Save As writes, given a suggested name and a start folder. Tests replace it.
   var chooseSaveLocation: @MainActor (String, String?, NSWindow?) async -> URL? =
@@ -240,8 +248,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     let name = displayName
 
-    Task { [weak self] in
+    asking = Task { [weak self] in
       guard let self else { return }
+
+      defer { asking = nil }
 
       let request = AppletConfirmation(
         title: "Discard your changes to \u{201C}\(name)\u{201D}?",
@@ -362,8 +372,33 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   var canClearFile: Bool { record.path != nil || !filePins.isEmpty || fileFailure != nil }
 
   /// Removes the file layer's pins and forgets the file, so a relaunch does not bring them back.
-  /// The layer keeps its default accent.
+  /// The layer keeps its default accent. Unsaved edits are asked about first, since the clear
+  /// cannot be undone.
   func clearFile() {
+    guard isDirty else {
+      clearFileNow()
+      return
+    }
+
+    let name = displayName
+
+    asking = Task { [weak self] in
+      guard let self else { return }
+
+      defer { asking = nil }
+
+      let request = AppletConfirmation(
+        title: "Discard your changes to \u{201C}\(name)\u{201D}?",
+        detail: "Clearing the file's pins also drops the pins you have not saved.",
+        confirmTitle: "Discard and Clear", cancelTitle: "Cancel")
+
+      guard await host?.applet(self, confirm: request) == true, !closed else { return }
+
+      clearFileNow()
+    }
+  }
+
+  private func clearFileNow() {
     opening?.cancel()
     opening = nil
     openGeneration += 1
@@ -662,7 +697,16 @@ extension MapViewerApplet {
 
       switch result {
       case .failure(let error):
-        self.host?.applet(self, post: .warning, text: error.errorDescription ?? "The edit failed.")
+        // The edit made bytes the reader refuses. Keeping them would let Save write a broken
+        // file, so the document goes back and the undo stack, which now points at them, goes.
+        self.document = previous
+        self.undoManager.removeAllActions()
+
+        let reason = error.errorDescription ?? "the file could not be read back"
+
+        self.host?.applet(
+          self, post: .warning,
+          text: "The edit was not applied, since it made the file unreadable: \(reason)")
 
       case .success(let layer):
         self.filePins = layer.pins

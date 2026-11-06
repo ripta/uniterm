@@ -374,3 +374,74 @@ final class RemovePinKeyTests: XCTestCase {
     XCTAssertFalse(remove.isAvailable(applet))
   }
 }
+
+/// Edits that must never leave the user's file at risk.
+@MainActor
+final class PinEditSafetyTests: XCTestCase {
+  private func loaded(_ scratch: GeoScratch) async throws -> (MapViewerApplet, RecordingHost, Data)
+  {
+    let file = try scratch.write(
+      "places.geojson", GeoFixtures.collection([GeoFixtures.point("A", 1, 1)]))
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+    applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    await applet.opening?.value
+
+    return (applet, host, try Data(contentsOf: file))
+  }
+
+  /// Catches an edit whose bytes the reader refuses, which would leave unreadable bytes for Save
+  /// to write. The document goes back, the pane stays clean, and the user is told.
+  func testAnEditTheReaderRefusesIsTakenBack() async throws {
+    let (applet, host, original) = try await loaded(try GeoScratch(self))
+
+    applet.replaceDocument(with: Data("not geojson".utf8), registeringUndo: true)
+    await applet.editing?.value
+
+    XCTAssertEqual(applet.document, original)
+    XCTAssertFalse(applet.isDirty)
+    XCTAssertFalse(applet.undoManager.canUndo)
+    XCTAssertEqual(applet.filePinsShown.map(\.label), ["A"])
+    XCTAssertTrue(host.posts.contains { $0.text.hasPrefix("The edit was not applied") })
+  }
+
+  /// Catches Clear File Pins dropping unsaved pins without asking. Cancel keeps them, and
+  /// confirming clears.
+  func testClearingWithUnsavedPinsAsksFirst() async throws {
+    let (applet, host, _) = try await loaded(try GeoScratch(self))
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await applet.editing?.value
+
+    host.confirms = false
+    applet.clearFile()
+    await applet.asking?.value
+
+    XCTAssertEqual(host.confirmations.count, 1)
+    XCTAssertEqual(applet.filePinsShown.count, 2)
+    XCTAssertTrue(applet.isDirty)
+
+    host.confirms = true
+    applet.clearFile()
+    await applet.asking?.value
+
+    XCTAssertTrue(applet.filePinsShown.isEmpty)
+    XCTAssertFalse(applet.isDirty)
+  }
+
+  /// Catches opening another file over unsaved pins without asking.
+  func testOpeningAnotherFileOverUnsavedPinsAsksFirst() async throws {
+    let scratch = try GeoScratch(self)
+    let (applet, host, _) = try await loaded(scratch)
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await applet.editing?.value
+
+    let other = try scratch.write("other.geojson", GeoFixtures.collection([]))
+    host.confirms = false
+    applet.replaceSource(with: other, startDirectory: scratch.url.path)
+    await applet.asking?.value
+
+    XCTAssertEqual(applet.displayName, "places.geojson")
+    XCTAssertTrue(applet.isDirty)
+  }
+}

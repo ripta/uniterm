@@ -119,7 +119,8 @@ final class UnsavedWorkTests: XCTestCase {
     await controller.pendingGuard?.value
 
     XCTAssertEqual(asked.last?.labels.sorted(), ["Untitled", "places.geojson"])
-    XCTAssertTrue(window.isVisible || controller.paneIDs.count == 2)
+    XCTAssertEqual(controller.paneIDs.count, 2)
+    XCTAssertFalse(made[0].closed)
     XCTAssertEqual(made[0].saves + made[1].saves, 0)
   }
 
