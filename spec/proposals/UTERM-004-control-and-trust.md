@@ -44,8 +44,8 @@ one program cannot take over panes it has no business touching.
   the program's stdin. Its stdout drives the applet. Its stderr goes to the window history as info-level diagnostic text
   and takes no turn on the status bar. The host sanitizes, coalesces, and bounds it before the main-thread queue admits
   it. A driver exit or protocol failure that the host observes is a separate typed warning, or an error when user work
-  is lost. Level never comes from matching words in stderr. Amended 2026-11-06; see Decision Log. The attached driver is
-  not an ambient remote caller, so disconnected does not sever this explicitly attached channel.
+  is lost. Level never comes from matching words in stderr. The attached driver is not an ambient remote caller, so
+  disconnected does not sever this explicitly attached channel. Amended 2026-11-06; see Decision Log.
 
 Each applet declares which access-mode and driver combinations it supports. Unsupported combinations are refused
 before anything starts. Window shortcuts reach uniterm before applet events reach a driver, per ADR-04.

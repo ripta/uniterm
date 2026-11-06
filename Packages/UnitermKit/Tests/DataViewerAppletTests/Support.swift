@@ -1,60 +1,12 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import StatusKit
 import TableData
 import TableTestSupport
 import XCTest
 
 @testable import DataViewerApplet
-
-/// Collects what an applet tells its pane.
-@MainActor
-final class RecordingHost: AppletHost {
-  var posts: [(level: StatusLevel, text: String)] = []
-  var changes = 0
-  var tabChanges = 0
-
-  /// What the applet recorded in the history without a turn on the bar.
-  var records: [(level: StatusLevel, text: String)] = []
-
-  /// What the applet delivered with the unseen signal and no turn on the bar.
-  var attentions: [(level: StatusLevel, text: String)] = []
-
-  /// What the applet presented again from a record it made earlier, without a new history entry.
-  var presented: [(delivery: StatusDelivery, level: StatusLevel, text: String, record: UInt64)] =
-    []
-
-  private var lastRecord: UInt64 = 0
-
-  func applet(
-    _ applet: any Applet, send delivery: StatusDelivery, level: StatusLevel, text: String,
-    presenting record: StatusRecordID?
-  ) -> StatusRecordID? {
-    if let record {
-      presented.append((delivery, level, text, record))
-      return record
-    }
-
-    switch delivery {
-    case .message: posts.append((level, text))
-    case .attention: attentions.append((level, text))
-    case .historyOnly: records.append((level, text))
-    }
-
-    lastRecord += 1
-    return lastRecord
-  }
-
-  func appletDidExit(_ applet: any Applet) {}
-
-  func appletDidChange(_ applet: any Applet) { changes += 1 }
-
-  func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
-
-  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool { false }
-
-  func issueCloseStamp() -> UInt64 { 0 }
-}
 
 final class Scratch {
   let url: URL

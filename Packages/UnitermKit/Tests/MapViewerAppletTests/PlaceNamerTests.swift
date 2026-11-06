@@ -1,4 +1,5 @@
 import AppletKit
+import AppletTestSupport
 import GeoData
 import XCTest
 

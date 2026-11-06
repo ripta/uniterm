@@ -1,47 +1,9 @@
 import AppKit
+import AppletTestSupport
 import StatusKit
 import XCTest
 
 @testable import AppletKit
-
-/// Stands in for the pane's host. It numbers each history record it admits, so a test can tell a
-/// new record from a presented one.
-@MainActor
-private final class AlertHost: AppletHost {
-  struct Sent: Equatable {
-    var delivery: StatusDelivery
-    var level: StatusLevel
-    var text: String
-    var record: StatusRecordID?
-  }
-
-  var sent: [Sent] = []
-  private var last: StatusRecordID = 0
-
-  /// The deliveries that admitted a history record, as the window's history would hold them.
-  var admitted: [Sent] { sent.filter { $0.record == nil } }
-
-  /// The deliveries that presented an earlier record again.
-  var presented: [Sent] { sent.filter { $0.record != nil } }
-
-  func applet(
-    _ applet: any Applet, send delivery: StatusDelivery, level: StatusLevel, text: String,
-    presenting record: StatusRecordID?
-  ) -> StatusRecordID? {
-    sent.append(Sent(delivery: delivery, level: level, text: text, record: record))
-
-    if let record { return record }
-
-    last += 1
-    return last
-  }
-
-  func appletDidExit(_ applet: any Applet) {}
-  func appletDidChange(_ applet: any Applet) {}
-  func appletTabsDidChange(_ applet: any Applet) {}
-  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool { false }
-  func issueCloseStamp() -> UInt64 { 0 }
-}
 
 @MainActor
 final class AppletAlertsTests: XCTestCase {
@@ -79,7 +41,7 @@ final class AppletAlertsTests: XCTestCase {
 
   func testAnAttachedAlertIsDeliveredAtOnceAsItsOriginSays() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
 
     alerts.deliver(AppletNotice(.warning, "cut"), origin: .restore, from: applet, to: host)
@@ -95,7 +57,7 @@ final class AppletAlertsTests: XCTestCase {
   /// The record is made when the event happens, with no signal and no turn.
   func testADetachedAlertIsRecordedAtOnceAndNothingIsShown() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
 
     alerts.detach()
@@ -110,7 +72,7 @@ final class AppletAlertsTests: XCTestCase {
   /// the record made at the event, and it keeps the delivery the origin chose.
   func testReattachPresentsHeldAlertsThroughTheirRecordsOnly() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
 
     alerts.detach()
@@ -125,7 +87,7 @@ final class AppletAlertsTests: XCTestCase {
     XCTAssertEqual(host.admitted.count, 3, "reattach admitted a history entry")
     XCTAssertEqual(host.presented.map(\.text), ["moved", "cut", "lost"])
     XCTAssertEqual(host.presented.map(\.delivery), [.message, .attention, .message])
-    XCTAssertEqual(host.presented.compactMap(\.record), [1, 2, 3])
+    XCTAssertEqual(host.presented.map(\.record), [1, 2, 3])
     XCTAssertEqual(alerts.heldCount, 0)
     XCTAssertFalse(alerts.isDetached)
   }
@@ -134,7 +96,7 @@ final class AppletAlertsTests: XCTestCase {
   /// that gets a turn on return. Neither would be shown even when attached.
   func testDetachedAlertsThatNeverPresentAreNotHeld() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
 
     alerts.detach()
@@ -151,13 +113,37 @@ final class AppletAlertsTests: XCTestCase {
     XCTAssertTrue(host.presented.isEmpty)
   }
 
+  /// Catches a replaced load whose notices outlive it, and a replacement that drops more than it
+  /// should. A new load drops the held notices of the old one. A held error stays, and so does an
+  /// alert that no load produced. The dropped notice's record stays in the history.
+  func testANewLoadDropsOnlyTheReplacedLoadsNonErrorNotices() {
+    var alerts = AppletAlerts()
+    let host = RecordingHost()
+    let applet = applet()
+
+    alerts.detach()
+    alerts.deliver(AppletNotice(.warning, "cut"), origin: .user, from: applet, to: host)
+    alerts.deliver(AppletNotice(.info, "moved"), origin: .user, from: applet, to: host)
+    alerts.deliver(AppletNotice(.error, "lost work"), origin: .user, from: applet, to: host)
+    alerts.deliver(.warning, "bell", from: applet, to: host)
+
+    alerts.replaceLoad()
+
+    XCTAssertEqual(alerts.heldCount, 2)
+
+    alerts.reattach(from: applet, to: host)
+
+    XCTAssertEqual(host.presented.map(\.text), ["lost work", "bell"])
+    XCTAssertEqual(host.admitted.map(\.text), ["cut", "moved", "lost work", "bell"])
+  }
+
   // MARK: The bound
 
   /// Catches an unbounded wait. Past the count limit, the oldest non-error alert goes, the loss is
   /// counted, and reattach says how many. Every alert is still in the history.
   func testTheWaitIsBoundedInCountAndOverflowIsCounted() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
     let total = AppletAlerts.heldLimit + 3
 
@@ -188,7 +174,7 @@ final class AppletAlertsTests: XCTestCase {
   /// the most severe level that was lost.
   func testAnErrorOutlastsWarningsAndTheCountTakesTheMostSevereLevelLost() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
 
     alerts.detach()
@@ -208,7 +194,7 @@ final class AppletAlertsTests: XCTestCase {
   /// Catches a byte bound that never binds. Long alerts cost their text, so a few fill the wait.
   func testTheWaitIsBoundedInBytes() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
     let long = String(repeating: "a", count: 2000)
 
@@ -230,7 +216,7 @@ final class AppletAlertsTests: XCTestCase {
   /// the event, so the host holds them. The applet holds nothing.
   func testDiscardKeepsTheRecordsAndDropsThePresentation() {
     var alerts = AppletAlerts()
-    let host = AlertHost()
+    let host = RecordingHost()
     let applet = applet()
 
     alerts.detach()

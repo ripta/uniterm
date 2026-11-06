@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import StatusKit
 import TableData
 import XCTest
@@ -210,8 +211,8 @@ final class DataViewerAppletTests: XCTestCase {
     XCTAssertEqual(host.posts.filter { $0.text == cut }.count, 1, "the notice posted again")
   }
 
-  /// Catches a count that posts again each time it grows. Three rows are cut over several pages. The
-  /// status bar gets the notice once, after the load settles, with the whole count.
+  /// Catches a count that posts again each time it grows. Three rows are cut over several pages.
+  /// The status bar gets the notice once, after the load settles, with the whole count.
   func testACutRowCountThatGrowsDuringALoadPostsOnceWithTheFinalCount() async throws {
     let scratch = try Scratch(self)
     let big = String(repeating: "x", count: (1 << 20) + 10)

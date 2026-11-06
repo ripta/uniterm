@@ -6,8 +6,8 @@ import StatusKit
 /// nothing on screen, such as a file found at a new path, is info. Lost user work, including work
 /// that cannot reach disk, is an error. A message that reports lost work never times out, and a
 /// later message that replaces it leaves the unseen-error attention up until the user
-/// acknowledges it. A failed load is a warning unless the failure loses user work. The applet states the level, and never works it out from
-/// the text.
+/// acknowledges it. A failed load is a warning unless the failure loses user work. The applet
+/// states the level, and never works it out from the text.
 ///
 /// Placement. While the pane's content is still on screen, a notice posts once to the status bar.
 /// A state that lasts also shows as a segment while it holds. When the pane has nothing else to

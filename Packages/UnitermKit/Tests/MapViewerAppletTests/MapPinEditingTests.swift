@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import Foundation
 import GeoData
 import MapKit
@@ -556,7 +557,7 @@ final class PinEditSafetyTests: XCTestCase {
     applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
     await applet.editing?.value
 
-    host.confirms = false
+    host.answer = false
     applet.clearFile()
     await applet.asking?.value
 
@@ -564,7 +565,7 @@ final class PinEditSafetyTests: XCTestCase {
     XCTAssertEqual(applet.filePinsShown.count, 2)
     XCTAssertTrue(applet.isDirty)
 
-    host.confirms = true
+    host.answer = true
     applet.clearFile()
     await applet.asking?.value
 
@@ -580,7 +581,7 @@ final class PinEditSafetyTests: XCTestCase {
     await applet.editing?.value
 
     let other = try scratch.write("other.geojson", GeoFixtures.collection([]))
-    host.confirms = false
+    host.answer = false
     applet.replaceSource(with: other, startDirectory: scratch.url.path)
     await applet.asking?.value
 

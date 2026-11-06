@@ -194,4 +194,33 @@ final class RestoreNoticeTests: XCTestCase {
 
     XCTAssertFalse(center.hasUnseenWarning, "an acknowledged signal came back")
   }
+
+  /// Catches a held error that falls off the host's ledger. Hundreds of later alerts arrive while
+  /// the pane is detached. Reattach still presents the error through its own record, so the
+  /// history keeps one entry for it.
+  func testAHeldErrorSurvivesManyLaterAlertsWithoutADuplicateRecord() throws {
+    let restored = try controller(panes: 1)
+    defer { restored.window?.close() }
+
+    let applet = try XCTUnwrap(restored.paneArea.applet(for: NodeID(rawValue: 1)))
+    let center = restored.statusCenter
+
+    var alerts = AppletAlerts()
+
+    alerts.detach()
+    alerts.deliver(.error, "work lost", from: applet, to: applet.host)
+
+    for number in 0..<300 {
+      alerts.deliver(.info, "later \(number)", from: applet, to: applet.host)
+    }
+
+    let before = center.history.filter { $0.text == "work lost" }.count
+
+    XCTAssertEqual(before, 1)
+
+    alerts.reattach(from: applet, to: applet.host)
+
+    XCTAssertEqual(
+      center.history.filter { $0.text == "work lost" }.count, 1, "reattach duplicated the record")
+  }
 }

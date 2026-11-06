@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import Foundation
 import GeoData
 import MapKit
@@ -58,6 +59,33 @@ final class MapAlertsTests: XCTestCase {
     XCTAssertEqual(host.records.map(\.text), texts, "reattach added history entries")
     XCTAssertEqual(host.presented.map(\.text), texts)
     XCTAssertTrue(host.presented.allSatisfy { $0.delivery == .message })
+  }
+
+  /// Catches a stale notice after a newer load. File A skips a shape while the pane is detached.
+  /// File B replaces it and loads clean. Reattach presents nothing about A, and A's records stay.
+  func testANewerLoadDropsTheReplacedLoadsHeldNoticesButNotItsRecords() async throws {
+    let scratch = try GeoScratch(self)
+    let first = try mixedFile(scratch)
+    let second = try scratch.write(
+      "clean.geojson", GeoFixtures.collection([GeoFixtures.point("B", 2, 2)]))
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    applet.detach()
+    applet.replaceSource(with: first, startDirectory: scratch.url.path)
+    await applet.opening?.value
+
+    let recorded = host.records.map(\.text)
+
+    XCTAssertFalse(recorded.isEmpty, "the first file must leave a notice")
+
+    applet.replaceSource(with: second, startDirectory: scratch.url.path)
+    await applet.opening?.value
+    applet.reattach()
+
+    XCTAssertEqual(host.records.map(\.text), recorded, "the replaced load's records are kept")
+    XCTAssertTrue(host.presented.isEmpty, "\(host.presented)")
   }
 
   /// Catches a map closed while detached that loses what it recorded. The records were made when

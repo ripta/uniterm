@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import StatusKit
 import TableData
 import XCTest
@@ -64,6 +65,30 @@ final class DataViewerAlertsTests: XCTestCase {
     XCTAssertEqual(host.records.map(\.text), [cut], "reattach added a history entry")
     XCTAssertEqual(host.presented.map(\.text), [cut])
     XCTAssertEqual(host.presented.map(\.delivery), [.message])
+  }
+
+  /// Catches a stale notice after a newer load. File A cuts a cell while the pane is detached. File
+  /// B replaces it and loads clean. Reattach presents nothing about A, and A's record stays.
+  func testANewerLoadDropsTheReplacedLoadsHeldNoticesButNotItsRecords() async throws {
+    let scratch = try Scratch(self)
+    let first = try oversized(scratch)
+    let second = try scratch.write("small.csv", "note\nsmall\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    let host = RecordingHost()
+    applet.host = host
+
+    applet.detach()
+    try applet.replaceSource(with: first, startDirectory: scratch.url.path)
+    _ = await loaded(applet)
+
+    XCTAssertEqual(host.records.map(\.text), [cut])
+
+    try applet.replaceSource(with: second, startDirectory: scratch.url.path)
+    _ = await loaded(applet)
+    applet.reattach()
+
+    XCTAssertEqual(host.records.map(\.text), [cut], "the replaced load's record is kept")
+    XCTAssertTrue(host.presented.isEmpty, "\(host.presented)")
   }
 
   /// Catches a pane closed while detached that loses what it recorded.

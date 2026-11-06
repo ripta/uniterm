@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import AppletTestSupport
 import StatusKit
 import Theme
 import XCTest
@@ -64,74 +65,6 @@ final class FakeEngine: TerminalEngine {
   }
 
   func apply(palette: ThemePalette) throws {}
-}
-
-@MainActor
-private final class RecordingHost: AppletHost {
-  var posts: [(StatusLevel, String)] = []
-  var exited = false
-  var changed = 0
-  var tabsChanged = 0
-  var confirmations: [AppletConfirmation] = []
-  var answer = false
-
-  /// When set, a question waits here until a test answers it.
-  var holdsQuestions = false
-  var pendingAnswer: CheckedContinuation<Bool, Never>?
-
-  /// Signals each question as it is asked, so a test awaits it and never polls.
-  let questions = AsyncStream.makeStream(of: Void.self)
-
-  var records: [(StatusLevel, String)] = []
-
-  /// What the applet delivered with the unseen signal and no turn on the bar.
-  var attentions: [(StatusLevel, String)] = []
-
-  /// What the applet presented again from a record it made earlier, without a new history entry.
-  var presented: [(StatusDelivery, StatusLevel, String, UInt64)] = []
-
-  private var lastRecord: UInt64 = 0
-
-  func applet(
-    _ applet: any Applet, send delivery: StatusDelivery, level: StatusLevel, text: String,
-    presenting record: StatusRecordID?
-  ) -> StatusRecordID? {
-    if let record {
-      presented.append((delivery, level, text, record))
-      return record
-    }
-
-    switch delivery {
-    case .message: posts.append((level, text))
-    case .attention: attentions.append((level, text))
-    case .historyOnly: records.append((level, text))
-    }
-
-    lastRecord += 1
-    return lastRecord
-  }
-
-  func appletDidExit(_ applet: any Applet) { exited = true }
-  func appletDidChange(_ applet: any Applet) { changed += 1 }
-  func appletTabsDidChange(_ applet: any Applet) { tabsChanged += 1 }
-
-  var lastStamp: UInt64 = 0
-
-  func issueCloseStamp() -> UInt64 {
-    lastStamp += 1
-    return lastStamp
-  }
-
-  func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
-    confirmations.append(request)
-    questions.continuation.yield()
-
-    if holdsQuestions {
-      return await withCheckedContinuation { pendingAnswer = $0 }
-    }
-
-    return answer
-  }
 }
 
 @MainActor
@@ -545,7 +478,7 @@ final class TerminalAppletTests: XCTestCase {
 
     session.onEvent?(.workingDirectoryChanged("/var/tmp"))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "tmp")])
-    XCTAssertEqual(host.changed, 1)
+    XCTAssertEqual(host.changes, 1)
 
     session.onEvent?(.commandFinished(exitCode: 2, duration: .seconds(1)))
     XCTAssertEqual(
@@ -554,11 +487,11 @@ final class TerminalAppletTests: XCTestCase {
         AppletSegment(symbolName: "folder", text: "tmp"),
         AppletSegment(symbolName: "xmark.circle", text: "2", style: .error),
       ])
-    XCTAssertEqual(host.changed, 2)
+    XCTAssertEqual(host.changes, 2)
 
     session.onEvent?(.commandFinished(exitCode: 0, duration: .seconds(1)))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "tmp")])
-    XCTAssertEqual(host.changed, 3)
+    XCTAssertEqual(host.changes, 3)
   }
 
   /// Catches a directory label that shows a long path, or the home folder as its own name.
@@ -996,10 +929,10 @@ final class TerminalAppletTests: XCTestCase {
     engine.sessions[1].onEvent?(.workingDirectoryChanged("/Users/x/proj"))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "proj")])
 
-    let changes = host.changed
+    let changes = host.changes
     first.onEvent?(.workingDirectoryChanged("/etc"))
     XCTAssertEqual(applet.segments, [AppletSegment(symbolName: "folder", text: "proj")])
-    XCTAssertGreaterThan(host.changed, changes, "a background directory change was never saved")
+    XCTAssertGreaterThan(host.changes, changes, "a background directory change was never saved")
 
     applet.selectTab(at: 0)
     XCTAssertEqual(
@@ -1008,7 +941,7 @@ final class TerminalAppletTests: XCTestCase {
         AppletSegment(symbolName: "folder", text: "etc"),
         AppletSegment(symbolName: "xmark.circle", text: "2", style: .error),
       ])
-    XCTAssertGreaterThan(host.changed, changes)
+    XCTAssertGreaterThan(host.changes, changes)
   }
 
   /// Catches a pane that closes when one of several shells exits, or stays open when the last one
@@ -1092,14 +1025,14 @@ final class TerminalAppletTests: XCTestCase {
   func testABackgroundTabsTitleAndDirectoryChangesSignal() {
     let (applet, engine, host, first) = makeApplet()
     applet.openTab()
-    host.tabsChanged = 0
-    host.changed = 0
+    host.tabChanges = 0
+    host.changes = 0
 
     first.onEvent?(.titleChanged("htop"))
-    XCTAssertEqual(host.tabsChanged, 1)
+    XCTAssertEqual(host.tabChanges, 1)
 
     first.onEvent?(.workingDirectoryChanged("/var"))
-    XCTAssertEqual(host.tabsChanged, 2)
+    XCTAssertEqual(host.tabChanges, 2)
 
     XCTAssertEqual(applet.publishedTabs.first.title, "htop")
     XCTAssertEqual(engine.sessions.count, 2)
@@ -1108,16 +1041,16 @@ final class TerminalAppletTests: XCTestCase {
   /// Catches opening, selecting, or closing a tab that leaves the palette's list stale.
   func testOpeningSelectingAndClosingATabSignal() async {
     let (applet, _, host, _) = makeApplet()
-    host.tabsChanged = 0
+    host.tabChanges = 0
 
     applet.openTab()
-    XCTAssertEqual(host.tabsChanged, 1)
+    XCTAssertEqual(host.tabChanges, 1)
 
     applet.selectTab(at: 0)
-    XCTAssertEqual(host.tabsChanged, 2)
+    XCTAssertEqual(host.tabChanges, 2)
 
     _ = await applet.closeCurrentTab()
-    XCTAssertEqual(host.tabsChanged, 3)
+    XCTAssertEqual(host.tabChanges, 3)
     XCTAssertEqual(applet.publishedTabs.all.count, 1)
   }
 

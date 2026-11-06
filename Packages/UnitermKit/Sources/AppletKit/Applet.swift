@@ -76,16 +76,6 @@ extension AppletHost {
   public func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
     self.applet(applet, send: .message, level: level, text: text, presenting: nil)
   }
-
-  /// Records `text` in the window's history without a turn on the bar and without an unseen
-  /// signal. An applet whose pane already says the same thing records this way, and so does one
-  /// that cannot be seen. Returns the record's ID.
-  @discardableResult
-  public func applet(
-    _ applet: any Applet, recordInHistory level: StatusLevel, text: String
-  ) -> StatusRecordID? {
-    self.applet(applet, send: .historyOnly, level: level, text: text, presenting: nil)
-  }
 }
 
 /// What built an applet that is about to start.

@@ -153,6 +153,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     // A sheet is a load of its own. The old sheet's notices are spent, and the file was found
     // once already.
     posted.reset()
+    alerts.replaceLoad()
     resolvedNotice = nil
     loadOrigin = .user
     sortOrigin = .user
@@ -240,7 +241,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     table.onNotice = { [weak self] notice in
       guard let self else { return }
 
-      alerts.deliver(notice, origin: .user, from: self, to: host)
+      alerts.deliver(notice, origin: .user, ofLoad: false, from: self, to: host)
     }
 
     nested = table
@@ -270,6 +271,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     sortOrigin = origin
     resolvedNotice = nil
     posted.reset()
+    alerts.replaceLoad()
     nested?.close()
     nested = nil
 

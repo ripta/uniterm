@@ -111,11 +111,16 @@ let package = Package(
     // Test support. It builds ZIP archives for the tests of both targets that read workbooks, and
     // holds the seeded generator the table and map fuzzers share.
     .target(name: "TableTestSupport", path: "Tests/TableTestSupport"),
+    // The recording host the applet tests share, so each applet's tests read one set of deliveries.
+    .target(
+      name: "AppletTestSupport", dependencies: ["AppletKit", "StatusKit"],
+      path: "Tests/AppletTestSupport"),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
       name: "DataViewerAppletTests",
       dependencies: [
         "DataViewerApplet", "TableData", "AppletKit", "StatusKit", "Theme", "TableTestSupport",
+        "AppletTestSupport",
       ]),
     .testTarget(name: "SourceAccessTests", dependencies: ["SourceAccess"]),
     .testTarget(name: "GeoDataTests", dependencies: ["GeoData", "ThemeCore"]),
@@ -124,16 +129,16 @@ let package = Package(
       name: "MapViewerAppletTests",
       dependencies: [
         "MapViewerApplet", "GeoData", "AppletKit", "PlaceSearch", "SourceAccess", "StatusKit",
-        "Theme", "TableTestSupport",
+        "Theme", "TableTestSupport", "AppletTestSupport",
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
-    .testTarget(name: "AppletKitTests", dependencies: ["AppletKit"]),
+    .testTarget(name: "AppletKitTests", dependencies: ["AppletKit", "AppletTestSupport"]),
     .testTarget(name: "LayoutKitTests", dependencies: ["LayoutKit", "AppletKit", "PaneModel"]),
     .testTarget(
       name: "TerminalAppletTests",
       dependencies: [
         "TerminalApplet", "AppletKit", "StatusKit", "TerminalSurface", "Theme", "WindowKit",
-        "Preferences",
+        "Preferences", "AppletTestSupport",
       ]),
     .testTarget(name: "SettingsKitTests", dependencies: ["SettingsKit", "Preferences"]),
     .testTarget(name: "ThemeTests", dependencies: ["Theme"]),

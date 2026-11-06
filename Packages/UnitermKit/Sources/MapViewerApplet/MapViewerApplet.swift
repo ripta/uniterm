@@ -316,6 +316,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     hiddenFromFile = 0
     fileTruncated = false
     posted.reset()
+    alerts.replaceLoad()
     filePins = []
     content.removePins(layer: .file)
     forgetDocument()
