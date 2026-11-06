@@ -83,6 +83,7 @@ public final class WindowSet {
   private var closing: [MainWindowController] = []
 
   private let confirmer: CloseConfirmer
+  private let unsavedConfirmer: UnsavedConfirmer
 
   /// Runs when a window opens or closes, and when anything a saved layout holds changes in one.
   public var onLayoutChange: (() -> Void)?
@@ -99,6 +100,7 @@ public final class WindowSet {
     },
     screens: @escaping @MainActor () -> [ScreenArea] = WindowSet.attachedScreens,
     confirmer: @escaping CloseConfirmer = CloseDialog.present,
+    unsavedConfirmer: @escaping UnsavedConfirmer = UnsavedDialog.present,
     makeRestoredController: RestoringFactory? = nil,
     makeRoutedController: RoutedFactory? = nil,
     makeController: @escaping Factory
@@ -106,6 +108,7 @@ public final class WindowSet {
     self.visibleFrame = visibleFrame
     self.screens = screens
     self.confirmer = confirmer
+    self.unsavedConfirmer = unsavedConfirmer
     self.makeRestoredController = makeRestoredController
     self.makeRoutedController = makeRoutedController
     self.makeController = makeController
@@ -121,8 +124,32 @@ public final class WindowSet {
     controllers.flatMap { $0.runningTabLabels }
   }
 
-  /// Asks before a quit that would end something running. Returns true when the app may quit.
+  /// Asks before a quit that would lose unsaved work or end something running. Unsaved work comes
+  /// first, and Save saves each pane in window order. Returns true when the app may quit.
   public func shouldQuit() async -> Bool {
+    let unsaved = controllers.flatMap(\.unsavedLabels)
+
+    if !unsaved.isEmpty {
+      let question = UnsavedQuestion(
+        title: "Save changes before quitting?",
+        detail: "Your changes are lost if you don\u{2019}t save them.", labels: unsaved)
+
+      switch await unsavedConfirmer(question, activeController?.window) {
+      case .cancel:
+        return false
+
+      case .discard:
+        break
+
+      case .save:
+        for controller in controllers {
+          for applet in controller.paneArea.applets where applet.unsavedWork != nil {
+            guard await applet.saveUnsavedWork() else { return false }
+          }
+        }
+      }
+    }
+
     let labels = runningTabLabels
 
     guard !labels.isEmpty else { return true }

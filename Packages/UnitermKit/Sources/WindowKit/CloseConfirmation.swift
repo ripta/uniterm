@@ -69,3 +69,69 @@ public enum CloseDialog {
     return response == .alertSecondButtonReturn
   }
 }
+
+/// The answer to a question about unsaved work.
+public enum UnsavedAnswer: Sendable, Equatable {
+  case save
+  case discard
+  case cancel
+}
+
+/// A question the window asks before a close would lose unsaved work.
+public struct UnsavedQuestion: Sendable, Equatable {
+  public var title: String
+  public var detail: String
+
+  /// What would be lost, such as each file with unsaved edits.
+  public var labels: [String]
+
+  /// The button that closes without saving, such as "Don't Save".
+  public var discardTitle: String
+
+  public init(
+    title: String, detail: String, labels: [String], discardTitle: String = "Don\u{2019}t Save"
+  ) {
+    self.title = title
+    self.detail = detail
+    self.labels = labels
+    self.discardTitle = discardTitle
+  }
+}
+
+/// Asks about unsaved work and returns the user's answer. Tests replace it.
+public typealias UnsavedConfirmer =
+  @MainActor (_ question: UnsavedQuestion, _ window: NSWindow?) async -> UnsavedAnswer
+
+public enum UnsavedDialog {
+  /// Asks in a sheet on the window, or in a modal alert when the window is not on screen. Save is
+  /// the default button, as in every Mac document app, and Escape cancels.
+  @MainActor
+  public static let present: UnsavedConfirmer = { question, window in
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = question.title
+    alert.informativeText = [question.detail, CloseDialog.listing(of: question.labels)]
+      .filter { !$0.isEmpty }
+      .joined(separator: "\n\n")
+    alert.addButton(withTitle: "Save")
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: question.discardTitle)
+    alert.buttons[1].keyEquivalent = "\u{1B}"
+    alert.buttons[2].keyEquivalent = "d"
+    alert.buttons[2].keyEquivalentModifierMask = .command
+    alert.window.setAccessibilityIdentifier("unsaved-confirmation")
+
+    let response: NSApplication.ModalResponse
+    if let window, window.isVisible {
+      response = await alert.beginSheetModal(for: window)
+    } else {
+      response = alert.runModal()
+    }
+
+    switch response {
+    case .alertFirstButtonReturn: return .save
+    case .alertThirdButtonReturn: return .discard
+    default: return .cancel
+    }
+  }
+}

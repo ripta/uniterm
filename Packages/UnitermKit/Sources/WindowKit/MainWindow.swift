@@ -7,7 +7,8 @@ import AppletKit
 /// text control being edited undoes its edit. That answer comes before the window controller in the
 /// responder chain, so a controller method named for undo would never be reached. This window
 /// answers the action itself. While a text control is being edited, it undoes the edit. Otherwise
-/// it does nothing, and the item is off.
+/// a focused view that keeps its own undo manager, as a map does for its pin edits, undoes its own
+/// last change. With neither, it does nothing, and the item is off.
 ///
 /// The window is also uniterm's one key route. A key that matches a key equivalent in the live
 /// menu goes to that menu item before any view in the window sees it. The menu is read live, so a
@@ -33,38 +34,51 @@ public final class MainWindow: NSWindow {
     (firstResponder as? NSTextView)?.undoManager ?? undoManager
   }
 
-  /// The target of Edit > Undo. The selector is the standard `undo:`, so the menu item keeps its
-  /// place in the Edit menu and a text control gets the key when it has focus. It undoes a text
-  /// edit and nothing else. Reopening a closed tab or pane is a window command.
-  @objc(undo:) public func undoEdit(_ sender: Any?) {
-    guard isEditingText else { return }
+  /// The undo manager a focused view keeps apart from the window's. A view that keeps none reports
+  /// the window's own, which holds nothing undo should reach, so that counts as none.
+  private var focusedViewUndoManager: UndoManager? {
+    guard let manager = firstResponder?.undoManager, manager !== undoManager else { return nil }
 
-    editingUndoManager?.undo()
+    return manager
   }
 
-  /// The target of Edit > Redo. Redo repeats an undone text edit. Pane closes have no redo.
-  @objc(redo:) public func redoEdit(_ sender: Any?) {
-    guard isEditingText else { return }
+  /// The undo manager Edit > Undo and Redo act on: the field being edited, else the focused
+  /// view's own.
+  private var activeUndoManager: UndoManager? {
+    isEditingText ? editingUndoManager : focusedViewUndoManager
+  }
 
-    editingUndoManager?.redo()
+  /// The target of Edit > Undo. The selector is the standard `undo:`, so the menu item keeps its
+  /// place in the Edit menu and a text control gets the key when it has focus. It undoes a text
+  /// edit, or a focused view's own edit. Reopening a closed tab or pane is a window command.
+  @objc(undo:) public func undoEdit(_ sender: Any?) {
+    activeUndoManager?.undo()
+  }
+
+  /// The target of Edit > Redo. Redo repeats an undone edit. Pane closes have no redo.
+  @objc(redo:) public func redoEdit(_ sender: Any?) {
+    activeUndoManager?.redo()
   }
 
   public override func validateMenuItem(_ item: NSMenuItem) -> Bool {
     switch item.action {
     case #selector(redoEdit(_:)):
-      guard isEditingText else { return false }
+      guard let manager = activeUndoManager else {
+        item.title = "Redo"
+        return false
+      }
 
-      item.title = editingUndoManager?.redoMenuItemTitle ?? "Redo"
-      return editingUndoManager?.canRedo ?? false
+      item.title = manager.redoMenuItemTitle
+      return manager.canRedo
 
     case #selector(undoEdit(_:)):
-      guard isEditingText else {
+      guard let manager = activeUndoManager else {
         item.title = "Undo"
         return false
       }
 
-      item.title = editingUndoManager?.undoMenuItemTitle ?? "Undo"
-      return editingUndoManager?.canUndo ?? false
+      item.title = manager.undoMenuItemTitle
+      return manager.canUndo
 
     default:
       return super.validateMenuItem(item)
