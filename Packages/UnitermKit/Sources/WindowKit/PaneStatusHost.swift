@@ -54,6 +54,8 @@ final class PaneStatusHost: AppletHost {
 
     var target: StatusRecordID?
 
+    if record != nil { pruneLedger(window) }
+
     if let record, let index = ledger.firstIndex(where: { $0.id == record }) {
       guard !ledger[index].presented else { return record }
 
@@ -67,12 +69,18 @@ final class PaneStatusHost: AppletHost {
     if target == nil, let id {
       ledger.append(Issued(id: id, presented: delivery != .historyOnly))
 
-      let retained = Set(window.statusCenter.history.map(\.id))
-
-      ledger.removeAll { !retained.contains($0.id) }
+      pruneLedger(window)
     }
 
     return id
+  }
+
+  /// Drops the entries whose records the history no longer keeps. A lookup prunes first, so a
+  /// record that retention evicted is never honored, whenever the pane last admitted one.
+  private func pruneLedger(_ window: MainWindowController) {
+    let retained = Set(window.statusCenter.history.map(\.id))
+
+    ledger.removeAll { !retained.contains($0.id) }
   }
 
   func appletDidExit(_ applet: any Applet) {
