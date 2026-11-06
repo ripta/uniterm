@@ -310,6 +310,17 @@ final class MapPinEditingTests: XCTestCase {
     editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
     XCTAssertFalse(editor.doneButton.isEnabled)
 
+    editor.glyphField.stringValue = "xyz"
+    editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    XCTAssertFalse(editor.doneButton.isEnabled, "a symbol this Mac lacks was accepted")
+
+    let width = editor.view.fittingSize.width
+    editor.glyphField.stringValue = "this is not a glyph at all"
+    editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    editor.view.layoutSubtreeIfNeeded()
+    XCTAssertEqual(
+      editor.view.fittingSize.width, width, accuracy: 0.5, "the error widened the popover")
+
     editor.glyphField.stringValue = "\u{2605}"
     editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
     editor.done()

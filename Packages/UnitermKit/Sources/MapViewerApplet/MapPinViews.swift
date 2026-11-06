@@ -175,6 +175,11 @@ final class MapMarkerView: MKAnnotationView {
   static let pinSide = 26.0
   static let clusterSide = 32.0
 
+  /// The square a single pin takes clicks and drags in. It is wider than the marker, so a drag that
+  /// starts just off the disc moves the pin and does not pan the map. MapKit declutters by this
+  /// frame too, so nearby pins cluster a little sooner than the marker alone would.
+  static let pinHitSide = 36.0
+
   private let art = MarkerArtView()
   private let editButton = NSButton(title: "Edit", target: nil, action: nil)
 
@@ -192,11 +197,13 @@ final class MapMarkerView: MKAnnotationView {
   override init(annotation: (any MKAnnotation)?, reuseIdentifier: String?) {
     super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
 
-    let side = reuseIdentifier == Self.clusterReuse ? Self.clusterSide : Self.pinSide
+    let isCluster = reuseIdentifier == Self.clusterReuse
+    let side = isCluster ? Self.clusterSide : Self.pinSide
+    let hit = isCluster ? side : Self.pinHitSide
 
-    frame = NSRect(x: 0, y: 0, width: side, height: side)
-    art.frame = bounds
-    art.autoresizingMask = [.width, .height]
+    frame = NSRect(x: 0, y: 0, width: hit, height: hit)
+    art.frame = NSRect(x: (hit - side) / 2, y: (hit - side) / 2, width: side, height: side)
+    art.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
     addSubview(art)
 
     canShowCallout = reuseIdentifier == Self.pinReuse

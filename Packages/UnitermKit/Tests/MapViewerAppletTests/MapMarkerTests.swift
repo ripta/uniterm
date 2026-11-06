@@ -149,7 +149,8 @@ final class MapMarkerTests: XCTestCase {
       let view = try marker(
         MapPinAnnotation(pin: pin, layer: .file, layerAccent: .teal), in: content)
       let pixels = try render(view)
-      let ring = pixels.color(x: pixels.width / 2, y: 2 * scale)
+      let margin = (view.bounds.height - MapMarkerView.pinSide) / 2
+      let ring = pixels.color(x: pixels.width / 2, y: Int((margin + 2) * Double(scale)))
 
       XCTAssertTrue(closeEnough(ring, palette[.teal]), "\(flavor)")
     }
