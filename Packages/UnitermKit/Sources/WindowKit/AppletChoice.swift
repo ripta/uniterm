@@ -10,4 +10,7 @@ public enum AppletChoice: Sendable, Equatable {
 
   /// A data viewer with nothing open, started in the pane's directory.
   case dataViewer
+
+  /// A map viewer, started in the pane's directory.
+  case mapViewer
 }

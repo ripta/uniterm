@@ -67,4 +67,40 @@ final class BuiltInCommandsTests: XCTestCase {
 
     XCTAssertTrue(warnings.isEmpty, "\(warnings)")
   }
+
+  /// Catches a map command that gains a key, lands in the wrong menu, or loses its name. The
+  /// commands are the registry's contract with the menu and the palette. Open and Clear File Pins
+  /// sit in File, the three styles in View, and none asks for a key, so Cmd-O stays with the
+  /// window's File > Open.
+  func testTheMapCommandsSitInTheirMenusWithNoKeys() throws {
+    var warnings: [String] = []
+    let registry = CommandRegistry(app: AppCommandHooks(warn: { warnings.append($0) }))
+
+    for set in BuiltInApplets.commandSets {
+      registry.register(set)
+    }
+
+    let menu = CommandMenu(registry: registry, activeController: { nil })
+    menu.refreshKeys()
+
+    let map = try XCTUnwrap(BuiltInApplets.commandSets.first { $0.typeID == "map-viewer" })
+
+    XCTAssertEqual(
+      map.commands.map(\.name),
+      ["open", "clear-file", "style-standard", "style-satellite", "style-hybrid"])
+    XCTAssertEqual(
+      map.commands.map(\.title),
+      ["Open\u{2026}", "Clear File Pins", "Standard Map", "Satellite Map", "Hybrid Map"])
+
+    for command in map.commands {
+      XCTAssertNil(command.key, command.title)
+      XCTAssertEqual(
+        command.home, command.name.hasPrefix("style-") ? .view : .file, command.title)
+
+      let id = CommandRegistry.commandID(typeID: "map-viewer", name: command.name)
+      XCTAssertNil(registry.appletKeys[id], command.title)
+    }
+
+    XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+  }
 }

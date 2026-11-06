@@ -17,6 +17,7 @@ let package = Package(
   name: "UnitermKit",
   platforms: [.macOS("26.0")],
   products: [
+    .library(name: "ThemeCore", targets: ["ThemeCore"]),
     .library(name: "Theme", targets: ["Theme"]),
     .library(name: "Preferences", targets: ["Preferences"]),
     .library(name: "PaneModel", targets: ["PaneModel"]),
@@ -29,8 +30,11 @@ let package = Package(
     .library(name: "TerminalApplet", targets: ["TerminalApplet"]),
     .library(name: "FileRouting", targets: ["FileRouting"]),
     .library(name: "AppletCatalog", targets: ["AppletCatalog"]),
+    .library(name: "SourceAccess", targets: ["SourceAccess"]),
     .library(name: "TableData", targets: ["TableData"]),
     .library(name: "DataViewerApplet", targets: ["DataViewerApplet"]),
+    .library(name: "GeoData", targets: ["GeoData"]),
+    .library(name: "MapViewerApplet", targets: ["MapViewerApplet"]),
   ],
   dependencies: [
     // The first third-party Swift package. Only TableData uses it. The version is exact, and
@@ -38,7 +42,11 @@ let package = Package(
     .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20")
   ],
   targets: [
-    .target(name: "Theme"),
+    // The palette's tokens, flavors, color values, and color math, with no AppKit. GeoData reads the
+    // accent set from it. Theme adds the AppKit colors and re-exports it, so `import Theme` still
+    // sees every name.
+    .target(name: "ThemeCore"),
+    .target(name: "Theme", dependencies: ["ThemeCore"]),
     .target(name: "Preferences"),
     .target(name: "StatusKit"),
     .target(name: "AppletKit", dependencies: ["StatusKit", "Theme"]),
@@ -72,24 +80,45 @@ let package = Package(
       ]),
     .target(
       name: "TerminalApplet", dependencies: ["AppletKit", "StatusKit", "TerminalSurface", "Theme"]),
+    // Reaching a file for a viewer: the stored path and bookmark, and the errors for a missing,
+    // protected, or irregular file. It has no AppKit, so the table and map targets share it.
+    .target(name: "SourceAccess"),
     .target(
-      name: "TableData", dependencies: [.product(name: "ZIPFoundation", package: "ZIPFoundation")]),
+      name: "TableData",
+      dependencies: ["SourceAccess", .product(name: "ZIPFoundation", package: "ZIPFoundation")]),
     .target(
-      name: "DataViewerApplet", dependencies: ["AppletKit", "StatusKit", "TableData", "Theme"]),
+      name: "DataViewerApplet",
+      dependencies: ["AppletKit", "SourceAccess", "StatusKit", "TableData", "Theme"]),
+    // The map's pure model. It has no AppKit and no MapKit, so the region and style rules test
+    // without a map view.
+    .target(name: "GeoData", dependencies: ["ThemeCore"]),
     .target(
-      name: "AppletCatalog", dependencies: ["AppletKit", "DataViewerApplet", "TerminalApplet"]),
+      name: "MapViewerApplet",
+      dependencies: ["AppletKit", "GeoData", "SourceAccess", "StatusKit", "Theme"]),
+    .target(
+      name: "AppletCatalog",
+      dependencies: ["AppletKit", "DataViewerApplet", "MapViewerApplet", "TerminalApplet"]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
     .testTarget(
       name: "AppletCatalogTests",
       dependencies: ["AppletCatalog", "FileRouting", "AppletKit", "WindowKit"]),
-    // Test support. It builds ZIP archives for the tests of both targets that read workbooks.
+    // Test support. It builds ZIP archives for the tests of both targets that read workbooks, and
+    // holds the seeded generator the table and map fuzzers share.
     .target(name: "TableTestSupport", path: "Tests/TableTestSupport"),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
       name: "DataViewerAppletTests",
       dependencies: [
         "DataViewerApplet", "TableData", "AppletKit", "StatusKit", "Theme", "TableTestSupport",
+      ]),
+    .testTarget(name: "SourceAccessTests", dependencies: ["SourceAccess"]),
+    .testTarget(name: "GeoDataTests", dependencies: ["GeoData", "ThemeCore"]),
+    .testTarget(
+      name: "MapViewerAppletTests",
+      dependencies: [
+        "MapViewerApplet", "GeoData", "AppletKit", "SourceAccess", "StatusKit", "Theme",
+        "TableTestSupport",
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit"]),

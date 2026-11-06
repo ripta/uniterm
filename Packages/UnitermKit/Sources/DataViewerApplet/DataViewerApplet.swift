@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import SourceAccess
 import StatusKit
 import TableData
 import Theme
@@ -257,7 +258,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
         self.session.load(.file(resolved.file, sheet: sheet), restoring: query)
 
       case .failure(let error):
-        self.session.fail(error, restoring: query)
+        self.session.fail(TableLoadError(error), restoring: query)
       }
     }
   }

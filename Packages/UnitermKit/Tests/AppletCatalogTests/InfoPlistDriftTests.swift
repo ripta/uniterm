@@ -93,7 +93,8 @@ final class InfoPlistDriftTests: XCTestCase {
       [
         .undeclared(type: "org.openxmlformats.spreadsheetml.sheet"),
         .undeclared(type: "public.comma-separated-values-text"),
-        .undeclared(type: "public.folder"), .undeclared(type: "public.json"),
+        .undeclared(type: "public.folder"), .undeclared(type: "public.geojson"),
+        .undeclared(type: "public.json"),
         .unclaimed(type: "public.png"),
       ])
   }
@@ -104,7 +105,8 @@ final class InfoPlistDriftTests: XCTestCase {
       [
         .undeclared(type: "org.openxmlformats.spreadsheetml.sheet"),
         .undeclared(type: "public.comma-separated-values-text"),
-        .undeclared(type: "public.folder"), .undeclared(type: "public.json"),
+        .undeclared(type: "public.folder"), .undeclared(type: "public.geojson"),
+        .undeclared(type: "public.json"),
       ])
   }
 

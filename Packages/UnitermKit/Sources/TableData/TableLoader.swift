@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import SourceAccess
 
 /// Where a table's rows come from. A file is the usual source. A nested value that a cell holds
 /// loads from memory through the same entry point, with no file behind it. A byte stream joins when
@@ -161,7 +162,7 @@ struct LoadRun {
     }
 
     guard info.st_mode & S_IFMT == S_IFREG else {
-      finish(.failed(.notARegularFile(path: path, kind: Self.kind(of: info.st_mode))))
+      finish(.failed(.notARegularFile(path: path, kind: SourceAccessError.kind(of: info.st_mode))))
       return
     }
 
@@ -389,16 +390,6 @@ struct LoadRun {
 
     case .completed, .stoppedAtBudget, .stoppedLowMemory:
       emit(.finished(snapshot(includingPartialPage: false), reason, progress))
-    }
-  }
-
-  private static func kind(of mode: mode_t) -> String {
-    switch mode & S_IFMT {
-    case S_IFDIR: return "a folder"
-    case S_IFIFO: return "a pipe"
-    case S_IFCHR, S_IFBLK: return "a device"
-    case S_IFSOCK: return "a socket"
-    default: return "not a regular file"
     }
   }
 }

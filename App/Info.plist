@@ -44,6 +44,18 @@
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
+			<string>GeoJSON Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.geojson</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
 			<string>Excel Workbook</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
