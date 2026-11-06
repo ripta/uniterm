@@ -152,7 +152,7 @@ public enum GeoJSONPatcher {
         return [append(Writer.feature(pin, properties: Writer.properties(for: pin)))]
 
       case .remove(let pin):
-        let point = try locate(pin.id)
+        let point = try locate(pin)
 
         if point.memberCount <= 1 {
           return [cut(element: point.ordinal, of: features, in: featuresSpan)]
@@ -166,9 +166,11 @@ public enum GeoJSONPatcher {
     }
 
     private func update(old: GeoPin, new: GeoPin) throws -> [Change] {
-      let point = try locate(old.id)
+      let point = try locate(old)
       let moved = old.coordinate != new.coordinate
-      let restyled = old.label != new.label || old.accent != new.accent || old.glyph != new.glyph
+      let restyled =
+        Self.ownLabel(old) != Self.ownLabel(new) || old.accent != new.accent
+        || old.glyph != new.glyph
 
       if restyled, point.memberCount > 1 {
         let properties = try point.properties.map { try restyledObject($0, old: old, new: new) }
@@ -216,6 +218,36 @@ public enum GeoJSONPatcher {
       let nullProperties: Range<Int>?
 
       var memberCount: Int { isMulti ? coordinates.count : 1 }
+    }
+
+    /// A pin's label as the file sets it. A pin with no label shows its coordinate, which moves with
+    /// it, so a move never reads as a label change.
+    static func ownLabel(_ pin: GeoPin) -> String {
+      let label = pin.label.trimmingCharacters(in: .whitespacesAndNewlines)
+
+      return label == GeoFileLayerBuilder.coordinateText(pin.coordinate) ? "" : label
+    }
+
+    /// The far a stored coordinate may sit from the pin's and still be that pin. MapKit's decoder
+    /// and this reader can differ in the last bits of a number.
+    static let coordinateTolerance = 1e-7
+
+    /// Finds the pin's point by its ID, and refuses it when the point there is not at the pin's
+    /// coordinate. An editor or a list row held across an undo or a reload names a pin by an ID
+    /// that may now belong to another pin.
+    func locate(_ pin: GeoPin) throws -> Point {
+      let point = try locate(pin.id)
+      let parts = try spans.elements(of: point.coordinates[point.index])
+      let numbers = parts.prefix(2).compactMap {
+        Double(String(decoding: spans.bytes[$0], as: UTF8.self))
+      }
+
+      guard numbers.count == 2,
+        abs(numbers[0] - pin.coordinate.longitude) <= Self.coordinateTolerance,
+        abs(numbers[1] - pin.coordinate.latitude) <= Self.coordinateTolerance
+      else { throw PinEditError.notFound(pin.id) }
+
+      return point
     }
 
     func locate(_ id: String) throws -> Point {
@@ -390,8 +422,8 @@ public enum GeoJSONPatcher {
     func plan(members: [JSONMember], old: GeoPin, new: GeoPin) throws -> Plan {
       var plan = Plan()
 
-      if old.label != new.label {
-        let label = new.label.trimmingCharacters(in: .whitespacesAndNewlines)
+      if Collection.ownLabel(old) != Collection.ownLabel(new) {
+        let label = Collection.ownLabel(new)
         let current = GeoFileLayerBuilder.labelKeys.lazy.compactMap { key in
           members.first { member in
             member.key == key
@@ -489,5 +521,23 @@ public enum GeoJSONPatcher {
         + Array(#", "geometry": {"type": "Point", "coordinates": "#.utf8) + coordinates
         + Array("}}".utf8)
     }
+  }
+}
+
+extension GeoJSONPatcher {
+  /// The ordinals of the features whose pins the patcher can change: those whose geometry is a
+  /// Point or a MultiPoint. A pin in a geometry collection is shown, and cannot be edited.
+  public static func editableOrdinals(in data: Data) -> Set<Int> {
+    guard let bytes = try? wrappedInCollection([UInt8](data)),
+      let document = try? Collection(bytes)
+    else { return [] }
+
+    var ordinals = Set<Int>()
+
+    for ordinal in document.features.indices {
+      if (try? document.locate("\(ordinal):0")) != nil { ordinals.insert(ordinal) }
+    }
+
+    return ordinals
   }
 }
