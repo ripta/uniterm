@@ -194,7 +194,8 @@ Decision: this proposal makes no change to the applet contract. Its input and ev
 - The payload holds one number about command layers: how many distinct layers held pins in this launch. The set of
   counted names rides in the undo-only part, so a rerun or a reopen in the same launch does not raise it. Each launch
   starts counting from zero. `start()` reads the stored count only to show, when it is above zero, a notice that that
-  many program layers from the last session were not restored. Amended 2026-11-03; see Decision Log.
+  many program layers from the last session were not restored. The notice posts once to the status bar at info level,
+  and nothing is drawn over the map. Amended 2026-11-05; see Decision Log.
 - An exec declaration and its desired modes are the host's, saved outside the payload, per UTERM-004 "Saved layouts".
   Restore runs nothing, per ADR-03.
 
@@ -536,6 +537,10 @@ None.
   not shown is a warning. A file found at a new path is info. Lost user work is an error, so it stays until seen. The
   map's load notices were info before, and the data viewer's were warnings. Unsaved pins that cannot come back after a
   reopen were a warning, which clears in 5 seconds.
+- 2026-11-05: The relaunch notice for program layers posts once to the status bar at info level. The text named the
+  notice but not its place, and M2's notices had been drawn over the map until the user's review moved them. It is
+  info, not a warning, because restore never runs a program by design, so the missing layers are expected. The
+  2026-11-03 marker on "The applet contract" is replaced by this one.
 
 ## References
 

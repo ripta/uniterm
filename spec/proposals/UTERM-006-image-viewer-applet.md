@@ -95,9 +95,9 @@ Decision: files and folders open from inside the pane, following UTERM-009's "In
 - The launcher offers the image viewer, and the pane starts empty. Inside it, the user opens a file or a folder with an
   open panel, from an Open... registry command with no key in the File menu, or drops file URLs onto the pane.
 - A pane shows one source, a file or a folder. Opening another replaces it, and a slideshow that was playing stops.
-  The open panel selects one file or one folder. A drop of several items is refused with a message asking for one
-  file or folder, and the pane keeps what it showed. The source stays one file or one folder, in the description and
-  in `show`, as UTERM-009 settles for the data viewer. Amended 2026-11-03; see Decision Log.
+  The open panel selects one file or one folder. A drop of several items is refused with a status bar warning asking
+  for one file or folder, and the pane keeps what it showed. The source stays one file or one folder, in the
+  description and in `show`, as UTERM-009 settles for the data viewer. Amended 2026-11-05; see Decision Log.
 - A drawer of open documents beside the image, as Preview has, is an idea for later. This proposal does not commit to
   it. Building it needs its own proposal, since it changes what a pane and its description hold.
 - All loading goes through one internal entry point that takes a source.
@@ -137,8 +137,8 @@ Decision: all three, with a fit-size backdrop and a bounded tile cache in the ap
   holds, and asks for crisp tiles when the gesture ends.
 - One app-side budget covers every bitmap image panes hold: backdrops, tiles, the prefetched and previous images, and
   animation frames.
-- Zoom past what the helper cap or the app-wide helper budget allows is refused, and the pane says the limit was
-  reached. Another pane's helper is never killed to make room.
+- Zoom past what the helper cap or the app-wide helper budget allows is refused, and the status bar says the limit was
+  reached. Another pane's helper is never killed to make room. Amended 2026-11-05; see Decision Log.
 
 Rationale: the draft names all three modes, and a viewer for screenshots and photos needs detail at 1:1. A backdrop
 keeps panning responsive while tiles arrive, as ADR-08 requires, where a viewport-only transfer would show blank edges
@@ -206,8 +206,8 @@ and a folder listing taken once, with Reload.
 - The folder is listed once, off the main thread, when it opens. The user can step while the listing runs, through what
   is listed so far, and the index and count stay provisional until it ends. Reload Folder lists it again and keeps the
   current image, or lands on the image nearest its old position when it is gone.
-- A file deleted since the listing shows a message when reached and is skipped. Given one file, its siblings are listed
-  the same way, starting at that file. Subfolders and hidden files are not included.
+- A file deleted since the listing posts a status bar warning when reached and is skipped. Given one file, its siblings
+  are listed the same way, starting at that file. Subfolders and hidden files are not included. Amended 2026-11-05; see Decision Log.
 
 Rationale: plain keys cover the focused case, as Preview does, and registry commands give the menu and palette a way in
 without claiming a chord the palette's text field needs. A timer is what makes a folder a slideshow, and one fixed
@@ -316,8 +316,8 @@ None.
   the Open... command with no key or the empty pane, or by dropping file URLs on the pane, through the one
   source-taking entry point
 - Opening a source into a pane that shows one replaces it and stops any slideshow. A drop of several items is refused
-  with a message asking for one file or folder, and the pane keeps what it showed. A drop with no file URL shows why it
-  was refused
+  with a status bar warning asking for one file or folder, and the pane keeps what it showed. A drop with no file URL
+  posts a warning that says why it was refused. Amended 2026-11-05; see Decision Log.
 - The app reads no image bytes: it types files by extension and UTType only, and every ImageIO call runs in the helper
 - The shipped helper cannot open a file by path or make a network connection
 - The regular-file check runs on the opened descriptor, so swapping the path after the check cannot slip past it
@@ -365,10 +365,11 @@ None.
 - Name order matches Finder's for numbered files, and date order is newest first with ties in name order
 - Stepping works while a large folder is still listing, and Reload keeps the current image or lands nearest it
 - When the folder of a single opened file cannot be listed, such as under macOS privacy protection, the pane shows that
-  file with a message, never an empty pane
+  file, never an empty pane. The status bar says so once, and a "Folder not listed" warning segment shows while it
+  holds. Amended 2026-11-05; see Decision Log.
 - Restoring into a large folder opens the stored image at once, without showing the first image while the listing runs
 - Stepping during a partial listing keeps a stable order, and the slideshow does not wrap before the listing ends
-- The slideshow stops, with a message, when every remaining file has been deleted
+- The slideshow stops when every remaining file has been deleted, and the status bar says why
 - Reload and restore land on the same image when the current one is gone
 - A single-file source is restored from its stored path, then its bookmark, then its old folder for the current image,
   in that order
@@ -391,9 +392,10 @@ None.
 - Panning a large image at actual size never shows blank edges past the backdrop, and the main thread never waits on
   a tile
 - Peak app memory on a very large image stays bounded while zoomed and panned
-- A slow but legitimate decode of a very large image reports that the zoom limit was reached, never a crash
-- Zoom past the helper cap or the app-wide helper budget is refused with a message, and no other pane's helper is
-  killed
+- A slow but legitimate decode of a very large image reports in the status bar that the zoom limit was reached, never a
+  crash
+- Zoom past the helper cap or the app-wide helper budget is refused with a status bar warning, and no other pane's
+  helper is killed. Amended 2026-11-05; see Decision Log.
 - Moving the window to a display with a different scale requests new pixels
 - A user remap of the shared "Actual Size" title moves the terminal's item and the viewer's item together
 - On detach a zoomed pane releases its 1:1 decode and tiles and keeps only its backdrop
@@ -479,6 +481,11 @@ None.
   viewer gains an Open... command with no key, declares `public.image` as owner and `public.folder` as alternate, and
   M4 starts after UTERM-015 M4. M1's gate on the filing became the declaration check, and the risk names UTERM-015.
 - 2026-11-03: Scheduled as UTERM-006 M1-M3 and UTERM-006 M4 in queue.md.
+- 2026-11-05: Messages shown while an image is on screen go to the status bar, after a status bar audit. The text said
+  "with a message" or "the pane says" without a place. The refused drops, a deleted file reached while stepping, the
+  stopped slideshow, and the zoom limit now post warnings. A folder that cannot be listed posts once and shows a
+  "Folder not listed" warning segment while it holds. The pane keeps the image in each case. This follows the rule the
+  user set for the map and data viewers. The 2026-11-03 marker on "Input sources" is replaced by this one.
 
 ## References
 
