@@ -20,9 +20,9 @@ Commits, in order:
 5. "Finish the status bar placement row"
 6. "Bring back an evicted held record whichever order the pane posts in", the final review
 
-Two gaps in the proof remain. The UI suite ran only on M1. Every later attempt found the screen locked. And
-`make test-package` ends with 21 unowned failures in `TerminalSessionIntegrationTests`. Run `make test-app` with the screen
-unlocked, and rerun `make test-package` once the leftover `xctest` processes have ended.
+One gap in the proof remains. The UI suite ran only on M1, since every later attempt found the screen locked. Run
+`make test-app` with the screen unlocked. `make test-package` passed in full after the run, on 2026-11-06 at 08:44: 1,143
+tests, 4 skipped, 0 failures, run `11ZJFH`. See "Unowned failures" for the correction to what this report first said.
 
 | Milestone | Run status | Commit |
 |---|---|---|
@@ -88,7 +88,7 @@ Checks, each run on 2026-11-06:
 - The coordinator reran `make fmt-check` and `make test-package`: 1,022 tests, 4 skipped, 0 failures.
 - The coordinator ran `make test-app`: 97 tests, 0 failures, in 790 s.
 - `ls -lt ~/Library/Logs/DiagnosticReports` showed no uniterm crash report.
-- `TerminalSessionIntegrationTests` passed. The pty shortage from the 2026-11-05 run did not recur.
+- `TerminalSessionIntegrationTests` passed. The failure from the 2026-11-05 run did not recur.
 - `make swiftpm-offline-check` was not run, since `Package.swift` did not change.
 
 Best guesses made during the milestone:
@@ -153,12 +153,16 @@ removed", all in `TerminalSessionIntegrationTests`.
 
 - Evidence the work did not cause them: `git diff cdd3bcf` shows no change to the `TerminalSurface` sources, its tests, its
   one local dependency `Theme`, or `Package.swift`. The same tests passed in M1's run, before any hung run existed.
-- Likely cause: four `xctest` processes left by hung runs are still alive, PIDs 14347, 34092, 64115, and 68084. They may
-  hold ptys. The same failure appeared on 2026-11-05.
-- Uncertain: the pty link is not proven. `ps` and `sysctl` are denied, and the base commit was not run. The cleanup failure
-  has no explanation yet.
-- Attempts: the coordinator's `kill` was refused by a cg deny rule, and the rule was not worked around. To settle it, end
-  those processes and rerun `make test-package`.
+- Correction, 2026-11-06: this section first blamed a pty shortage from the `xctest` processes the hung runs left behind.
+  The evidence refutes that. Those runs hung in `StatusKitTests`, before `TerminalSurfaceTests` run, so they never started
+  a terminal. Only 38 `/dev/ttys*` nodes existed. And all 21 tests passed with an orphan alive and the display on, run
+  `QSTC7S`. The sandboxed `pty.openpty()` failure the 2026-11-05 report cites is the sandbox's, not a real shortage.
+- Likely cause: the display being off. `pmset -g log` shows it off from 01:30:51 to 08:32:27 local, apart from four
+  30-second wakes when a UI test launched. All 10 failing `make test-package` runs listed by `cg_list`, 03:56 to 07:54, fall
+  inside that window. M1's passing run at about 01:06, and the runs at 08:43 and 08:44, fall outside it.
+- Uncertain: this is a correlation in time, with no run yet that turns the display off on purpose. The libghostty code path
+  behind the failure was not read. The cleanup failure's message has no explanation yet, though it stopped with the rest.
+- Not a flake in the sense of random failure: all 21 failed together on every run in the window, and passed together outside it.
 
 ### The hang and the stalled agents
 
