@@ -2,6 +2,7 @@ import AppKit
 import AppletKit
 import Foundation
 import GeoData
+import MapKit
 import XCTest
 
 @testable import MapViewerApplet
@@ -229,21 +230,22 @@ final class MapPinEditingTests: XCTestCase {
     let scratch = try GeoScratch(self)
     let file = try mixedFile(scratch)
     var changes = 0
-    let fired = expectation(description: "watcher")
-    fired.expectedFulfillmentCount = 2
+    let replaced = expectation(description: "replaced")
+    let written = expectation(description: "written")
     let watcher = FileWatcher(url: file) {
       changes += 1
-      if changes <= 2 { fired.fulfill() }
+      if changes == 1 { replaced.fulfill() }
+      if changes == 2 { written.fulfill() }
     }
     defer { watcher.stop() }
 
     let replacement = scratch.url.appendingPathComponent("replacement.geojson")
     try Data("{}".utf8).write(to: replacement)
     _ = try FileManager.default.replaceItemAt(file, withItemAt: replacement)
-    try await Task.sleep(for: .milliseconds(50))
-    try Data("{} ".utf8).write(to: file)
+    await fulfillment(of: [replaced], timeout: 5)
 
-    await fulfillment(of: [fired], timeout: 5)
+    try Data("{} ".utf8).write(to: file)
+    await fulfillment(of: [written], timeout: 5)
   }
 
   /// Catches a closed pane whose unsaved pins are gone on reopen. The undo-only part of its
@@ -443,5 +445,103 @@ final class PinEditSafetyTests: XCTestCase {
 
     XCTAssertEqual(applet.displayName, "places.geojson")
     XCTAssertTrue(applet.isDirty)
+  }
+}
+
+/// Review findings in the applet: restored unsaved bytes, refused drags, and symlinked files.
+@MainActor
+final class PinEditReviewTests: XCTestCase {
+  /// Catches unsaved pins from a closed pane being laid over a different file. The pane's own file
+  /// is gone on reopen, so its unsaved pins cannot apply, and a file opened later in the pane must
+  /// show as it is on disk.
+  func testRestoredUnsavedPinsNeverLandOnAnotherFile() async throws {
+    let scratch = try GeoScratch(self)
+    let first = try scratch.write(
+      "first.geojson", GeoFixtures.collection([GeoFixtures.point("A", 1, 1)]))
+    let applet = MapViewerApplet(startDirectory: nil)
+    applet.replaceSource(with: first, startDirectory: scratch.url.path)
+    await applet.opening?.value
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await applet.editing?.value
+
+    let description = applet.describe()
+    try FileManager.default.removeItem(at: first)
+
+    let reopened = try MapViewerApplet(restoring: description)
+    reopened.start()
+    await reopened.opening?.value
+
+    let second = try scratch.write(
+      "second.geojson", GeoFixtures.collection([GeoFixtures.point("Z", 5, 5)]))
+    reopened.replaceSource(with: second, startDirectory: scratch.url.path)
+    await reopened.asking?.value
+    await reopened.opening?.value
+    await reopened.editing?.value
+
+    XCTAssertEqual(reopened.document, try Data(contentsOf: second))
+    XCTAssertFalse(reopened.isDirty)
+    XCTAssertEqual(reopened.filePinsShown.map(\.label), ["Z"])
+  }
+
+  /// Catches a refused drag that leaves the pin where it was dropped while the file keeps it
+  /// where it was. The pin goes back to the file's coordinate.
+  func testARefusedDragPutsThePinBack() async throws {
+    let applet = MapViewerApplet(startDirectory: nil)
+    applet.addPin(at: GeoCoordinate(latitude: 1, longitude: 1))
+    await applet.editing?.value
+
+    let annotation = try XCTUnwrap(
+      applet.content.mapView.annotations.compactMap { $0 as? MapPinAnnotation }.first)
+    let old = annotation.pin
+    annotation.coordinate = CLLocationCoordinate2D(latitude: 30, longitude: 30)
+
+    let gone = GeoPin(id: "9:0", coordinate: old.coordinate, label: old.label)
+    applet.update(
+      gone,
+      to: GeoPin(
+        id: "9:0", coordinate: GeoCoordinate(latitude: 30, longitude: 30), label: old.label))
+    await applet.editing?.value
+
+    let shown = try XCTUnwrap(
+      applet.content.mapView.annotations.compactMap { $0 as? MapPinAnnotation }.first)
+    XCTAssertEqual(shown.coordinate.latitude, 1, accuracy: 0.0001)
+  }
+
+  /// Catches a pin in a geometry collection offered for dragging and editing, which the patcher
+  /// refuses.
+  func testAPinInAGeometryCollectionIsNotEditable() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try scratch.write(
+      "gc.geojson",
+      #"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":"G"},"geometry":{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[1,2]}]}},{"type":"Feature","properties":{"name":"P"},"geometry":{"type":"Point","coordinates":[3,4]}}]}"#
+    )
+    let applet = MapViewerApplet(startDirectory: nil)
+    applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    await applet.opening?.value
+
+    let editable = applet.content.mapView.annotations.compactMap { $0 as? MapPinAnnotation }
+      .filter(\.isEditable).map(\.pin.label)
+    XCTAssertEqual(editable, ["P"])
+  }
+
+  /// Catches a save that replaces a symlinked file with a plain one, which breaks the link.
+  func testSaveThroughASymlinkKeepsTheLink() async throws {
+    let scratch = try GeoScratch(self)
+    let target = try scratch.write(
+      "real.geojson", GeoFixtures.collection([GeoFixtures.point("A", 1, 1)]))
+    let link = scratch.url.appendingPathComponent("link.geojson")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+    let applet = MapViewerApplet(startDirectory: nil)
+    applet.replaceSource(with: link, startDirectory: scratch.url.path)
+    await applet.opening?.value
+
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await applet.editing?.value
+    _ = await applet.save()
+
+    XCTAssertEqual(
+      try FileManager.default.attributesOfItem(atPath: link.path)[.type] as? FileAttributeType,
+      .typeSymbolicLink)
+    XCTAssertEqual(try Data(contentsOf: target), applet.document)
   }
 }

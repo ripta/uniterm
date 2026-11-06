@@ -606,7 +606,13 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
 
   /// Replaces every pin of `layer` with `pins`. The other layers keep theirs. A selected pin whose
   /// ID is still there stays selected.
-  func replacePins(layer: MapLayer, pins: [GeoPin], defaultAccent: ThemeToken) {
+  ///
+  /// `isEditable` says which of a file layer's pins the user may change. Every other layer's pins
+  /// are read-only.
+  func replacePins(
+    layer: MapLayer, pins: [GeoPin], defaultAccent: ThemeToken,
+    isEditable: (GeoPin) -> Bool = { _ in true }
+  ) {
     let selected = (mapView.selectedAnnotations.first as? MapPinAnnotation).flatMap {
       $0.layer == layer ? $0.pin.id : nil
     }
@@ -614,7 +620,9 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
     removePins(layer: layer)
 
     let annotations = pins.map {
-      MapPinAnnotation(pin: $0, layer: layer, layerAccent: defaultAccent)
+      MapPinAnnotation(
+        pin: $0, layer: layer, layerAccent: defaultAccent,
+        isEditable: layer == .file && isEditable($0))
     }
 
     mapView.addAnnotations(annotations)

@@ -34,18 +34,19 @@ final class MapPinAnnotation: NSObject, MKAnnotation {
   /// The label. MapKit shows it in the callout when the pin is selected.
   var title: String? { pin.label }
 
-  init(pin: GeoPin, layer: MapLayer, layerAccent: ThemeToken) {
+  /// True for a pin the user can change: one from the file, outside a geometry collection.
+  let isEditable: Bool
+
+  init(pin: GeoPin, layer: MapLayer, layerAccent: ThemeToken, isEditable: Bool = false) {
     self.pin = pin
     self.layer = layer
     self.layerAccent = layerAccent
+    self.isEditable = isEditable
     coordinate = CLLocationCoordinate2D(
       latitude: pin.coordinate.latitude, longitude: pin.coordinate.longitude)
   }
 
   var accent: ThemeToken { pin.accent ?? layerAccent }
-
-  /// True for a pin the user can change: one from the file.
-  var isEditable: Bool { layer == .file }
 }
 
 /// What a marker draws: a body in the accent, a neutral disc inside it, and a glyph or a count on
