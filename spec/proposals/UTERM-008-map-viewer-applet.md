@@ -85,7 +85,8 @@ pin belongs to a named layer.
 - The per-layer pin cap is sized so a full `set-layer` fits in one UTERM-004 frame. A `set-layer` past a cap is
   refused whole, with no effect.
 - The file layer is outside the command namespace. No layer name a command can send refers to it, so commands cannot
-  add to, remove from, or clear the file's pins. Only the user and file loading change it.
+  add to, remove from, or clear the file's pins. Only file loading and the user's own edits change it. UTERM-016 adds
+  a file-layer target for edit commands, gated by the path-reading power, with saving left to the user.
 - Layers are namespaces, not authority. Every command is authorized against the pane at dispatch, per ADR-09. Any
   caller authorized for the pane may address any command layer. A layer name is never proof of who placed a pin.
 - A script run again, or a driver restarted, sends `set-layer` for the same layer and replaces its own earlier pins.
@@ -230,8 +231,10 @@ None.
   stack as shipped under a memory-error detector. This is the exposure UTERM-009 carries for its readers.
 - **Map tiles reveal the regions the user views to Apple** — likelihood: high, impact: low. Pins stay local, but
   MapKit fetches tiles for every region shown, so opening a log of someone's locations sends the areas viewed.
-  Accepted: tile fetching is how MapKit works, and the settled MapKit decision chose it. The map makes no network
-  request of its own.
+  Accepted: tile fetching is how MapKit works, and the settled MapKit decision chose it. Two requests of the map's own
+  send Apple the same kind of data: the place name in the palette sends the map's center after a move, and Go to Place
+  sends what the user types. Both are injected services, so a pane given none, as in every test, sends nothing.
+  Amended 2026-11-05; see Decision Log.
 - **The payload is stored data** — every later build reads it. The design defuses the one-way door: the payload
   carries its own version per ADR-06, carries every field from its first version, and an unreadable description is
   kept, not dropped.
@@ -512,6 +515,12 @@ None.
   matches the glyph rule of one or two characters. The keys are `uniterm:accent` and `uniterm:glyph`, and they win over
   the simplestyle keys. An unusable value is counted and falls through to the next source. A Maki name is ignored and
   not counted, since ignoring Maki is the documented rule.
+- 2026-11-05: Amended the tile risk. It said the map makes no network request of its own. A review of the map added
+  the palette's place name, which reverse-geocodes the map's center, and Go to Place, which sends typed text to Apple's
+  search. Both run only when the app gives the pane Apple's place services.
+- 2026-11-05: Amended "Where pins come from" for UTERM-016. The user now edits the file's pins by hand and saves them.
+  UTERM-016 M4 will let an authorized caller edit the open document's file pins, under the path-reading power. The
+  text before said only the user and file loading change the file layer.
 
 ## References
 

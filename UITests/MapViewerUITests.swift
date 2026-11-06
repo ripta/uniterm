@@ -102,7 +102,8 @@ final class MapViewerUITests: UnitermUITestCase {
   }
 
   /// Catches a place field the launcher never shows, a Cmd-L that does not reach the map, and a
-  /// search that Escape cannot close. No place is searched, so the test needs no network.
+  /// search that Escape cannot close. Nothing is typed, so the search sends nothing, and the UI
+  /// tests turn off place names.
   func testThePlaceFieldShowsInTheLauncherAndCmdLOpensItOverTheMap() throws {
     let app = launchApp()
     let window = mainWindow(in: app)
@@ -289,5 +290,55 @@ final class MapViewerUITests: UnitermUITestCase {
 
     XCTAssertTrue(map(in: secondWindow).waitForExistence(timeout: 20), "no map pane")
     XCTAssertTrue(waitFor(map(in: secondWindow), timeout: 5) { !$0.contains("pins=") })
+  }
+
+  /// Catches pin editing that never reaches the file, an undo that does not reach the map, and a
+  /// close that drops unsaved pins without asking. A right-click adds a pin, Cmd-Z takes it back,
+  /// a second add and Cmd-S write it beside the file's line, and Cmd-W on an edited map asks.
+  func testRightClickAddsAPinThatUndoesAndSaves() throws {
+    let file = try makeGeoJSON()
+    try plantMap(
+      payload:
+        #"{"startDirectory":"\#(file.deletingLastPathComponent().path)","path":"\#(file.path)"}"#)
+
+    let app = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
+    let window = mainWindow(in: app)
+    let mapView = window.descendants(matching: .any)["map-viewer-map"]
+
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 20) { $0.hasSuffix("pins=3") }, "the pins did not load")
+
+    func addPin() {
+      mapView.rightClick()
+      let add = app.menuItems["Add Pin Here"]
+      XCTAssertTrue(add.waitForExistence(timeout: 5), "no Add Pin Here in the context menu")
+      add.click()
+    }
+
+    addPin()
+    XCTAssertTrue(waitFor(map(in: window), timeout: 10) { $0.hasSuffix("pins=4 edited") })
+
+    app.typeKey("z", modifierFlags: .command)
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 10) { $0.hasSuffix("pins=3") }, "Cmd-Z did not undo")
+
+    addPin()
+    XCTAssertTrue(waitFor(map(in: window), timeout: 10) { $0.hasSuffix("pins=4 edited") })
+
+    app.typeKey("w", modifierFlags: .command)
+    let question =
+      app.dialogs["unsaved-confirmation"].exists
+      ? app.dialogs["unsaved-confirmation"] : window.sheets.firstMatch
+    XCTAssertTrue(question.waitForExistence(timeout: 5), "closing an edited map asked nothing")
+    app.typeKey(.escape, modifierFlags: [])
+    XCTAssertTrue(waitForNoSheet(in: window, timeout: 5))
+
+    app.typeKey("s", modifierFlags: .command)
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 10) { $0.hasSuffix("pins=4") }, "Cmd-S left it edited")
+
+    let written = try String(contentsOf: file, encoding: .utf8)
+    XCTAssertTrue(written.contains("LineString"), written)
+    XCTAssertTrue(written.contains("Ferry Building"), written)
   }
 }

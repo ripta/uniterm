@@ -86,6 +86,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   /// Asks the user before something is ended that undo cannot bring back. Tests replace it.
   var confirmer: CloseConfirmer = CloseDialog.present
 
+  /// Asks before a close would lose unsaved work. Tests replace it.
+  var unsavedConfirmer: UnsavedConfirmer = UnsavedDialog.present
+
   /// The question the window is asking now, if any. A second question is not stacked on it.
   private(set) var pendingGuard: Task<Void, Never>?
 
@@ -536,7 +539,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   ///
   /// A close is a close, however it happens. A pane the user closes and a pane whose applet ended
   /// on its own both end the applet at once and put its description on the reopen list. Only a
-  /// pane the user closes while it runs something asks first. A launcher has nothing to reopen.
+  /// pane the user closes while it holds unsaved work, or runs something, asks first. A launcher
+  /// has nothing to reopen.
   func closePane(_ pane: NodeID, appletEnded: Bool) {
     guard let applet = paneArea.applet(for: pane) else { return }
 
@@ -549,10 +553,93 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
       discard(pane)
     } else if appletEnded || exitedApplets.contains(ObjectIdentifier(applet)) {
       describeAndClose(pane)
+    } else if applet.unsavedWork != nil {
+      askAboutUnsaved(pane, applet: applet)
     } else if applet.isRunningSomething {
       askBeforeClosing(pane, applet: applet)
     } else {
       describeAndClose(pane)
+    }
+  }
+
+  /// Asks Save, Don't Save, or Cancel for one pane. Once the work is saved or let go, the close
+  /// goes on as any other, asking about a running program when there is one.
+  private func askAboutUnsaved(_ pane: NodeID, applet: any Applet) {
+    guard pendingGuard == nil, let label = applet.unsavedWork?.label else { return }
+
+    let question = UnsavedQuestion(
+      title: "Save changes before closing this pane?",
+      detail: "Your changes are lost if you don\u{2019}t save them.", labels: [label])
+
+    pendingGuard = Task { @MainActor [weak self] in
+      guard let self else { return }
+
+      let mayClose = await settleUnsaved([applet], question: question)
+      pendingGuard = nil
+
+      guard mayClose, paneArea.applet(for: pane) === applet else { return }
+
+      if applet.isRunningSomething {
+        askBeforeClosing(pane, applet: applet)
+      } else if paneArea.paneCount > 1 {
+        describeAndClose(pane)
+      } else {
+        window?.close()
+      }
+    }
+  }
+
+  /// What in this window holds unsaved work, as a dialog names it.
+  public var unsavedLabels: [String] {
+    paneArea.applets.compactMap { $0.unsavedWork?.label }
+  }
+
+  /// Asks about the unsaved work in `applets`, and saves it when the user says so. Returns true
+  /// when the close may go ahead: nothing was unsaved, the user let it go, or every save worked.
+  func settleUnsaved(_ applets: [any Applet], question: UnsavedQuestion) async -> Bool {
+    let holding = applets.filter { $0.unsavedWork != nil }
+
+    guard !holding.isEmpty else { return true }
+
+    switch await unsavedConfirmer(question, window) {
+    case .cancel:
+      return false
+
+    case .discard:
+      return true
+
+    case .save:
+      for applet in holding where applet.unsavedWork != nil {
+        guard await applet.saveUnsavedWork() else { return false }
+      }
+
+      return true
+    }
+  }
+
+  /// Asks about every pane's unsaved work before the window closes, then about what is running.
+  private func askAboutUnsavedThenCloseWindow() {
+    guard pendingGuard == nil else { return }
+
+    let question = UnsavedQuestion(
+      title: "Save changes before closing this window?",
+      detail: "Your changes are lost if you don\u{2019}t save them.", labels: unsavedLabels)
+
+    pendingGuard = Task { @MainActor [weak self] in
+      guard let self else { return }
+
+      let mayClose = await settleUnsaved(paneArea.applets, question: question)
+      pendingGuard = nil
+
+      guard mayClose else { return }
+
+      let labels = runningTabLabels
+
+      if labels.isEmpty {
+        window?.close()
+      } else {
+        askToCloseWindow(labels: labels)
+      }
     }
   }
 
@@ -620,6 +707,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   /// asked about again. It stays after a Cancel, and closing it then needs no question.
   private func closeLastPane() {
     guard pendingGuard == nil else { return }
+
+    guard unsavedLabels.isEmpty else {
+      askAboutUnsavedThenCloseWindow()
+      return
+    }
 
     let labels = runningTabLabels
 
@@ -847,9 +939,14 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   // MARK: Window
 
-  /// The red button and Cmd-Q on the last window end here. When something is running in the window,
-  /// the sheet asks and the close waits for the answer.
+  /// The red button and Cmd-Q on the last window end here. When a pane holds unsaved work, or
+  /// something is running in the window, the sheet asks and the close waits for the answer.
   public func windowShouldClose(_ sender: NSWindow) -> Bool {
+    guard unsavedLabels.isEmpty else {
+      askAboutUnsavedThenCloseWindow()
+      return false
+    }
+
     let labels = runningTabLabels
 
     guard !labels.isEmpty else { return true }

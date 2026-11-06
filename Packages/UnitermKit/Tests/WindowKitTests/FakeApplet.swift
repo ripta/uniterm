@@ -22,6 +22,19 @@ final class FakeApplet: Applet {
   var detachCount = 0
   var reattachCount = 0
 
+  /// Unsaved work the applet reports, and what its save answers.
+  var unsavedWork: AppletUnsavedWork?
+  var saveSucceeds = true
+  var saves = 0
+
+  func saveUnsavedWork() async -> Bool {
+    saves += 1
+
+    if saveSucceeds { unsavedWork = nil }
+
+    return saveSucceeds
+  }
+
   /// What a dialog calls the running parts. Without it, a running applet names its title.
   var labels: [String]?
 

@@ -35,6 +35,14 @@ public enum PinGlyph: Sendable, Equatable {
     self = .symbol(trimmed)
   }
 
+  /// The glyph as a file writes it: the characters, or the symbol's name.
+  public var text: String {
+    switch self {
+    case .text(let text): return text
+    case .symbol(let name): return name
+    }
+  }
+
   private static func isSymbolName(_ name: String) -> Bool {
     name.split(separator: ".", omittingEmptySubsequences: false).allSatisfy { part in
       !part.isEmpty

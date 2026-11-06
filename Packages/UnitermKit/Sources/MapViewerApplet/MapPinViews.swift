@@ -27,15 +27,21 @@ final class MapPinAnnotation: NSObject, MKAnnotation {
   let layer: MapLayer
   let layerAccent: ThemeToken
 
-  @objc dynamic let coordinate: CLLocationCoordinate2D
+  /// Settable so MapKit can move a dragged file pin. The pin itself keeps the coordinate the file
+  /// holds until the drag ends and the edit lands.
+  @objc dynamic var coordinate: CLLocationCoordinate2D
 
   /// The label. MapKit shows it in the callout when the pin is selected.
   var title: String? { pin.label }
 
-  init(pin: GeoPin, layer: MapLayer, layerAccent: ThemeToken) {
+  /// True for a pin the user can change: one from the file, outside a geometry collection.
+  let isEditable: Bool
+
+  init(pin: GeoPin, layer: MapLayer, layerAccent: ThemeToken, isEditable: Bool = false) {
     self.pin = pin
     self.layer = layer
     self.layerAccent = layerAccent
+    self.isEditable = isEditable
     coordinate = CLLocationCoordinate2D(
       latitude: pin.coordinate.latitude, longitude: pin.coordinate.longitude)
   }
@@ -169,7 +175,16 @@ final class MapMarkerView: MKAnnotationView {
   static let pinSide = 26.0
   static let clusterSide = 32.0
 
+  /// The square a single pin takes clicks and drags in. It is wider than the marker, so a drag that
+  /// starts just off the disc moves the pin and does not pan the map. MapKit declutters by this
+  /// frame too, so nearby pins cluster a little sooner than the marker alone would.
+  static let pinHitSide = 36.0
+
   private let art = MarkerArtView()
+  private let editButton = NSButton(title: "Edit", target: nil, action: nil)
+
+  /// Gets a press of the callout's Edit button.
+  var onEdit: ((MapPinAnnotation) -> Void)?
 
   var palette = ThemePalette.latte {
     didSet { refresh() }
@@ -182,16 +197,31 @@ final class MapMarkerView: MKAnnotationView {
   override init(annotation: (any MKAnnotation)?, reuseIdentifier: String?) {
     super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
 
-    let side = reuseIdentifier == Self.clusterReuse ? Self.clusterSide : Self.pinSide
+    let isCluster = reuseIdentifier == Self.clusterReuse
+    let side = isCluster ? Self.clusterSide : Self.pinSide
+    let hit = isCluster ? side : Self.pinHitSide
 
-    frame = NSRect(x: 0, y: 0, width: side, height: side)
-    art.frame = bounds
-    art.autoresizingMask = [.width, .height]
+    frame = NSRect(x: 0, y: 0, width: hit, height: hit)
+    art.frame = NSRect(x: (hit - side) / 2, y: (hit - side) / 2, width: side, height: side)
+    art.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
     addSubview(art)
 
     canShowCallout = reuseIdentifier == Self.pinReuse
     collisionMode = .circle
+
+    editButton.bezelStyle = .inline
+    editButton.controlSize = .small
+    editButton.target = self
+    editButton.action = #selector(edit)
+    editButton.setAccessibilityIdentifier("map-pin-edit")
+
     refresh()
+  }
+
+  @objc private func edit() {
+    guard let pin = annotation as? MapPinAnnotation else { return }
+
+    onEdit?(pin)
   }
 
   @available(*, unavailable)
@@ -208,6 +238,8 @@ final class MapMarkerView: MKAnnotationView {
       clusteringIdentifier = pin.layer.clusteringIdentifier
       art.art = .of(palette: palette, accent: pin.accent, glyph: pin.pin.glyph)
       setAccessibilityLabel(pin.pin.label)
+      isDraggable = pin.isEditable
+      rightCalloutAccessoryView = pin.isEditable ? editButton : nil
     } else if let cluster = annotation as? MKClusterAnnotation {
       let members = cluster.memberAnnotations.compactMap { $0 as? MapPinAnnotation }
       let accent = members.first?.layerAccent ?? .blue

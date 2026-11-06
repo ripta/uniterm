@@ -89,26 +89,33 @@ final class BuiltInCommandsTests: XCTestCase {
       "style-standard": KeyChord("1"), "style-satellite": KeyChord("2"),
       "style-hybrid": KeyChord("3"), "zoom-in": KeyChord("+"), "zoom-out": KeyChord("-"),
       "zoom-to-pins": KeyChord("0"), "face-north": KeyChord("n", [.command, .shift]),
-      "go-to-place": KeyChord("l"),
+      "go-to-place": KeyChord("l"), "save": KeyChord("s"),
+      "save-as": KeyChord("s", [.command, .shift]), "remove-pin": KeyChord("\u{8}"),
+      "pin-list": KeyChord("l", [.command, .shift]),
     ]
-    let file: Set = ["open", "clear-file"]
+    let homes: [String: AppletMenuHome] = [
+      "open": .file, "save": .file, "save-as": .file, "clear-file": .file, "edit-pin": .applet,
+      "remove-pin": .applet,
+    ]
 
     XCTAssertEqual(
       map.commands.map(\.name),
       [
-        "open", "clear-file", "style-standard", "style-satellite", "style-hybrid", "zoom-in",
-        "zoom-out", "zoom-to-pins", "face-north", "go-to-place",
+        "open", "save", "save-as", "clear-file", "style-standard", "style-satellite",
+        "style-hybrid", "zoom-in", "zoom-out", "zoom-to-pins", "face-north", "go-to-place",
+        "edit-pin", "remove-pin", "pin-list",
       ])
     XCTAssertEqual(
       map.commands.map(\.title),
       [
-        "Open\u{2026}", "Clear File Pins", "Standard Map", "Satellite Map", "Hybrid Map",
-        "Zoom In", "Zoom Out", "Zoom to Fit Pins", "Face North", "Go to Place\u{2026}",
+        "Open\u{2026}", "Save", "Save As\u{2026}", "Clear File Pins", "Standard Map",
+        "Satellite Map", "Hybrid Map", "Zoom In", "Zoom Out", "Zoom to Fit Pins", "Face North",
+        "Go to Place\u{2026}", "Edit Pin\u{2026}", "Remove Pin", "Show or Hide Pin List",
       ])
 
     for command in map.commands {
       XCTAssertEqual(command.key, keys[command.name], command.title)
-      XCTAssertEqual(command.home, file.contains(command.name) ? .file : .view, command.title)
+      XCTAssertEqual(command.home, homes[command.name] ?? .view, command.title)
 
       let id = CommandRegistry.commandID(typeID: "map-viewer", name: command.name)
       XCTAssertEqual(registry.appletKeys[id], keys[command.name], command.title)

@@ -176,7 +176,8 @@ public struct GeoFileLayerBuilder {
       && abs(coordinate.longitude) <= 180
   }
 
-  static func coordinateText(_ coordinate: GeoCoordinate) -> String {
+  /// The label of a pin with no label property: its coordinate to five places.
+  public static func coordinateText(_ coordinate: GeoCoordinate) -> String {
     String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude)
   }
 

@@ -5,6 +5,7 @@ import PlaceSearch
 import SourceAccess
 import StatusKit
 import Theme
+import UniformTypeIdentifiers
 
 /// Shows a map that the user can pan and zoom, in one of three styles, with the pins of a GeoJSON
 /// file on it.
@@ -43,6 +44,47 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private var fileFailure: String?
   private var resolvedNotice: String?
 
+  /// The file's bytes as the user has edited them. Nil before any file or pin.
+  private(set) var document: Data?
+
+  /// The file's bytes as they are on disk, as of the last load or save.
+  private(set) var savedDocument: Data?
+
+  /// The pane's own undo stack, for pin edits. Cmd-Z reaches it while the map has focus. Each step
+  /// keeps a whole document, so the stack is bounded.
+  let undoManager: UndoManager = {
+    let manager = UndoManager()
+    manager.levelsOfUndo = 50
+    return manager
+  }()
+
+  /// The read of an edited document's pins, while it runs.
+  private(set) var editing: Task<Void, Never>?
+  private var editGeneration = 0
+  private var watcher: FileWatcher?
+  private var changedOnDisk = false
+  /// Unsaved pins a closed pane carried, waiting for its file to load: the edited bytes, the
+  /// file's bytes the edits were made over, and the file's path. They apply only to that file.
+  private var unsavedFromUndo: UnsavedPins?
+
+  /// The features whose pins the patcher can change, by ordinal.
+  private var editableOrdinals: Set<Int> = []
+
+  /// The save in flight. A second Save waits for it, so it cannot read the file between the
+  /// first one's write and its record of what it wrote, and see its own write as a conflict.
+  private var saving: Task<Bool, Never>?
+
+  /// A question about unsaved edits, while it is open.
+  private(set) var asking: Task<Void, Never>?
+
+  /// Asks where Save As writes, given a suggested name and a start folder. Tests replace it.
+  var chooseSaveLocation: @MainActor (String, String?, NSWindow?) async -> URL? =
+    MapViewerApplet.runSavePanel
+
+  /// Asks what Save does when the file changed on disk since it was read. Tests replace it.
+  var resolveConflict: @MainActor (String, NSWindow?) async -> SaveConflictChoice =
+    MapViewerApplet.runConflictAlert
+
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
   ///
@@ -74,6 +116,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     services = places
     record = try MapViewerDescription.decode(description)
     restoreWaitsForStart = record.path != nil
+    unsavedFromUndo = Self.unsavedPins(in: description)
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
     wire()
@@ -84,6 +127,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     }
 
     refresh()
+
+    if record.path == nil, let unsaved = unsavedFromUndo, unsaved.path == nil {
+      unsavedFromUndo = nil
+      replaceDocument(with: unsaved.document, registeringUndo: false)
+    }
   }
 
   /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
@@ -130,6 +178,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.onRegionShown = { [weak self] region in self?.places.regionShown(region) }
     places.onName = { [weak self] _ in self?.refresh() }
     content.onPlacePicked = { [weak self] region in self?.goTo(region) }
+    content.onAddPin = { [weak self] coordinate in self?.addPin(at: coordinate) }
+    content.onAddPinAtCenter = { [weak self] in self?.addPinAtCenter() }
+    content.onUpdatePin = { [weak self] old, new in self?.update(old, to: new) }
+    content.onRemovePin = { [weak self] pin in self?.remove(pin) }
+    content.ownUndoManager = undoManager
   }
 
   // MARK: Style
@@ -197,6 +250,32 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// `SourceReplacing` lets a viewer throw. This one never does, since every failure shows in the
   /// pane once the load runs.
   public func replaceSource(with file: URL, startDirectory: String) {
+    guard isDirty else {
+      load(file, startDirectory: startDirectory)
+      return
+    }
+
+    let name = displayName
+
+    asking = Task { [weak self] in
+      guard let self else { return }
+
+      defer { asking = nil }
+
+      let request = AppletConfirmation(
+        title: "Discard your changes to \u{201C}\(name)\u{201D}?",
+        detail:
+          "Opening \u{201C}\(file.lastPathComponent)\u{201D} replaces the pins you have not saved.",
+        confirmTitle: "Discard and Open", cancelTitle: "Cancel")
+
+      guard await host?.applet(self, confirm: request) == true, !closed else { return }
+
+      load(file, startDirectory: startDirectory)
+    }
+  }
+
+  private func load(_ file: URL, startDirectory: String) {
+    dropUnsavedFromUndo()
     record.startDirectory = startDirectory
     record.path = file.path
     record.bookmark = nil
@@ -213,6 +292,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     fileNotices = []
     filePins = []
     content.removePins(layer: .file)
+    forgetDocument()
 
     let generation = openGeneration
     let limits = Self.limits
@@ -224,6 +304,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
       switch resolved {
       case .failure(let error):
+        self.dropUnsavedFromUndo()
         self.finishOpen(failure: error.errorDescription)
 
       case .success(let source):
@@ -234,16 +315,32 @@ public final class MapViewerApplet: Applet, SourceReplacing {
           self.resolvedNotice = "Moved. Found at \(source.file.path)."
         }
 
-        let result = await GeoJSONFileReader.read(source.file, limits: limits)
+        let result = await GeoJSONFileReader.readDocument(source.file, limits: limits)
 
         guard generation == self.openGeneration, !self.closed else { return }
 
         switch result {
         case .failure(let error):
+          self.dropUnsavedFromUndo()
           self.finishOpen(failure: error.errorDescription)
 
-        case .success(let layer):
-          self.finishOpen(layer: layer, fitsPins: fitsPins)
+        case .success(let read):
+          self.document = read.bytes
+          self.savedDocument = read.bytes
+          self.editableOrdinals = GeoJSONPatcher.editableOrdinals(in: read.bytes)
+          self.watch(source.file)
+          self.finishOpen(layer: read.layer, fitsPins: fitsPins)
+
+          // The edits were made over the file as it was at close. Save compares with those
+          // bytes, so a file changed since then asks before it is overwritten.
+          if let unsaved = self.unsavedFromUndo, unsaved.path == path {
+            self.unsavedFromUndo = nil
+            self.savedDocument = unsaved.base ?? read.bytes
+            self.changedOnDisk = self.savedDocument != read.bytes
+            self.replaceDocument(with: unsaved.document, registeringUndo: false)
+          } else {
+            self.dropUnsavedFromUndo()
+          }
         }
       }
     }
@@ -268,7 +365,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     let accent = fileAccent
 
     record.fileAccent = accent.rawValue
-    content.replacePins(layer: .file, pins: layer.pins, defaultAccent: accent)
+    showFilePins()
 
     if fitsPins, let region = GeoRegion.fitting(layer.pins.map(\.coordinate)) {
       record.region = region
@@ -292,8 +389,34 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   var canClearFile: Bool { record.path != nil || !filePins.isEmpty || fileFailure != nil }
 
   /// Removes the file layer's pins and forgets the file, so a relaunch does not bring them back.
-  /// The layer keeps its default accent.
+  /// The layer keeps its default accent. Unsaved edits are asked about first, since the clear
+  /// cannot be undone.
   func clearFile() {
+    guard isDirty else {
+      clearFileNow()
+      return
+    }
+
+    let name = displayName
+
+    asking = Task { [weak self] in
+      guard let self else { return }
+
+      defer { asking = nil }
+
+      let request = AppletConfirmation(
+        title: "Discard your changes to \u{201C}\(name)\u{201D}?",
+        detail: "Clearing the file's pins also drops the pins you have not saved.",
+        confirmTitle: "Discard and Clear", cancelTitle: "Cancel")
+
+      guard await host?.applet(self, confirm: request) == true, !closed else { return }
+
+      clearFileNow()
+    }
+  }
+
+  private func clearFileNow() {
+    dropUnsavedFromUndo()
     opening?.cancel()
     opening = nil
     openGeneration += 1
@@ -305,6 +428,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     record.path = nil
     record.bookmark = nil
     content.removePins(layer: .file)
+    forgetDocument()
 
     refresh()
     host?.appletDidChange(self)
@@ -339,6 +463,12 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     closed = true
     opening?.cancel()
     opening = nil
+    editing?.cancel()
+    editing = nil
+    watcher?.stop()
+    watcher = nil
+    content.closeEditor()
+    undoManager.removeAllActions()
     content.onRegionSettled = nil
     content.onLoadFailure = nil
     content.onDrop = nil
@@ -365,7 +495,13 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   public func describe() -> AppletDescription {
     // The payload always encodes. The fields are plain values, so a failure is a programming error.
     // A release build falls back to an empty payload, which restores as a default map.
-    if let description = try? record.appletDescription() { return description }
+    if let description = try? record.appletDescription() {
+      guard isDirty, let document else { return description }
+
+      return AppletDescription(
+        type: description.type, version: description.version, payload: description.payload,
+        undoState: Self.undoState(document: document, base: savedDocument, path: record.path))
+    }
 
     assertionFailure("the map viewer description failed to encode")
 
@@ -380,6 +516,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     guard !closed else { return }
 
     var newSegments = [AppletSegment(symbolName: "map", text: Self.name(of: record.style))]
+
+    if isDirty {
+      newSegments.append(AppletSegment(symbolName: "pencil", text: "Edited"))
+    }
 
     if !filePins.isEmpty {
       newSegments.append(
@@ -400,10 +540,14 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     if let resolvedNotice { lines.append(resolvedNotice) }
 
+    if changedOnDisk {
+      lines.append("The file changed on disk. Saving asks before it overwrites the change.")
+    }
+
     content.show(notices: lines)
     content.setAccessibilityValue(accessibilitySummary())
 
-    let newTitle = record.path.map { ($0 as NSString).lastPathComponent } ?? Self.untitled
+    let newTitle = displayName + (isDirty ? " \u{2014} Edited" : "")
     let tab = AppletTab(
       id: publishedTabs.first.id, title: newTitle, details: places.name.map { [$0] } ?? [])
 
@@ -434,6 +578,521 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
     if !filePins.isEmpty { text += " pins=\(filePins.count)" }
 
+    if isDirty { text += " edited" }
+
     return text
+  }
+}
+
+// MARK: - Editing
+
+/// Unsaved pins a closed pane carried in its description's undo-only part.
+struct UnsavedPins: Equatable {
+  let document: Data
+  let base: Data?
+  let path: String?
+}
+
+/// What Save does when the file changed on disk after the map read it.
+enum SaveConflictChoice: Equatable {
+  /// Write the edits over the change on disk.
+  case overwrite
+
+  /// Write the edits to a new file instead.
+  case saveAs
+
+  /// Drop the edits and show the file as it is on disk.
+  case revert
+
+  case cancel
+}
+
+extension MapViewerApplet {
+  static let unsavedKey = "unsavedDocument"
+
+  /// True when the pins differ from the file on disk, or a pane with no file holds pins.
+  var isDirty: Bool { document != nil && document != savedDocument }
+
+  /// The file's name, or what an unsaved map is called.
+  var displayName: String {
+    if let path = record.path { return (path as NSString).lastPathComponent }
+
+    return document == nil ? "Map" : "Untitled"
+  }
+
+  public var unsavedWork: AppletUnsavedWork? {
+    isDirty ? AppletUnsavedWork(label: displayName) : nil
+  }
+
+  public func saveUnsavedWork() async -> Bool {
+    await save()
+  }
+
+  /// True when no read of an edit is still running. An edit names pins by the IDs the last read
+  /// gave them, and a removal or a split renumbers them, so a second edit waits for the first.
+  var canEdit: Bool { editing == nil && opening == nil }
+
+  // MARK: Edits
+
+  func addPin(at coordinate: GeoCoordinate) {
+    let pin = GeoPin(
+      id: "", coordinate: coordinate, label: GeoFileLayerBuilder.coordinateText(coordinate))
+
+    apply(.add(pin), named: "Add Pin")
+  }
+
+  /// Adds a pin at the center of the map, for the pin list's Add Pin.
+  func addPinAtCenter() {
+    let center = content.mapView.centerCoordinate
+
+    addPin(at: GeoCoordinate(latitude: center.latitude, longitude: center.longitude))
+  }
+
+  func update(_ old: GeoPin, to new: GeoPin) {
+    guard old != new else { return }
+
+    apply(
+      .update(old: old, new: new), named: old.coordinate != new.coordinate ? "Move Pin" : "Edit Pin"
+    )
+  }
+
+  func remove(_ pin: GeoPin) {
+    apply(.remove(pin), named: "Remove Pin")
+  }
+
+  /// Removes the pin selected on the map.
+  func removeSelectedPin() {
+    guard let pin = content.selectedFilePin?.pin else { return }
+
+    remove(pin)
+  }
+
+  /// Opens the editor for the pin selected on the map.
+  func editSelectedPin() {
+    guard let pin = content.selectedFilePin else { return }
+
+    content.showEditor(for: pin)
+  }
+
+  var hasSelectedPin: Bool { content.selectedFilePin != nil }
+
+  private func apply(_ edit: PinEdit, named action: String) {
+    guard canEdit else {
+      NSSound.beep()
+      showFilePins()
+      return
+    }
+
+    do {
+      let next = try GeoJSONPatcher.apply(edit, to: document ?? GeoJSONPatcher.emptyDocument)
+
+      undoManager.setActionName(action)
+      replaceDocument(with: next, registeringUndo: true, actionName: action)
+    } catch {
+      showFilePins()
+      host?.applet(
+        self, post: .warning,
+        text: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+    }
+  }
+
+  /// Makes `next` the document and reads its pins off the main thread. Undo puts back the document
+  /// as it was, and redo puts back `next`, through this same path.
+  func replaceDocument(with next: Data?, registeringUndo: Bool, actionName: String = "") {
+    let previous = document
+
+    if registeringUndo {
+      undoManager.registerUndo(withTarget: self) { applet in
+        applet.replaceDocument(with: previous, registeringUndo: true, actionName: actionName)
+      }
+      undoManager.setActionName(actionName)
+    }
+
+    document = next
+    editGeneration += 1
+
+    let generation = editGeneration
+    let path = record.path ?? "Untitled"
+    let bytes = next ?? GeoJSONPatcher.emptyDocument
+
+    editing = Task { [weak self] in
+      let result = await GeoJSONFileReader.layer(of: bytes, path: path)
+
+      guard let self, generation == self.editGeneration, !self.closed else { return }
+
+      self.editing = nil
+
+      switch result {
+      case .failure(let error):
+        // The edit made bytes the reader refuses. Keeping them would let Save write a broken
+        // file, so the document goes back and the undo stack, which now points at them, goes.
+        self.document = previous
+        self.undoManager.removeAllActions()
+
+        let reason = error.errorDescription ?? "the file could not be read back"
+
+        self.host?.applet(
+          self, post: .warning,
+          text: "The edit was not applied, since it made the file unreadable: \(reason)")
+
+      case .success(let layer):
+        self.filePins = layer.pins
+        self.fileNotices = layer.notices(limit: Self.limits.maxPoints)
+        self.editableOrdinals = GeoJSONPatcher.editableOrdinals(in: bytes)
+        self.showFilePins()
+
+        if actionName == "Add Pin", layer.truncated {
+          self.host?.applet(
+            self, post: .warning,
+            text:
+              "The pin is in the file, past the map's \(Self.limits.maxPoints.formatted())-point limit, "
+              + "so it does not show.")
+        }
+      }
+
+      self.refresh()
+      self.host?.appletDidChange(self)
+    }
+
+    refresh()
+  }
+
+  /// Drops the document and its undo stack, as when another file loads.
+  private func forgetDocument() {
+    editing?.cancel()
+    editing = nil
+    editGeneration += 1
+    document = nil
+    savedDocument = nil
+    changedOnDisk = false
+    watcher?.stop()
+    watcher = nil
+    undoManager.removeAllActions()
+  }
+
+  // MARK: Saving
+
+  var canSave: Bool { isDirty || (document != nil && record.path == nil) }
+
+  /// Writes the edits to the file. A pane with no file asks where. A file changed on disk since
+  /// the map read it asks before it is overwritten. Returns true when the edits are on disk.
+  @discardableResult
+  func save() async -> Bool {
+    if let saving { return await saving.value }
+
+    let task = Task { await performSave() }
+    saving = task
+    defer { saving = nil }
+
+    return await task.value
+  }
+
+  private func performSave() async -> Bool {
+    guard let path = record.path else { return await saveAs() }
+
+    guard let document else { return true }
+
+    let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    let onDisk = try? Data(contentsOf: url)
+
+    if onDisk != savedDocument {
+      switch await resolveConflict(displayName, content.window) {
+      case .overwrite: break
+      case .saveAs: return await saveAs()
+      case .revert:
+        revert()
+        return false
+      case .cancel: return false
+      }
+    }
+
+    return await write(document, to: url)
+  }
+
+  /// Writes the pins to a new file the user names, and makes it the pane's file.
+  @discardableResult
+  func saveAs() async -> Bool {
+    let suggested = record.path == nil ? "Pins.geojson" : displayName
+
+    guard let url = await chooseSaveLocation(suggested, currentDirectory, content.window) else {
+      return false
+    }
+
+    let bytes = document ?? GeoJSONPatcher.emptyDocument
+
+    guard await write(bytes, to: url) else { return false }
+
+    record.path = url.path
+    record.bookmark = nil
+    record.startDirectory = url.deletingLastPathComponent().path
+    document = bytes
+    savedDocument = bytes
+    watch(url)
+    refresh()
+    host?.appletDidChange(self)
+
+    return true
+  }
+
+  private func write(_ bytes: Data, to url: URL) async -> Bool {
+    switch await Self.atomicWrite(bytes, to: url) {
+    case .success:
+      if url.path == record.path { savedDocument = bytes }
+
+      changedOnDisk = false
+      refresh()
+      host?.appletTabsDidChange(self)
+
+      return true
+
+    case .failure(let error):
+      host?.applet(
+        self, post: .error,
+        text:
+          "\u{201C}\(url.lastPathComponent)\u{201D} could not be saved: \(error.localizedDescription)"
+      )
+
+      return false
+    }
+  }
+
+  /// Writes beside the file, then swaps the new file in. A failure leaves the old file whole. The
+  /// swap keeps the old file's permissions and other metadata.
+  @concurrent
+  static func atomicWrite(_ bytes: Data, to url: URL) async -> Result<Void, any Error> {
+    let manager = FileManager.default
+    let temporary = url.deletingLastPathComponent().appendingPathComponent(
+      ".\(url.lastPathComponent).uniterm-\(UUID().uuidString)")
+
+    do {
+      try bytes.write(to: temporary, options: .withoutOverwriting)
+
+      if manager.fileExists(atPath: url.path) {
+        _ = try manager.replaceItemAt(url, withItemAt: temporary)
+      } else {
+        try manager.moveItem(at: temporary, to: url)
+      }
+
+      return .success(())
+    } catch {
+      try? manager.removeItem(at: temporary)
+      return .failure(error)
+    }
+  }
+
+  /// Drops the edits and reads the file as it is on disk.
+  func revert() {
+    guard let path = record.path else { return }
+
+    open(path: path, bookmark: record.bookmark, fitsPins: false)
+  }
+
+  // MARK: The file on disk
+
+  private func watch(_ url: URL) {
+    watcher?.stop()
+    watcher = FileWatcher(url: url) { [weak self] in self?.fileChangedOnDisk() }
+  }
+
+  /// The file on disk changed. A pane with no edits reads it again. A pane with edits keeps them
+  /// and says so, and Save asks before it overwrites the change. A change that only repeats what
+  /// the map last saved or read, as its own save does, is not a change.
+  func fileChangedOnDisk() {
+    guard !closed, let path = record.path else { return }
+
+    let onDisk = try? Data(contentsOf: URL(fileURLWithPath: path))
+
+    guard onDisk != savedDocument else { return }
+
+    if isDirty {
+      changedOnDisk = true
+      refresh()
+    } else {
+      open(path: path, bookmark: record.bookmark, fitsPins: false)
+    }
+  }
+
+  // MARK: Restore
+
+  /// The undo-only part of a dirty pane's description: the edited bytes, and for a pane with a
+  /// file, the bytes the edits were made over and the file's path.
+  static func undoState(document: Data, base: Data?, path: String?) -> JSONValue {
+    var fields: [String: JSONValue] = [unsavedKey: .string(document.base64EncodedString())]
+
+    if let base { fields[unsavedBaseKey] = .string(base.base64EncodedString()) }
+
+    if let path { fields[unsavedPathKey] = .string(path) }
+
+    return .object(fields)
+  }
+
+  static let unsavedBaseKey = "unsavedBase"
+  static let unsavedPathKey = "unsavedPath"
+
+  static func unsavedPins(in description: AppletDescription) -> UnsavedPins? {
+    guard case .object(let fields)? = description.undoState,
+      case .string(let encoded)? = fields[unsavedKey],
+      let document = Data(base64Encoded: encoded)
+    else { return nil }
+
+    var base: Data?
+    var path: String?
+
+    if case .string(let text)? = fields[unsavedBaseKey] { base = Data(base64Encoded: text) }
+
+    if case .string(let text)? = fields[unsavedPathKey] { path = text }
+
+    return UnsavedPins(document: document, base: base, path: path)
+  }
+
+  /// Lets go of a closed pane's unsaved pins that can no longer apply, and says so.
+  func dropUnsavedFromUndo() {
+    guard unsavedFromUndo != nil else { return }
+
+    unsavedFromUndo = nil
+    host?.applet(
+      self, post: .warning,
+      text:
+        "The pins left unsaved when this pane closed could not be restored, since their file did not open."
+    )
+  }
+
+  /// Shows the file layer's pins as the last read gave them. A pin dragged off its place, or one
+  /// a refused edit moved, goes back to where the file holds it.
+  func showFilePins() {
+    let editable = editableOrdinals
+
+    content.replacePins(layer: .file, pins: filePins, defaultAccent: fileAccent) { pin in
+      pin.id.split(separator: ":").first.flatMap { Int($0) }.map(editable.contains) ?? false
+    }
+  }
+
+  // MARK: Panels
+
+  static let runSavePanel: @MainActor (String, String?, NSWindow?) async -> URL? = {
+    name, directory, window in
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = name
+    panel.allowedContentTypes = [UTType("public.geojson") ?? .json]
+    panel.canCreateDirectories = true
+
+    if let directory { panel.directoryURL = URL(fileURLWithPath: directory, isDirectory: true) }
+
+    let response: NSApplication.ModalResponse
+
+    if let window, window.isVisible {
+      response = await panel.beginSheetModal(for: window)
+    } else {
+      response = panel.runModal()
+    }
+
+    return response == .OK ? panel.url : nil
+  }
+
+  static let runConflictAlert: @MainActor (String, NSWindow?) async -> SaveConflictChoice = {
+    name, window in
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = "\u{201C}\(name)\u{201D} changed on disk."
+    alert.informativeText =
+      "Another program changed the file after the map read it. Saving now replaces that change."
+    alert.addButton(withTitle: "Save As\u{2026}")
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: "Overwrite")
+    alert.addButton(withTitle: "Revert")
+    alert.window.setAccessibilityIdentifier("map-save-conflict")
+
+    let response: NSApplication.ModalResponse
+
+    if let window, window.isVisible {
+      response = await alert.beginSheetModal(for: window)
+    } else {
+      response = alert.runModal()
+    }
+
+    switch response {
+    case .alertFirstButtonReturn: return .saveAs
+    case .alertThirdButtonReturn: return .overwrite
+    case NSApplication.ModalResponse(
+      rawValue: NSApplication.ModalResponse.alertThirdButtonReturn.rawValue + 1):
+      return .revert
+    default: return .cancel
+    }
+  }
+}
+
+/// Calls back when a file is written, renamed, or deleted. An editor that saves by writing a new
+/// file and renaming it over the old one replaces the watched file, so the watch moves to whatever
+/// file is at the path after each change.
+@MainActor
+final class FileWatcher {
+  private let url: URL
+  private let onChange: @MainActor () -> Void
+  private var source: (any DispatchSourceFileSystemObject)?
+
+  init(url: URL, onChange: @escaping @MainActor () -> Void) {
+    self.url = url
+    self.onChange = onChange
+    arm()
+  }
+
+  private var retries = 0
+
+  /// The most times a watch looks again for a file that is gone, half a second apart. An editor
+  /// that deletes the file before writing the new one puts it back within that time.
+  static let maximumRetries = 10
+
+  private func arm() {
+    let descriptor = open(url.path, O_EVTONLY)
+
+    guard descriptor >= 0 else {
+      guard retries < Self.maximumRetries else { return }
+
+      retries += 1
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        MainActor.assumeIsolated {
+          guard let self, self.source == nil, !self.stopped else { return }
+
+          self.arm()
+
+          if self.source != nil { self.onChange() }
+        }
+      }
+
+      return
+    }
+
+    retries = 0
+
+    let source = DispatchSource.makeFileSystemObjectSource(
+      fileDescriptor: descriptor, eventMask: [.write, .extend, .delete, .rename], queue: .main)
+
+    source.setEventHandler { [weak self] in
+      MainActor.assumeIsolated {
+        guard let self, let source = self.source else { return }
+
+        let replaced = !source.data.isDisjoint(with: [.delete, .rename])
+
+        if replaced {
+          source.cancel()
+          self.source = nil
+          self.arm()
+        }
+
+        self.onChange()
+      }
+    }
+
+    source.setCancelHandler { close(descriptor) }
+    source.resume()
+    self.source = source
+  }
+
+  private var stopped = false
+
+  func stop() {
+    stopped = true
+    source?.cancel()
+    source = nil
   }
 }

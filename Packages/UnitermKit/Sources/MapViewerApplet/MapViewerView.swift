@@ -10,7 +10,7 @@ import Theme
 /// and reports the region the map settles on. It never reads its window's appearance. The owner
 /// sets the light or dark look from the palette.
 @MainActor
-final class MapViewerView: NSView, MKMapViewDelegate {
+final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   /// Gets the region the map settled on after the user moved it.
   var onRegionSettled: ((GeoRegion) -> Void)?
 
@@ -19,6 +19,35 @@ final class MapViewerView: NSView, MKMapViewDelegate {
 
   /// Gets the region of a place the user picked in the place search.
   var onPlacePicked: ((GeoRegion) -> Void)?
+
+  /// Gets a request to add a pin at a coordinate, from the map's context menu.
+  var onAddPin: ((GeoCoordinate) -> Void)?
+
+  /// Gets a pin the user edited in the popover: the pin as it was, and as it is now.
+  var onUpdatePin: ((GeoPin, GeoPin) -> Void)?
+
+  /// Gets a pin the user asked to remove.
+  var onRemovePin: ((GeoPin) -> Void)?
+
+  /// Gets the Add Pin button of the pin list.
+  var onAddPinAtCenter: (() -> Void)?
+
+  /// The applet's undo stack. The window's Undo reaches it through the responder chain while the
+  /// map has focus.
+  weak var ownUndoManager: UndoManager?
+
+  override var undoManager: UndoManager? { ownUndoManager ?? super.undoManager }
+
+  /// The file's pins in file order, as the last update gave them. MapKit keeps its annotations in no
+  /// order, so the list reads this.
+  private var filePinsInOrder: [GeoPin] = []
+
+  /// The list of pins beside the map, while it shows.
+  private(set) var pinList: PinListView?
+  private var mapTrailing: NSLayoutConstraint?
+
+  /// The pin editor, while it shows.
+  private(set) var editor: (popover: NSPopover, controller: PinEditorController)?
 
   /// The place search over the map, while it shows.
   private(set) var placeSearch: PlaceSearchView?
@@ -101,7 +130,6 @@ final class MapViewerView: NSView, MKMapViewDelegate {
       notices.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
       notices.widthAnchor.constraint(lessThanOrEqualToConstant: 560),
       mapView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      mapView.trailingAnchor.constraint(equalTo: trailingAnchor),
       mapView.topAnchor.constraint(equalTo: topAnchor),
       mapView.bottomAnchor.constraint(equalTo: bottomAnchor),
       banner.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -110,6 +138,10 @@ final class MapViewerView: NSView, MKMapViewDelegate {
       banner.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
       banner.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
     ])
+
+    let trailing = mapView.trailingAnchor.constraint(equalTo: trailingAnchor)
+    trailing.isActive = true
+    mapTrailing = trailing
 
     show(style: .standard)
     apply(.latte)
@@ -195,13 +227,20 @@ final class MapViewerView: NSView, MKMapViewDelegate {
 
     let gestures: NSEvent.EventTypeMask = [
       .leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .magnify, .smartMagnify,
-      .keyDown,
+      .keyDown, .rightMouseDown,
     ]
 
     eventMonitor = NSEvent.addLocalMonitorForEvents(matching: gestures) { [weak self] event in
-      MainActor.assumeIsolated { self?.observe(event) }
+      let taken = MainActor.assumeIsolated { () -> Bool in
+        guard let self else { return false }
 
-      return event
+        if event.type == .rightMouseDown { return self.showContextMenu(for: event) }
+
+        self.observe(event)
+        return false
+      }
+
+      return taken ? nil : event
     }
   }
 
@@ -277,6 +316,220 @@ final class MapViewerView: NSView, MKMapViewDelegate {
   private func move(to camera: MKMapCamera) {
     noteUserGesture()
     mapView.setCamera(camera, animated: animatesCommands)
+  }
+
+  // MARK: Editing pins
+
+  /// The file pin at a point in the window, as a right-click finds it.
+  private func filePin(atWindowPoint point: NSPoint) -> MapPinAnnotation? {
+    var view = window?.contentView?.hitTest(point)
+
+    while let current = view {
+      if let marker = current as? MapMarkerView {
+        return (marker.annotation as? MapPinAnnotation).flatMap { $0.isEditable ? $0 : nil }
+      }
+
+      view = current.superview
+    }
+
+    return nil
+  }
+
+  /// True while the map itself has the keyboard. Remove Pin's key is Cmd-Delete, which a text
+  /// field such as the place search uses to delete text, so the key works only here.
+  var mapHasKeyboard: Bool {
+    guard let responder = window?.firstResponder as? NSView else { return false }
+
+    return responder === mapView || responder.isDescendant(of: mapView)
+  }
+
+  /// The selected file pin, which Edit Pin and Remove Pin act on.
+  var selectedFilePin: MapPinAnnotation? {
+    mapView.selectedAnnotations.lazy.compactMap { $0 as? MapPinAnnotation }.first {
+      $0.isEditable
+    }
+  }
+
+  /// Shows the map's context menu for a right-click on the map, and returns true when it took the
+  /// click. The map's own views never see it, since MapKit's inner views do not ask the map for a
+  /// menu. A click on the place search or the pin list is theirs.
+  private func showContextMenu(for event: NSEvent) -> Bool {
+    guard let window, event.window === window else { return false }
+
+    let point = mapView.convert(event.locationInWindow, from: nil)
+
+    guard mapView.isMousePoint(point, in: mapView.bounds) else { return false }
+
+    if let placeSearch,
+      placeSearch.isMousePoint(
+        placeSearch.convert(event.locationInWindow, from: nil), in: placeSearch.bounds)
+    {
+      return false
+    }
+
+    let menu = NSMenu()
+    menu.setAccessibilityIdentifier("map-context-menu")
+    contextItems(atWindowPoint: event.locationInWindow).forEach(menu.addItem)
+    NSMenu.popUpContextMenu(menu, with: event, for: mapView)
+
+    return true
+  }
+
+  /// The context menu's items for a click at a point in the window. A test reads them.
+  func contextItems(atWindowPoint point: NSPoint) -> [NSMenuItem] {
+    if let pin = filePin(atWindowPoint: point) {
+      return [
+        ClosureMenuItem("Edit Pin\u{2026}") { [weak self] in self?.showEditor(for: pin) },
+        ClosureMenuItem("Remove Pin") { [weak self] in self?.onRemovePin?(pin.pin) },
+      ]
+    }
+
+    let local = mapView.convert(point, from: nil)
+    let coordinate = mapView.convert(local, toCoordinateFrom: mapView)
+    let target = GeoCoordinate(latitude: coordinate.latitude, longitude: coordinate.longitude)
+
+    return [ClosureMenuItem("Add Pin Here") { [weak self] in self?.onAddPin?(target) }]
+  }
+
+  /// A drag of a file pin ends as a move. MapKit moved the annotation, and the edit puts the file's
+  /// new coordinate in place.
+  func mapView(
+    _ mapView: MKMapView, annotationView view: MKAnnotationView,
+    didChange newState: MKAnnotationView.DragState,
+    fromOldState oldState: MKAnnotationView.DragState
+  ) {
+    guard newState == .ending || newState == .canceling,
+      let annotation = view.annotation as? MapPinAnnotation
+    else { return }
+
+    view.dragState = .none
+
+    guard newState == .ending else { return }
+
+    let moved = annotation.coordinate
+    let old = annotation.pin
+    let new = GeoPin(
+      id: old.id, coordinate: GeoCoordinate(latitude: moved.latitude, longitude: moved.longitude),
+      label: old.label == GeoFileLayerBuilder.coordinateText(old.coordinate)
+        ? GeoFileLayerBuilder.coordinateText(
+          GeoCoordinate(latitude: moved.latitude, longitude: moved.longitude)) : old.label,
+      accent: old.accent, glyph: old.glyph)
+
+    onUpdatePin?(old, new)
+  }
+
+  /// A pin selected on the map is selected in the list too, without moving the map.
+  func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+    guard let pin = view.annotation as? MapPinAnnotation, pin.isEditable else { return }
+
+    pinList?.select(id: pin.pin.id)
+  }
+
+  /// Shows the editor for a file pin, over its marker when it is on screen.
+  func showEditor(for annotation: MapPinAnnotation) {
+    closeEditor()
+
+    var used: [PinGlyph] = []
+
+    for glyph in filePinsInOrder.compactMap(\.glyph) where !used.contains(glyph) {
+      used.append(glyph)
+    }
+
+    let controller = PinEditorController(
+      pin: annotation.pin, layerAccent: annotation.layerAccent, palette: palette, used: used)
+    let popover = NSPopover()
+    popover.contentViewController = controller
+    popover.behavior = .transient
+    popover.delegate = self
+
+    controller.onDone = { [weak self] edited in
+      self?.closeEditor()
+      self?.onUpdatePin?(annotation.pin, edited)
+    }
+    controller.onCancel = { [weak self] in self?.closeEditor() }
+
+    editor = (popover, controller)
+
+    if let marker = mapView.view(for: annotation), marker.window != nil {
+      popover.show(relativeTo: marker.bounds, of: marker, preferredEdge: .maxY)
+    } else if window != nil {
+      let center = NSRect(x: bounds.midX - 1, y: bounds.midY - 1, width: 2, height: 2)
+      popover.show(relativeTo: center, of: self, preferredEdge: .maxY)
+    }
+  }
+
+  func closeEditor() {
+    editor?.popover.close()
+    editor = nil
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    if (notification.object as? NSPopover) === editor?.popover { editor = nil }
+  }
+
+  // MARK: Pin list
+
+  var showsPinList: Bool { pinList != nil }
+
+  /// Shows or hides the pin list at the map's trailing edge.
+  func setPinList(visible: Bool) {
+    guard visible != showsPinList else { return }
+
+    if visible {
+      let list = PinListView()
+      list.translatesAutoresizingMaskIntoConstraints = false
+      list.apply(palette)
+      list.onSelect = { [weak self] id in self?.reveal(pinID: id) }
+      list.onEdit = { [weak self] id in
+        guard let self, let pin = annotation(forPinID: id) else { return }
+
+        reveal(pinID: id)
+        showEditor(for: pin)
+      }
+      list.onRemove = { [weak self] id in
+        guard let self, let pin = annotation(forPinID: id) else { return }
+
+        onRemovePin?(pin.pin)
+      }
+      list.onAdd = { [weak self] in self?.onAddPinAtCenter?() }
+      addSubview(list)
+
+      mapTrailing?.isActive = false
+      let trailing = mapView.trailingAnchor.constraint(equalTo: list.leadingAnchor)
+
+      NSLayoutConstraint.activate([
+        trailing,
+        list.trailingAnchor.constraint(equalTo: trailingAnchor),
+        list.topAnchor.constraint(equalTo: topAnchor),
+        list.bottomAnchor.constraint(equalTo: bottomAnchor),
+      ])
+
+      mapTrailing = trailing
+      pinList = list
+      list.show(pins: filePinsInOrder)
+    } else {
+      pinList?.removeFromSuperview()
+      pinList = nil
+
+      let trailing = mapView.trailingAnchor.constraint(equalTo: trailingAnchor)
+      trailing.isActive = true
+      mapTrailing = trailing
+    }
+  }
+
+  private func annotation(forPinID id: String) -> MapPinAnnotation? {
+    mapView.annotations.lazy.compactMap { $0 as? MapPinAnnotation }.first {
+      $0.layer == .file && $0.pin.id == id
+    }
+  }
+
+  /// Selects a pin and moves the map to it, as the user's own move.
+  func reveal(pinID id: String) {
+    guard let pin = annotation(forPinID: id) else { return }
+
+    noteUserGesture()
+    mapView.setCenter(pin.coordinate, animated: animatesCommands)
+    mapView.selectAnnotation(pin, animated: animatesCommands)
   }
 
   // MARK: Place search
@@ -357,15 +610,45 @@ final class MapViewerView: NSView, MKMapViewDelegate {
 
   // MARK: Pins
 
-  /// Replaces every pin of `layer` with `pins`. The other layers keep theirs.
-  func replacePins(layer: MapLayer, pins: [GeoPin], defaultAccent: ThemeToken) {
+  /// Replaces every pin of `layer` with `pins`. The other layers keep theirs. A selected pin whose
+  /// ID is still there stays selected.
+  ///
+  /// `isEditable` says which of a file layer's pins the user may change. Every other layer's pins
+  /// are read-only.
+  func replacePins(
+    layer: MapLayer, pins: [GeoPin], defaultAccent: ThemeToken,
+    isEditable: (GeoPin) -> Bool = { _ in true }
+  ) {
+    let selected = (mapView.selectedAnnotations.first as? MapPinAnnotation).flatMap {
+      $0.layer == layer ? $0.pin.id : nil
+    }
+
     removePins(layer: layer)
 
-    mapView.addAnnotations(
-      pins.map { MapPinAnnotation(pin: $0, layer: layer, layerAccent: defaultAccent) })
+    let annotations = pins.map {
+      MapPinAnnotation(
+        pin: $0, layer: layer, layerAccent: defaultAccent,
+        isEditable: layer == .file && isEditable($0))
+    }
+
+    mapView.addAnnotations(annotations)
+
+    if let selected, let again = annotations.first(where: { $0.pin.id == selected }) {
+      mapView.selectAnnotation(again, animated: false)
+    }
+
+    if layer == .file {
+      filePinsInOrder = pins
+      pinList?.show(pins: pins)
+    }
   }
 
   func removePins(layer: MapLayer) {
+    if layer == .file {
+      filePinsInOrder = []
+      pinList?.show(pins: [])
+    }
+
     let old = mapView.annotations.filter { ($0 as? MapPinAnnotation)?.layer == layer }
 
     mapView.removeAnnotations(old)
@@ -392,6 +675,7 @@ final class MapViewerView: NSView, MKMapViewDelegate {
 
     if let marker = view as? MapMarkerView {
       marker.palette = palette
+      marker.onEdit = { [weak self] annotation in self?.showEditor(for: annotation) }
       markers.add(marker)
     }
 
@@ -445,5 +729,30 @@ final class MapViewerView: NSView, MKMapViewDelegate {
     for marker in markers.allObjects { marker.palette = palette }
 
     placeSearch?.apply(palette)
+    pinList?.apply(palette)
+  }
+}
+
+/// A menu item that runs a closure, for menus built on the fly.
+@MainActor
+final class ClosureMenuItem: NSMenuItem {
+  private let handler: @MainActor () -> Void
+
+  init(_ title: String, handler: @escaping @MainActor () -> Void) {
+    self.handler = handler
+    super.init(title: title, action: #selector(run), keyEquivalent: "")
+    target = self
+  }
+
+  @available(*, unavailable)
+  required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+  @objc private func run() {
+    handler()
+  }
+
+  /// Runs the item as a click would. A test calls it.
+  func perform() {
+    handler()
   }
 }
