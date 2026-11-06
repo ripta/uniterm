@@ -429,8 +429,14 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   func showEditor(for annotation: MapPinAnnotation) {
     closeEditor()
 
+    var used: [PinGlyph] = []
+
+    for glyph in filePinsInOrder.compactMap(\.glyph) where !used.contains(glyph) {
+      used.append(glyph)
+    }
+
     let controller = PinEditorController(
-      pin: annotation.pin, layerAccent: annotation.layerAccent, palette: palette)
+      pin: annotation.pin, layerAccent: annotation.layerAccent, palette: palette, used: used)
     let popover = NSPopover()
     popover.contentViewController = controller
     popover.behavior = .transient

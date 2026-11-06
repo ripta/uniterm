@@ -4,10 +4,11 @@ import Theme
 
 /// The fields for one pin's label, accent, and glyph, shown in a popover over the pin.
 ///
-/// Nothing changes until Done. Cancel and Escape leave the pin as it was. A glyph the map cannot
-/// draw keeps Done off and says why, so the file never gains a value the reader would drop.
+/// Nothing changes until Done. Cancel and Escape leave the pin as it was. The glyph comes from the
+/// glyph picker, which offers only glyphs the map can draw, so no value the reader would drop
+/// reaches the file.
 @MainActor
-final class PinEditorController: NSViewController, NSTextFieldDelegate {
+final class PinEditorController: NSViewController {
   let original: GeoPin
 
   /// Gets the edited pin when the user presses Done.
@@ -18,19 +19,27 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
 
   let labelField = NSTextField()
   let accentMenu = NSPopUpButton()
-  let glyphField = NSTextField()
+  let glyphButton = NSButton(title: "", target: nil, action: nil)
   let doneButton = NSButton(title: "Done", target: nil, action: nil)
   private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
-  private let problem = NSTextField(wrappingLabelWithString: "")
 
-  /// The width of each field. The popover is sized from it, so a long error wraps instead of
-  /// widening the popover.
+  /// The glyph Done writes. The picker sets it.
+  private(set) var glyph: PinGlyph?
+
+  /// The glyph picker, while it shows.
+  private(set) var picker: (popover: NSPopover, controller: GlyphPickerController)?
+  private let usedGlyphs: [PinGlyph]
+
+  /// The width of the label field. The popover is sized from it.
   static let fieldWidth = 240.0
   private let palette: ThemePalette
   private let layerAccent: ThemeToken
 
-  init(pin: GeoPin, layerAccent: ThemeToken, palette: ThemePalette) {
+  /// `used` is the glyphs the file's pins already use, which the picker offers as shortcuts.
+  init(pin: GeoPin, layerAccent: ThemeToken, palette: ThemePalette, used: [PinGlyph] = []) {
     original = pin
+    glyph = pin.glyph
+    usedGlyphs = used
     self.palette = palette
     self.layerAccent = layerAccent
 
@@ -63,15 +72,13 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
     accentMenu.setAccessibilityIdentifier("pin-editor-accent")
     accentMenu.setAccessibilityLabel("Color")
 
-    glyphField.stringValue = original.glyph?.text ?? ""
-    glyphField.placeholderString = "One or two characters, or a symbol name"
-    glyphField.delegate = self
-    glyphField.setAccessibilityIdentifier("pin-editor-glyph")
-    glyphField.setAccessibilityLabel("Glyph")
-
-    problem.font = .systemFont(ofSize: 11)
-    problem.textColor = .systemRed
-    problem.isHidden = true
+    glyphButton.bezelStyle = .push
+    glyphButton.imagePosition = .imageLeading
+    glyphButton.target = self
+    glyphButton.action = #selector(showPicker)
+    glyphButton.setAccessibilityIdentifier("pin-editor-glyph")
+    glyphButton.setAccessibilityLabel("Glyph")
+    showGlyph()
 
     doneButton.target = self
     doneButton.action = #selector(done)
@@ -84,28 +91,25 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
     let grid = NSGridView(views: [
       [NSTextField(labelWithString: "Label"), labelField],
       [NSTextField(labelWithString: "Color"), accentMenu],
-      [NSTextField(labelWithString: "Glyph"), glyphField],
+      [NSTextField(labelWithString: "Glyph"), glyphButton],
     ])
     grid.column(at: 0).xPlacement = .trailing
     grid.rowAlignment = .firstBaseline
     grid.rowSpacing = 10
     grid.columnSpacing = 8
 
-    for field in [labelField, glyphField] {
-      field.widthAnchor.constraint(equalToConstant: Self.fieldWidth).isActive = true
-    }
-
-    problem.preferredMaxLayoutWidth = Self.fieldWidth
+    labelField.widthAnchor.constraint(equalToConstant: Self.fieldWidth).isActive = true
+    grid.cell(for: glyphButton)?.xPlacement = .leading
+    grid.cell(for: accentMenu)?.xPlacement = .leading
 
     let buttons = NSStackView(views: [cancelButton, doneButton])
     buttons.spacing = 8
 
-    let stack = NSStackView(views: [grid, problem, buttons])
+    let stack = NSStackView(views: [grid, buttons])
     stack.orientation = .vertical
     stack.alignment = .trailing
     stack.spacing = 12
     stack.translatesAutoresizingMaskIntoConstraints = false
-    problem.widthAnchor.constraint(equalToConstant: Self.fieldWidth).isActive = true
 
     let container = NSView()
     container.setAccessibilityElement(true)
@@ -123,17 +127,8 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
     view = container
   }
 
-  /// The pin as the fields describe it, or nil when the glyph is not one the map can draw.
-  var editedPin: GeoPin? {
-    let glyphText = glyphField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    var glyph: PinGlyph?
-
-    if !glyphText.isEmpty {
-      guard let parsed = PinGlyph(glyphText), Self.canDraw(parsed) else { return nil }
-
-      glyph = parsed
-    }
-
+  /// The pin as the fields describe it.
+  var editedPin: GeoPin {
     let accent = (accentMenu.selectedItem?.representedObject as? String).flatMap {
       ThemeToken(accent: $0)
     }
@@ -144,38 +139,63 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
       accent: accent, glyph: glyph)
   }
 
-  /// True for a glyph this Mac can draw. A name shaped like an SF Symbol that the system does not
-  /// have would draw as the default dot, so the editor refuses it.
-  static func canDraw(_ glyph: PinGlyph) -> Bool {
-    guard case .symbol(let name) = glyph else { return true }
+  // MARK: Glyph
 
-    return NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
+  /// Shows the glyph on the button: the symbol itself and its name, the characters, or None. A
+  /// symbol this Mac lacks, from a file, shows its name.
+  private func showGlyph() {
+    switch glyph {
+    case .symbol(let name):
+      glyphButton.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+      glyphButton.title = name
+
+    case .text(let text):
+      glyphButton.image = nil
+      glyphButton.title = text
+
+    case nil:
+      glyphButton.image = nil
+      glyphButton.title = "None"
+    }
+
+    glyphButton.setAccessibilityValue(glyphButton.title)
   }
 
-  func controlTextDidChange(_ notification: Notification) {
-    let valid = editedPin != nil
-    let typed = glyphField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+  @objc func showPicker() {
+    closePicker()
 
-    doneButton.isEnabled = valid
-    problem.isHidden = valid
+    let controller = GlyphPickerController(current: glyph, used: usedGlyphs)
+    let popover = NSPopover()
+    popover.contentViewController = controller
+    popover.behavior = .semitransient
 
-    if valid {
-      problem.stringValue = ""
-    } else if case .symbol(let name)? = PinGlyph(typed) {
-      problem.stringValue = "This Mac has no SF Symbol named \u{201C}\(name)\u{201D}."
-    } else {
-      problem.stringValue =
-        "A glyph is one or two characters, or an SF Symbol name such as star.fill."
+    controller.onPick = { [weak self] picked in self?.choose(picked) }
+    picker = (popover, controller)
+
+    if glyphButton.window != nil {
+      popover.show(relativeTo: glyphButton.bounds, of: glyphButton, preferredEdge: .maxX)
     }
   }
 
-  @objc func done() {
-    guard let pin = editedPin else { return }
+  /// Takes a glyph from the picker and closes it.
+  func choose(_ picked: PinGlyph?) {
+    glyph = picked
+    showGlyph()
+    closePicker()
+  }
 
-    onDone?(pin)
+  private func closePicker() {
+    picker?.popover.close()
+    picker = nil
+  }
+
+  @objc func done() {
+    closePicker()
+    onDone?(editedPin)
   }
 
   @objc func cancel() {
+    closePicker()
     onCancel?()
   }
 

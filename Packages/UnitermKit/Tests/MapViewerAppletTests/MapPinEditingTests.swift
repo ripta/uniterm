@@ -293,8 +293,9 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertEqual(pin.coordinate.longitude, center.longitude, accuracy: 0.0001)
   }
 
-  /// Catches an editor whose Done writes nothing, or writes a glyph the reader would drop.
-  func testTheEditorWritesItsFieldsAndRefusesABadGlyph() async throws {
+  /// Catches an editor whose Done writes nothing, or a picked glyph that never reaches the file.
+  /// A symbol picked from the grid, then characters typed past two, land as the last pick.
+  func testTheEditorWritesWhatThePickerPicks() async throws {
     let scratch = try GeoScratch(self)
     let applet = MapViewerApplet(startDirectory: nil)
     await load(applet, try mixedFile(scratch))
@@ -306,29 +307,68 @@ final class MapPinEditingTests: XCTestCase {
 
     editor.labelField.stringValue = "Alpha"
     editor.accentMenu.selectItem(withTitle: "Peach")
-    editor.glyphField.stringValue = "too long name!"
-    editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
-    XCTAssertFalse(editor.doneButton.isEnabled)
 
-    editor.glyphField.stringValue = "xyz"
-    editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
-    XCTAssertFalse(editor.doneButton.isEnabled, "a symbol this Mac lacks was accepted")
+    editor.showPicker()
+    var picker = try XCTUnwrap(editor.picker?.controller)
+    _ = picker.view
+    try XCTUnwrap(picker.tiles["cup.and.saucer.fill"]).performClick(nil)
 
-    let width = editor.view.fittingSize.width
-    editor.glyphField.stringValue = "this is not a glyph at all"
-    editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
-    editor.view.layoutSubtreeIfNeeded()
-    XCTAssertEqual(
-      editor.view.fittingSize.width, width, accuracy: 0.5, "the error widened the popover")
+    XCTAssertEqual(editor.glyph, .symbol("cup.and.saucer.fill"))
+    XCTAssertNil(editor.picker, "a pick left the picker open")
+    XCTAssertEqual(editor.glyphButton.title, "cup.and.saucer.fill")
 
-    editor.glyphField.stringValue = "\u{2605}"
-    editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    editor.showPicker()
+    picker = try XCTUnwrap(editor.picker?.controller)
+    _ = picker.view
+    picker.showCharacters()
+    picker.characterField.stringValue = "ABC"
+    picker.controlTextDidChange(
+      Notification(name: NSControl.textDidChangeNotification, object: picker.characterField))
+    XCTAssertEqual(picker.characterField.stringValue, "C", "a third character did not replace")
+
+    picker.characterField.stringValue = "\u{2605}"
+    picker.useCharacters()
     editor.done()
     await settle(applet)
 
     let edited = try XCTUnwrap(applet.filePinsShown.first { $0.label == "Alpha" })
     XCTAssertEqual(edited.accent, .peach)
     XCTAssertEqual(edited.glyph, PinGlyph("\u{2605}"))
+  }
+
+  /// Catches No Glyph that leaves the old glyph, and a filter that hides the symbol it names.
+  func testNoGlyphClearsAndTheFilterNarrowsTheGrid() throws {
+    let pin = GeoPin(
+      id: "0:0", coordinate: GeoCoordinate(latitude: 1, longitude: 1), label: "A",
+      glyph: .symbol("star.fill"))
+    let editor = PinEditorController(pin: pin, layerAccent: .blue, palette: .latte)
+    _ = editor.view
+
+    editor.showPicker()
+    let picker = try XCTUnwrap(editor.picker?.controller)
+    _ = picker.view
+    XCTAssertEqual(picker.tiles["star.fill"]?.state, .on)
+
+    picker.filterField.stringValue = "cup"
+    picker.controlTextDidChange(
+      Notification(name: NSControl.textDidChangeNotification, object: picker.filterField))
+    XCTAssertEqual(
+      Set(picker.tiles.keys), ["cup.and.saucer.fill", "takeoutbag.and.cup.and.straw.fill"])
+
+    picker.pickNone()
+    XCTAssertNil(editor.glyph)
+    XCTAssertEqual(editor.editedPin.glyph, nil)
+  }
+
+  /// Catches a symbol in the picker that this Mac cannot draw, which would show as a blank tile and
+  /// save a glyph that draws as the default dot.
+  func testEverySymbolThePickerOffersExists() {
+    for group in GlyphCatalog.groups {
+      for name in group.names {
+        XCTAssertNotNil(NSImage(systemSymbolName: name, accessibilityDescription: nil), name)
+        XCTAssertEqual(PinGlyph(name), .symbol(name), name)
+      }
+    }
   }
 
   /// Catches a pin list that disagrees with the map, or a filter that misses.
