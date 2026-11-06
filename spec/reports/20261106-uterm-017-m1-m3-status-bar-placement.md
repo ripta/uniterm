@@ -8,9 +8,21 @@ detached panes and restore. The specs live in the code repo, so every commit bel
 
 ## Run state
 
-The run is in progress. The run's base is "8< --- snip ---", which is also the row's base. The row has no dependencies,
-and no milestone carries a `Live after` line. Nothing is held, blocked, or skipped, and no work is stashed. No commands
-need the user's credentials.
+The run finished on 2026-11-06, and UTERM-017 is `implemented`. The run's base is "8< --- snip ---", which is also the row's
+base. The row has no dependencies, and no milestone carries a `Live after` line. Nothing is held, blocked, or skipped, and no
+work is stashed. No commands needed the user's credentials.
+
+Commits, in order:
+1. "Give every notice one rule and show window state in the status bar"
+2. "Bind status identity at origin and bound the history by severity and source"
+3. "Hold alerts while detached and keep restored panes off the bar"
+4. "Close the seams between the status milestones", the row review
+5. "Finish the status bar placement row"
+6. "Bring back an evicted held record whichever order the pane posts in", the final review
+
+Two gaps in the proof remain. The UI suite ran only on M1. Every later attempt found the screen locked. And
+`make test-package` ends with 21 unowned failures in `TerminalSessionIntegrationTests`. Run `make test-app` with the screen
+unlocked, and rerun `make test-package` once the leftover `xctest` processes have ended.
 
 | Milestone | Run status | Commit |
 |---|---|---|
@@ -235,8 +247,9 @@ Best guesses made during the milestone:
    severe level and strongest delivery lost.
 6. Every viewer and terminal post goes through the helper. User-action posts happen attached, so they behave as before. The
    terminal's clipboard question is not a notice, and it still shows while detached.
-7. A pane's host keeps a ledger of at most 256 records it issued, and honours a present call only for those, once each. The
-   queue cannot tell who made a record retention has already dropped.
+7. A pane's host keeps a ledger of the records it issued, and honours a present call only for those, once each. The queue
+   cannot tell who made a record retention has already dropped. This first shipped with a 256-entry limit, which the row review
+   replaced. See "Row review".
 
 Nothing sends `detach` or `reattach` yet, so the detached behaviour has no user path. Tests call the events directly.
 
@@ -289,6 +302,33 @@ Findings:
 
 ADR candidates: none added. The held-load rule and the ledger rule are mechanisms.
 
+## Final review
+
+Commit: "Bring back an evicted held record whichever order the pane posts in".
+
+The coordinator reran these on 2026-11-06. `make fmt-check`, `make lint`, `make check`, and `make build` passed, run `DHHT3C`.
+The UI tests built with `build-for-testing`, run `SDDW9R`. `make test-package` ran 1,143 tests, 4 skipped, 21 failures, run
+`P8ZKKR`, the known count. `make test-app` did not run. A filtered probe, run `V4X8JK`, found the screen locked.
+
+Findings:
+
+- Fixed, `CONFIRMED`: the ledger pruned only when the pane admitted a record, so an evicted held record behaved two ways on
+  reattach. It now prunes on lookup too, and the record always returns as its own row. The test for the first order failed on
+  unfixed code. The test for the second order passed before the fix, as the trace predicted, and guards it.
+- Fixed: a stale claim in this report about a 256-entry ledger.
+- Left for the user: the UTERM-013 freeze hunk.
+- `adr-impact` reported no conflict and no supersession. The range adds and edits no ADR.
+
+The new tests use a four-record warning pool, so a few records evict a held one. Production keeps 400.
+
 ## Status
 
-In progress. M1, M2, M3, and the row review's fixes are committed. The final review remains.
+Changed: everything in the commits above, on `agent/petunia`. Nothing is pushed.
+
+Open:
+
+- The checks listed under "Checks left to the user".
+- The ADR candidate in UTERM-017's Decision Log: the host binds a status source's identity at origin. It is `Undecided`.
+- Nothing sends `detach` or `reattach`, so M3's detached rule has no user path yet.
+- The package tests' leaked animation workers, and the `.unavailable` and missing-folder paths that do not save a layout.
+- Allowlist gap: `.cg.yaml` allows `proposals.py` only under older plugin hashes.
