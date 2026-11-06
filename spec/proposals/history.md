@@ -10,3 +10,4 @@
 | UTERM-015 M8 | None | The user records the sender each Finder and Dock path reports, and checks a Finder drag onto the app icon and a Dock drop by hand. Its result can reopen "Opens that arrive through Launch Services" before M7 builds on it |
 | UTERM-009 M1-M4 | None | |
 | UTERM-008 M1-M2 | None | Split at M2: M3 needs the exec driver and applet command hook from UTERM-004 M3 |
+| UTERM-016 M1-M3 | None | Built from the map review outside the queue. M4 waits on UTERM-008 M3 |
