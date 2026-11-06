@@ -1,6 +1,7 @@
 import AppKit
 import AppletCatalog
 import AppletKit
+import BrowserApplet
 import DataViewerApplet
 import FileRouting
 import MapViewerApplet
@@ -170,6 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try MapViewerApplet(
           restoring: description, places: places)
 
+      case BrowserApplet.descriptionTypeID:
+        return try BrowserApplet(restoring: description)
+
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
       }
@@ -189,6 +193,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       case .mapViewer(let region):
         return MapViewerApplet(
           startDirectory: directory, region: region, places: places)
+
+      case .browser:
+        return BrowserApplet()
       }
     }
 

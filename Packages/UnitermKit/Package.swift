@@ -36,6 +36,8 @@ let package = Package(
     .library(name: "GeoData", targets: ["GeoData"]),
     .library(name: "MapViewerApplet", targets: ["MapViewerApplet"]),
     .library(name: "PlaceSearch", targets: ["PlaceSearch"]),
+    .library(name: "BrowserModel", targets: ["BrowserModel"]),
+    .library(name: "BrowserApplet", targets: ["BrowserApplet"]),
   ],
   dependencies: [
     // The first third-party Swift package. Only TableData uses it. The version is exact, and
@@ -100,9 +102,18 @@ let package = Package(
     .target(
       name: "MapViewerApplet",
       dependencies: ["AppletKit", "GeoData", "PlaceSearch", "SourceAccess", "StatusKit", "Theme"]),
+    // The browser's pure rules: which URL schemes load from which source, where a scheme-less
+    // address goes, and the description payload. It has no AppKit and no WebKit, so the policy
+    // tests without a web view.
+    .target(name: "BrowserModel"),
+    .target(
+      name: "BrowserApplet",
+      dependencies: ["AppletKit", "BrowserModel", "StatusKit", "Theme"]),
     .target(
       name: "AppletCatalog",
-      dependencies: ["AppletKit", "DataViewerApplet", "MapViewerApplet", "TerminalApplet"]),
+      dependencies: [
+        "AppletKit", "BrowserApplet", "DataViewerApplet", "MapViewerApplet", "TerminalApplet",
+      ]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
     .testTarget(
@@ -115,6 +126,9 @@ let package = Package(
     .target(
       name: "AppletTestSupport", dependencies: ["AppletKit", "StatusKit"],
       path: "Tests/AppletTestSupport"),
+    // A local HTTP server for the browser's tests, so a web view loads real pages from a real
+    // socket and no test reaches the network.
+    .target(name: "BrowserTestSupport", path: "Tests/BrowserTestSupport"),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
       name: "DataViewerAppletTests",
@@ -130,6 +144,13 @@ let package = Package(
       dependencies: [
         "MapViewerApplet", "GeoData", "AppletKit", "PlaceSearch", "SourceAccess", "StatusKit",
         "Theme", "TableTestSupport", "AppletTestSupport",
+      ]),
+    .testTarget(name: "BrowserModelTests", dependencies: ["BrowserModel"]),
+    .testTarget(
+      name: "BrowserAppletTests",
+      dependencies: [
+        "BrowserApplet", "BrowserModel", "AppletKit", "StatusKit", "Theme", "BrowserTestSupport",
+        "AppletTestSupport",
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit", "AppletTestSupport"]),

@@ -110,7 +110,7 @@ a page can run scripts. Decide whether that counts as running a program under AD
 and loads it only on request.
 
 Decision: the open page is where a tab was, not running state, so restore reopens it. ADR-03 holds unchanged: what
-runs in a page is never restored. Restore loads lazily and never resubmits a form. Amended 2026-11-03; see Decision
+runs in a page is never restored. Restore loads lazily and never resubmits a form. Amended 2026-11-06; see Decision
 Log.
 
 - In a terminal, the working directory is where the pane was, and a running program is state. Restore keeps the first
@@ -119,8 +119,10 @@ Log.
 - Reopening a page loads it as a fresh visit, from WebKit's cache or from the network when the cache is stale. It does
   not bring back the page as it was.
 
-- The layout payload stores each tab's last committed URL and title, and which tab is selected. It never stores
-  back/forward history or form data.
+- The layout payload stores each tab's last committed URL and title, and which tab is selected. It stores a URL only
+  when "Schemes" lets a restored tab load it, so a committed `blob:` page is not stored. A URL over 32 KiB is not
+  stored, and a title is cut to 512 characters. A tab keeps the value it last stored when a commit is not storable. It
+  never stores back/forward history or form data.
 - Restore loads only the selected tab of each pane, and only while the pane is attached. Other tabs load when first
   selected. A tab that has not loaded shows its stored URL and title.
 - The undo-only part carries each tab's `interactionState`, so Cmd-Shift-T brings back a tab's or a pane's history
@@ -421,12 +423,58 @@ None.
 
 ### M1: Single-page browser
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A pane can run the browser applet and load a typed address
 - Back, forward, and reload work
 - An address typed without a scheme loads over HTTPS, except loopback, which loads over HTTP
 - The launcher offers the browser, and restore picks the browser by its description type
+
+**As built:**
+
+- The browser has three modules. `BrowserModel` holds the scheme policy, the address policy, and the description
+  payload, with no AppKit and no WebKit. `BrowserApplet` holds the applet and all WebKit use. `BrowserTestSupport` holds
+  an in-process HTTP server on loopback, which has a mode enum so the TLS mode of a later milestone adds one case.
+- A real `WKWebView` loads pages from that server under `swift test`, so WebKit behaviour is proved in package tests.
+  Without a window the web view still loads, and a load takes about 0.1 seconds. The UI tests only cover the launcher
+  entry and restore.
+- Measured under `swift test`: an `https` address aimed at the plain HTTP listener fails with `NSURLErrorDomain` -1200,
+  and a closed port fails with -1004. Both come as one warning naming the address. M4 builds Load over HTTP on these
+  two errors.
+- The scheme policy takes a source and whether the frame is the main frame. A typed, restored, or controller load
+  takes `http`, `https`, and `about:blank`. A page also takes `blob:`, and a subframe takes `data:` and `about:srcdoc`.
+  The web view's navigation delegate applies the page rule to every navigation. WebKit blocks a page's own link to
+  `file:` before the delegate sees it, so the page rule is proved with `ftp:`.
+- The address policy returns the scheme it assumed, so M4 can offer HTTP only after an assumed HTTPS load fails. It reads
+  an IPv4 loopback address only as four decimal parts. `127.1` takes HTTPS.
+- Reload, back, and forward refuse to resend a form post, and say so in one warning. WebKit does resend the post
+  silently when asked. The navigation delegate is the one gate: it cancels a main-frame reload, resubmit, or history
+  step whose request is a post, so a swipe and the web view's own Reload are covered with the buttons. The tab also
+  tracks which history entries a form post produced, so the button methods can answer before they ask WebKit. A post
+  that redirects to a page counts as an ordinary page. Back and forward onto a post result are refused too, which M3
+  turns into the question.
+- The interim scope: a navigation WebKit marks as a download, a response the browser cannot show, and one the server
+  marks as an attachment are each cancelled with one warning that downloads are not available. A link that opens a new
+  window does nothing. M6 builds both. WebKit reports each cancelled load as an interrupted load, code 102, and the
+  tab stays quiet about that code only for the address it cancelled itself.
+- A server that asks for credentials gets none. The browser answers no authentication challenge, so the page shows the
+  server's own 401, and a test pins that no request carries an `Authorization` header. WebKit asks the server twice.
+- Camera and microphone are denied in the UI delegate. A real `getUserMedia` call never reaches the delegate under
+  `swift test`, with the web view in a window or out of one, and the page's promise stays pending. The cause is
+  unsettled, and a system privacy prompt before the delegate is one candidate. The test therefore calls the delegate
+  method and pins the answer for each capture type, not WebKit's route to it. The user should try a microphone request
+  from a real page in the running app. WKUIDelegate has no geolocation hook, and the app has no usage strings, so
+  location cannot get the same treatment.
+- `NSAllowsArbitraryLoadsInWebContent` is in `Info.plist`. It also drops the transport rules' TLS version and cipher
+  floor for web content, and certificate validation is unchanged. A test pins the key and that no app-wide exception
+  exists. Loopback is exempt from the transport rules, so no package test can show the key's effect on a named host.
+- The browser uses WebKit's default website data store for now. M5 moves it to the browser's own store.
+- Back, Forward, Reload, and Open Location are declared as commands now. Reload takes Cmd-R and Open Location takes
+  Cmd-L, and the built-in key conflict test passes. M3 adds the rest and its own checks.
+- A restored tab loads at `start`, never at construction. A refused stored address leaves the tab blank, posts one
+  warning, and stays in the description. Reload on that blank tab applies the same rule again and warns again. The
+  durable explanation in the pane is M5's.
+- Layout storage narrows what "What restore loads" said. See the Decision Log entry of 2026-11-06 for the stored URL.
 
 ### M2: Security indicator
 
@@ -619,6 +667,14 @@ Starts after UTERM-004 M6.
   while the pane is detached was said to rely on the message reaching the user. The pane now withholds the message,
   records the outcome at once, and presents it on reattach. The profile label keeps its pane-local placement for M5's
   review.
+- 2026-11-06: Narrowed what the layout payload stores (work-queue best guess). "What restore loads" said the payload
+  stores each tab's last committed URL and title. It now stores a URL only when "Schemes" lets a restored tab load it,
+  drops a URL over 32 KiB, and cuts a title to 512 characters. A committed `blob:` page would restore as a refusal at
+  every launch, and a page chooses the length of both values, which the layout file holds. A tab keeps its last
+  storable value when a commit is not storable.
+- 2026-11-06: ADR candidate (cuts across the system): web content hosted anywhere in uniterm may load plain HTTP, with
+  no App Transport Security floor, so each applet that hosts a web view owns its own scheme gate. The key is app-wide,
+  so the text viewer in UTERM-007 and the canvas in UTERM-010 inherit it. Undecided. Found in UTERM-005 M1.
 
 ## References
 
