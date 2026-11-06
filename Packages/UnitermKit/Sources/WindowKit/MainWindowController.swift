@@ -260,13 +260,22 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   // MARK: Status bar
 
-  /// The segments the bar shows now. The window owns the message area and the unseen-error
-  /// indicator. The applet of the focused pane fills the rest. The pane model decides which pane
-  /// that is, not the first responder, so the segments stay put while the keyboard is in the
-  /// Settings window or a sheet.
+  /// The window states the bar shows, one compact slot each. The window set owns them and pushes
+  /// each change here.
+  var windowStates = WindowStates() {
+    didSet {
+      if windowStates != oldValue { refreshStatusBar() }
+    }
+  }
+
+  /// The segments the bar shows now. The window owns the message area, the unseen-error
+  /// indicator, and a slot for each window state. The applet of the focused pane fills the rest.
+  /// The pane model decides which pane that is, not the first responder, so the segments stay put
+  /// while the keyboard is in the Settings window or a sheet.
   var statusBarSegments: [BarSegment] {
     StatusBarContent.segments(
       display: statusCenter.display, hasUnseenError: statusCenter.hasUnseenError,
+      windowStates: windowStates,
       applet: paneArea.applet(for: paneArea.focusedPane)?.segments ?? [])
   }
 
@@ -991,6 +1000,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     // live pane.
     let id = paneArea.paneID(for: applet)?.rawValue ?? 0
     statusCenter.post(level: level, source: .pane(id: id, name: applet.title), text: text)
+  }
+
+  public func applet(_ applet: any Applet, recordInHistory level: StatusLevel, text: String) {
+    let id = paneArea.paneID(for: applet)?.rawValue ?? 0
+    statusCenter.record(level: level, source: .pane(id: id, name: applet.title), text: text)
   }
 
   /// A pane whose applet ended closes, and goes on the reopen list like any other close.

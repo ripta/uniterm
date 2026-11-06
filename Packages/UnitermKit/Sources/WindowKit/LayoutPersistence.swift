@@ -29,6 +29,11 @@ public final class LayoutPersistence {
     case unavailable
   }
 
+  /// What the window's layout slot says in a second instance. The state holds for as long as the
+  /// instance runs, in every window, so it is a slot and not a message.
+  static let secondInstanceText =
+    "Another uniterm is running, so this window's layout is not saved."
+
   private static let logger = Logger(subsystem: "dev.uniterm.app", category: "layout")
 
   private let store: LayoutStore
@@ -88,10 +93,10 @@ public final class LayoutPersistence {
     }
 
     guard writer else {
+      windows.setWindowState(.layoutNotSaved, text: Self.secondInstanceText)
+
       return try openDefault(
-        .secondInstance, level: .info,
-        notice: "Another uniterm is running, so this window's layout is not saved.",
-        hasPendingOpen: hasPendingOpen)
+        .secondInstance, level: .info, notice: nil, hasPendingOpen: hasPendingOpen)
     }
 
     let result: LaunchResult

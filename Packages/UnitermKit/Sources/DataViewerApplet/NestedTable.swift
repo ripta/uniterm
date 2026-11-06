@@ -102,7 +102,9 @@ final class NestedTable: NSObject, NSPopoverDelegate {
     view.show(body(), filter: session.query.filter, sort: session.query.sort)
 
     for notice in posted.unposted(notices()) {
-      onNotice?(AppletNotice(notice.level, "In \u{201C}\(title)\u{201D}: \(notice.text)"))
+      onNotice?(
+        AppletNotice(
+          notice.level, "In \u{201C}\(title)\u{201D}: \(notice.text)", key: notice.key))
     }
   }
 
@@ -131,8 +133,8 @@ final class NestedTable: NSObject, NSPopoverDelegate {
   }
 
   private func notices() -> [AppletNotice] {
-    DataViewerNotices.lines(
-      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows
-    ).map { AppletNotice(.warning, $0) }
+    DataViewerNotices.notices(
+      sortSkipped: session.sortSkipped, truncatedRows: session.progress.truncatedRows,
+      settled: session.phase != .idle && session.phase != .loading)
   }
 }

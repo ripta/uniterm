@@ -13,6 +13,39 @@ final class StatusQueueTests: XCTestCase {
     queue.post(level: level, source: source, text: text, at: time)
   }
 
+  /// Catches a history-only record that takes a turn on the bar, raises the unseen signal, or
+  /// goes missing from the history. It lands in the history and in nothing else, whatever its
+  /// level, and a message on the bar stays where it was.
+  func testARecordEntersTheHistoryWithoutATurnOrASignal() {
+    var queue = StatusQueue()
+    post(&queue, .info, "shown", at: 0)
+
+    queue.record(level: .error, source: source, text: "kept", at: 0.1)
+    queue.record(level: .warning, source: .pane(id: 3, name: "csv"), text: "also kept", at: 0.2)
+
+    XCTAssertEqual(queue.history.map(\.text), ["shown", "kept", "also kept"])
+    XCTAssertEqual(queue.history.map(\.level), [.info, .error, .warning])
+    XCTAssertEqual(queue.history[2].source.paneID, 3)
+    XCTAssertEqual(queue.current?.message.text, "shown")
+    XCTAssertEqual(queue.pendingCount, 0)
+    XCTAssertFalse(queue.hasUnseenError)
+    XCTAssertEqual(queue.history.map(\.id), [1, 2, 3])
+  }
+
+  /// Catches a record that skips the history bound. Records and posts share the cap.
+  func testRecordsCountAgainstTheHistoryCap() {
+    var policy = StatusPolicy()
+    policy.historyLimit = 3
+
+    var queue = StatusQueue(policy: policy)
+
+    for index in 0..<5 {
+      queue.record(level: .info, source: source, text: "r\(index)", at: 0)
+    }
+
+    XCTAssertEqual(queue.history.map(\.text), ["r2", "r3", "r4"])
+  }
+
   /// Catches a first message that waits behind a dwell nobody started.
   func testFirstMessageShowsAtOnce() {
     var queue = StatusQueue()

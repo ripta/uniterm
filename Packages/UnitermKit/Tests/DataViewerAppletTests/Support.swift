@@ -18,6 +18,13 @@ final class RecordingHost: AppletHost {
     posts.append((level, text))
   }
 
+  /// What the applet recorded in the history without a turn on the bar.
+  var records: [(level: StatusLevel, text: String)] = []
+
+  func applet(_ applet: any Applet, recordInHistory level: StatusLevel, text: String) {
+    records.append((level, text))
+  }
+
   func appletDidExit(_ applet: any Applet) {}
 
   func appletDidChange(_ applet: any Applet) { changes += 1 }

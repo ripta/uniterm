@@ -43,6 +43,11 @@ public struct AppletConfirmation: Sendable, Equatable {
 public protocol AppletHost: AnyObject {
   func applet(_ applet: any Applet, post level: StatusLevel, text: String)
 
+  /// Records `text` in the window's history without a turn on the bar and without an unseen
+  /// signal. An applet whose pane already says the same thing records this way. The protocol has
+  /// no default for it, so a host cannot drop these records unnoticed.
+  func applet(_ applet: any Applet, recordInHistory level: StatusLevel, text: String)
+
   /// The applet has nothing left to run, so its pane should close.
   func appletDidExit(_ applet: any Applet)
 

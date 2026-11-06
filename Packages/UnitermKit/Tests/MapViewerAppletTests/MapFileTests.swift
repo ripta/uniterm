@@ -83,9 +83,9 @@ final class MapFileTests: XCTestCase {
     await applet.opening?.value
   }
 
-  /// What the map says about a file: failures in the pane, and notices for the status bar.
+  /// What the map says about a file: what the pane explains, and the notices for the status bar.
   private func notices(_ applet: MapViewerApplet) -> [String] {
-    applet.content.noticeLines + applet.statusNotices.map(\.text)
+    applet.content.explanationLines + applet.statusNotices.map(\.text)
   }
 
   // MARK: Loading
@@ -368,10 +368,15 @@ final class MapFileTests: XCTestCase {
     try FileManager.default.moveItem(at: old, to: moved)
 
     let found = try MapViewerApplet(restoring: description)
+    let host = RecordingHost()
+    found.host = host
     found.start()
     await found.opening?.value
 
     XCTAssertEqual(found.filePinsShown.map(\.label), ["Old"])
+    XCTAssertEqual(
+      host.posts.filter { $0.text.hasPrefix("Moved") }.map(\.level), [.info],
+      "a file found at a new path changes nothing on screen")
     XCTAssertEqual(
       notices(found).filter { $0.hasPrefix("Moved. Found at") }.count, 1, "\(notices(found))")
     XCTAssertEqual(
@@ -557,6 +562,11 @@ final class MapFileTests: XCTestCase {
 /// Where the map says what a load left out: the status bar, not over the map.
 @MainActor
 final class MapNoticePlacementTests: XCTestCase {
+  private func load(_ applet: MapViewerApplet, _ file: URL) async throws {
+    applet.replaceSource(with: file, startDirectory: file.deletingLastPathComponent().path)
+    await applet.opening?.value
+  }
+
   /// Catches a load notice drawn over the map, where it covered MapKit's attribution, and one
   /// posted again on every refresh. The pane shows nothing, the status bar gets the sentence once
   /// as a warning, and a segment says how many shapes are hidden.
@@ -573,7 +583,7 @@ final class MapNoticePlacementTests: XCTestCase {
     await applet.opening?.value
 
     let skipped = "Skipped 2 shapes that are not points. The map shows points only."
-    XCTAssertEqual(applet.content.noticeLines, [])
+    XCTAssertEqual(applet.content.explanationLines, [])
     XCTAssertEqual(
       host.posts.filter { $0.text == skipped }.map(\.level), [.warning],
       "shapes the map does not show are a warning")
@@ -595,16 +605,155 @@ final class MapNoticePlacementTests: XCTestCase {
     XCTAssertEqual(host.posts.filter { $0.text == skipped }.count, 2, "a new load did not post")
   }
 
-  /// Catches a failure moved off the pane, which would leave an empty map with nothing to say.
-  func testAFailureStaysInThePane() async throws {
+  private func fileWithHiddenShapes(_ scratch: GeoScratch) throws -> URL {
+    try scratch.write(
+      "mixed.geojson",
+      GeoFixtures.collection([GeoFixtures.point("A", 1, 1), GeoFixtures.line, GeoFixtures.polygon]))
+  }
+
+  /// Catches a failure box drawn over a map that still shows content. With tiles that load, the
+  /// failure is one warning on the status bar and one history entry. The pane says nothing, and a
+  /// segment holds while the failure does. A good load ends the segment.
+  func testAFailureOverUsableTilesIsOneWarningAndASegment() async throws {
     let scratch = try GeoScratch(self)
     let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    applet.replaceSource(
+      with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)
+    await applet.opening?.value
+    applet.choose(style: .hybrid)
+
+    XCTAssertEqual(host.posts.map(\.level), [.warning])
+    XCTAssertTrue(host.posts[0].text.contains("is missing"), "\(host.posts)")
+    XCTAssertTrue(host.records.isEmpty, "a posted failure is not recorded twice")
+    XCTAssertEqual(applet.content.explanationLines, [])
+    XCTAssertTrue(applet.segments.contains { $0.text == "File not opened" }, "\(applet.segments)")
+
+    try await load(
+      applet,
+      try scratch.write("ok.geojson", GeoFixtures.collection([GeoFixtures.point("A", 1, 1)])))
+
+    XCTAssertFalse(applet.segments.contains { $0.text == "File not opened" })
+  }
+
+  /// Catches an empty map that says nothing, or one that says it twice. With no tiles and no pins,
+  /// the pane explains the failure and the history gets one warning. The bar takes no turn for it.
+  func testAFailureWithNothingElseOnTheMapIsExplainedInThePaneAndRecordedOnce() async throws {
+    let scratch = try GeoScratch(self)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    applet.content.onTilesChanged?("The map could not load: offline.")
+    host.posts = []
+
+    applet.replaceSource(
+      with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)
+    await applet.opening?.value
+    applet.choose(style: .hybrid)
+    applet.content.onTilesChanged?("The map could not load: still offline.")
+
+    XCTAssertTrue(applet.content.explanationLines.joined().contains("is missing"))
+    XCTAssertTrue(host.posts.filter { $0.text.contains("is missing") }.isEmpty, "\(host.posts)")
+    XCTAssertEqual(host.records.map(\.level), [.warning])
+    XCTAssertTrue(host.records[0].text.contains("is missing"))
+  }
+
+  /// Catches a pane that explains a failure over a map that still has command pins. They are
+  /// content, so the failure goes to the bar instead.
+  func testCommandPinsKeepAFailureOffThePane() async throws {
+    let scratch = try GeoScratch(self)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+    let pin = GeoPin(id: "x", coordinate: GeoCoordinate(latitude: 5, longitude: 5), label: "X")
+
+    applet.content.onTilesChanged?("The map could not load: offline.")
+    applet.content.replacePins(layer: .command("demo"), pins: [pin], defaultAccent: .green)
 
     applet.replaceSource(
       with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)
     await applet.opening?.value
 
-    XCTAssertTrue(
-      applet.content.noticeLines.joined().contains("missing"), "\(applet.content.noticeLines)")
+    XCTAssertEqual(applet.content.explanationLines, [])
+    XCTAssertEqual(host.posts.filter { $0.text.contains("is missing") }.map(\.level), [.warning])
+    XCTAssertTrue(host.records.isEmpty)
+  }
+
+  /// Catches a stale failure that stays on the bar while the next file loads. A new load shows its
+  /// wait at once and drops the old failure's segment.
+  func testANewLoadReplacesTheOldFailureAtOnce() async throws {
+    let scratch = try GeoScratch(self)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    applet.replaceSource(
+      with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)
+    await applet.opening?.value
+    XCTAssertTrue(applet.segments.contains { $0.text == "File not opened" })
+
+    let changes = host.changes
+    applet.replaceSource(
+      with: try fileWithHiddenShapes(scratch), startDirectory: scratch.url.path)
+
+    XCTAssertEqual(applet.content.explanationLines, ["Opening\u{2026}"])
+    XCTAssertFalse(applet.segments.contains { $0.text == "File not opened" }, "\(applet.segments)")
+    XCTAssertGreaterThan(host.changes, changes, "the host was not told the load started")
+
+    await applet.opening?.value
+    XCTAssertEqual(applet.content.explanationLines, [])
+  }
+
+  /// Catches a load that was replaced mid-flight and still reports. The second load wins, and the
+  /// first one's failure is never posted, recorded, or shown.
+  func testALoadReplacedInFlightNeverReportsItsFailure() async throws {
+    let scratch = try GeoScratch(self)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    applet.replaceSource(
+      with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)
+    let stale = applet.opening
+    applet.replaceSource(
+      with: try fileWithHiddenShapes(scratch), startDirectory: scratch.url.path)
+
+    await stale?.value
+    await applet.opening?.value
+
+    XCTAssertFalse(host.posts.contains { $0.text.contains("is missing") }, "\(host.posts)")
+    XCTAssertTrue(host.records.isEmpty)
+    XCTAssertFalse(applet.segments.contains { $0.text == "File not opened" })
+    XCTAssertEqual(applet.filePinsShown.count, 1)
+  }
+
+  /// Catches a clear that leaves the old file's counts on the bar, and a cancelled load that still
+  /// reports. After the clear, no hidden-points segment and no failure remain.
+  func testClearingForgetsTheCountsAndACancelledLoadStaysQuiet() async throws {
+    let scratch = try GeoScratch(self)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    try await load(applet, try fileWithHiddenShapes(scratch))
+    XCTAssertTrue(applet.segments.contains { $0.text == "2 hidden" })
+
+    applet.clearFile()
+    await applet.asking?.value
+
+    XCTAssertEqual(applet.segments.map(\.text), ["Standard"])
+
+    applet.replaceSource(
+      with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)
+    let cancelled = applet.opening
+    applet.clearFile()
+    await cancelled?.value
+
+    XCTAssertEqual(applet.segments.map(\.text), ["Standard"])
+    XCTAssertEqual(applet.content.explanationLines, [])
+    XCTAssertFalse(host.posts.contains { $0.text.contains("is missing") }, "\(host.posts)")
   }
 }

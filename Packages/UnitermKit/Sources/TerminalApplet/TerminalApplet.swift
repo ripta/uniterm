@@ -286,7 +286,7 @@ public final class TerminalApplet: Applet {
     }
 
     if let failure {
-      host?.applet(self, post: .error, text: "The terminal could not start: \(failure)")
+      host?.applet(self, post: .warning, text: "The terminal could not start: \(failure)")
     }
 
     let live = tabs.filter { $0.session != nil || $0.awaitingRun }
@@ -361,7 +361,7 @@ public final class TerminalApplet: Applet {
     do {
       try startSession(for: tab)
     } catch {
-      host?.applet(self, post: .error, text: "The program could not start: \(error)")
+      host?.applet(self, post: .warning, text: "The program could not start: \(error)")
       return
     }
 
@@ -423,7 +423,7 @@ public final class TerminalApplet: Applet {
       do {
         try startSession(for: tab)
       } catch {
-        host?.applet(self, post: .error, text: "The tab could not open: \(error)")
+        host?.applet(self, post: .warning, text: "The tab could not open: \(error)")
         return
       }
     }

@@ -1,3 +1,4 @@
+import AppKit
 import AppletKit
 import Preferences
 import StatusKit
@@ -38,6 +39,57 @@ final class StatusBarContentTests: XCTestCase {
       applet: [AppletSegment(text: "tmp")])
 
     XCTAssertEqual(segments.map(\.id), [.message, .dismiss, .unseenError, .applet(0)])
+  }
+
+  /// Catches window slots in the wrong order, or displaced by an error. The three kinds show in
+  /// their fixed order whatever order they were set in. They sit after the message, dismiss, and
+  /// unseen indicator, and before the applet's segments. Each is compact, and its full sentence is
+  /// both the tooltip and the accessibility label.
+  func testWindowStatesShowInFixedOrderBeforeTheAppletSegments() {
+    var states = WindowStates()
+    states.set(.survivingWork, text: "Work is still running.")
+    states.set(.layoutNotSaved, text: "Not saved.")
+    states.set(.pendingPermissions, text: "A program is asking.")
+
+    let segments = StatusBarContent.segments(
+      display: display(.error, .uniterm, "boom"), hasUnseenError: true, windowStates: states,
+      applet: [AppletSegment(text: "tmp")])
+
+    XCTAssertEqual(
+      segments.map(\.id),
+      [
+        .message, .dismiss, .unseenError, .window(.layoutNotSaved),
+        .window(.pendingPermissions), .window(.survivingWork), .applet(0),
+      ])
+
+    for segment in segments {
+      guard case .window = segment.id else { continue }
+
+      XCTAssertNil(segment.text)
+      XCTAssertNotNil(segment.symbolName)
+      XCTAssertEqual(segment.toolTip, segment.accessibilityLabel)
+    }
+
+    XCTAssertEqual(segments[3].toolTip, "Not saved.")
+    XCTAssertEqual(segments[5].toolTip, "Work is still running.")
+  }
+
+  /// Catches a kind whose symbol name is not a system symbol. The slot would show nothing, and
+  /// the user would see no sign of the state.
+  func testEveryWindowStateKindHasASymbolThatExists() throws {
+    for kind in WindowStateKind.allCases {
+      var states = WindowStates()
+      states.set(kind, text: "x")
+
+      let segment = try XCTUnwrap(
+        StatusBarContent.segments(
+          display: nil, hasUnseenError: false, windowStates: states, applet: []
+        )
+        .first { $0.id == .window(kind) })
+      let name = try XCTUnwrap(segment.symbolName)
+
+      XCTAssertNotNil(NSImage(systemSymbolName: name, accessibilityDescription: nil), name)
+    }
   }
 
   /// Catches a message shown without its source, or with the wrong icon or tone for its level.

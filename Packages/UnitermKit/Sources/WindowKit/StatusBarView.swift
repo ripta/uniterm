@@ -21,6 +21,19 @@ extension ThemePalette {
 final class StatusBarView: NSView {
   static let height: CGFloat = 22
 
+  /// The least width the message area keeps, however many slots compete for the bar. It fits a
+  /// few words, which truncate. Applet segments leave the bar before the message goes below it.
+  static let minimumMessageWidth: CGFloat = 64
+
+  /// The room between the bar's edge and its segments, on each side.
+  private static let edgeInset: CGFloat = 10
+
+  /// The gap after the message area and after the last icon-only slot.
+  private static let wideGap: CGFloat = 12
+
+  /// The gap between two icon-only slots.
+  private static let narrowGap: CGFloat = 6
+
   /// Runs when the user clicks the bar.
   var onActivate: (() -> Void)?
 
@@ -44,13 +57,13 @@ final class StatusBarView: NSView {
     stack.orientation = .horizontal
     stack.alignment = .centerY
     stack.distribution = .fill
-    stack.spacing = 12
+    stack.spacing = Self.wideGap
     stack.translatesAutoresizingMaskIntoConstraints = false
     addSubview(stack)
 
     NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-      stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.edgeInset),
+      stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.edgeInset),
       stack.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
 
@@ -83,9 +96,14 @@ final class StatusBarView: NSView {
     }
   }
 
+  override func setFrameSize(_ newSize: NSSize) {
+    super.setFrameSize(newSize)
+    fitApplets()
+  }
+
   /// Where a segment sits in the bar, or nil when it is not showing.
   func frame(of id: BarSegmentID) -> NSRect? {
-    guard let view = segmentViews[id], view.superview != nil else { return nil }
+    guard let view = segmentViews[id], view.superview != nil, !view.isHidden else { return nil }
 
     return convert(view.bounds, from: view)
   }
@@ -116,6 +134,61 @@ final class StatusBarView: NSView {
     }
 
     stack.setViews(ordered, in: .leading)
+
+    for (index, segment) in segments.enumerated() {
+      guard let view = segmentViews[segment.id] else { continue }
+
+      let next = index + 1 < segments.count ? segments[index + 1] : nil
+      stack.setCustomSpacing(gap(after: segment, before: next), after: view)
+    }
+
+    fitApplets()
+  }
+
+  /// A slot that shows only an icon sits close to the next one. Text sits further apart.
+  private func gap(after segment: BarSegment, before next: BarSegment?) -> CGFloat {
+    guard let next, isCompact(segment), isCompact(next) else { return Self.wideGap }
+
+    return Self.narrowGap
+  }
+
+  private func isCompact(_ segment: BarSegment) -> Bool {
+    segment.id != .message && segment.text == nil
+  }
+
+  /// Hides the applet segments that do not fit. The message area keeps its least width and every
+  /// window slot stays, so a narrow window loses applet segments first, from the last one back.
+  /// Both an applet segment and a slot are measured by the width they need on their own.
+  private func fitApplets() {
+    let available = bounds.width - 2 * Self.edgeInset
+    var used: CGFloat = 0
+    var fits = true
+
+    for (index, segment) in segments.enumerated() {
+      guard let view = segmentViews[segment.id] else { continue }
+
+      let next = index + 1 < segments.count ? segments[index + 1] : nil
+      let width: CGFloat
+
+      if segment.id == .message {
+        width = Self.minimumMessageWidth
+      } else {
+        view.isHidden = false
+        width = view.fittingSize.width
+      }
+
+      let gap = gap(after: segment, before: next)
+
+      if case .applet = segment.id {
+        let needed = used + width
+        fits = fits && needed <= available
+        view.isHidden = !fits
+
+        if fits { used = needed + gap }
+      } else {
+        used += width + gap
+      }
+    }
   }
 
   override func updateLayer() {
@@ -165,6 +238,11 @@ private final class SegmentView: NSStackView {
     label.setContentCompressionResistancePriority(
       flexible ? NSLayoutConstraint.Priority(10) : .defaultHigh, for: .horizontal)
     label.setContentHuggingPriority(flexible ? .defaultLow : .defaultHigh, for: .horizontal)
+
+    if flexible {
+      widthAnchor.constraint(greaterThanOrEqualToConstant: StatusBarView.minimumMessageWidth)
+        .isActive = true
+    }
   }
 
   @available(*, unavailable)
@@ -182,6 +260,7 @@ private final class SegmentView: NSStackView {
 
   func show(_ segment: BarSegment) {
     self.segment = segment
+    toolTip = segment.toolTip
 
     let color = palette.color(for: segment.tone)
     let weight: NSFont.Weight = segment.tone == .emphasized ? .semibold : .regular

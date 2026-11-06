@@ -32,6 +32,21 @@ private final class ManualScheduler {
 
 @MainActor
 final class StatusCenterTests: XCTestCase {
+  /// Catches a record that the center keeps from its observers. The history panel redraws from
+  /// the observers, so a record that skips them would show up only after the next post.
+  func testARecordTellsObserversAndLeavesTheBarAlone() {
+    let center = StatusCenter(clock: ManualClock(), scheduler: ManualScheduler().schedule)
+    var calls = 0
+    center.addObserver { calls += 1 }
+
+    center.record(level: .warning, source: .uniterm, text: "kept")
+
+    XCTAssertEqual(calls, 1)
+    XCTAssertEqual(center.history.map(\.text), ["kept"])
+    XCTAssertNil(center.display)
+    XCTAssertFalse(center.hasUnseenError)
+  }
+
   /// Catches a center that never wakes the model, so an info message stays on the bar forever.
   func testWakeClearsInfoAtTheIdleTimeout() {
     let clock = ManualClock()
