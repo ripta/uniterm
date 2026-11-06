@@ -214,7 +214,8 @@ None.
 
 - The View menu shows and hides a sidebar that lists the pins, with a filter
 - Selecting a row selects the pin and moves the map to it
-- Program layers show read-only, with their Clear action
+
+Amended 2026-11-05; see Decision Log.
 
 **As built:**
 
@@ -250,6 +251,16 @@ None.
 - 2026-11-05: Accepted when the user asked for every unimplemented part to be built. M1 to M3 built the same day. M4
   waits on UTERM-008 M3.
 - 2026-11-05: M3's program-layer check moved to M4, since program layers do not exist before UTERM-008 M3.
+- 2026-11-05: Amended M3. Its third check, "Program layers show read-only, with their Clear action", moved to M4,
+  since program layers do not exist before UTERM-008 M3.
+- 2026-11-05: The user approved the map's keys as built: Cmd-1 to Cmd-3, Cmd-+, Cmd--, Cmd-0, Cmd-Shift-N, Cmd-L,
+  Cmd-S, Cmd-Shift-S, Cmd-Delete, and Cmd-Shift-L. They are applet keys under UTERM-013's rules, live only while a map
+  has focus.
+- 2026-11-05: A review found and fixed: restored unsaved pins could land on another file; a move of an unlabeled pin
+  wrote properties or split a MultiPoint; a refused drag left the pin off its place; pins in a geometry collection were
+  offered for editing; a save replaced a symlink with a plain file; an edit held across a renumbering could hit another
+  pin; two saves at once could see their own write as a conflict; and the watcher gave up on a file that came back. The
+  UI tests now run with place names off, so they send no map center to Apple.
 
 ## References
 
