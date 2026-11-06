@@ -74,6 +74,7 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["SHELL"] = "/bin/zsh"
     app.launchEnvironment["ZDOTDIR"] = scratch + "-shell"
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""
+    app.launchEnvironment["UNITERM_PLACE_NAMES"] = "off"
     app.launch()
     app.activate()
     launched.append(app)

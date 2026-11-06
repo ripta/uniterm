@@ -152,6 +152,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let settings = settings
 
+    // The UI tests turn off the place names, so a test's map never sends its center to Apple. The
+    // search stays, since it sends nothing until someone types.
+    let places =
+      ProcessInfo.processInfo.environment["UNITERM_PLACE_NAMES"] == "off"
+      ? PlaceServices(search: PlaceServices.apple.search) : PlaceServices.apple
+
     let restoreApplet: AppletRestorer = { description in
       switch description.type {
       case TerminalDescription.typeID:
@@ -162,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case MapViewerDescription.typeID:
         return try MapViewerApplet(
-          restoring: description, places: .apple)
+          restoring: description, places: places)
 
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
@@ -182,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case .mapViewer(let region):
         return MapViewerApplet(
-          startDirectory: directory, region: region, places: .apple)
+          startDirectory: directory, region: region, places: places)
       }
     }
 
@@ -191,19 +197,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
           commands: commands, restoring: restored, restoreApplet: restoreApplet,
-          places: .apple, makeApplet: makeApplet)
+          places: places, makeApplet: makeApplet)
       },
       makeRoutedController: { identifier, applet in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
           commands: commands, startingWith: applet, restoreApplet: restoreApplet,
-          places: .apple, makeApplet: makeApplet)
+          places: places, makeApplet: makeApplet)
       },
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
           startingIn: directory, commands: commands, restoreApplet: restoreApplet,
-          places: .apple, makeApplet: makeApplet)
+          places: places, makeApplet: makeApplet)
       })
     windowSet = windows
 
@@ -216,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       },
       MapViewerDescription.typeID: { file, startDirectory in
         MapViewerApplet.opening(
-          file, startDirectory: startDirectory, places: .apple)
+          file, startDirectory: startDirectory, places: places)
       },
     ]
 
