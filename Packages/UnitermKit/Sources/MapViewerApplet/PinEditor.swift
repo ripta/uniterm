@@ -21,7 +21,11 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
   let glyphField = NSTextField()
   let doneButton = NSButton(title: "Done", target: nil, action: nil)
   private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
-  private let problem = NSTextField(labelWithString: "")
+  private let problem = NSTextField(wrappingLabelWithString: "")
+
+  /// The width of each field. The popover is sized from it, so a long error wraps instead of
+  /// widening the popover.
+  static let fieldWidth = 240.0
   private let palette: ThemePalette
   private let layerAccent: ThemeToken
 
@@ -83,9 +87,15 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
       [NSTextField(labelWithString: "Glyph"), glyphField],
     ])
     grid.column(at: 0).xPlacement = .trailing
-    grid.rowSpacing = 8
+    grid.rowAlignment = .firstBaseline
+    grid.rowSpacing = 10
     grid.columnSpacing = 8
-    labelField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+
+    for field in [labelField, glyphField] {
+      field.widthAnchor.constraint(equalToConstant: Self.fieldWidth).isActive = true
+    }
+
+    problem.preferredMaxLayoutWidth = Self.fieldWidth
 
     let buttons = NSStackView(views: [cancelButton, doneButton])
     buttons.spacing = 8
@@ -93,11 +103,24 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
     let stack = NSStackView(views: [grid, problem, buttons])
     stack.orientation = .vertical
     stack.alignment = .trailing
-    stack.spacing = 10
-    stack.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
-    stack.setAccessibilityIdentifier("pin-editor")
+    stack.spacing = 12
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    problem.widthAnchor.constraint(equalToConstant: Self.fieldWidth).isActive = true
 
-    view = stack
+    let container = NSView()
+    container.setAccessibilityElement(true)
+    container.setAccessibilityRole(.group)
+    container.setAccessibilityIdentifier("pin-editor")
+    container.addSubview(stack)
+
+    NSLayoutConstraint.activate([
+      stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+      stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
+      stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 18),
+      stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+    ])
+
+    view = container
   }
 
   /// The pin as the fields describe it, or nil when the glyph is not one the map can draw.
@@ -106,7 +129,7 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
     var glyph: PinGlyph?
 
     if !glyphText.isEmpty {
-      guard let parsed = PinGlyph(glyphText) else { return nil }
+      guard let parsed = PinGlyph(glyphText), Self.canDraw(parsed) else { return nil }
 
       glyph = parsed
     }
@@ -121,13 +144,29 @@ final class PinEditorController: NSViewController, NSTextFieldDelegate {
       accent: accent, glyph: glyph)
   }
 
+  /// True for a glyph this Mac can draw. A name shaped like an SF Symbol that the system does not
+  /// have would draw as the default dot, so the editor refuses it.
+  static func canDraw(_ glyph: PinGlyph) -> Bool {
+    guard case .symbol(let name) = glyph else { return true }
+
+    return NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
+  }
+
   func controlTextDidChange(_ notification: Notification) {
     let valid = editedPin != nil
+    let typed = glyphField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
 
     doneButton.isEnabled = valid
-    problem.stringValue =
-      valid ? "" : "A glyph is one or two characters, or an SF Symbol name such as star.fill."
     problem.isHidden = valid
+
+    if valid {
+      problem.stringValue = ""
+    } else if case .symbol(let name)? = PinGlyph(typed) {
+      problem.stringValue = "This Mac has no SF Symbol named \u{201C}\(name)\u{201D}."
+    } else {
+      problem.stringValue =
+        "A glyph is one or two characters, or an SF Symbol name such as star.fill."
+    }
   }
 
   @objc func done() {
