@@ -20,6 +20,8 @@ public struct CommandID: Hashable, Sendable, ExpressibleByStringLiteral, CustomS
 
 extension CommandID {
   public static let newWindow: CommandID = "uniterm.new-window"
+  public static let openFile: CommandID = "uniterm.open"
+  public static let openFileWith: CommandID = "uniterm.open-with"
   public static let showSettings: CommandID = "uniterm.settings"
   public static let hideApp: CommandID = "uniterm.hide"
   public static let quit: CommandID = "uniterm.quit"
@@ -90,6 +92,13 @@ enum CommandScope: Sendable {
 struct CommandContext {
   weak var controller: MainWindowController?
   var pane: NodeID?
+
+  /// The pane a request came from, when there is one. A file opened from it lands beside it.
+  var anchor: RouteAnchor? {
+    guard let controller, let pane else { return nil }
+
+    return RouteAnchor(controller: controller, pane: pane)
+  }
 
   /// The applet of this type in the target pane, nil when the pane holds another kind.
   func applet(ofType typeID: String) -> (any Applet)? {

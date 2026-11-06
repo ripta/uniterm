@@ -435,4 +435,76 @@ final class WindowSetTests: XCTestCase {
     let later = try fixture.windows.open()
     XCTAssertTrue(later.statusCenter.history.isEmpty)
   }
+
+  // MARK: Launch anchor
+
+  /// Catches an anchor that follows creation order, not key order. The first window was key last,
+  /// so a Launch Services open anchors there though the second is newer.
+  func testTheLaunchAnchorIsTheFocusedPaneOfTheWindowThatWasKeyLast() throws {
+    let fixture = makeFixture()
+    let first = try fixture.windows.open()
+    let second = try fixture.windows.open()
+
+    fixture.windows.noteKey(second)
+    fixture.windows.noteKey(first)
+
+    let anchor = try XCTUnwrap(fixture.windows.launchAnchor())
+    XCTAssertTrue(anchor.controller === first)
+    XCTAssertEqual(anchor.pane, first.focusedPane)
+  }
+
+  /// Catches a closed window that stays the anchor. The next most recent key window takes over,
+  /// and with none ever key the newest window does.
+  func testTheAnchorFallsBackWhenTheKeyWindowCloses() throws {
+    let fixture = makeFixture()
+    let first = try fixture.windows.open()
+    let second = try fixture.windows.open()
+    let third = try fixture.windows.open()
+
+    fixture.windows.noteKey(first)
+    fixture.windows.noteKey(second)
+    second.window?.close()
+
+    XCTAssertTrue(fixture.windows.launchAnchorController === first)
+
+    first.window?.close()
+
+    XCTAssertTrue(fixture.windows.launchAnchorController === third)
+  }
+
+  func testNoWindowMeansNoAnchor() {
+    XCTAssertNil(makeFixture().windows.launchAnchor())
+  }
+
+  /// Catches a Finder open that leaves its window minimized, or one that restores it without
+  /// making it key. The fake reports itself minimized and records what it is asked to do.
+  func testBringingAWindowForwardUnminimizesItAndMakesItKey() {
+    let window = FakeForwardable(isMiniaturized: true)
+
+    WindowSet.bringForward(window)
+
+    XCTAssertEqual(window.calls, ["deminiaturize", "makeKeyAndOrderFront"])
+  }
+
+  /// A window that is not minimized is only made key.
+  func testBringingAnOpenWindowForwardOnlyMakesItKey() {
+    let window = FakeForwardable(isMiniaturized: false)
+
+    WindowSet.bringForward(window)
+
+    XCTAssertEqual(window.calls, ["makeKeyAndOrderFront"])
+  }
+}
+
+@MainActor
+private final class FakeForwardable: ForwardableWindow {
+  let isMiniaturized: Bool
+  var calls: [String] = []
+
+  init(isMiniaturized: Bool) {
+    self.isMiniaturized = isMiniaturized
+  }
+
+  func deminiaturize(_ sender: Any?) { calls.append("deminiaturize") }
+  func makeKeyAndOrderFront(_ sender: Any?) { calls.append("makeKeyAndOrderFront") }
 }

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-03
-**Updated:** 2026-11-03
+**Updated:** 2026-11-04
 
 ## Dependencies
 
@@ -13,8 +13,9 @@
 - UTERM-004 M1 and M3: M4's path-reading power builds on caller identity and shared command dispatch
 - UTERM-004 M4: M1's check that a routed split never joins a group a controller owns. Until it lands, the check runs
   against a fixture group
-- UTERM-004 M6: M4's grants, M2's approvals for senders other than Apple's openers, and M5's session approval all use
-  its approval flow and pending indicator. M5 starts only after it. Until it lands, M2 refuses other senders
+- UTERM-004 M6: M4's grants, M7's approvals for senders other than Apple's openers, and M5's session approval all use
+  its approval flow and pending indicator. M5 and M7 start only after it. Until it lands, M2 refuses other senders.
+  Amended 2026-11-03; see Decision Log.
 
 ## Impacts
 
@@ -149,7 +150,9 @@ per-type choice the user saves overrides the rank.
   conforming to `public.json`. Without it, the file resolves to a dynamic type that matches no declaration.
 - One match is more specific than another when its declared type conforms to the other's. Rank decides only between
   matches that are equal or that neither conforms to. Two applets claiming the same type at the same rank fail a test,
-  so no silent tiebreak ever picks a default.
+  so no silent tiebreak ever picks a default. Two unrelated declared types can still tie at run time, when one file's
+  type conforms to both. The router then asks the user to pick, and refuses the file with a message when nothing can
+  ask. Amended 2026-11-03; see Decision Log.
 - An "Open With" choice in uniterm lists every applet that declares the file's type. It can save the choice for the
   file's exact type, and the user can clear a saved choice.
 - A saved choice matches the file's exact resolved type only, never types that conform to it. A choice for `.json`
@@ -235,24 +238,30 @@ Decision: Apple's user-facing openers are the user's act. Every other sender nee
 remembered past the sender's run.
 
 - The sender is identified from the event's audit token, by code-signing requirement, never by PID, path, or display
-  name. Apple's user-facing openers are matched on platform-binary requirements: Finder, the Dock, Spotlight, Quick
-  Look, and Recent Items. M2 confirms the list on real macOS. Generic Apple-signed binaries, such as `osascript`,
-  `python3`, and `/usr/bin/open`, never match.
+  name. Apple's user-facing openers are matched by an Apple-anchored requirement on the signing identifier, such as
+  `anchor apple and identifier "com.apple.finder"`: Finder, the Dock, and Spotlight. The `anchor apple` clause holds
+  only for code signed by Apple's own anchor, so a third party cannot satisfy it with a copied identifier.
+  Generic Apple-signed binaries, such as `osascript`, `python3`, and `/usr/bin/open`, never match. Quick Look and
+  Recent Items are not on the list, since M2 found no signed program for either to name an identifier for. Adding one
+  needs its measured identifier. Amended 2026-11-03; see Decision Log.
 - Opens from those openers are the user's act, and need no grant.
 - Until UTERM-004 M6 lands, every other sender is refused, with a bounded, coalesced message naming it.
 - After M6, every other sender goes to UTERM-004's pending indicator, named from its verified signing information. The
   user can allow once, or allow for the session. A session grant binds to the sender's audit-token PID and PID
   version, and its label says it covers everything that app sends until it quits, as UTERM-004's OSC 52 approval says
-  for a terminal session. Nothing is remembered after the sender quits.
+  for a terminal session. Nothing is remembered after the sender quits. M7 builds this.
 - A go-between, such as `/usr/bin/open` or a Launch Services helper, and a sender that cannot be identified, get Allow
-  once only. Before accepting a go-between as the sender, M2 checks for an attribute that names the originator.
+  once only. M2 checked for an attribute that names the originator, and found none. An event sent by `open -a` carries
+  `keyActualSenderAuditToken`, and it names the Launch Services UI agent, not the program that ran `open`. The
+  authority therefore reads only the sender's own audit token. Amended 2026-11-03; see Decision Log.
 - One event is one operation that names every file in it.
 - A prompt for an unknown sender says the sender is unknown and lists every full path.
 - A program with Automation consent over Finder can make Finder the sender. The event carries no originator, so this
   cannot be closed. It is accepted under ADR-09's statement that uniterm gives no isolation from the user's own
   processes.
-- M2 records which sender a cold-launch Finder open, a warm Finder open, and `open -a` each report, before the
-  authority is built. If Finder and `open -a` cannot be told apart, this question reopens.
+- M2 recorded which sender `open -a` reports, cold and warm. M8 records what a cold-launch Finder open and a warm one
+  report. If Finder and `open -a` cannot be told apart, this question reopens. Amended 2026-11-03; see Decision
+  Log.
 
 Rationale: accepting every sender lets any program open panes with no grant, which ADR-09 forbids. Refusing every
 other sender breaks third-party file managers and launchers with no recovery. Remembered trust in a launcher such as
@@ -423,8 +432,9 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
   declarations live with each applet, so a later claim changes no router code, and an equal-rank claim fails a test.
 - **M2's sender measurement reopens the Launch Services decision** — likelihood: medium, impact: medium. If a
   cold-launch Finder open reports a Launch Services helper as its sender, Finder opens would be refused before UTERM-004
-  M6 and ask on every open after it. Mitigation: M2 records the sender each path reports before it builds the
-  authority, and the decision says to reopen the question if Finder and `open -a` cannot be told apart.
+  M6 and ask on every open after it. Mitigation: M2 recorded the sender `open -a` reports, and M8 records the sender
+  Finder reports, by hand. The decision says to reopen the question if Finder and `open -a` cannot be told apart.
+  Amended 2026-11-03; see Decision Log.
 - **Parts of the design wait on unbuilt work** — likelihood: high, impact: low. Third-party launchers are refused, and
   `uniterm open` cannot ship, until UTERM-004 M6 and UTERM-003 M3 land. Accepted: Finder, the Dock, File > Open, and
   terminal clicks need neither, and the gating is stated in Dependencies and each milestone.
@@ -438,7 +448,7 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 
 ### M1: The router
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Each applet type declares the content types it opens, and the router picks one applet per file by the rule "How a
   file type maps to an applet" settles
@@ -461,21 +471,49 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 - No script or controller can write a saved choice
 - A test fails when two applets claim the same type at the same rank, and when a declared type the system lacks is not
   imported with its conformance
-- Type and placement work runs off the main thread, so a path on a slow network volume never stalls the UI
+- Type resolution and the file-system checks run off the main thread, so a path on a slow network volume never stalls
+  the UI. Choosing the pane and changing the window stay on the main thread, since AppKit owns them. Amended
+  2026-11-03; see Decision Log.
+
+**As built:**
+
+- The production catalog holds one applet type, the terminal, which opens `public.folder` at the owner rank. No viewer
+  is built, so none declares a type. The factory that turns a file into an applet is kept apart from the declaration,
+  since the terminal's needs the host's engine. The app attaches it. A routed folder reuses the terminal's ordinary
+  start path.
+- Fixture types cannot be made through the system's database. A type exported in code, with no registration, conforms
+  to nothing, so the router takes its type source and conformance check as an injected input. Router tests use a table
+  of fixture types. The catalog tests use the real database, including a check that a package is refused.
+- The declared-type check takes the host's imported types as an input. M1 tests it with fixture tables. M2 feeds it from
+  `Info.plist`, and adds the drift test.
+- The tie rule changed from the plan. See Decision Log, 2026-11-03.
+- A symlink is followed before its target is classified, and the type is looked up on the target, since the system
+  types a link as `public.symlink`. The router never opens it, and a symlink to a FIFO is refused. The start directory
+  keeps the path as the request named it, so a link to a folder starts its terminal at the link, and a linked file
+  starts in the link's folder. See Decision Log.
+- A pane-group seam on the window answers "no group" until UTERM-004 M4. Ordinary splits report to it and routed splits
+  never do. The fixture group proves the difference. The re-run against UTERM-004's groups stays with that milestone.
+- The anchor is an input. The most recently key window is M2's.
+- The chooser is an alert with a pop-up, an "always use" checkbox, and a clear button. Its model is unit tested. The
+  alert's buttons and list are checked without presenting it. M3 wires it to a menu item.
+- The saved-choice writers are file-private to the chooser model's file. A test cannot prove a call fails to compile, so
+  it proves what the store does with entries it did not write.
 
 ### M2: Finder and Dock
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-- Open With in Finder and a drop on the Dock icon open the file in uniterm, at launch and while running
+Amended 2026-11-04; see Decision Log.
+
+- An open-documents event from an Apple opener opens its file or folder in uniterm, at launch and while running, proven
+  with a sender fixture. Open With in Finder and a drop on the Dock icon by hand are M8's
 - An open sent by another program follows the authority "Opens that arrive through Launch Services" settles
-- Before the authority is built, the sender each path reports is recorded: a cold-launch Finder open, a warm one, and
-  `open -a`
+- Before the authority is built, the sender `open -a` reports is recorded, cold and warm
 - The sender is checked by code-signing requirement on the event's audit token, and a sender that already exited is
   treated as unidentified
 - A test shows `osascript`, `python3`, and `/usr/bin/open` never match an Apple opener
-- Refusal messages and approval requests stay bounded and coalesced under a loop of `open -a`
-- A session grant binds to the sender's PID and PID version, so a reused PID never inherits it
+- Two senders with one PID and different PID versions are different identities, and a lookup for a reused PID fails
+- Refusal messages stay bounded and coalesced under a loop of `open -a`
 - Every `LSHandlerRank` is Alternate, and uniterm never displaces another app's handler
 - Several files open one pane each, with one summary message for the ones that failed, and a confirmation above the
   fixed count
@@ -486,20 +524,96 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 - The reply to an open-documents event is the same for success, missing, unsupported, and denied
 - The app's declared document types match the applet declarations, and a test fails when they drift
 - A folder opened from Finder at cold launch opens one terminal there, and no other shell
-- A batch from a sender that needs approval raises one prompt that names every file and covers the count
-  confirmation
-- Its approvals for senders other than Apple's openers wait on UTERM-004 M6, and until then those senders are refused
+- Until UTERM-004 M6 lands, senders other than Apple's openers are refused, and the refusal touches no path
+
+**As built:**
+
+- Divergences from the milestone text are in the Decision Log, 2026-11-03, M2 best guesses. Approvals moved to M7. The
+  Finder sender record moved to M8, since the Automation consent to drive Finder was denied. The opener list narrowed
+  to Finder, the Dock, and Spotlight. The `open -a` measurements and the identifiers are in the same entry.
+- Authority is decided when the event arrives, from the event's sender audit token. The sender is often an `open`
+  process that has exited by then, so it is unidentified and refused. Only the sender token decides. The actual-sender
+  token is logged and ignored.
+- A refused open posts one message per 30 seconds in total, naming the first sender in the window. It touches no path.
+  A loop of a thousand refusals leaves one message in the history, tested at the coordinator and for the counter alone.
+- An event that arrives before the coordinator exists is held in the app delegate with its sender already resolved,
+  then handed over. The layout asks the coordinator before it opens a default window, on every launch outcome, and
+  the coordinator opens one window after the replay when none is open. Saved windows still restore as saved.
+- Most-recently-key tracking is a list of the windows that have been key. When the last key window closes, the one
+  before it takes over, and with none ever key the newest window anchors.
+- A batch above 10 files asks first. `RoutedOpener.open` owns the question and the threshold, through an injected
+  confirmer that defaults to the close dialog, so every entry point asks and a test injects the answer. The
+  dialog is not styled for opening, and its accessibility identifier still says close confirmation. Nobody has looked at
+  it on screen.
+- Unit tests cover the identity checks against the real Finder, Dock, Spotlight, `osascript`, `python3`, and
+  `/usr/bin/open` binaries, a lookup with this process's own audit token, and the same token with a bumped PID
+  version, which does not resolve. Hand-built Apple Events cannot carry the sender tokens, since the system sets them,
+  so the token read is proven live only.
+- The drift test reads `App/Info.plist` through a path from the test file and feeds the catalog audit its imported
+  types.
+- The UI test sends an open from the test runner to the running app. The runner is not an Apple opener, so it proves a
+  refusal with a message and no new pane. An accepted open needs Finder as the sender, which no test can be, so the
+  accepted path is covered by unit tests with a sender fixture and by the hand checks below.
+- No `test-cost` target exists in this repo. New test classes ran in under 1 s each: `LaunchOpenCoordinatorTests` 12
+  tests in 0.7 s, `SenderIdentityTests` 9 in 0.1 s, `InfoPlistDriftTests` 7, `OpenAuthorityTests` 5.
+- The hand checks, Open With from Finder and a drop on the Dock icon, cold and warm, moved to M8 with the Finder sender
+  record. See the Decision Log, 2026-11-03, review fix.
+- Bringing a window forward and unminimizing it is proven by a test over a fake window that reports itself minimized.
+  The confirmation above 10 files is proven through the injectable confirmer. Neither dialog nor window was looked at
+  on screen.
 
 ### M3: File > Open
 
-**Status:** NOT STARTED
+**Status:** DONE
+
+Amended 2026-11-03; see Decision Log.
 
 - File > Open opens a panel and routes the chosen file, by the key ownership "Who owns Cmd-O" settles
 - The panel starts in the focused pane's `currentDirectory`, or the home folder when there is none
 - A test checks that no built-in applet command claims Cmd-O
-- Each viewer's pane-local Open command replaces its source, and in a controller-owned pane that controller gets no
-  path or content outside its scope, tested with fixture controllers and scopes
+- Each viewer's pane-local Open command replaces its source, proven on a fixture applet
 - The panel selects several files, and they follow the batch rule
+
+**As built:**
+
+- File > Open is the window command `uniterm.open`, titled "Open File or Folder" in the palette and "Open..." in the
+  File menu, section 0, beside New Window. Cmd-O joins the reserved keys through the live menu, so no applet can take
+  it. It is an app-scope command, so it also runs with no window. It waits while a sheet holds the window.
+- "Open With..." is `uniterm.open-with`, with no key. It takes one file from the panel, then shows M1's chooser for it.
+  The chooser lists every applet that declares the type, saves the pick, or clears a saved one. Clearing routes the
+  file again by rank. A file no applet declares is refused with the usual message and no chooser.
+- The panel lives in AppletKit, so the window command and the viewers' pane-local Open share it. It chooses files and
+  folders, treats a package as one file, and always sets its start directory. The start directory is the focused pane's
+  `currentDirectory`, or the home folder when there is no window, the pane reports none, or the reported folder is
+  gone. It hangs from the anchor's window as a sheet, or runs as a modal with no window. The router runs after the
+  panel returns. The panel is injectable. With no window open the panel runs `runModal`, which waits on the user. Its
+  loop still pumps events and no other window exists to block, so ADR-08's main-thread bound holds.
+- After the panel and the chooser, the commands wait for the sheet to leave the window, up to 25 polls of 20 ms,
+  before the router places a pane. The sleep is injected. The router treats an attached sheet as no room, so a sheet
+  that lingered would have sent the pane to a new window. A unit test attaches a real sheet that an injected sleeper
+  ends and shows the pane lands beside the anchor. A second test never ends the sheet and shows the wait stops at the
+  poll limit and the pane opens in a new window. The batch confirmation needs no wait, since a batch always opens in a
+  new window. On screen, only the open panel is covered, by the UI test. The chooser sheet is covered by the same wait
+  and the unit test, and nobody has watched it.
+- Several chosen files follow the batch rule. A selection above the 10-file threshold asks first, through the
+  confirmer that `RoutedOpener` owns, which serves both entry points.
+- The pane-local Open is `AppletCommand.openSource()` with a `SourceReplacing` protocol. An applet that adopts the
+  protocol gets "Open..." with no key in the File menu. It takes one file or folder and calls the applet's
+  `replaceSource`. A failure reaches the pane's status bar, and the applet keeps its source. The terminal does not
+  adopt it. No viewer exists, so a fixture applet proves it. The start directory comes from one rule that the router and
+  this command share, kept in AppletKit. A test over every command set in the built-in catalog fails when an applet
+  claims Cmd-O or the terminal declares an Open of its own. The app registers that same catalog list.
+- The controller half of this milestone's old fourth check moved to M4. See the Decision Log.
+- A UI test presses Cmd-O in a terminal pane, drives the real panel through go-to-folder, and shows a new terminal
+  beside the first, in the chosen folder, with no second window. No hook substitutes the panel. The routed pane
+  landing beside the anchor proves the sheet is gone by then.
+- No `test-cost` target exists in this repo. The new test classes ran in under 0.5 s each in the package suite, and
+  `OpenPanelUITests` took 23 s.
+- The pane-local Open skips the router's file inspection. A FIFO or device the user picks in a viewer's own panel
+  reaches `replaceSource`. The first viewer that adopts `SourceReplacing` must refuse non-regular files, or run the
+  same inspection.
+- A screenshot of the real panel as a sheet over the window was looked at. Nobody has yet looked at the File menu, or
+  at Open With's chooser, on screen.
 
 ### M4: The path-reading power
 
@@ -552,6 +666,35 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 - A `file:` hyperlink naming another host never opens a local file
 - A Cmd-click on a web URL or another non-file scheme does nothing
 - The open-URL and mouse-over-link actions reach the app through the terminal surface protocol
+
+### M7: Launch Services approvals
+
+**Status:** NOT STARTED
+
+Amended 2026-11-03; see Decision Log. Moved from M2.
+
+- Starts after UTERM-004 M6
+- A sender other than Apple's openers goes to UTERM-004's pending indicator, named from its verified signing
+  information, and can be allowed once or for the session
+- A session grant binds to the sender's PID and PID version, so a reused PID never inherits it
+- A batch from a sender that needs approval raises one prompt that names every file and covers the count
+  confirmation
+- A prompt for an unknown sender says the sender is unknown, lists every full path, and offers Allow once only
+- A go-between such as `/usr/bin/open` gets Allow once only
+- Nothing is remembered after the sender quits
+- Nothing touches a path before its open is approved, so an unapproved open never raises a macOS privacy prompt
+
+### M8: Finder sender record
+
+**Status:** NOT STARTED
+
+Amended 2026-11-03; see Decision Log. Moved from M2. This milestone is a check only the user can run.
+
+- The sender a cold-launch Finder open, a warm one, and a Dock drop each report is recorded in the As built block,
+  read from the debug log line of a build run directly
+- Finder and `open -a` report senders that tell them apart. When they do not, the user rules on the Launch Services
+  decision, which reopens
+- Open With in Finder and a drop on the Dock icon open the file, cold and warm, in a release build
 
 ## Decision Log
 
@@ -637,13 +780,87 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
 - 2026-11-03: ADR candidate: every way a file reaches an applet from outside its pane goes through one route into the
   applet's own entry point. Waits on UTERM-009's byte-stream source and UTERM-010's design, either of which could
   change what an entry point is. It was also amended in this review for the terminal's folder entry.
-- 2026-11-03: ADR candidate: which Launch Services senders count as the user's act. Waits on M2's record of the sender
-  each path reports, since the decision reopens if Finder and `open -a` cannot be told apart.
+- 2026-11-03: ADR candidate: which Launch Services senders count as the user's act. Waits on M8's record of the sender
+  each Finder path reports, since the decision reopens if Finder and `open -a` cannot be told apart.
 - 2026-11-03: Accepted after the review gate. No ADR written.
 - 2026-11-03: Scheduled as UTERM-015 M1-M3 and UTERM-015 M4-M6 in queue.md.
 - 2026-11-03: Amended "Folders": the terminal declares `public.folder` at the owner rank and the image viewer at the
   alternate rank. Folders said only that the type mapping picks, and two equal claims fail its test. Amended UTERM-006,
   UTERM-008, and UTERM-009 to declare their types and gain a pane-local Open... with no key.
+- 2026-11-03: M1 work-queue best guesses (work-queue best guess). Amended "How a file type maps to an applet", which
+  said equal-rank claims fail a test and nothing about unrelated types that tie. A file whose type conforms to two
+  unrelated declared types can tie at run time, and the test cannot see it. The router now asks the user to pick, and
+  refuses with a message when nothing can ask, so no default is picked. Amended M1's last check, which said "Type and
+  placement work runs off the main thread, so a path on a slow network volume never stalls the UI". Only type resolution
+  and file-system checks move off it. Choosing the pane and changing the window stay on the main thread. Review fix: a
+  symlink's type comes from its target, and its start directory is the path as named, not the resolved target, matching
+  the shell's logical paths. Also recorded: saved choices live in one defaults dictionary keyed by exact type, a symlink
+  is followed before classifying its target, and the declared-type check takes the imported types as an input that M2
+  fills from `Info.plist`.
+- 2026-11-03: M2 work-queue best guesses (work-queue best guess). Amended M2, M7, and M8 and the Launch Services
+  decision.
+  1. Approvals moved out of M2. The session grant bound to the sender's PID and PID version, and the single prompt for a
+     batch from a sender that needs approval, both need UTERM-004 M6's approval flow, which is not built. They are the
+     new M7, and the queue row `UTERM-015 M4-M6` is now `UTERM-015 M4-M7`, since M7 has M4's dependency. M2 keeps
+     building the identity and tests that two PID versions are two identities.
+  2. The Finder measurement moved out of M2. The decision said M2 records the sender a cold-launch Finder open and a
+     warm one report, before the authority is built. The Automation consent to drive Finder with `osascript` was
+     denied, so neither was recorded. The authority was built as settled, since the `open -a` record gave a sender
+     (`com.apple.open` or an exited process) that no Apple opener's requirement matches. The Finder record is the new
+     user-check milestone M8, and it is not in the queue. It needs no dependency, and a queue row for it would wait on
+     UTERM-004 M6 for no reason. If Finder cannot be told apart from `open -a`, the decision reopens then.
+  3. The opener list narrowed. The decision named Finder, the Dock, Spotlight, Quick Look, and Recent Items. On this
+     macOS (build 25G83), Finder is `com.apple.finder`, the Dock is `com.apple.dock`, and Spotlight is
+     `com.apple.Spotlight`. All three are platform binaries with platform identifier 26 and no team. Quick Look's
+     program is not a file on the system volume, so no identifier could be read for it. Recent Items has no
+     program found either. `com.apple.systemuiserver` exists, and nothing showed that it sends opens, so it is not
+     listed. No event from the Dock or Spotlight was sent either, so their identifiers are read from the programs
+     and unmeasured as senders. A list that names a program nobody measured is a guess about who the user's act is. The narrower
+     list fails safe, since an unlisted opener is refused with a message. Quick Look and Recent Items return with a
+     measured identifier.
+  4. No attribute names the originator behind a go-between. The decision said M2 checks. An event from `open -a`
+     carries `keySenderAuditTokenAttr` and `keyActualSenderAuditToken`. The sender token names `/usr/bin/open`
+     (`com.apple.open`) while that process is alive, and nothing once it has exited. The actual-sender token names the
+     Launch Services UI agent (`com.apple.coreservices.uiagent`, platform binary), cold and warm. It is a helper, not
+     the program that ran `open`. The authority reads the sender token only, so a go-between stays refused, and M7
+     gives it Allow once only.
+  5. Measurements, on Darwin 25.6.0, running the debug build directly with a scratch layout. A warm `open -a` of a
+     folder, an `open -a` of a file and a folder, and a cold `open -a` launched with `--env` all reported the same.
+     The sender token's process was `open`, identified as `com.apple.open` in one run and already exited, so
+     unidentified, in two. Both refuse. The actual-sender token was `com.apple.coreservices.uiagent` every time. The
+     sender's process had exited by the time of lookup in two of three runs, which is why "a sender that already
+     exited is unidentified" is the common case for `open -a`. A debug build logs one line per open event with the
+     identifier, team, platform flag, PID, and PID version of each token, so any sender can be measured again by hand.
+  6. The refusal message is coalesced to one per 30 seconds, whoever sends. The message names the first sender in the
+     window and folds the rest into a count on the next one. The interval is one constant. A per-sender interval
+     would let a loop of different senders post without bound.
+  7. The batch confirmation threshold is 10 files, so a batch of 11 asks and a batch of 10 does not. The decision
+     asked for a fixed count and named none. It is one constant.
+  8. `Info.plist` holds one document type, `public.folder`, at the Alternate rank, and no imported types, since the
+     only declared type is a system type. The entry is written by hand, and a test fails when it drifts from the
+     catalog. It is not generated, since the catalog has one entry.
+  9. The reply to an open-documents event is AppKit's own. The delegate method returns nothing, so a refused sender
+     and an accepted one get the same reply, and success, missing, unsupported, and denied cannot differ.
+  10. A cold-launch open waits for restore, and the layout opens no default window while one waits. When the replay
+      leaves no window, because every file failed, the app opens one default window. A warm open that fails with no
+      window open leaves the app with none, as closing the last window does.
+- 2026-11-03: M2 review fix (work-queue best guess). Amended M2's first check, which said "Open With in Finder and a
+  drop on the Dock icon open the file in uniterm, at launch and while running". Only the user can run it, and a check
+  only the user can run blocks DONE. It now says an open-documents event from an Apple opener opens its file, proven
+  with a sender fixture. The hand check is M8's, so one milestone owns it. Also amended the opener wording, which said
+  "platform-binary requirements". The code matches an Apple-anchored requirement on the identifier, since the platform
+  identifier measured, 26, is tied to the OS release. M8 has its own queue row, because it needs no dependency. Its
+  result can reopen the Launch Services decision before M7 builds on it.
+- 2026-11-04: M3 work-queue best guesses (work-queue best guess). Amended M3's pane-local Open check, which said "and
+  in a controller-owned pane that controller gets no path or content outside its scope, tested with fixture
+  controllers and scopes". No controller, scope, or event channel exists yet, so there is nothing to test it against.
+  M4 already holds the check, "A pane whose source lies outside a controller's scope sends that controller no path
+  or content from it", so M3 now says only that the pane-local Open replaces its source, proven on a fixture applet.
+  Also recorded: the window commands are `uniterm.open` and `uniterm.open-with`, with the palette titles "Open File
+  or Folder" and "Open File or Folder With", so the palette tells them apart from a viewer's "Open...". A selection
+  above 10 files asks first, as Finder's batch does, since the user can pick hundreds of files. The panel's start
+  folder falls back to home when the reported folder no longer exists, since the panel would otherwise fall back to
+  AppKit's own memory.
 
 ## References
 

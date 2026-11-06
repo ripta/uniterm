@@ -71,21 +71,27 @@ public final class LayoutPersistence {
 
   /// Opens the windows for this launch. Throws only when not even a default window opens. Such a
   /// launch is not a crash, so it clears the launch marker and does not count toward the bound.
+  ///
+  /// `hasPendingOpen` is asked each time the launch is about to open a default window. When it says
+  /// yes, the launch opens none, because a routed open waits to make the window. Whoever holds that
+  /// open must open a window if it ends with none. A restored window still opens as saved.
   @discardableResult
-  public func launch() throws -> Outcome {
+  public func launch(hasPendingOpen: () -> Bool = { false }) throws -> Outcome {
     let writer: Bool
 
     do {
       writer = try store.acquire()
     } catch {
       return try openDefault(
-        .unavailable, level: .error, notice: "The layout could not be restored or saved: \(error)")
+        .unavailable, level: .error, notice: "The layout could not be restored or saved: \(error)",
+        hasPendingOpen: hasPendingOpen)
     }
 
     guard writer else {
       return try openDefault(
         .secondInstance, level: .info,
-        notice: "Another uniterm is running, so this window's layout is not saved.")
+        notice: "Another uniterm is running, so this window's layout is not saved.",
+        hasPendingOpen: hasPendingOpen)
     }
 
     let result: LaunchResult
@@ -96,7 +102,8 @@ public final class LayoutPersistence {
       store.release()
 
       return try openDefault(
-        .unavailable, level: .error, notice: "The layout could not be restored or saved: \(error)")
+        .unavailable, level: .error, notice: "The layout could not be restored or saved: \(error)",
+        hasPendingOpen: hasPendingOpen)
     }
 
     let outcome: Outcome
@@ -104,10 +111,11 @@ public final class LayoutPersistence {
     do {
       switch result {
       case .restored(let layout):
-        outcome = try restore(layout)
+        outcome = try restore(layout, hasPendingOpen: hasPendingOpen)
 
       case .fresh(let notice):
-        outcome = try openDefault(.fresh, level: .warning, notice: notice)
+        outcome = try openDefault(
+          .fresh, level: .warning, notice: notice, hasPendingOpen: hasPendingOpen)
       }
     } catch {
       store.finishLaunch()
@@ -133,7 +141,7 @@ public final class LayoutPersistence {
 
   // MARK: Restore
 
-  private func restore(_ layout: SavedLayout) throws -> Outcome {
+  private func restore(_ layout: SavedLayout, hasPendingOpen: () -> Bool) throws -> Outcome {
     var opened = 0
     var failures: [String] = []
 
@@ -147,7 +155,7 @@ public final class LayoutPersistence {
       }
     }
 
-    if layout.windows.isEmpty || opened == 0 {
+    if (layout.windows.isEmpty || opened == 0) && !hasPendingOpen() {
       try windows.open()
     }
 
@@ -163,10 +171,12 @@ public final class LayoutPersistence {
     return .restored(windows: opened)
   }
 
-  private func openDefault(_ outcome: Outcome, level: StatusLevel, notice: String?) throws
-    -> Outcome
-  {
-    try windows.open()
+  private func openDefault(
+    _ outcome: Outcome, level: StatusLevel, notice: String?, hasPendingOpen: () -> Bool
+  ) throws -> Outcome {
+    if !hasPendingOpen() {
+      try windows.open()
+    }
 
     if let notice {
       windows.post(level: level, source: .uniterm, text: notice)

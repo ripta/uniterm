@@ -48,6 +48,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
   var isPaletteVisible: Bool { paletteTarget != nil }
 
+  /// Who owns the groups of panes a controller drives. The window asks it nothing yet, and tells
+  /// it about every ordinary split. A routed split is never reported, so a routed pane joins no
+  /// group.
+  var paneGroups: any PaneGroupOwnership = NoPaneGroups()
+
   /// The tabs that took focus, newest first. It lives in memory only. A tab ID is never reused,
   /// so an entry for a tab that closed is harmless and the palette prunes it when it lists.
   var tabRecency: [PaletteTabKey] = []
@@ -89,6 +94,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   /// Runs once, when the window closes. The set of windows uses it to let go of the controller.
   var onClose: ((MainWindowController) -> Void)?
 
+  /// Runs when the window becomes key. The set of windows uses it to remember which was key last.
+  var onBecomeKey: ((MainWindowController) -> Void)?
+
   /// The description of each pane as of the last snapshot of the window.
   private var savedDescriptions: [NodeID: AppletDescription] = [:]
 
@@ -108,7 +116,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
   /// The undo policy sets how many closes the window remembers.
   ///
   /// A restored window takes its pane tree and its applets from the saved layout, and `makeApplet`
-  /// is not called for the first pane. Otherwise the first pane starts in `directory`.
+  /// is not called for the first pane. A routed window holds `routed` as its only pane, starts no
+  /// shell beside it, and takes no directory from anywhere. Otherwise the first pane starts in
+  /// `directory`.
   public init(
     appearance: AppearanceController, settings: SettingsStore,
     statusCenter: StatusCenter = StatusCenter(),
@@ -117,6 +127,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     startingIn directory: String? = nil,
     commands: CommandRegistry = CommandRegistry(),
     restoring restored: RestoredWindow? = nil,
+    startingWith routed: (any Applet)? = nil,
     restoreApplet: @escaping AppletRestorer = { _ in
       throw AppletRestoreError.unsupported("this window cannot reopen a closed pane")
     },
@@ -135,6 +146,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
 
     if let panes {
       paneArea = PaneAreaView(restoring: panes.tree, applets: panes.applets, focus: panes.focus)
+    } else if let routed {
+      paneArea = PaneAreaView(firstApplet: routed)
     } else {
       paneArea = PaneAreaView(firstApplet: try makeApplet(.terminalShell, directory))
     }
@@ -363,6 +376,79 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
     return place(applet, axis: axis, from: pane)
   }
 
+  // MARK: Routed panes
+
+  /// True when a routed pane may split this window. A window with a sheet attached holds the
+  /// user's attention, so it counts as having no room.
+  public var acceptsRoutedPane: Bool { paneActionsEnabled }
+
+  /// True when the pane is in this window.
+  public func contains(pane: NodeID) -> Bool {
+    paneArea.tree.paneIDs.contains(pane)
+  }
+
+  /// The pane with the largest area, the first in reading order on a tie.
+  public func largestPane() -> NodeID? {
+    contentController.view.layoutSubtreeIfNeeded()
+
+    let frames = paneArea.tree.layout(in: paneArea.bounds.size).frames
+    var best: (pane: NodeID, area: CGFloat)?
+
+    for pane in paneArea.tree.paneIDs {
+      guard let frame = frames[pane] else { continue }
+
+      let area = frame.width * frame.height
+
+      if area > (best?.area ?? -1) {
+        best = (pane, area)
+      }
+    }
+
+    return best?.pane
+  }
+
+  /// Splits `pane` and puts a routed applet in the new pane, which takes focus. The new pane is
+  /// disconnected: it joins no group a controller owns, and no pane's source is replaced.
+  ///
+  /// Returns nil, and leaves the applet untouched for the caller, when the window has a sheet, the
+  /// pane is not here, or there is no room in either direction.
+  @discardableResult
+  public func placeRouted(_ applet: any Applet, beside pane: NodeID) -> NodeID? {
+    guard paneActionsEnabled, contains(pane: pane) else { return nil }
+
+    contentController.view.layoutSubtreeIfNeeded()
+
+    let frame = paneArea.tree.layout(in: paneArea.bounds.size).frames[pane]
+    let wide = (frame?.width ?? 0) >= (frame?.height ?? 0)
+    let axes: [Axis] = wide ? [.row, .column] : [.column, .row]
+
+    guard let axis = axes.first(where: { paneArea.canSplit(pane, $0) }) else { return nil }
+
+    adopt(applet)
+
+    let created: NodeID
+    do {
+      created = try paneArea.split(pane, axis, adding: applet)
+    } catch {
+      applet.host = nil
+      return nil
+    }
+
+    startPendingApplets()
+    paneArea.focus(created)
+    return created
+  }
+
+  /// Splits the pane with the largest area in the current layout and puts a routed applet in the
+  /// new pane. A nil return means the window refused: it has a sheet, or the largest pane has no
+  /// room to split. The applet is untouched then, and the caller keeps it.
+  @discardableResult
+  public func placeRoutedInLargestPane(_ applet: any Applet) -> NodeID? {
+    guard let pane = largestPane() else { return nil }
+
+    return placeRouted(applet, beside: pane)
+  }
+
   /// Splits `pane` and puts a launcher in the new one, which takes the keyboard. The launcher
   /// remembers the directory `pane` reports and starts what it opens there.
   @discardableResult
@@ -384,6 +470,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, A
       return nil
     }
 
+    paneGroups.paneSplit(created, from: pane)
     startPendingApplets()
     paneArea.focus(created)
     return created

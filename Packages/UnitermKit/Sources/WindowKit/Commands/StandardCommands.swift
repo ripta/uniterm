@@ -37,7 +37,22 @@ enum StandardCommands {
         .newWindow, "New Window", scope: .app, key: KeyChord("n"),
         menu: MenuPlacement(.file, section: 0)
       ) { _ in app.newWindow() },
+      Command(
+        .openFile, "Open File or Folder", scope: .app, key: KeyChord("o"),
+        menu: MenuPlacement(.file, section: 0, title: "Open\u{2026}"),
+        isAvailable: canOpen
+      ) { context in app.openFile(context.anchor) },
+      Command(
+        .openFileWith, "Open File or Folder With", scope: .app,
+        menu: MenuPlacement(.file, section: 0, title: "Open With\u{2026}"),
+        isAvailable: canOpen
+      ) { context in app.openFileWith(context.anchor) },
     ]
+  }
+
+  /// Opening works with no window, and waits while a sheet holds the window's attention.
+  private static func canOpen(_ context: CommandContext) -> Bool {
+    context.controller == nil || context.actionsEnabled
   }
 
   private static func paneCommands() -> [Command] {

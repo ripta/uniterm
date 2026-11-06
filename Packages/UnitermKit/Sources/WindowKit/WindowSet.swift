@@ -1,4 +1,5 @@
 import AppKit
+import AppletKit
 import LayoutKit
 import StatusKit
 
@@ -24,8 +25,21 @@ enum WindowCascade {
   }
 }
 
+/// The part of a window that bringing it forward touches. A test replaces the window with a fake
+/// that reports itself minimized.
+@MainActor
+protocol ForwardableWindow {
+  var isMiniaturized: Bool { get }
+
+  func deminiaturize(_ sender: Any?)
+  func makeKeyAndOrderFront(_ sender: Any?)
+}
+
+extension NSWindow: ForwardableWindow {}
+
 public enum WindowSetError: Error, Equatable {
   case cannotRestore
+  case cannotRoute
 }
 
 /// The open main windows, in the order they were opened.
@@ -49,8 +63,14 @@ public final class WindowSet {
   public typealias RestoringFactory =
     @MainActor (_ identifier: String, _ restored: RestoredWindow) throws -> MainWindowController
 
+  /// Makes the controller for a window that holds one routed pane. The pane is the window's only
+  /// pane. No shell starts beside it, and no directory comes from another window.
+  public typealias RoutedFactory =
+    @MainActor (_ identifier: String, _ applet: any Applet) throws -> MainWindowController
+
   private let makeController: Factory
   private let makeRestoredController: RestoringFactory?
+  private let makeRoutedController: RoutedFactory?
   private let visibleFrame: @MainActor (NSWindow) -> NSRect?
   private let screens: @MainActor () -> [ScreenArea]
   private var serial = 0
@@ -80,12 +100,14 @@ public final class WindowSet {
     screens: @escaping @MainActor () -> [ScreenArea] = WindowSet.attachedScreens,
     confirmer: @escaping CloseConfirmer = CloseDialog.present,
     makeRestoredController: RestoringFactory? = nil,
+    makeRoutedController: RoutedFactory? = nil,
     makeController: @escaping Factory
   ) {
     self.visibleFrame = visibleFrame
     self.screens = screens
     self.confirmer = confirmer
     self.makeRestoredController = makeRestoredController
+    self.makeRoutedController = makeRoutedController
     self.makeController = makeController
   }
 
@@ -127,6 +149,51 @@ public final class WindowSet {
       ?? controllers.last
   }
 
+  /// The open windows that have been key, least recently key first. It survives the app going to
+  /// the background, since no window is key then.
+  private var keyOrder: [MainWindowController] = []
+
+  /// The controller whose window was key most recently, among the windows still open.
+  public var mostRecentlyKey: MainWindowController? { keyOrder.last }
+
+  /// The controller a Launch Services open anchors to: the window that was key last, else the
+  /// newest window.
+  public var launchAnchorController: MainWindowController? {
+    mostRecentlyKey ?? controllers.last
+  }
+
+  /// Records that a window became key.
+  func noteKey(_ controller: MainWindowController) {
+    guard controllers.contains(where: { $0 === controller }) else { return }
+
+    keyOrder.removeAll { $0 === controller }
+    keyOrder.append(controller)
+  }
+
+  /// The focused pane of the window that was key last. Nil when no window is open.
+  public func launchAnchor() -> RouteAnchor? {
+    guard let controller = launchAnchorController else { return nil }
+
+    return RouteAnchor(controller: controller, pane: controller.focusedPane)
+  }
+
+  /// Brings a window forward, unminimized, and activates the app.
+  public func bringForward(_ controller: MainWindowController) {
+    guard let window = controller.window else { return }
+
+    Self.bringForward(window)
+    NSApp.activate()
+  }
+
+  /// Restores a minimized window, then makes it key and frontmost.
+  static func bringForward(_ window: some ForwardableWindow) {
+    if window.isMiniaturized {
+      window.deminiaturize(nil)
+    }
+
+    window.makeKeyAndOrderFront(nil)
+  }
+
   /// Opens a window, shows it, and returns its controller. It cascades from the active window, and
   /// the first window is centered. Its first pane starts in the directory the active window's
   /// focused pane reports. When the factory throws, nothing opens and no number is used.
@@ -137,6 +204,33 @@ public final class WindowSet {
 
     let number = serial + 1
     let controller = try makeController(Self.identifier(forSerial: number), directory)
+    serial = number
+
+    register(controller)
+
+    if let anchor, let window = controller.window {
+      let corner = WindowCascade.topLeft(
+        after: anchor.frame, size: window.frame.size, in: visibleFrame(anchor))
+      window.setFrameTopLeftPoint(corner)
+    }
+
+    show(controller)
+    return controller
+  }
+
+  /// Opens a window whose only pane is `applet`, and returns its controller. It cascades from the
+  /// active window like any new window, and it takes no directory from it. When the factory
+  /// throws, nothing opens, no number is used, and the applet stays the caller's to close.
+  @discardableResult
+  public func open(routing applet: any Applet) throws -> MainWindowController {
+    guard let makeRoutedController else {
+      throw WindowSetError.cannotRoute
+    }
+
+    let anchor = activeController?.window
+
+    let number = serial + 1
+    let controller = try makeRoutedController(Self.identifier(forSerial: number), applet)
     serial = number
 
     register(controller)
@@ -189,6 +283,9 @@ public final class WindowSet {
     controller.onLayoutChange = { [weak self] in
       self?.onLayoutChange?()
     }
+    controller.onBecomeKey = { [weak self] controller in
+      self?.noteKey(controller)
+    }
     controller.visibleFrameProvider = visibleFrame
     controller.refreshMinimumSize()
     controllers.append(controller)
@@ -231,6 +328,8 @@ public final class WindowSet {
 
   private func windowDidClose(_ controller: MainWindowController) {
     controllers.removeAll { $0 === controller }
+
+    keyOrder.removeAll { $0 === controller }
     closing.append(controller)
     onLayoutChange?()
 
