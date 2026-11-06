@@ -360,6 +360,32 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertEqual(editor.editedPin.glyph, nil)
   }
 
+  /// Catches a filter that spreads the remaining groups out or resizes the picker. The groups
+  /// stay packed from the top, one spacing apart, and the grid's area keeps its height.
+  func testFilteringKeepsTheGroupsPackedAndThePickerStill() throws {
+    let picker = GlyphPickerController(current: nil, used: [])
+    picker.view.layoutSubtreeIfNeeded()
+    let height = picker.symbolArea.frame.height
+
+    picker.filterField.stringValue = "h"
+    picker.controlTextDidChange(
+      Notification(name: NSControl.textDidChangeNotification, object: picker.filterField))
+    picker.view.layoutSubtreeIfNeeded()
+
+    XCTAssertEqual(picker.symbolArea.frame.height, height, accuracy: 0.5)
+
+    let sections = picker.groupsStack.arrangedSubviews.map {
+      $0.convert($0.bounds, to: picker.symbolArea.documentView)
+    }
+
+    XCTAssertGreaterThan(sections.count, 1)
+    XCTAssertEqual(sections[0].minY, 0, accuracy: 0.5, "the first group is not at the top")
+
+    for (above, below) in zip(sections, sections.dropFirst()) {
+      XCTAssertEqual(below.minY - above.maxY, picker.groupsStack.spacing, accuracy: 0.5)
+    }
+  }
+
   /// Catches a symbol in the picker that this Mac cannot draw, which would show as a blank tile and
   /// save a glyph that draws as the default dot.
   func testEverySymbolThePickerOffersExists() {
