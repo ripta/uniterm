@@ -16,7 +16,7 @@ need the user's credentials.
 |---|---|---|
 | UTERM-017 M1: Shared rules and the window slot | DONE | "Give every notice one rule and show window state in the status bar" |
 | UTERM-017 M2: The queue | DONE | "Bind status identity at origin and bound the history by severity and source" |
-| UTERM-017 M3: Detached panes and restore | QUEUED | |
+| UTERM-017 M3: Detached panes and restore | DONE | "Hold alerts while detached and keep restored panes off the bar" |
 
 ## Local checks
 
@@ -57,7 +57,7 @@ The approved plan made these guesses before any work began.
   for its tooltip, since no headless test can show one.
 - UTERM-017 M2: look at the expanded history: the filter menu, the Focus Pane controls, and the loss strip. Run the Focus
   Message History command, then try the arrow keys, Return, Tab, and Escape.
-- UTERM-017 M2: run `make test-app` with the screen unlocked, since the UI suite has not run on M2.
+- UTERM-017 M2 and M3: run `make test-app` with the screen unlocked, since the UI suite has not run on either.
 
 ## Edits found but not made
 
@@ -207,6 +207,59 @@ test rule "windows close with animation off" is a test practice, so it is not a 
 Open for the user: the leaked animation workers in the package tests can starve any later test that uses the global queue.
 Setting `animationBehavior = .none` in the test fixtures would close it.
 
+## UTERM-017 M3
+
+Commit: "Hold alerts while detached and keep restored panes off the bar".
+
+Checks, each run on 2026-11-06:
+
+- The implementer ran `make fmt-check`, `make lint`, `make check`, `make build`, the UI tests built with
+  `build-for-testing`, `proposals.py check`, and `proposals.py freeze`. All passed, apart from the UTERM-013 finding above.
+  `proposals.py check` also reports that the proposal and its queue row can now finish, which the row review settles.
+- The coordinator reran `make test-package`: 1,137 tests, 4 skipped, 21 failures, run `P62JZA`. A grep of that run shows all 21
+  are the same `TerminalSessionIntegrationTests` set.
+- `make test-app` did not run. A filtered `StatusBarUITests` probe failed with "System authentication is running", which means
+  the screen was locked.
+
+Best guesses made during the milestone:
+
+1. One delivery requirement with three ways: a message, attention with no turn, and history only. An optional record ID shows
+   an existing record without adding a history entry. All four test hosts changed.
+2. Restore origin travels on the start event as a required `start(origin:)`, with no default. The first version added a
+   `restoredAtLaunch()` call. Review found its default could be missed silently, and `adr-impact` found it added a fifth call to
+   ADR-05's list of events. If the guess is wrong, undo-reopened or launch-restored panes get the wrong delivery.
+3. `StartOrigin` is its own type with `restore` and `user`, since a reload makes no sense on a start event. Reusing `LoadOrigin`
+   is a small change.
+4. Revert and the file watcher are `reload`. A sheet switch is `user`.
+5. The held bound is 8 alerts and 8 KiB. The oldest non-error goes first. The count message is a new history entry, at the most
+   severe level and strongest delivery lost.
+6. Every viewer and terminal post goes through the helper. User-action posts happen attached, so they behave as before. The
+   terminal's clipboard question is not a notice, and it still shows while detached.
+7. A pane's host keeps a ledger of at most 256 records it issued, and honours a present call only for those, once each. The
+   queue cannot tell who made a record retention has already dropped.
+
+Nothing sends `detach` or `reattach` yet, so the detached behaviour has no user path. Tests call the events directly.
+
+Review findings:
+
+- Fixed, plan gap: the terminal's start failure bypassed the rule, so many failing restored terminals could bury the bar. New
+  tests inject the failure with a fake engine.
+- Fixed: `restoredAtLaunch()` became the required start origin, as guess 2 says. `adr-impact`'s `PLAUSIBLE` ADR-05 point goes away
+  with it, since the events are unchanged.
+- Fixed, `CONFIRMED`: an unused public helper that bypassed the rule was removed.
+- Fixed, comment craft: one doc comment packed two ideas.
+- Traced and confirmed, then fixed: a pane could present another pane's record, and a never-issued ID left an indicator that
+  could not be cleared, since the loss strip hides at zero. Four tests failed on unfixed code.
+- Traced and confirmed, then fixed: a changed-on-disk notice from a restore took a turn, with a test failing on unfixed code. A
+  guard test shows a real watcher change still posts.
+- Traced and confirmed, then fixed: a user filter relabelled a restored sort notice, with a test failing on unfixed code.
+- Accepted: the many-panes test runs the real launch path with a stand-in applet. The viewers and terminal are proved one at a
+  time, not in one launch together.
+- Left for the user: the UTERM-013 freeze hunk.
+
+ADR candidates: none added. The delivery modes and `start(origin:)` are mechanisms. The restore-origin rule is part of the notice
+rule the user declined an ADR for on 2026-11-05.
+
 ## Status
 
-In progress. M1 and M2 are committed. M3 remains.
+In progress. M1, M2, and M3 are committed. The row review and final review remain.

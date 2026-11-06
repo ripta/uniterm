@@ -96,16 +96,61 @@ public struct StatusQueue: Sendable {
     return message
   }
 
-  /// Admits a message to the history only. It takes no turn on the bar and raises no unseen
-  /// signal. An applet records this way when its own pane already says the same thing.
+  /// Admits a message to the history only. It takes no turn on the bar. It raises no unseen signal
+  /// unless `raisesSignal` says so. An applet records quietly when its own pane already says the
+  /// same thing, or when it cannot be seen. It raises the signal for a warning that restore
+  /// recorded while the pane is on screen.
   @discardableResult
   public mutating func record(
-    level: StatusLevel, source: StatusSource, text: String, at now: TimeInterval
+    level: StatusLevel, source: StatusSource, text: String, raisesSignal: Bool = false,
+    at now: TimeInterval
   ) -> StatusMessage {
     admit(
       level: level, source: source.boundingLabel(to: policy.maximumLabelBytes),
       text: StatusText.bounded(text, maximumBytes: policy.maximumTextBytes), at: now,
-      raisesSignal: false)
+      raisesSignal: raisesSignal)
+  }
+
+  /// Presents a record that `record` admitted earlier, without admitting it again. An applet does
+  /// this when a pane returns to the screen and shows what it held back.
+  ///
+  /// `showsMessage` queues a turn on the bar, coalescing as `post` does. `raisesSignal` marks the
+  /// record unseen. A record that retention has dropped since has no row left to mark, so its
+  /// signal goes to the loss summary instead, where only the summary's control clears it.
+  ///
+  /// The queue refuses an ID it never issued, and a retained record that another source made. It
+  /// cannot tell who made a record that retention has dropped, so the pane's host keeps that
+  /// ledger. Returns false when it refused.
+  @discardableResult
+  public mutating func present(
+    level: StatusLevel, source: StatusSource, text: String, record id: UInt64,
+    showsMessage: Bool, raisesSignal: Bool, at now: TimeInterval
+  ) -> Bool {
+    guard id >= 1, id < nextID else { return false }
+
+    if let retained = history.first(where: { $0.id == id }), retained.source.key != source.key {
+      return false
+    }
+
+    advance(at: now)
+
+    if raisesSignal { markUnseen(id: id, level: level) }
+
+    guard showsMessage else { return true }
+
+    let source = source.boundingLabel(to: policy.maximumLabelBytes)
+    let text = StatusText.bounded(text, maximumBytes: policy.maximumTextBytes)
+
+    guard !isPresented(level: level, key: source.key, text: text) else { return true }
+
+    let message =
+      history.first { $0.id == id }
+      ?? StatusMessage(id: id, level: level, source: source, text: text, postedAt: now)
+
+    pending.append(Pending(message: message, folded: []))
+    boundPending()
+    advance(at: now)
+    return true
   }
 
   /// Applies whatever the passage of time allows. Returns true when the displayed message changed.
@@ -260,16 +305,25 @@ public struct StatusQueue: Sendable {
     poolBytes[pool, default: 0] += message.storageBytes
     sourceIndex[pool, default: [:]][source.key, default: 0] += 1
 
-    if raisesSignal {
-      switch level {
-      case .error: unseenErrors.insert(message.id)
-      case .warning: unseenWarnings.insert(message.id)
-      case .info: break
-      }
-    }
+    if raisesSignal { markUnseen(id: message.id, level: level) }
 
     trim()
     return message
+  }
+
+  private mutating func markUnseen(id: UInt64, level: StatusLevel) {
+    let retained = history.contains { $0.id == id }
+
+    switch level {
+    case .error:
+      if retained { unseenErrors.insert(id) } else { loss.unseenErrors += 1 }
+
+    case .warning:
+      if retained { unseenWarnings.insert(id) } else { loss.unseenWarnings += 1 }
+
+    case .info:
+      break
+    }
   }
 
   /// Holds each pool to its count and byte limits. A full pool drops the oldest record of its most

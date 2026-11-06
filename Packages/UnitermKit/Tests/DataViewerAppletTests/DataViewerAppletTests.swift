@@ -328,7 +328,7 @@ final class DataViewerAppletTests: XCTestCase {
     let found = try DataViewerApplet(restoring: description, budget: makeBudget())
     let host = RecordingHost()
     found.host = host
-    found.start()
+    found.start(origin: .user)
     _ = await loaded(found)
 
     XCTAssertEqual(host.posts.map(\.level), [.info], "\(host.posts)")
@@ -424,7 +424,7 @@ final class DataViewerAppletTests: XCTestCase {
       sort: SortSpec(column: amount, ascending: false), filter: "x")
     let applet = try restore(description)
 
-    applet.start()
+    applet.start(origin: .user)
 
     XCTAssertEqual(try DataViewerDescription.decode(applet.describe()), description)
 
@@ -450,7 +450,7 @@ final class DataViewerAppletTests: XCTestCase {
         startDirectory: scratch.url.path, path: file.path,
         sort: SortSpec(column: .named("gone"), ascending: true)))
 
-    applet.start()
+    applet.start(origin: .user)
     let done = await loaded(applet)
 
     XCTAssertTrue(done)
@@ -471,7 +471,7 @@ final class DataViewerAppletTests: XCTestCase {
 
     let applet = try restore(
       DataViewerDescription(startDirectory: scratch.url.path, path: old.path, bookmark: bookmark))
-    applet.start()
+    applet.start(origin: .user)
 
     let done = await loaded(applet)
     XCTAssertTrue(done)
@@ -492,7 +492,7 @@ final class DataViewerAppletTests: XCTestCase {
     let applet = try restore(
       DataViewerDescription(startDirectory: scratch.url.path, path: file.path, sort: sort))
 
-    applet.start()
+    applet.start(origin: .user)
     _ = await eventually {
       if case .failed = applet.session.phase { return true }
       return false
@@ -658,7 +658,7 @@ final class DataViewerAppletTests: XCTestCase {
 
     XCTAssertEqual(try DataViewerDescription.decode(applet.describe()).sheet, "Costs")
 
-    applet.start()
+    applet.start(origin: .user)
     let done = await loaded(applet)
 
     XCTAssertTrue(done)
@@ -668,7 +668,7 @@ final class DataViewerAppletTests: XCTestCase {
     let gone = try restore(
       DataViewerDescription(startDirectory: scratch.url.path, path: file.path, sheet: "Deleted"))
 
-    gone.start()
+    gone.start(origin: .user)
     let fallback = await loaded(gone)
 
     XCTAssertTrue(fallback)

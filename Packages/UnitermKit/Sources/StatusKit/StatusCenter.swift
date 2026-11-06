@@ -84,6 +84,47 @@ public final class StatusCenter {
     return true
   }
 
+  /// Delivers a message the way `delivery` says. With no `record`, it admits a new history record.
+  /// With the ID of a record admitted earlier, it presents that record again and adds none.
+  /// Returns the record's ID, or nil when the source was refused.
+  @discardableResult
+  package func deliver(
+    _ delivery: StatusDelivery, level: StatusLevel, source: StatusSource, text: String,
+    presenting record: StatusRecordID? = nil
+  ) -> StatusRecordID? {
+    guard isAllowed(source) else { return nil }
+
+    let id: StatusRecordID
+
+    if let record {
+      guard
+        queue.present(
+          level: level, source: source, text: text, record: record,
+          showsMessage: delivery == .message, raisesSignal: delivery != .historyOnly,
+          at: clock.now)
+      else { return nil }
+
+      id = record
+    } else {
+      switch delivery {
+      case .message:
+        id = queue.post(level: level, source: source, text: text, at: clock.now).id
+
+      case .attention:
+        id =
+          queue.record(
+            level: level, source: source, text: text, raisesSignal: true, at: clock.now
+          ).id
+
+      case .historyOnly:
+        id = queue.record(level: level, source: source, text: text, at: clock.now).id
+      }
+    }
+
+    didChange()
+    return id
+  }
+
   /// Records several messages in the history, and tells observers once. Returns false when the
   /// source was refused.
   @discardableResult

@@ -41,12 +41,15 @@ public struct AppletConfirmation: Sendable, Equatable {
 /// the message source.
 @MainActor
 public protocol AppletHost: AnyObject {
-  func applet(_ applet: any Applet, post level: StatusLevel, text: String)
-
-  /// Records `text` in the window's history without a turn on the bar and without an unseen
-  /// signal. An applet whose pane already says the same thing records this way. The protocol has
-  /// no default for it, so a host cannot drop these records unnoticed.
-  func applet(_ applet: any Applet, recordInHistory level: StatusLevel, text: String)
+  /// Delivers `text` the way `delivery` says. With no `record`, the host admits a new history
+  /// record. With the ID of a record the applet got from an earlier call, it presents that record
+  /// again and adds none. Returns the record's ID. The protocol has no default for it, so a host
+  /// cannot drop a delivery unnoticed.
+  @discardableResult
+  func applet(
+    _ applet: any Applet, send delivery: StatusDelivery, level: StatusLevel, text: String,
+    presenting record: StatusRecordID?
+  ) -> StatusRecordID?
 
   /// The applet has nothing left to run, so its pane should close.
   func appletDidExit(_ applet: any Applet)
@@ -66,6 +69,40 @@ public protocol AppletHost: AnyObject {
   /// counter, so the window can order a closed tab against a closed pane. An applet asks for one
   /// when it records a close, after any question has been answered.
   func issueCloseStamp() -> UInt64
+}
+
+extension AppletHost {
+  /// A turn on the status bar, an entry in the history, and the unseen signal of the level.
+  public func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
+    self.applet(applet, send: .message, level: level, text: text, presenting: nil)
+  }
+
+  /// Records `text` in the window's history without a turn on the bar and without an unseen
+  /// signal. An applet whose pane already says the same thing records this way, and so does one
+  /// that cannot be seen. Returns the record's ID.
+  @discardableResult
+  public func applet(
+    _ applet: any Applet, recordInHistory level: StatusLevel, text: String
+  ) -> StatusRecordID? {
+    self.applet(applet, send: .historyOnly, level: level, text: text, presenting: nil)
+  }
+}
+
+/// What built an applet that is about to start.
+public enum StartOrigin: Sendable, Equatable {
+  /// The window rebuilt the applet from the saved layout of an earlier launch.
+  case restore
+
+  /// Anything else: a new pane, a pane reopened by undo, or a launcher swap.
+  case user
+
+  /// The origin of the first load the applet begins.
+  public var loadOrigin: LoadOrigin {
+    switch self {
+    case .restore: return .restore
+    case .user: return .user
+    }
+  }
 }
 
 /// How an applet answers a request to reopen one of its closed tabs.
@@ -143,7 +180,12 @@ public protocol Applet: AnyObject {
   var currentDirectory: String? { get }
 
   /// The applet is in a pane and on screen. It begins its work.
-  func start()
+  ///
+  /// The origin says what built the applet. `restore` means the window rebuilt it from the saved
+  /// layout of an earlier launch, so the loads it begins are a restore and its notices say so. A
+  /// pane reopened by undo, a launcher swap, and a new pane pass `user`. The origin has no default.
+  /// An applet with no loads ignores it.
+  func start(origin: StartOrigin)
 
   /// The host is done with the applet, and it is unusable afterwards. What the applet does next is
   /// its own choice. It may end its work at once, finish it after a delay, or save more state into
@@ -154,6 +196,9 @@ public protocol Applet: AnyObject {
   /// The applet has left the screen and stays alive. It stops at once what the user would notice
   /// but cannot see. It pauses audio and video, and it holds back alerts. An applet with nothing
   /// perceptible to pause does nothing.
+  ///
+  /// Holding back an alert means withholding its presentation. The applet still records the alert
+  /// in the history when it happens, and shows it again on `reattach`. `AppletAlerts` does both.
   func detach()
 
   /// The applet is back on screen. It undoes what `detach` did.

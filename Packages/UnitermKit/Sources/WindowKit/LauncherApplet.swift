@@ -71,7 +71,7 @@ final class LauncherApplet: Applet {
     self.init(directory: directory)
   }
 
-  func start() {}
+  func start(origin: StartOrigin) {}
 
   func close() {
     launcher.stop()

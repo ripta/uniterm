@@ -33,7 +33,7 @@ public final class PlaceholderApplet: Applet {
     view = panel
   }
 
-  public func start() {}
+  public func start(origin: StartOrigin) {}
   public func close() {}
   public func detach() {}
   public func reattach() {}
