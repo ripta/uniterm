@@ -10,7 +10,10 @@ enum DataViewerNotices {
     }
 
     if truncatedRows > 0 {
-      lines.append("\(truncatedRows.formatted()) rows had oversized cells cut.")
+      lines.append(
+        truncatedRows == 1
+          ? "1 row had an oversized cell cut."
+          : "\(truncatedRows.formatted()) rows had oversized cells cut.")
     }
 
     return lines

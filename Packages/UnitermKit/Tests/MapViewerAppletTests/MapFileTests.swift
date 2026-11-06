@@ -83,7 +83,10 @@ final class MapFileTests: XCTestCase {
     await applet.opening?.value
   }
 
-  private func notices(_ applet: MapViewerApplet) -> [String] { applet.content.noticeLines }
+  /// What the map says about a file: failures in the pane, and notices for the status bar.
+  private func notices(_ applet: MapViewerApplet) -> [String] {
+    applet.content.noticeLines + applet.statusNotices
+  }
 
   // MARK: Loading
 
@@ -112,7 +115,7 @@ final class MapFileTests: XCTestCase {
     XCTAssertEqual(
       notices(applet), ["Skipped 2 shapes that are not points. The map shows points only."])
     XCTAssertEqual(applet.title, "pins.geojson")
-    XCTAssertEqual(applet.segments.map(\.text), ["Standard", "3 pins"])
+    XCTAssertEqual(applet.segments.map(\.text), ["Standard", "3 pins", "2 hidden"])
 
     let stored = try MapViewerDescription.decode(applet.describe())
 
@@ -548,5 +551,58 @@ final class MapFileTests: XCTestCase {
   func testTheMapOwnsGeoJSON() {
     XCTAssertEqual(
       MapViewerApplet.typeDeclaration.opens, [OpenedType("public.geojson", rank: .owner)])
+  }
+}
+
+/// Where the map says what a load left out: the status bar, not over the map.
+@MainActor
+final class MapNoticePlacementTests: XCTestCase {
+  /// Catches a load notice drawn over the map, where it covered MapKit's attribution, and one
+  /// posted again on every refresh. The pane shows nothing, the status bar gets the sentence once,
+  /// and a segment says how many shapes are hidden.
+  func testLoadNoticesGoToTheStatusBarOnce() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try scratch.write(
+      "mixed.geojson",
+      GeoFixtures.collection([GeoFixtures.point("A", 1, 1), GeoFixtures.line, GeoFixtures.polygon]))
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+
+    applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    await applet.opening?.value
+
+    let skipped = "Skipped 2 shapes that are not points. The map shows points only."
+    XCTAssertEqual(applet.content.noticeLines, [])
+    XCTAssertEqual(host.posts.filter { $0.text == skipped }.count, 1)
+    XCTAssertTrue(applet.segments.contains { $0.text == "2 hidden" }, "\(applet.segments)")
+
+    applet.addPin(at: GeoCoordinate(latitude: 3, longitude: 3))
+    await applet.editing?.value
+    applet.choose(style: .hybrid)
+
+    XCTAssertEqual(host.posts.filter { $0.text == skipped }.count, 1, "the notice posted again")
+
+    applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    await applet.asking?.value
+    host.confirms = true
+    applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    await applet.asking?.value
+    await applet.opening?.value
+
+    XCTAssertEqual(host.posts.filter { $0.text == skipped }.count, 2, "a new load did not post")
+  }
+
+  /// Catches a failure moved off the pane, which would leave an empty map with nothing to say.
+  func testAFailureStaysInThePane() async throws {
+    let scratch = try GeoScratch(self)
+    let applet = MapViewerApplet(startDirectory: nil)
+
+    applet.replaceSource(
+      with: scratch.url.appendingPathComponent("missing.geojson"), startDirectory: scratch.url.path)
+    await applet.opening?.value
+
+    XCTAssertTrue(
+      applet.content.noticeLines.joined().contains("missing"), "\(applet.content.noticeLines)")
   }
 }
