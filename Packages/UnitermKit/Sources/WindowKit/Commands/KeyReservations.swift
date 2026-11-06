@@ -74,21 +74,34 @@ enum KeyReservations {
     return resolution
   }
 
-  /// One message for an applet type. It names the applet, each command, and its key, and it says
-  /// what to do next.
-  static func warning(for conflicts: [KeyConflict], menuTitle: String) -> String {
-    let parts = conflicts.map { conflict -> String in
-      let key = KeyEquivalentText.spell(key: conflict.key.key, modifiers: conflict.key.modifiers)
-      let spelled = key ?? conflict.key.key
-      let why =
-        conflict.reason == .reserved
-        ? "uniterm uses it" : "another \(menuTitle) command asks for it"
+  /// The most drops one applet lists in the message. A longer list ends with a count, so one
+  /// remap of a shared key such as Cmd-1 stays readable.
+  static let listedDrops = 3
 
-      return "\u{201C}\(conflict.commandTitle)\u{201D} has no key, because \(why) (\(spelled))"
+  /// One message for every applet that lost a key. It names each applet, its commands, and their
+  /// keys, and it says what to do next.
+  static func warning(for groups: [(menuTitle: String, conflicts: [KeyConflict])]) -> String {
+    let parts = groups.map { group -> String in
+      let listed = group.conflicts.prefix(listedDrops).map {
+        describe($0, menuTitle: group.menuTitle)
+      }
+      let rest = group.conflicts.count - listed.count
+      let more = rest > 0 ? ["and \(rest) more lose their keys too"] : []
+
+      return "\(group.menuTitle): " + (listed + more).joined(separator: "; ")
     }
 
-    return "\(menuTitle): " + parts.joined(separator: "; ")
+    return parts.joined(separator: ". ")
       + ". The commands still work from the menu and the command palette. To give one a key, "
       + "choose it in System Settings > Keyboard > Keyboard Shortcuts > App Shortcuts."
+  }
+
+  private static func describe(_ conflict: KeyConflict, menuTitle: String) -> String {
+    let key = KeyEquivalentText.spell(key: conflict.key.key, modifiers: conflict.key.modifiers)
+    let spelled = key ?? conflict.key.key
+    let why =
+      conflict.reason == .reserved ? "uniterm uses it" : "another \(menuTitle) command asks for it"
+
+    return "\u{201C}\(conflict.commandTitle)\u{201D} has no key, because \(why) (\(spelled))"
   }
 }

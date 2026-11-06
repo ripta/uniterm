@@ -135,8 +135,9 @@ public final class CommandRegistry {
   }
 
   /// Settles which applet command holds which key, given the keys uniterm reserves. Keys that
-  /// are dropped are returned. Each applet type gets at most one warning per pass, and it names
-  /// only the drops not announced before this session.
+  /// are dropped are returned. Each pass posts at most one warning, and it names every applet that
+  /// lost a key and only the drops not announced before this session. One message covers all of
+  /// them, since the status bar shows the newest message and a second one would hide the first.
   @discardableResult
   func resolveKeys(reserved: Set<KeyChord>) -> [KeyConflict] {
     let resolution = KeyReservations.resolve(sets: appletSets, reserved: reserved)
@@ -148,14 +149,18 @@ public final class CommandRegistry {
       byType[conflict.typeID, default: []].append(conflict)
     }
 
+    var groups: [(menuTitle: String, conflicts: [KeyConflict])] = []
+
     for set in appletSets {
       let fresh = (byType[set.typeID] ?? []).filter {
         announced.insert(AnnouncedDrop(command: $0.commandID, key: $0.key)).inserted
       }
 
-      guard !fresh.isEmpty else { continue }
+      if !fresh.isEmpty { groups.append((set.menuTitle, fresh)) }
+    }
 
-      hooks.warn(KeyReservations.warning(for: fresh, menuTitle: set.menuTitle))
+    if !groups.isEmpty {
+      hooks.warn(KeyReservations.warning(for: groups))
     }
 
     return resolution.conflicts

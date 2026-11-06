@@ -15,7 +15,7 @@ need the user's credentials.
 |---|---|---|
 | UTERM-005 M1: Single-page browser | DONE | "Add a single-page browser applet" |
 | UTERM-005 M2: Security indicator | DONE | "Warn in the address bar when a page is not fully secure" |
-| UTERM-005 M3: Tabs | IN PROGRESS | |
+| UTERM-005 M3: Tabs | DONE | "Add browser tabs, keys, and a question before resending a form" |
 | UTERM-005 M4: Address bar input | QUEUED | |
 | UTERM-005 M5: Website data, restore, and reopen | QUEUED | |
 | UTERM-005 M6: Pop-ups, downloads, and running work | QUEUED | |
@@ -196,6 +196,60 @@ The ADR check found no conflicts, and no new candidate.
 
 Test cost: the security test class takes about 0.6 s.
 
+### M3: Tabs
+
+Commit: "Add browser tabs, keys, and a question before resending a form".
+
+Checks, on 2026-11-06:
+
+- `make test-package`, coordinator's run `A65FTM`: 1,227 tests, 4 skipped, 0 failures.
+- `make test-app`, run `5W5MC3`, before the warning fix: 103 tests, 1 failure, described below.
+- Filtered UI run `QEQMJ9`, after that fix, of `ShortcutOwnershipUITests`, `BrowserUITests`, and `TabsUITests`: 18 tests, 0 failures.
+- `make fmt-check`, `make lint`, and the UI tests' build for testing passed after the last fix. `make check` and `make build`
+  passed in the round before it, and the build for testing compiled the app after it. `proposals.py check` reports nothing, and
+  `freeze` reports only the UTERM-013 hunk.
+- Trackpad swipes and a physical mouse need hardware. The mouse handler is tested with real `CGEvent`-built events.
+
+Best guesses from the implementer:
+
+1. The question lives in the navigation delegate. It holds WebKit's decision and resolves it exactly once. A second repeat
+   while one waits, and closing the tab, each cancel. If wrong, a pre-check path returns beside the gate.
+2. Only a post this tab saw a form produce is ever asked about. Measured: reopening a tab on a post result sends no second post,
+   and the tab shows its stored title and a blank page with its history intact. "Browser commands and keys" and M3's check are
+   amended. If wrong, a yes path opens into restored history, which "What restore loads" forbids.
+3. A yes on a history step onto a post result may send no post, since WebKit can serve the step from its cache. A yes on Reload
+   is proved to send one.
+4. Web views are lazy. A tab builds one on first use, and a tab loads when first selected. The attached-pane rule stays with M5.
+5. New Tab inserts after the selected tab, selects it, and focuses the address bar. Closing the selected tab selects its right
+   neighbour, or the last tab. A tab switch drops an unsent edit in the address bar. A blank tab titles itself "Browser".
+6. The host says "could not be reopened: <reason>." The terminal's reason carries the shell advice, so its message is unchanged.
+
+The coordinator's best guess, for the user's review: only the browser's own Back, Forward, and Reload may ask before resending a
+form. They are the toolbar, the Browser menu, the commands, and mouse buttons 4 and 5. A page script, a background tab, a
+trackpad swipe, and the web view's own Reload are refused with a notice and no question. WebKit gives no user-initiated flag, and
+a page could otherwise raise the question in a loop, luring a click that repeats an earlier order. The cost is that a swipe onto
+a post result is refused where a button would ask. If wrong, the swipe needs its own detection, or the question gains a limit.
+
+Review findings and dispositions:
+
+- Fixed by the decision above: a page's `history.back()` could raise the question in a loop, including from a background tab.
+  `location.reload()` turned out to reload a post result with a GET, so it sends no post and needs no refusal.
+- Fixed: matching a history step by address let an unseen restored post inherit a yes from a seen post to one address. Measured:
+  at the gate the current entry is already the target, so seen posts are now keyed on the entry's identity. The test failed first.
+- Fixed: load origin is per tab, and a notice from a background tab names the tab.
+- Fixed: a late answer after a typed load left a stale question behind. Two tests were tightened, and one was folded into another.
+- No finding on the held decision: every path resolves WebKit's handler exactly once.
+
+Found by the coordinator's UI run, not by review: `testARemapOntoAnAppletKeyWinsAndWarnsOnce` failed. Two applets now declare Cmd-T,
+so a remap posted two warnings and the terminal's was replaced on the bar. It stayed only in the history. One warning now names
+every applet that lost a key. Each applet lists at most three commands, then a count. The test failed first. This is shared code,
+not browser work. UTERM-013's text says one warning names the applet, so it may want a correction of fact, which the user decides.
+
+ADR check: no conflicts. The two candidates raised, the shared tab bar and the single gate, fail the Architecture test, since both
+shape one component's internals.
+
+Test cost: the browser tab tests take about 1.3 s for 13 tests.
+
 ## Unowned failures
 
 `make test-app` run `WWM5Y9` on 2026-11-06, 11:38 to 11:58 local, failed 22 tests with scattered focus and input errors, such as
@@ -204,6 +258,10 @@ a typed path arriving as `unite0rm-data` and the app leaving the foreground. The
 and none of the 22 is a browser test. A filtered rerun of 6 tests passed. No crash report for uniterm appeared. The cause is
 collision by correlation and by the other session's report, and is not proved by a clean full run yet. The full suite reruns when
 the other session says the screen is free.
+
+That full rerun came later, as `5W5MC3`, on 2026-11-06 from 12:34 to 12:48 local, with no other UI run on the screen. It covered
+M2's code and M3's. It ran 103 tests with 1 failure, and that failure was M3's own, recorded under M3. All 22 earlier failures
+passed, which supports the collision and settles that M2 did not cause them.
 
 ## Edits found and not made
 

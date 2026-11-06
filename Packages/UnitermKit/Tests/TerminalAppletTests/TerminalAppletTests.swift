@@ -651,8 +651,8 @@ final class TerminalAppletTests: XCTestCase {
 
   // MARK: Tabs
 
-  private func tabBar(of applet: TerminalApplet) throws -> TerminalTabBar {
-    try XCTUnwrap(applet.view.subviews.compactMap { $0 as? TerminalTabBar }.first)
+  private func tabBar(of applet: TerminalApplet) throws -> AppletTabBar {
+    try XCTUnwrap(applet.view.subviews.compactMap { $0 as? AppletTabBar }.first)
   }
 
   /// Catches a tab bar that shows for a single tab, or that stays after the second tab closes.

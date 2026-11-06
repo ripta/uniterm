@@ -12,14 +12,18 @@ protocol BrowserTabDelegate: AnyObject {
 
   /// Something the user should hear about, such as a refused navigation or a failed load.
   func tab(_ tab: BrowserTab, notice level: StatusLevel, text: String)
+
+  /// Asks the user a question for the tab. Nothing in the tab waits on it except the one
+  /// navigation that raised it.
+  func tab(_ tab: BrowserTab, confirm request: AppletConfirmation) async -> Bool
+
+  /// The user pressed a history button on the mouse over the tab's page.
+  func tab(_ tab: BrowserTab, historyButton: BrowserWebView.HistoryButton)
 }
 
 /// Why a reload, a back, or a forward did not go ahead.
 enum HistoryMove: Equatable {
   case moved
-
-  /// The move would send a form again. The browser refuses until it can ask first.
-  case refusedResubmit
 
   /// There was nowhere to go.
   case unavailable
@@ -36,8 +40,19 @@ enum HistoryMove: Equatable {
 @MainActor
 final class BrowserTab: NSObject {
   let id: AppletTabID
-  let webView: WKWebView
+
+  /// The tab's web view. It is built on first use, so a restored tab nobody has looked at holds no
+  /// web view and no content process.
+  lazy var webView: WKWebView = makeWebView()
+
+  /// Whether the web view exists. It never goes back to false while the tab is open.
+  private(set) var isMaterialized = false
+
   weak var delegate: (any BrowserTabDelegate)?
+
+  /// What began the tab's current load. A notice from the tab takes its delivery from it, so a
+  /// background tab restored at launch stays as quiet as a restore is.
+  var loadOrigin = LoadOrigin.user
 
   /// The last committed address and title, as the description stores them.
   private(set) var record: BrowserDescription.Tab
@@ -66,39 +81,104 @@ final class BrowserTab: NSObject {
   /// The address of the load this tab last ended with a policy decision, after telling the user.
   private var cancelledAddress: String?
 
+  /// The one question the gate has put to the user, with the navigation it holds.
+  private var pendingResend: PendingResend?
+
+  /// What the applet's own Reload, Back, or Forward is about to ask of the web view. The gate takes
+  /// it at the next main-frame decision and clears it, so it never carries over to a later
+  /// navigation. Nothing else sets it, so a page script, a swipe, and the web view's own Reload
+  /// never reach the question.
+  private var resendIntent: ResendIntent?
+
+  private enum ResendIntent {
+    case reload
+    case history
+  }
+
+  /// The history WebKit handed back when a closed tab reopened. It applies at the first load.
+  private var restoredState: Data?
+
+  /// Whether a load began, from the stored address, a restored history, or the user.
+  private(set) var hasBegunLoading = false
+
+  private let dataStore: WKWebsiteDataStore
   private var observations: [NSKeyValueObservation] = []
 
-  init(id: AppletTabID, record: BrowserDescription.Tab, dataStore: WKWebsiteDataStore) {
+  init(
+    id: AppletTabID, record: BrowserDescription.Tab, dataStore: WKWebsiteDataStore,
+    restoredState: Data? = nil
+  ) {
     self.id = id
     self.record = record
+    self.dataStore = dataStore
+    self.restoredState = restoredState
 
+    super.init()
+  }
+
+  private func makeWebView() -> WKWebView {
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = dataStore
 
-    webView = WKWebView(frame: .zero, configuration: configuration)
+    let view = BrowserWebView(frame: .zero, configuration: configuration)
 
-    super.init()
+    isMaterialized = true
 
-    webView.navigationDelegate = self
-    webView.uiDelegate = self
-    webView.allowsBackForwardNavigationGestures = true
-    webView.setAccessibilityIdentifier("browser-web")
+    view.navigationDelegate = self
+    view.uiDelegate = self
+    view.allowsBackForwardNavigationGestures = true
+    view.setAccessibilityIdentifier("browser-web")
+    view.onHistoryButton = { [weak self] button in
+      guard let self else { return }
 
-    observe()
+      delegate?.tab(self, historyButton: button)
+    }
+
+    observe(view)
+
+    return view
   }
 
-  var hasLoadedNothing: Bool { webView.url == nil && !isLoading }
+  var hasLoadedNothing: Bool { !isMaterialized || (webView.url == nil && !isLoading) }
+
+  /// WebKit's record of the tab's history and scroll positions, for a tab that is closing. A tab
+  /// that never loaded hands back the record it was given.
+  var interactionData: Data? {
+    isMaterialized ? webView.interactionState as? Data : restoredState
+  }
 
   // MARK: Loading
 
   /// Loads an address that already passed the scheme rule for its source. The caller checks it,
   /// since a refusal is the caller's to present.
   func load(_ url: URL) {
+    hasBegunLoading = true
+    restoredState = nil
+    pendingResend?.resolve(.cancel)
+    pendingResend = nil
     webView.load(URLRequest(url: url))
   }
 
+  /// Records that the stored address was refused, so selecting the tab again does not try it again.
+  func noteRefusedStoredLoad() {
+    hasBegunLoading = true
+  }
+
+  /// Starts the tab's first load from an address that passed the scheme rule for a restored tab.
+  /// A reopened tab brings WebKit's history back instead, so its back and forward steps work.
+  func loadStored(_ url: URL) {
+    guard let state = restoredState else {
+      load(url)
+      return
+    }
+
+    restoredState = nil
+    hasBegunLoading = true
+    webView.interactionState = state
+  }
+
   func reload() -> HistoryMove {
-    guard webView.url != nil else {
+    guard isMaterialized, webView.url != nil else {
       guard let address = record.url else { return .unavailable }
 
       guard let stored = URL(string: address) else {
@@ -107,7 +187,7 @@ final class BrowserTab: NSObject {
 
       switch SchemePolicy.decide(stored, source: .restored) {
       case .allow:
-        load(stored)
+        loadStored(stored)
         return .moved
 
       case .refuse(let refusal):
@@ -115,30 +195,24 @@ final class BrowserTab: NSObject {
       }
     }
 
-    if let item = webView.backForwardList.currentItem, isPostResult(item) {
-      return .refusedResubmit
-    }
-
+    resendIntent = .reload
     webView.reload()
     return .moved
   }
 
   func goBack() -> HistoryMove {
-    move(to: webView.backForwardList.backItem) { $0.goBack() }
+    guard isMaterialized, webView.backForwardList.backItem != nil else { return .unavailable }
+
+    resendIntent = .history
+    _ = webView.goBack()
+    return .moved
   }
 
   func goForward() -> HistoryMove {
-    move(to: webView.backForwardList.forwardItem) { $0.goForward() }
-  }
+    guard isMaterialized, webView.backForwardList.forwardItem != nil else { return .unavailable }
 
-  private func move(
-    to item: WKBackForwardListItem?, _ go: (WKWebView) -> WKNavigation?
-  ) -> HistoryMove {
-    guard let item else { return .unavailable }
-
-    if isPostResult(item) { return .refusedResubmit }
-
-    _ = go(webView)
+    resendIntent = .history
+    _ = webView.goForward()
     return .moved
   }
 
@@ -146,17 +220,26 @@ final class BrowserTab: NSObject {
     postResults.object(forKey: item)?.boolValue ?? false
   }
 
-  /// Stops loading and drops the web view's references to this tab.
+  /// Stops loading and drops every reference between the web view and this tab. A question the tab
+  /// was waiting on is answered no, so the navigation it held ends.
   func close() {
+    pendingResend?.resolve(.cancel)
+    pendingResend = nil
+    restoredState = nil
     observations = []
+
+    guard isMaterialized else { return }
+
     webView.stopLoading()
     webView.navigationDelegate = nil
     webView.uiDelegate = nil
+    (webView as? BrowserWebView)?.onHistoryButton = nil
+    webView.removeFromSuperview()
   }
 
   // MARK: Observation
 
-  private func observe() {
+  private func observe(_ webView: WKWebView) {
     observations = [
       webView.observe(\.title) { [weak self] _, _ in
         MainActor.assumeIsolated { self?.titleChanged() }
@@ -261,25 +344,12 @@ extension BrowserTab: WKNavigationDelegate {
     // reports the reload and the resubmit with their own types, and a history step as a step with
     // the post's method. One gate here covers every path that would send the form again. A form's
     // first submission, and a redirect it follows, are not these types.
-    let isRepeat: Bool
+    let intent = isMainFrame ? resendIntent : nil
 
-    switch navigationAction.navigationType {
-    case .formResubmitted:
-      isRepeat = true
+    if isMainFrame { resendIntent = nil }
 
-    case .backForward, .reload:
-      isRepeat = navigationAction.request.httpMethod == "POST"
-
-    default:
-      isRepeat = false
-    }
-
-    if isMainFrame, isRepeat {
-      cancel(
-        url,
-        notice:
-          "Did not load \(AddressDisplay.bounded(url.absoluteString)). The page came from a form, and loading it again would send the form again.",
-        decisionHandler)
+    if isMainFrame, repeatsPost(navigationAction) {
+      resendOrRefuse(url, navigationAction, intent: intent, decisionHandler)
       return
     }
 
@@ -322,6 +392,100 @@ extension BrowserTab: WKNavigationDelegate {
     decisionHandler(.allow)
   }
 
+  /// Whether the navigation would send a form again.
+  private func repeatsPost(_ action: WKNavigationAction) -> Bool {
+    switch action.navigationType {
+    case .formResubmitted:
+      return true
+
+    case .backForward, .reload:
+      return action.request.httpMethod == "POST"
+
+    default:
+      return false
+    }
+  }
+
+  /// Whether the entry the navigation lands on is one this tab saw a form post produce. WebKit
+  /// has already made the target the current entry when the gate runs, so the entry's identity
+  /// answers. A tab restored or reopened from history has seen none, so its post results never
+  /// qualify, whatever address a seen post had.
+  private func landsOnSeenPost() -> Bool {
+    guard isMaterialized, let item = webView.backForwardList.currentItem else { return false }
+
+    return isPostResult(item)
+  }
+
+  /// Whether the applet's own button, menu item, or key asked for this kind of navigation.
+  private func intent(_ intent: ResendIntent?, covers action: WKNavigationAction) -> Bool {
+    switch (intent, action.navigationType) {
+    case (.reload, .reload), (.reload, .formResubmitted), (.history, .backForward):
+      return true
+
+    default:
+      return false
+    }
+  }
+
+  /// The one place a form can be sent again. The user is asked, and the navigation waits for the
+  /// answer. Only a repeat the applet's own Reload, Back, or Forward started can ask, and only
+  /// onto a post this tab saw a form produce. Every other repeat is refused with no question. That
+  /// covers a page's script, a swipe, which cannot be told from a script, a background tab, and a
+  /// restored tab. A second repeat while one question is open is cancelled, not queued.
+  private func resendOrRefuse(
+    _ url: URL, _ action: WKNavigationAction, intent asked: ResendIntent?,
+    _ decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+  ) {
+    let address = AddressDisplay.bounded(url.absoluteString)
+
+    guard intent(asked, covers: action), landsOnSeenPost(), let delegate else {
+      cancel(
+        url,
+        notice:
+          "Did not load \(address). The page came from a form, and loading it again would send the form again.",
+        decisionHandler)
+      return
+    }
+
+    guard pendingResend == nil else {
+      cancelledAddress = url.absoluteString
+      decisionHandler(.cancel)
+      return
+    }
+
+    let pending = PendingResend(decisionHandler)
+    pendingResend = pending
+
+    let request = AppletConfirmation(
+      title: "Send the form again?",
+      detail: "\u{201C}\(address)\u{201D} came from a form. Loading it again sends the form to "
+        + "the site a second time, which can repeat what the first one did.",
+      confirmTitle: "Send Again", cancelTitle: "Cancel")
+
+    Task { @MainActor [weak self, weak delegate] in
+      var allowed = false
+
+      if let self, let delegate {
+        allowed = await delegate.tab(self, confirm: request)
+      }
+
+      guard let self else {
+        pending.resolve(.cancel)
+        return
+      }
+
+      if pendingResend === pending { pendingResend = nil }
+
+      if allowed, !pending.isResolved {
+        pending.resolve(.allow)
+      } else {
+        if !pending.isResolved { cancelledAddress = url.absoluteString }
+
+        pending.resolve(.cancel)
+      }
+    }
+  }
+
   private func cancel(
     _ url: URL, notice text: String,
     _ decisionHandler: @MainActor @Sendable (WKNavigationActionPolicy) -> Void
@@ -336,6 +500,7 @@ extension BrowserTab: WKNavigationDelegate {
   }
 
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    resendIntent = nil
     committed()
     stateChanged()
   }
@@ -344,12 +509,14 @@ extension BrowserTab: WKNavigationDelegate {
     _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: any Error
   ) {
+    resendIntent = nil
     report(error, for: nil)
   }
 
   func webView(
     _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error
   ) {
+    resendIntent = nil
     report(error, for: webView.url)
   }
 }
@@ -363,5 +530,25 @@ extension BrowserTab: WKUIDelegate {
     decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
     decisionHandler(.deny)
+  }
+}
+
+/// A navigation the gate holds while the user answers. It answers WebKit once, whichever path gets
+/// there first. WebKit must hear back for every held navigation, so the tab resolves it on close.
+@MainActor
+private final class PendingResend {
+  private var handler: (@MainActor @Sendable (WKNavigationActionPolicy) -> Void)?
+
+  init(_ handler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+    self.handler = handler
+  }
+
+  var isResolved: Bool { handler == nil }
+
+  func resolve(_ policy: WKNavigationActionPolicy) {
+    guard let handler else { return }
+
+    self.handler = nil
+    handler(policy)
   }
 }

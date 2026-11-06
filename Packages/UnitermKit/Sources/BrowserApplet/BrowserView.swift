@@ -1,4 +1,5 @@
 import AppKit
+import AppletKit
 import Theme
 import WebKit
 
@@ -27,7 +28,11 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   /// The user pressed Return in the address bar with this text.
   var onSubmit: (String) -> Void = { _ in }
 
+  /// The strip of tabs above the toolbar. The applet hides it while it has one tab.
+  let tabBar = AppletTabBar()
+
   private let toolbar = NSStackView()
+  private var tabBarHeight: NSLayoutConstraint?
   private var page: NSView?
   private var palette = ThemePalette.latte
   private(set) var addressIsInvalid = false
@@ -74,10 +79,21 @@ final class BrowserView: NSView, NSTextFieldDelegate {
       [backButton, forwardButton, reloadButton, securityIcon, addressField], in: .leading)
     toolbar.translatesAutoresizingMaskIntoConstraints = false
 
+    tabBar.translatesAutoresizingMaskIntoConstraints = false
+    tabBar.isHidden = true
+
+    addSubview(tabBar)
     addSubview(toolbar)
 
+    let height = tabBar.heightAnchor.constraint(equalToConstant: 0)
+    tabBarHeight = height
+
     NSLayoutConstraint.activate([
-      toolbar.topAnchor.constraint(equalTo: topAnchor),
+      tabBar.topAnchor.constraint(equalTo: topAnchor),
+      tabBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+      tabBar.trailingAnchor.constraint(equalTo: trailingAnchor),
+      height,
+      toolbar.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
       toolbar.leadingAnchor.constraint(equalTo: leadingAnchor),
       toolbar.trailingAnchor.constraint(equalTo: trailingAnchor),
     ])
@@ -109,6 +125,15 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     ])
   }
 
+  /// Shows one item for each title. The bar takes no room while there is one tab.
+  func show(tabTitles: [String], selected: Int) {
+    let visible = tabTitles.count > 1
+
+    tabBar.update(titles: tabTitles, selected: selected, canOpenTab: true)
+    tabBar.isHidden = !visible
+    tabBarHeight?.constant = visible ? AppletTabBar.height : 0
+  }
+
   func show(canGoBack: Bool, canGoForward: Bool, isLoading: Bool) {
     backButton.isEnabled = canGoBack
     forwardButton.isEnabled = canGoForward
@@ -121,13 +146,16 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   }
 
   /// Shows `address` unless the user is typing in the bar. A page that finishes loading while the
-  /// user edits must not overwrite the edit.
-  func show(address: String) {
+  /// user edits must not overwrite the edit. A switch to another tab drops the edit, since the
+  /// text belonged to the tab the user left.
+  func show(address: String, replacingEdit: Bool = false) {
     shownAddress = address
 
-    guard !isEditingAddress else { return }
+    guard replacingEdit || !isEditingAddress else { return }
 
     addressField.stringValue = address
+
+    if replacingEdit { markAddress(invalid: false) }
   }
 
   func focusAddress() {
@@ -148,6 +176,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
 
     appearance = NSAppearance(named: palette.flavor.isDark ? .darkAqua : .aqua)
     layer?.backgroundColor = palette[.base].cgColor
+    tabBar.apply(palette)
     addressField.textColor = addressIsInvalid ? palette[.red].nsColor : palette[.text].nsColor
     securityIcon.contentTintColor = palette[.yellow].nsColor
   }

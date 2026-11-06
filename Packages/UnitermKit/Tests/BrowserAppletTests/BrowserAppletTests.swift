@@ -152,33 +152,62 @@ final class BrowserAppletTests: XCTestCase {
     }
   }
 
-  /// Catches a reload that sends a form post again without asking. A reload of the result of a
-  /// post is refused and says why, and the server sees exactly one post. WebKit does resend it
-  /// when asked.
-  func testReloadOfAFormPostResultIsRefusedAndNeverResendsTheForm() async throws {
-    let harness = try await BrowserHarness.make(handler: Self.formServer())
-    defer { harness.stop() }
-
+  /// Posts the form and waits for the result page.
+  private func postResult(in harness: BrowserHarness) async {
     await harness.load("/form", expecting: "Form")
     await harness.run("document.forms[0].submit()")
     await harness.host.until("the post result shows") {
       harness.applet.title == "Posted" && !harness.tab.isLoading
     }
+  }
+
+  /// Catches a reload that sends a form post again without asking, and a no that sends it anyway.
+  /// Reload on the result of a post asks once, the page stays on no, and the server sees one post.
+  func testReloadOfAFormPostResultAsksAndNoNeverResendsTheForm() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    await postResult(in: harness)
 
     XCTAssertEqual(harness.count("POST", "/result"), 1)
 
-    XCTAssertEqual(harness.tab.reload(), .refusedResubmit)
-    XCTAssertFalse(harness.tab.webView.isLoading)
-
+    harness.host.recording.answer = false
     harness.applet.reload()
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
 
-    XCTAssertEqual(harness.posts.count, 1)
-    XCTAssertEqual(harness.posts.first?.level, .warning)
-    XCTAssertTrue(harness.posts.first?.text.contains("send the form again") ?? false)
+    XCTAssertEqual(harness.host.recording.confirmations.first?.title, "Send the form again?")
 
     await harness.load("/after", expecting: "Other")
 
     XCTAssertEqual(harness.count("POST", "/result"), 1)
+    XCTAssertTrue(harness.posts.isEmpty, "\(harness.posts)")
+  }
+
+  /// Catches a yes that does nothing, a yes that sends the form more than once, and a yes that
+  /// stays good for the next move. Each resubmit is its own question.
+  func testYesSendsTheFormOnceAndEachResendAsksAgain() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    await postResult(in: harness)
+
+    harness.host.recording.answer = true
+    harness.applet.reload()
+    await harness.host.until("the form goes again") {
+      harness.count("POST", "/result") == 2 && !harness.tab.isLoading
+    }
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 1)
+
+    harness.applet.reload()
+    await harness.host.until("the form goes a third time") {
+      harness.count("POST", "/result") == 3 && !harness.tab.isLoading
+    }
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 2)
+    XCTAssertTrue(harness.posts.isEmpty, "\(harness.posts)")
   }
 
   /// Catches a post that redirects to a page, which is an ordinary GET page, being treated as a
@@ -205,48 +234,245 @@ final class BrowserAppletTests: XCTestCase {
     XCTAssertTrue(harness.posts.isEmpty)
   }
 
-  /// Catches back or forward onto a form post result that sends the form again. Back from a later
-  /// page onto the result, and forward onto it from the form, are both refused. The refused move
-  /// leaves the page where it was.
-  func testGoingBackOrForwardOntoAFormPostResultIsRefused() async throws {
+  /// Catches back or forward onto a form post result that sends the form again without asking.
+  /// Back from a later page onto the result asks, and no leaves the page where it was.
+  func testGoingBackOntoAFormPostResultAsksAndNoLeavesThePage() async throws {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await harness.load("/form", expecting: "Form")
-    await harness.run("document.forms[0].submit()")
-    await harness.host.until("the post result shows") {
-      harness.applet.title == "Posted" && !harness.tab.isLoading
-    }
-
+    await postResult(in: harness)
     await harness.load("/after", expecting: "Other")
 
-    XCTAssertEqual(harness.tab.goBack(), .refusedResubmit)
-    XCTAssertEqual(harness.applet.title, "Other")
-
+    harness.host.recording.answer = false
     harness.applet.goBack()
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
 
-    XCTAssertEqual(harness.posts.count, 1)
-    XCTAssertTrue(harness.posts.first?.text.contains("go back") ?? false)
+    await harness.load("/barrier", expecting: "Other")
+
     XCTAssertEqual(harness.count("POST", "/result"), 1)
+    XCTAssertTrue(harness.posts.isEmpty, "\(harness.posts)")
   }
 
-  func testForwardOntoAFormPostResultIsRefused() async throws {
+  /// Catches a forward onto a post result that skips the question, and a yes that does not go. WebKit
+  /// may serve a history step from its own cache and send no post, so the test claims the question
+  /// and the step, and not the server's post count.
+  func testForwardOntoAFormPostResultAsksAndYesTakesTheStep() async throws {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await harness.load("/form", expecting: "Form")
-    await harness.run("document.forms[0].submit()")
-    await harness.host.until("the post result shows") {
-      harness.applet.title == "Posted" && !harness.tab.isLoading
-    }
+    await postResult(in: harness)
 
     harness.applet.goBack()
     await harness.host.until("the form shows again") {
       harness.applet.title == "Form" && !harness.tab.isLoading
     }
 
-    XCTAssertEqual(harness.tab.goForward(), .refusedResubmit)
-    XCTAssertEqual(harness.applet.title, "Form")
+    XCTAssertEqual(harness.count("POST", "/result"), 1)
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
+
+    harness.host.recording.answer = true
+    harness.applet.goForward()
+    await harness.host.until("the result page shows") {
+      harness.applet.title == "Posted" && !harness.tab.isLoading
+    }
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 1)
+  }
+
+  /// Catches a second repeat that opens a second question or waits in a queue. While one question
+  /// waits, another repeat is cancelled and the page stays put. After the first answer is no, no
+  /// second question appears and nothing is sent.
+  func testASecondRepeatWhileOneQuestionWaitsIsCancelledNotQueued() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    await postResult(in: harness)
+
+    harness.host.recording.holdsQuestions = true
+    harness.applet.reload()
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
+
+    harness.applet.reload()
+    harness.applet.goBack()
+
+    harness.host.recording.pendingAnswer?.resume(returning: false)
+    harness.host.recording.holdsQuestions = false
+
+    await harness.load("/barrier", expecting: "Other")
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 1)
+    XCTAssertEqual(harness.count("POST", "/result"), 1)
+  }
+
+  /// Catches a held navigation that survives the pane. Closing answers the held navigation no, and
+  /// the late answer sends nothing.
+  func testClosingThePaneAnswersAWaitingQuestionNo() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    await postResult(in: harness)
+
+    harness.host.recording.holdsQuestions = true
+    harness.applet.reload()
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
+
+    harness.applet.close()
+    harness.host.recording.pendingAnswer?.resume(returning: true)
+
+    for _ in 0..<20 { await Task.yield() }
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 1)
+    XCTAssertEqual(harness.count("POST", "/result"), 1)
+  }
+
+  /// Catches a load that leaves the question's navigation alive. A typed address cancels the held
+  /// navigation, and the late yes sends nothing and loads nothing.
+  func testALoadWhileAQuestionWaitsCancelsItAndALateYesDoesNothing() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    await postResult(in: harness)
+
+    harness.host.recording.holdsQuestions = true
+    harness.applet.reload()
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
+
+    await harness.load("/after", expecting: "Other")
+    harness.host.recording.pendingAnswer?.resume(returning: true)
+
+    for _ in 0..<20 { await Task.yield() }
+
+    XCTAssertEqual(harness.applet.title, "Other")
+    XCTAssertEqual(harness.count("POST", "/result"), 1)
+    XCTAssertTrue(harness.posts.isEmpty, "\(harness.posts)")
+  }
+
+  /// Catches a hostile page raising the question. A page reached from a post result calls
+  /// `history.back()`, which lands on the result. Nothing the page does reaches the question, so
+  /// the repeat is refused with a notice and the server sees one post. A Cancel earlier changes
+  /// nothing, and the page cannot ask again.
+  func testAPageScriptGoingBackOntoAPostResultIsRefusedAndStaysRefusedAfterCancel() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    await postResult(in: harness)
+
+    harness.host.recording.answer = false
+    harness.applet.reload()
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
+
+    await harness.load("/after", expecting: "Other")
+    harness.host.recording.forgetSent()
+
+    for _ in 0..<3 {
+      await harness.run("history.back()")
+      await harness.host.until("the repeat is refused") { !harness.posts.isEmpty }
+
+      harness.host.recording.answer = true
+      harness.host.recording.forgetSent()
+    }
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 1)
+    XCTAssertEqual(harness.count("POST", "/result"), 1)
+    XCTAssertEqual(harness.applet.title, "Other")
+  }
+
+  /// Catches `location.reload()` from the result page of a post raising the question or sending the
+  /// form. WebKit reloads such a page with a GET, so the server sees no second post, and no
+  /// question appears.
+  func testAPageScriptReloadingAPostResultRaisesNoQuestionAndSendsNoPost() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    harness.host.recording.answer = true
+
+    await postResult(in: harness)
+
+    await harness.run("location.reload()")
+    await harness.host.until("the reload settles") {
+      harness.count("GET", "/result") == 1 && !harness.tab.isLoading
+    }
+
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
+    XCTAssertEqual(harness.count("POST", "/result"), 1)
+  }
+
+  /// Catches an intent that outlives its own navigation. Back from the result to the form needs no
+  /// question and uses up the applet's intent. A script's forward onto the result right after is a
+  /// repeat nobody asked for, so it is refused with no question.
+  func testTheIntentOfOneBackNeverCarriesToAScriptsRepeat() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    harness.host.recording.answer = true
+
+    await postResult(in: harness)
+
+    harness.applet.goBack()
+    await harness.host.until("the form shows again") {
+      harness.applet.title == "Form" && !harness.tab.isLoading
+    }
+
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
+
+    await harness.run("history.forward()")
+    await harness.host.until("the repeat is refused") { !harness.posts.isEmpty }
+
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
+    XCTAssertEqual(harness.count("POST", "/result"), 1)
+  }
+
+  /// Catches a background tab raising a question, and a notice from one that does not say which tab
+  /// it is. The background tab's script goes back onto its post result. The notice names the tab and
+  /// no question appears. A background tab's own load origin sets how its notice is delivered.
+  func testABackgroundTabNeverAsksAndItsNoticesNameTheTab() async throws {
+    let harness = try await BrowserHarness.make(handler: Self.formServer())
+    defer { harness.stop() }
+
+    harness.host.recording.answer = true
+
+    await postResult(in: harness)
+    await harness.load("/after", expecting: "Other")
+
+    let background = harness.applet.tab
+
+    harness.applet.openTab()
+    harness.host.recording.forgetSent()
+
+    let request = AppletConfirmation(
+      title: "x", detail: "x", confirmTitle: "x", cancelTitle: "x")
+    let answered = await harness.applet.tab(background, confirm: request)
+
+    XCTAssertFalse(answered)
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
+
+    _ = try? await background.webView.evaluateJavaScript("history.back()")
+    await harness.host.until("the repeat is refused") { !harness.posts.isEmpty }
+
+    XCTAssertTrue(
+      harness.posts.first?.text.hasPrefix("In the tab \u{201C}Other\u{201D}: ") ?? false,
+      "\(harness.posts)")
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
+
+    harness.host.recording.forgetSent()
+    background.loadOrigin = .restore
+
+    _ = try? await background.webView.evaluateJavaScript("history.back()")
+    await harness.host.until("the second repeat is refused") {
+      !harness.host.recording.attentions.isEmpty
+    }
+
+    XCTAssertTrue(harness.posts.isEmpty, "\(harness.posts)")
     XCTAssertEqual(harness.count("POST", "/result"), 1)
   }
 
