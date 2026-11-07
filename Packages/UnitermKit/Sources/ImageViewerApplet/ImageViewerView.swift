@@ -111,6 +111,10 @@ final class ImageViewerView: NSView {
   /// True from the first to the last event of a pinch.
   private(set) var isPinching = false
 
+  /// A pinch began. The viewport is reported only when the fingers lift, so this is the owner's
+  /// first word of the gesture.
+  var onPinchBegin: (() -> Void)?
+
   /// False for an image that plays, such as an animation. Its viewport never leaves fit, whatever
   /// the gesture or command.
   private(set) var isZoomable = true
@@ -500,6 +504,7 @@ final class ImageViewerView: NSView {
     switch phase {
     case .began:
       isPinching = true
+      onPinchBegin?()
 
     case .ended:
       isPinching = false

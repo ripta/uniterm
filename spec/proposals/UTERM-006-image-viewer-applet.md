@@ -204,9 +204,9 @@ and a folder listing taken once, with Reload.
   close and run it. Amended 2026-11-07; see Decision Log.
 - Manual stepping stops at the first and last image.
 - Play or Pause Slideshow is one command, since a registry command has one title. Playback advances every 5 seconds and
-  wraps at the end. A manual step stops it, and so does zooming past fit. It pauses on detach and resumes on reattach only if it was playing. A status
-  segment shows it is playing. The interval is fixed, with no setting, and playing state is never saved. Amended
-  2026-11-07; see Decision Log.
+  wraps at the end. A manual step stops it, and so does zooming past fit, from the start of a pinch. It pauses on detach
+  and resumes on reattach only if it was playing. A status segment shows it is playing. The interval is fixed, with no
+  setting, and playing state is never saved. Amended 2026-11-07; see Decision Log.
 - Name order is Finder's: localized and numeric-aware, so `img2` comes before `img10`. Date order is the file's
   modification time, newest first, with ties in name order. Capture dates would mean reading EXIF in the app, which
   "Rendering" rules out.
@@ -698,7 +698,8 @@ None.
 - 2026-11-07: (work-queue best guess) Zooming past fit stops a playing slideshow, as a manual step does. The Navigation
   bullet said only that a manual step stops it. A tick that stepped away from a zoomed image would have discarded the
   detail the user zoomed in to see within 5 seconds. Zoom is a manual action, and the proposal had no rule for it. This
-  amended the Navigation slideshow bullet, which keeps its single 2026-11-07 marker.
+  amended the Navigation slideshow bullet, which keeps its single 2026-11-07 marker. A pinch reports its viewport only
+  when the fingers lift, so the start of a pinch stops the show.
 
 ## References
 

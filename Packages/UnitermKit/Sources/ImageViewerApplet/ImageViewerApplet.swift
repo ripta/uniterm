@@ -245,6 +245,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     content.onGeometryChange = { [weak self] in self?.geometryChanged() }
     content.onKey = { [weak self] key in self?.handle(key: key) ?? false }
     content.onViewportChange = { [weak self] _ in self?.viewportChanged() }
+    content.onPinchBegin = { [weak self] in self?.stopSlideshow() }
     client.onEvent = { [weak self] event in self?.handle(event) }
   }
 

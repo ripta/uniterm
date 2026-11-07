@@ -7,7 +7,9 @@ below is in this repo, on the `agent/petunia` branch.
 
 ## Run state
 
-The run's base is "8< --- snip ---", which is also the row's base. The row has no dependencies, and no milestone
+The run finished on 2026-11-07. UTERM-006 M1 to M3 are `DONE`, and the row moved to `history.md`. The proposal stays
+`accepted`, because M4 waits on UTERM-015 M4 in its own row. The run's base is "8< --- snip ---", which is also the
+row's base. The row has no dependencies, and no milestone
 carries a `Live after` line. Nothing is held, blocked, or skipped, and no work is stashed. No commands need the user's
 credentials.
 
@@ -469,3 +471,31 @@ A holistic reviewer read the range from "8< --- snip ---" to M3's commit, with `
 ### For M4
 
 M4's `zoom` command should state what it does for an animated image. Animated images do not zoom in M3.
+
+## Final review
+
+### Commit
+
+"Stop the slideshow when a pinch begins" holds the final review's fixes and the last report amendments.
+
+### Findings
+
+The final review covered the range from "8< --- snip ---" to "Finish the image viewer row". It was also the run's ADR
+review. `spec/adr/` is unchanged in the range, so there was no ADR to check.
+
+- No conflict with ADR-01 to ADR-07 or with ADR-09.
+- ADR-08 is advisory and left for the user. `ImageViewerApplet.swift:234`: `currentDirectory` runs a synchronous
+  `fileExists` check on the main thread, so a stalled network mount could block there. The data viewer and the
+  terminal already do the same. UTERM-009's run recorded it as advisory.
+- PLAUSIBLE then confirmed: a slideshow tick fired during a pinch longer than 5 seconds and stepped away. The pinch
+  reports its viewport only when the fingers lift.
+  - Fixed. A pinch's start now stops the slideshow, as zooming does.
+  - The regression test failed before the fix.
+  - Checks after the fix: `make check`, `make build`, and `make test-package` (1,740 tests, 5 skipped, 0 failures).
+  - The UI suite was not rerun for this change. It touches one view callback that a package test covers, and the
+    last full UI run passed at "Keep animations at fit, and stop the slideshow when zooming".
+- CONFIRMED: the slideshow bullet in the proposal ran to 150 columns after the row fix. It is rewrapped.
+- The row-review fix commit is confirmed correct, covering the animation gate, the slideshow stop, the HDR sizing, and
+  the LRU touch.
+- The proposal is coherent. `proposals.py check` is clean. `freeze` flags only the UTERM-013 hunks from another
+  session.

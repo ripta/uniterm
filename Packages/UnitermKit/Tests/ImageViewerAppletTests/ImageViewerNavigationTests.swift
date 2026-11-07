@@ -405,6 +405,31 @@ final class ImageViewerNavigationTests: XCTestCase {
     XCTAssertTrue(applet.isZoomedPastFit)
   }
 
+  /// Catches a slideshow that steps away in the middle of a pinch. A pinch reports its viewport only
+  /// when the fingers lift, so the start of the pinch has to stop the show, as a zoom does.
+  func testAPinchStopsASlideshowBeforeItsTickCanStepAway() async throws {
+    try write("a.png", "b.png", width: 600, height: 600)
+
+    let sleeper = ManualSleeper()
+    let (applet, _) = panes.make(sleeper: sleeper)
+    try await openFolder(applet, showing: "a.png")
+
+    applet.togglePlayback()
+
+    let armed = await Harness.eventually { sleeper.waitingCount == 1 }
+    XCTAssertTrue(armed)
+
+    applet.content.pinch(.began, magnification: 0, at: CGPoint(x: 150, y: 150))
+    XCTAssertTrue(applet.content.isPinching)
+
+    sleeper.tick()
+    applet.slideshowTick()
+
+    XCTAssertFalse(applet.isPlaying)
+    XCTAssertEqual(applet.committedName, "a.png")
+    XCTAssertEqual(applet.listing.current?.name, "a.png")
+  }
+
   /// Catches a slideshow that keeps running off screen, or that restarts when it was not playing.
   /// Detaching stops the timer and keeps the intent. Reattaching resumes a show that was playing and
   /// starts none that was not.
