@@ -162,6 +162,10 @@ final class BrowserTab: NSObject {
   private var dialogsStopped = false
   private var warnedAboutDialogs = false
 
+  /// The tabs this page's script tried to open past the pane's limit. It ends at the page's next
+  /// load.
+  var scriptTabs = ScriptTabHold()
+
   /// Whether the tab's media is suspended, as a detached pane's is.
   private(set) var isMediaSuspended = false
 
@@ -653,6 +657,7 @@ final class BrowserTab: NSObject {
     dialogsThisLoad = 0
     dialogsStopped = false
     warnedAboutDialogs = false
+    scriptTabs.reset()
     gesture = LinkGesture()
     windowGesture = LinkGesture()
     generation &+= 1
@@ -795,6 +800,7 @@ final class BrowserTab: NSObject {
     dialogsThisLoad = 0
     dialogsStopped = false
     warnedAboutDialogs = false
+    scriptTabs.reset()
     committedURL = webView.url
     unsent.clear()
     gate.noteCommit(item: webView.backForwardList.currentItem)

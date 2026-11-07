@@ -52,19 +52,23 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   /// The JavaScript dialogs the pane's pages raised that the user has not answered.
   let dialogs = PageDialogs()
 
-  /// The most tabs scripts may have open at once in one pane. WebKit lets a script that holds a
-  /// user gesture open as many windows as it asks for, and each is a web view and a content
-  /// process. A tab the user asked for, with a real click or a menu choice, neither counts nor is
-  /// refused. A policy value with no setting.
+  /// The most tabs scripts may have open at once in one pane before the pane asks. WebKit lets a
+  /// script that holds a user gesture open as many windows as it asks for, and each is a web view
+  /// and a content process. A tab the user asked for, with a real click or a menu choice, neither
+  /// counts nor is refused. A policy value with no setting.
   static let popupLimit = 10
-
-  /// Whether the user heard that the limit stopped a page, so a loop of attempts says it once.
-  private var warnedAboutPopups = false
 
   /// Whether a question is up for the user. The window shows a second question after the first, so
   /// a queued one could outlive the tab it asked about. A question that finds another up is refused
-  /// instead, the way its own kind already is.
-  private var isQuestionUp = false
+  /// instead, the way its own kind already is. The question about more script-opened tabs is the
+  /// exception: it keeps its list and asks again once this clears.
+  private var isQuestionUp = false {
+    didSet {
+      guard oldValue, !isQuestionUp else { return }
+
+      Task { @MainActor [weak self] in self?.askAboutScriptTabs() }
+    }
+  }
   private var started = false
   private var closed = false
   private var lastShown: Shown?
@@ -724,8 +728,6 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
     let removed = tabs.remove(at: index)
 
-    if tabs.filter(\.isScriptOpened).count < Self.popupLimit { warnedAboutPopups = false }
-
     removed.close()
     removed.delegate = nil
 
@@ -962,17 +964,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
       return nil
     }
 
-    guard byUser || tabs.filter(\.isScriptOpened).count < Self.popupLimit else {
-      if !warnedAboutPopups {
-        warnedAboutPopups = true
-        post(
-          .warning,
-          "A page tried to open more than \(Self.popupLimit) tabs. The browser opened the first \(Self.popupLimit).",
-          from: opener)
-      }
-
-      return nil
-    }
+    if !byUser, !admitsScriptTab(from: opener, address: action.request.url) { return nil }
 
     let popup = BrowserTab(
       id: .make(), adopting: configuration, opener: opener, openedByUser: byUser,
@@ -1007,6 +999,131 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     }
 
     return popup
+  }
+
+  /// Whether a script's call for a new window may open one now. A call past the limit is refused
+  /// and its address is remembered, because WebKit needs the answer at once. The pane asks the
+  /// user about the page, and a yes opens the remembered addresses.
+  private func admitsScriptTab(from opener: BrowserTab, address: URL?) -> Bool {
+    switch opener.scriptTabs.phase {
+    case .granted:
+      return true
+
+    case .refused:
+      return false
+
+    case .waiting, .asking:
+      opener.scriptTabs.remember(address)
+      return false
+
+    case .counting:
+      guard tabs.filter(\.isScriptOpened).count >= Self.popupLimit else { return true }
+
+      opener.scriptTabs.remember(address)
+      opener.scriptTabs.setPhase(.waiting)
+      askAboutScriptTabs()
+      return false
+    }
+  }
+
+  /// Asks about the first page that waits, when the pane has no other question up. A page that
+  /// finds another question up keeps its list and its place, and this runs again when the pane is
+  /// free. Closing the tab or the pane, or a new load of the page, makes a late answer do nothing.
+  private func askAboutScriptTabs() {
+    guard !closed, !isQuestionUp,
+      let page = tabs.first(where: { $0.scriptTabs.phase == .waiting })
+    else { return }
+
+    guard let host else {
+      page.scriptTabs.setPhase(.refused)
+      return
+    }
+
+    page.scriptTabs.setPhase(.asking)
+    isQuestionUp = true
+
+    let epoch = page.scriptTabs.epoch
+    let held = tabs.filter(\.isScriptOpened).count
+    let request = AppletConfirmation(
+      title: "Let this page open more tabs?",
+      detail: """
+        \u{201C}\(Self.title(of: page))\u{201D} tried to open more tabs. This pane already holds \
+        \(held) tabs that pages opened. Allow the page to open the rest, and any more until it \
+        loads again?
+        """,
+      confirmTitle: "Open Tabs", cancelTitle: "Don\u{2019}t Open")
+
+    Task { @MainActor [weak page] in
+      let allowed = await host.applet(self, confirm: request)
+
+      isQuestionUp = false
+
+      guard !closed, let page, tabs.contains(where: { $0 === page }), !page.isClosed,
+        page.scriptTabs.epoch == epoch, page.scriptTabs.phase == .asking
+      else { return }
+
+      if allowed {
+        openHeldTabs(of: page)
+      } else {
+        refuseHeldTabs(of: page)
+      }
+    }
+  }
+
+  /// A yes. The remembered addresses open as ordinary tabs after the page's own tab, in order,
+  /// with no opener and no selection. Each address meets the scheme rule as any page's link does.
+  private func openHeldTabs(of page: BrowserTab) {
+    let attempts = page.scriptTabs.attempts
+    let addresses = page.scriptTabs.takeAddresses()
+
+    page.scriptTabs.setPhase(.granted)
+
+    var position = tabs.firstIndex(where: { $0 === page }).map { $0 + 1 } ?? tabs.count
+
+    for url in addresses {
+      if case .refuse(let refusal) = SchemePolicy.decide(url, source: .page, isMainFrame: true) {
+        post(.warning, refusal.message(for: url.absoluteString), from: page)
+        continue
+      }
+
+      let opened = BrowserTab(
+        id: .make(), record: BrowserDescription.Tab(url: url.absoluteString), dataStore: dataStore,
+        hsts: services.hsts, clock: services.clock, hang: services.hang)
+
+      opened.delegate = self
+      opened.loadOrigin = .user
+      opened.setMediaSuspended(alerts.isDetached)
+
+      tabs.insert(opened, at: position)
+
+      if position <= selectedIndex { selectedIndex += 1 }
+
+      position += 1
+
+      if started, !alerts.isDetached { opened.load(url) }
+    }
+
+    refresh()
+
+    if attempts > addresses.count {
+      post(
+        .warning,
+        "A page tried to open \(attempts) tabs. The browser kept the first \(addresses.count).",
+        from: page)
+    }
+  }
+
+  /// A no. The list is dropped, the page is refused until its next load, and the user hears once.
+  private func refuseHeldTabs(of page: BrowserTab) {
+    let attempts = page.scriptTabs.attempts
+
+    page.scriptTabs.takeAddresses()
+    page.scriptTabs.setPhase(.refused)
+
+    post(
+      .warning,
+      "Did not open \(attempts) tabs that a page tried to open. It cannot open more until it loads again.",
+      from: page)
   }
 
   /// A script closed a window it opened. The last tab and the pane never close this way. A tab

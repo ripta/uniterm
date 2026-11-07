@@ -145,8 +145,8 @@ final class BrowserPopupTests: XCTestCase {
   }
 
   /// Catches a page that opens tabs without end. WebKit lets a script that holds a gesture open as
-  /// many windows as it asks for. The pane stops at its limit, says so once, and `window.open`
-  /// returns null for the rest. Closing a pop-up makes room, and the warning can be heard again.
+  /// many windows as it asks for. The pane stops at its limit and `window.open` returns null for
+  /// the rest. The pane asks about the page once, and a no is heard once as a warning.
   func testAPageCannotOpenMoreThanTheLimitOfTabs() async throws {
     let harness = try await make()
     defer { harness.stop() }
@@ -163,12 +163,17 @@ final class BrowserPopupTests: XCTestCase {
 
     XCTAssertEqual(opened as? Int, BrowserApplet.popupLimit)
     XCTAssertEqual(harness.applet.tabCount, 1 + BrowserApplet.popupLimit)
-    XCTAssertEqual(harness.posts.filter { $0.level == .warning }.count, 1)
+
+    await harness.host.until("the page's no is heard") {
+      harness.posts.filter { $0.level == .warning }.count == 1
+    }
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 1)
   }
 
   /// Catches the limit on script-opened tabs counting tabs the user opened. A real click on a
   /// `target=_blank` link opens a tab however many are open, keeps `window.opener`, and never
-  /// warns. The limit then still holds for a script, whose count starts from zero.
+  /// asks. The limit then still holds for a script, whose count starts from zero.
   func testRealClicksPastTheLimitStillOpenTabsAndTheLimitStillHoldsForAScript() async throws {
     let harness = try await make()
     defer { harness.stop() }
@@ -193,6 +198,7 @@ final class BrowserPopupTests: XCTestCase {
     XCTAssertEqual(harness.applet.tabCount, clicks + 1)
     XCTAssertTrue(harness.applet.tabs.dropFirst().allSatisfy { $0.isPopup && $0.opener === opener })
     XCTAssertEqual(harness.posts.filter { $0.level == .warning }.count, 0, "\(harness.posts)")
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
 
     let scripted = try await opener.webView.evaluateJavaScript(
       """
@@ -203,7 +209,12 @@ final class BrowserPopupTests: XCTestCase {
 
     XCTAssertEqual(scripted as? Int, BrowserApplet.popupLimit)
     XCTAssertEqual(harness.applet.tabCount, clicks + 1 + BrowserApplet.popupLimit)
-    XCTAssertEqual(harness.posts.filter { $0.level == .warning }.count, 1)
+
+    await harness.host.until("the page's no is heard") {
+      harness.posts.filter { $0.level == .warning }.count == 1
+    }
+
+    XCTAssertEqual(harness.host.recording.confirmations.count, 1)
   }
 
   /// Catches a menu choice that is not the user's. The rewritten item runs the action WebKit gave
