@@ -22,9 +22,10 @@ and passkeys, which need Apple entitlements.
 
 The browser rejects every microphone and camera request, so video calls and
 voice features do not work. Real support needs usage strings in the app, a
-per-site question, and a recording indicator. It also needs an answer to why a
-request never reaches WebKit's permission delegate today. That stall was seen
-under `swift test` and in the running app, and its cause is unknown.
+per-site question, and a recording indicator. The strings make WebKit expose the
+native API and ask macOS before the browser's permission delegate, and the
+stand-in `navigator.mediaDevices` script has to go. What a page sees after someone
+answers the macOS prompt has not been measured.
 
 ## Browser: manage profiles
 
