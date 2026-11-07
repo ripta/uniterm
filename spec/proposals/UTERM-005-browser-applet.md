@@ -221,9 +221,15 @@ Decision: it opens a new tab in the same pane.
 - A script with no user gesture opens nothing. WKWebView's macOS default lets such a script open a window, so the
   browser sets `javaScriptCanOpenWindowsAutomatically` to false. No public API reports a blocked attempt, so the browser
   shows no indicator for it. Amended 2026-11-06; see Decision Log.
-- A script with a gesture may open many windows, so a pane holds at most ten tabs that scripts opened. The rest of a
-  loop opens nothing, and the pane says so once. A tab the user's own click on a link or choice from the context menu
-  opens never counts toward the limit and is never refused for it.
+- A script with a gesture may open many windows, so a pane holds at most ten tabs that scripts opened before it asks.
+  WebKit needs an answer at once, so the eleventh call is refused and its address is remembered, at most 50 per page.
+  The pane then asks the user, through the host's confirmation, whether the page may open more. Yes opens every
+  remembered address as an ordinary new tab with no opener, unselected and in order, and lets that page open tabs freely
+  until its next load. No drops the list, posts one warning, and refuses the page's further calls with no further
+  question until its next load. Calls made while the question is up are refused and remembered too. A page that finds
+  another question up keeps its list and is asked once the pane is free. A late answer to a page that loaded again or a
+  pane that closed does nothing. A tab the user's own click on a link or choice from the context menu opens never counts
+  toward the limit and is never refused for it. Amended 2026-11-06; see Decision Log.
 - A pop-up from a tab the user is not looking at opens beside its opener, unselected, and says so. It never takes the
   selection or the keyboard.
 - `window.close()` closes only a tab a script opened, never the last tab or the pane. A tab that holds unsent input or
@@ -894,7 +900,11 @@ None.
   false, and a test pins it on a tab's web view and on a pop-up's. No test can run a script with no gesture, since
   `evaluateJavaScript` and `callAsyncJavaScript` both carry one, so the block itself is left to the user. A script with a
   gesture opened 41 tabs in one loop, so a pane holds at most ten tabs that scripts opened, and the rest of a loop gets
-  null. The limit is a policy value with no setting. A tab the user asked for does not count and is never refused: a real
+  null. The limit is a policy value with no setting. The eleventh call now starts a question, as "Pop-ups" says: a
+  refused call keeps its address in a per-page list of at most 50, held on the opener tab and reset at its next commit.
+  The question is the host's confirmation and names the page and the count of script-opened tabs the pane holds. It
+  does not quote how many calls the loop made, since the question is built at the eleventh call and the loop is still
+  running. The warning after a no, and after a yes that kept fewer than the page asked for, carries the final count. A tab the user asked for does not count and is never refused: a real
   mouse-up on a link, or a choice from the context menu, marks the next window request as the user's, once, within one
   second, and that tab keeps `window.opener`. A real test clicks a `target=_blank` link twelve times past the limit with no
   warning, and a script still stops at ten. Its first run failed on the eleventh click.
@@ -1431,6 +1441,18 @@ Starts after UTERM-004 M6.
   user said stop. Every further dialog from that page is dismissed until its next load, with one warning through the
   notice path used before. The 16 waiting dialogs stay as a memory guard. If wrong, a stop that should leave waiting
   dialogs alone costs one line in the applet.
+
+- 2026-11-06: Script tabs ask after ten (the user's choice in a hands-on review, not a best guess). "New windows and
+  pop-ups" and M6's As built said a pane holds at most ten script-opened tabs, the rest of a loop opens nothing, and
+  the pane says so once. The browser decided for the user. The eleventh call is still refused, since WebKit needs the
+  answer at once, but its address is kept, and the pane asks whether the page may open more. Yes opens the kept addresses
+  as ordinary unselected tabs with no opener and lifts the limit for that page until its next load. No drops them,
+  warns once, and refuses the page until its next load. The list holds at most 50 addresses, and a call with no address is
+  counted and not kept. Two choices were not in the user's text. The question names the count the pane holds and does
+  not quote the loop's total, since it is built at the eleventh call. A question that finds another up keeps its list
+  and asks once the pane is free, because dropping or stacking it would lose the user's chance to answer. The stale
+  question of a tab or pane that closed stays on screen until the user answers, as the other questions here do, and its
+  answer does nothing. If wrong, the 50 is one constant, and asking only for the selected tab's page would be one guard.
 
 ## References
 
