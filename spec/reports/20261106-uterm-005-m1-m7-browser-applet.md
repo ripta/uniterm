@@ -546,6 +546,32 @@ No correctness or security defect was found. The refactor had no lost guard, and
 
 The final ADR check found no conflict. It raised one more candidate for the user: one question per pane, if every applet should be bound by it. It stays in the proposal otherwise.
 
+## Hands-on review
+
+After the run, on 2026-11-06, the user tried the browser and chose these changes. Each has a commit and a Decision Log entry.
+
+- "Show the browser profile as an avatar button". Its UI test found that Escape did not close the popover, since nothing in it could take the keyboard. Fixed before the commit.
+- "End a hung page's content process". Measured under `swift test`: a spinning process outlived the release of its view for 61 s, with a non-persistent store and a navigation to `about:blank` as well. It outlived WebKit's private `_close` and `_killWebContentProcess` for 30 s. A signal to the process id ended it. The user confirmed in the running app that it ends after a reload, a closed tab, and a typed address.
+- "Let the user stop a page's dialogs". This replaces the limit of five per load.
+- "Ask before a page opens more than ten tabs". WebKit needs each answer at once, so the extra calls are refused and remembered while the pane asks.
+- "Ask before a page starts more than three downloads". A review found that a click with no navigation left a flag set, which let later script downloads skip the limit. Fixed before the commit.
+- "Keep a closed tab's probe from killing a live tab". From the same review. A pop-up shares its opener's process, which was measured.
+- "Clear a rebuilt view's title with the old page". `make test-package` run `FGDRBX` failed once on a stale title. A repeat of the scenario showed the stale title in 6 of 60 rounds, and a page with no title kept it for good. The flake exposed a real bug from M7.
+- "Open a page's script tabs in order". A loop read backwards.
+- "Give the browser toolbar its padding back". The stack's vertical insets sit below its own hugging priority, so the page clipped the address field. A screenshot from the UI test shows the fix.
+- "Fail microphone and camera requests at once". On `http://localhost`, `navigator.mediaDevices` is missing in the running app. On a real HTTPS page a request got no answer, no prompt, and no audio. The cause is unknown. The fix is proven against the loopback fixture, and the real HTTPS page is left to the user.
+
+- "Keep a pop-up's own tabs beside it". A final review found a page's next tab could split a pop-up from the tabs it opened. Its test failed first.
+
+Checks, on 2026-11-06:
+
+- `make test-package`, run `2M18X2`: 1,510 tests, 4 skipped, 0 failures, on the final code.
+- `make test-app`, run `YB8R15`: 109 tests, 1 failure, before the last two commits. The failure was `testARestoredViewerShowsTheFileWithItsSortAndFilterAndStoresNoRows`, which failed the same way alone. It looked for the row value `dx` in the whole layout file, and the bookmark's base64 carries the file's inode, which spelled `dx` by chance. No rows were saved. "Ignore the bookmark when checking a layout for rows" fixes the test.
+- `DataViewerUITests` and `BrowserUITests`, run `HJYBV0`: passed on the final code. Package tests overlapped this run and caused no failure. The other UI classes passed in `YB8R15`, and the last two commits touch only script-tab placement and this test.
+- `xctest-2026-11-06-230714.ips` is a segfault in a temporary measuring test, run `5984EW`, which was deleted. The committed layout test keeps its window with `isReleasedWhenClosed = false`, and later runs left no new report. The cause was not traced further.
+
+The user declined three ADR candidates as inconsequential: plain HTTP in hosted web content, no private API in shipping code, and one question per pane. Script-closed tabs stay off the reopen list, as the user chose. UTERM-013's text on key warnings was corrected. Future browser work is in `spec/ideas.md`, with OAuth2 access and refresh tokens first.
+
 ## Open for the user
 
 - Settled in the user's hands-on review on 2026-11-06, after this run. The browser now ends a hung content process, the dialog limit became an offer to stop, script tabs ask after ten, and downloads ask after three. Script-closed tabs stay off the reopen list. The proposal's Decision Log records each one.
@@ -581,4 +607,4 @@ and M7 touched neither. The cause is unknown. Not reproduced.
 ## Edits found and not made
 
 - `spec/proposals/UTERM-013-shortcut-ownership-and-reopen.md` line 70: `proposals.py freeze` reports an added "Superseded in
-  part by UTERM-016; see Decision Log." with origin `other`. This run did not make it.
+  part by UTERM-016; see Decision Log." with origin `other`. This run did not make it. Checked in the hands-on review: "Accept UTERM-016 and record its first three milestones" added it, and both proposals' Decision Logs agree, so it stays.
