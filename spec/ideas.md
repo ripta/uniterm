@@ -86,3 +86,15 @@ would save a blank area for content it cannot see. A screenshot of a tab is just
 the tab's content. A screenshot of a pane includes the pane's chrome, such as its
 tab bar and toolbar, and leaves out the host's frame around the pane, such as the
 focus border.
+
+## Reorder tabs within a pane
+
+Drag a tab to a new place in its own pane's tab bar. This covers one pane only.
+Tabs cannot be reordered today. The gesture belongs in the shared `AppletTabBar`,
+and each applet with tabs moves its own tab. The applet contract does not change.
+Saving a layout already writes tabs in their current order. The selection is a
+position, so a move has to keep the same tab selected.
+
+Move Tab Left and Move Tab Right commands would give the palette a keyboard route.
+They need no default shortcut. Tabs past the edge of a full bar are clipped, so a
+drag cannot reach them.
