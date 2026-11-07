@@ -12,6 +12,8 @@
 ## Impacts
 
 - UTERM-004 — "Control": adds browser navigation and browser read to its typed permission set
+- UTERM-013 — "What happens on a key conflict" and M1: superseded in part. A reserved-set check posts one warning per pass
+  that names every applet that lost a key, not one per applet type. See M3 As built.
 
 ## Summary
 

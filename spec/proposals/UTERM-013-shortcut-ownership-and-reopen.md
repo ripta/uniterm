@@ -67,8 +67,8 @@ Chosen by the user on 2026-11-01.
 ### Cmd-Shift-T reopens, and Cmd-Z undoes text edits only
 
 Cmd-Shift-T reopens the newest close in the window, whether a tab or a pane. Amended 2026-11-01 and 2026-11-02; see
-Decision Log. Cmd-Z undoes edits in a focused text field and nothing else. Superseded in part by UTERM-016; see
-Decision Log.
+Decision Log. Cmd-Z undoes edits in a focused text field and nothing else.
+Superseded in part by UTERM-016; see Decision Log.
 
 - The command is uniterm's `uniterm.reopen-closed`. Its item is in File, beside Close, under the fixed title "Reopen
   Closed Tab or Pane". The title does not change with what the next reopen would be, so an App Shortcuts remap keeps
@@ -234,10 +234,10 @@ Decision: the key is dropped, the user is told, and a test catches built-in conf
 
 - A command that declares a reserved key registers without its key. Its menu item and palette entry still work.
 - When two commands of one applet declare the same key, both lose it.
-- uniterm posts a status bar warning when applets newly lose keys. Each pass posts at most one warning, and it names
-  every applet that lost a key, with its commands and keys. It lists at most three commands for an applet and counts the
-  rest. It says what to do next. A key already announced this session is not announced again. Amended 2026-11-06; see
-  Decision Log.
+- uniterm posts a status bar warning for each applet type that newly loses a key. A reserved-set check posts at most one
+  per applet type. It names the applet, the commands, and the keys newly dropped, and says what to do next. A key
+  already announced this session is not announced again. Amended 2026-11-02; see Decision Log.
+  Superseded in part by UTERM-005; see Decision Log.
 - Keys are compared in a canonical form, so Cmd-} and Cmd-Shift-] match.
 - A unit test checks every built-in applet's commands against the reserved set and against each other.
 
@@ -341,9 +341,9 @@ Builds on UTERM-002's command registry milestone.
 - Moved items keep their current titles, such as Clear Screen, so existing App Shortcuts remaps still match. File >
   Close is the one deliberate rename, from Close Pane
 - The conflict warning says what to do next
-- An applet command on a reserved key, or two commands of one applet on one key, keeps working without the key, and one
-  warning per pass, for the keys newly dropped, names each applet that lost a key, up to three commands for each, and the
-  key of each. Amended 2026-11-06; see Decision Log.
+- An applet command on a reserved key, or two commands of one applet on one key, keeps working without the key, and a
+  warning per applet type, for the keys newly dropped, names the applet, the command, and the key
+  Superseded in part by UTERM-005; see Decision Log.
 - Cmd-} and Cmd-Shift-] count as the same key in the conflict check
 - A unit test fails when any built-in applet command claims a reserved key or a key another of its commands holds
 - The launcher keeps Cmd-1 to Cmd-9
@@ -595,13 +595,10 @@ pane's usual start error.
   closed-tab entry. UTERM-014 makes every close reopenable, so an exited tab is kept like a Cmd-W close.
 - 2026-11-05: Superseded in part by UTERM-016. Cmd-Z also undoes a focused map's pin edits, through an undo stack the
   focused view keeps apart from the window's. It still never reopens a tab or a pane.
-
-- 2026-11-06: One key warning per pass (the user's choice in a hands-on review, not a best guess). "What happens on a key
-  conflict", M1's check, and M1's As built said a reserved-set check posts at most one warning per applet type. The
-  code posts one warning per pass that names every applet that lost a key. It lists at most three commands for each
-  applet and counts the rest. The reason is recorded at UTERM-005 M3 As built: the status bar shows the newest message,
-  so a second warning in one pass hid the first. Only drops not announced before this session still appear, and a
-  repeated drop is silent. The dated entries above that say one warning per applet type are history and stay as written.
+- 2026-11-06: Superseded in part by UTERM-005. A reserved-set check no longer posts one warning per applet type. It
+  posts one warning per pass that names every applet that lost a key, with at most three commands for each and a count of
+  the rest. The status bar shows the newest message, so a second warning in one pass hid the first. Drops announced
+  earlier in the session stay silent. The user chose this in a hands-on review. UTERM-005 M3 As built records the reason.
 
 ## References
 
