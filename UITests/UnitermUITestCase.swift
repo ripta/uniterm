@@ -105,7 +105,35 @@ class UnitermUITestCase: XCTestCase {
     // "% ", so wait for it.
     XCTAssertTrue(
       waitFor(terminal, timeout: 40) { $0.contains("% ") }, "the shell never showed a prompt")
+
+    // A synthesized key event goes nowhere while the app is in the background, and the launch-time
+    // activation may not have landed yet. Activate once, then wait for the state to settle.
+    XCTAssertTrue(waitForForeground(app, activating: true), "the app never became frontmost")
     return terminal
+  }
+
+  /// Waits until the app reports `runningForeground`. State reads lag a window change, so a single
+  /// read right after a close can still say background. With `activating`, the app is asked to
+  /// activate once when the first read is not foreground. Without it, only the app's own behavior
+  /// can bring it forward, which is what a test of a window close needs to prove.
+  func waitForForeground(
+    _ app: XCUIApplication, activating: Bool = false, timeout: TimeInterval = 10
+  ) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    var asked = false
+
+    while Date() < deadline {
+      if app.state == .runningForeground { return true }
+
+      if activating && !asked {
+        app.activate()
+        asked = true
+      }
+
+      Thread.sleep(forTimeInterval: 0.1)
+    }
+
+    return app.state == .runningForeground
   }
 
   func waitFor(
