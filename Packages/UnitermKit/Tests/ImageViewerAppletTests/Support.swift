@@ -15,12 +15,12 @@ import XCTest
 enum Harness {
   static func settings(
     location: HelperLocation? = nil, timeBound: Duration = .seconds(10),
-    footprintCap: Int = ImageHelperPolicy.perHelperCap
+    footprintCap: Int = ImageHelperPolicy.perHelperCap, maxImageBytes: Int = 512 << 20
   ) -> HelperSettings {
     HelperSettings(
       location: location ?? HelperLocation(url: ImageFixtures.packageHelper()),
       timeBound: timeBound, probeInterval: .milliseconds(40), pongGrace: .milliseconds(500),
-      footprintCap: footprintCap)
+      footprintCap: footprintCap, maxImageBytes: maxImageBytes)
   }
 
   /// Polls until `condition` holds or `seconds` pass. Returns whether it held.
@@ -165,12 +165,13 @@ final class PaneFactory {
 
   func make(
     settings: HelperSettings? = nil, scanPace: ScanPace = ScanPace(),
-    sleeper: ManualSleeper? = nil, startDirectory: String? = nil
+    sleeper: ManualSleeper? = nil, startDirectory: String? = nil,
+    helperBudget: ImageHelperBudget = ImageHelperBudget(limit: 8 << 30, floor: 1 << 30),
+    bitmapBudget: ImageBitmapBudget = ImageBitmapBudget(limit: 1 << 30, floor: 256 << 20)
   ) -> (ImageViewerApplet, RecordingHost) {
     let applet = ImageViewerApplet(
       startDirectory: startDirectory ?? folder.path, settings: settings ?? Harness.settings(),
-      helperBudget: ImageHelperBudget(limit: 8 << 30, floor: 1 << 30),
-      bitmapBudget: ImageBitmapBudget(limit: 1 << 30, floor: 256 << 20), scanPace: scanPace,
+      helperBudget: helperBudget, bitmapBudget: bitmapBudget, scanPace: scanPace,
       slideshowSleep: Self.sleep(sleeper))
 
     return prepare(applet)

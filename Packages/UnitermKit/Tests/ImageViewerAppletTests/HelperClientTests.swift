@@ -281,7 +281,7 @@ final class HelperClientTests: XCTestCase {
   /// protocol lacks is ended as misbehaving, and its pane may retry.
   func testBytesThatBreakTheProtocolEndTheHelper() async throws {
     let location = try Harness.scriptHelper(
-      writing: "\\001\\000\\000\\000\\004\\000\\001\\000\\000\\011\\000\\000\\000\\000")
+      writing: "\\001\\000\\000\\000\\004\\000\\002\\000\\000\\011\\000\\000\\000\\000")
     let (client, log) = makeClient(Harness.settings(location: location))
 
     client.open(try openedFile(ImageFixtures.png(), in: folder))
@@ -295,7 +295,7 @@ final class HelperClientTests: XCTestCase {
   /// image body with no decode in flight is ended on the header, before any of the body is read.
   func testAnOversizeImageFrameIsRefusedOnItsHeader() async throws {
     let location = try Harness.scriptHelper(
-      writing: "\\001\\000\\000\\000\\004\\000\\001\\000\\000\\003\\020\\000\\000\\000")
+      writing: "\\001\\000\\000\\000\\004\\000\\002\\000\\000\\003\\020\\000\\000\\000")
     let (client, log) = makeClient(Harness.settings(location: location))
 
     client.open(try openedFile(ImageFixtures.png(), in: folder))

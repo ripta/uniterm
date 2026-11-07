@@ -19,6 +19,11 @@ extension ImageViewerApplet {
   /// such as Cmd-Left would reach the menu before the palette's search field does, and the palette
   /// would close to run the command. The viewer's plain keys act only in the image view.
   ///
+  /// The zoom commands sit in View with keys, as the terminal's and the map's do, since each
+  /// applet's keys apply only while its pane has focus. Actual Size is the terminal's title, so one
+  /// App Shortcuts remap moves both items. Zoom In and Zoom Out are the map's titles. Zoom to Fit
+  /// takes Cmd-9, which the terminal holds for its last tab.
+  ///
   /// Play or Pause Slideshow is one command, since a command has one title and the registry keeps
   /// no state for it. The status bar shows whether the slideshow plays.
   public static let commandSet = AppletCommandSet(
@@ -38,6 +43,12 @@ extension ImageViewerApplet {
         $0.setSort(.dateModified)
       },
       .viewer(name: "reload", title: "Reload Folder", section: 3) { $0.reloadFolder() },
+      .zoom(name: "zoom-in", title: "Zoom In", key: KeyChord("+")) { $0.zoomIn() },
+      .zoom(name: "zoom-out", title: "Zoom Out", key: KeyChord("-")) { $0.zoomOut() },
+      .zoom(name: "actual-size", title: "Actual Size", key: KeyChord("0")) {
+        $0.zoomToActualSize()
+      },
+      .zoom(name: "zoom-to-fit", title: "Zoom to Fit", key: KeyChord("9")) { $0.zoomToFit() },
     ])
 }
 
@@ -56,6 +67,21 @@ extension AppletCommand {
 
         return viewer.hasSource && isAvailable(viewer)
       },
+      run: { applet in
+        guard let viewer = applet as? ImageViewerApplet else { return }
+
+        run(viewer)
+      })
+  }
+
+  /// A View menu command on the zoom. It is off while the pane shows nothing it can zoom.
+  fileprivate static func zoom(
+    name: String, title: String, key: KeyChord,
+    run: @escaping @MainActor (ImageViewerApplet) -> Void
+  ) -> AppletCommand {
+    AppletCommand(
+      name: name, title: title, key: key, home: .view, section: 3,
+      isAvailable: { ($0 as? ImageViewerApplet)?.canZoom ?? false },
       run: { applet in
         guard let viewer = applet as? ImageViewerApplet else { return }
 

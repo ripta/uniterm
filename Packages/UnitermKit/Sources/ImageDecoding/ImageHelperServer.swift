@@ -20,6 +20,16 @@ public final class ImageHelperServer: @unchecked Sendable {
   /// Source IDs from the one used longest ago to the one used last.
   private var used: [UInt32] = []
 
+  /// The decode the last region request asked for, which later regions of the same level cut from.
+  /// Only one is kept, so the helper holds at most one decode beyond the sources it has open.
+  private var level: Level?
+
+  private struct Level {
+    var source: UInt32
+    var maxPixel: Int
+    var image: RenderedImage
+  }
+
   /// Serves on `socket`. Tests pass `types` to shorten the list.
   public init(socket: FramedSocket, types: [String]? = nil) {
     self.socket = socket
@@ -71,6 +81,18 @@ public final class ImageHelperServer: @unchecked Sendable {
         queue.async { [self] in
           decode(request: request, source: source, maxPixel: Int(maxPixel), frame: Int(frame))
         }
+
+      case .region(let request, let source, let level, let x, let y, let width, let height):
+        queue.async { [self] in
+          region(
+            request: request, source: source, maxPixel: Int(level),
+            rect: (Int(x), Int(y), Int(width), Int(height)))
+        }
+
+      case .release(let source):
+        queue.async { [self] in
+          if level?.source == source { level = nil }
+        }
       }
     }
   }
@@ -80,6 +102,8 @@ public final class ImageHelperServer: @unchecked Sendable {
   }
 
   private func forget(_ source: UInt32) {
+    if level?.source == source { level = nil }
+
     opened[source] = nil
     faults[source] = nil
     used.removeAll { $0 == source }
@@ -151,6 +175,58 @@ public final class ImageHelperServer: @unchecked Sendable {
         height: UInt32(rendered.height), space: rendered.space, format: rendered.space.format)
 
       let parts = HelperMessage.imageParts(header, pixels: rendered.pixels)
+
+      _ = try? socket.send(prefix: parts.prefix, trailer: parts.pixels)
+    } catch let error as SourceFailure {
+      reply(.failure(request: request, kind: kind(of: error), text: error.text))
+    } catch {
+      reply(.failure(request: request, kind: .unreadable, text: "The image could not be decoded."))
+    }
+
+  }
+
+  /// Answers with a rectangle of the decode at `maxPixel`. The decode is made once and kept, so a
+  /// pan costs a copy. The old decode goes first, so two large ones never exist together.
+  private func region(request: UInt32, source: UInt32, maxPixel: Int, rect: (Int, Int, Int, Int)) {
+    guard let image = opened[source] else {
+      reply(.failure(request: request, kind: .staleSource, text: "The source was replaced."))
+      return
+    }
+
+    #if DEBUG
+      if let fault = faults[source] ?? image.regionFault {
+        FaultInjection.perform(fault)
+      }
+    #endif
+
+    remember(source)
+
+    do {
+      if level?.source != source || level?.maxPixel != maxPixel {
+        level = nil
+
+        let exact = LevelGeometry.size(
+          nativeWidth: Int(image.info.width), nativeHeight: Int(image.info.height),
+          longerSide: maxPixel)
+        let rendered = try PixelRenderer.render(
+          image, frame: 0, maxPixel: maxPixel, exactSize: exact)
+
+        level = Level(source: source, maxPixel: maxPixel, image: rendered)
+      }
+
+      guard let held = level?.image,
+        let cut = PixelRenderer.crop(
+          held, x: rect.0, y: rect.1, width: rect.2, height: rect.3)
+      else {
+        reply(
+          .failure(request: request, kind: .unreadable, text: "The region is outside the image."))
+        return
+      }
+
+      let header = ImageHeader(
+        request: request, source: source, frame: 0, width: UInt32(cut.width),
+        height: UInt32(cut.height), space: cut.space, format: cut.space.format)
+      let parts = HelperMessage.imageParts(header, pixels: cut.pixels)
 
       _ = try? socket.send(prefix: parts.prefix, trailer: parts.pixels)
     } catch let error as SourceFailure {

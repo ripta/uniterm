@@ -54,6 +54,37 @@ public enum ImageFixtures {
     }
   }
 
+  /// The same four corners as `quadrants`, drawn as four rectangles. A very large image costs four
+  /// fills and not a closure call per pixel.
+  public static func solidQuadrants(
+    width: Int, height: Int, space: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+  ) -> CGImage {
+    let context = CGContext(
+      data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+
+    func fill(_ pixel: Pixel, _ rect: CGRect) {
+      context.setFillColor(
+        red: CGFloat(pixel.r) / 255, green: CGFloat(pixel.g) / 255, blue: CGFloat(pixel.b) / 255,
+        alpha: 1)
+      context.fill(rect)
+    }
+
+    let halfWidth = CGFloat(width / 2)
+    let halfHeight = CGFloat(height / 2)
+
+    fill(red, CGRect(x: 0, y: halfHeight, width: halfWidth, height: CGFloat(height) - halfHeight))
+    fill(
+      green,
+      CGRect(
+        x: halfWidth, y: halfHeight, width: CGFloat(width) - halfWidth,
+        height: CGFloat(height) - halfHeight))
+    fill(blue, CGRect(x: 0, y: 0, width: halfWidth, height: halfHeight))
+    fill(white, CGRect(x: halfWidth, y: 0, width: CGFloat(width) - halfWidth, height: halfHeight))
+
+    return context.makeImage()!
+  }
+
   public static func encode(
     _ image: CGImage, as type: UTType, properties: [CFString: Any] = [:]
   ) -> Data {

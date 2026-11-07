@@ -31,6 +31,11 @@
       case "spin":
         while true { usleep(1000) }
 
+      case "slow":
+        let milliseconds = parts.dropFirst().first.flatMap { Int($0) } ?? 1000
+
+        usleep(UInt32(milliseconds) * 1000)
+
       case "balloon":
         let megabytes = parts.dropFirst().first.flatMap { Int($0) } ?? 256
         let size = megabytes << 20

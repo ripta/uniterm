@@ -124,11 +124,13 @@ final class BuiltInCommandsTests: XCTestCase {
     XCTAssertTrue(warnings.isEmpty, "\(warnings)")
   }
 
-  /// Catches an image viewer command that gains a key or lands in the wrong menu. The stepping,
-  /// slideshow, sort, and reload commands sit in the viewer's own menu with no chord, because a
-  /// text-editing chord such as Cmd-Left would reach the menu before the palette's search field and
-  /// the palette would close and run it. Open stays in File with no key.
-  func testTheImageViewerCommandsSitInTheirMenuWithNoKeys() throws {
+  /// Catches an image viewer command that gains a key it should not have, loses one it should, or
+  /// lands in the wrong menu. The stepping, slideshow, sort, and reload commands sit in the viewer's
+  /// own menu with no chord, because a text-editing chord such as Cmd-Left would reach the menu
+  /// before the palette's search field and the palette would close and run it. Open stays in File
+  /// with no key. The four zoom commands sit in View on Cmd-+, Cmd--, Cmd-0, and Cmd-9, and none
+  /// loses its key to a reservation or draws a warning.
+  func testTheImageViewerCommandsSitInTheirMenusWithTheirKeys() throws {
     var warnings: [String] = []
     let registry = CommandRegistry(app: AppCommandHooks(warn: { warnings.append($0) }))
 
@@ -146,23 +148,54 @@ final class BuiltInCommandsTests: XCTestCase {
       viewer.commands.map(\.name),
       [
         "open", "next", "previous", "first", "last", "play-pause", "sort-by-name", "sort-by-date",
-        "reload",
+        "reload", "zoom-in", "zoom-out", "actual-size", "zoom-to-fit",
       ])
     XCTAssertEqual(
       viewer.commands.map(\.title),
       [
         "Open\u{2026}", "Next Image", "Previous Image", "First Image", "Last Image",
         "Play or Pause Slideshow", "Sort by Name", "Sort by Date Modified", "Reload Folder",
+        "Zoom In", "Zoom Out", "Actual Size", "Zoom to Fit",
       ])
 
+    let keys: [String: KeyChord] = [
+      "zoom-in": KeyChord("+"), "zoom-out": KeyChord("-"), "actual-size": KeyChord("0"),
+      "zoom-to-fit": KeyChord("9"),
+    ]
+
     for command in viewer.commands {
-      XCTAssertNil(command.key, command.title)
-      XCTAssertEqual(command.home, command.name == "open" ? .file : .applet, command.title)
+      let isZoom = keys[command.name] != nil
+      let home: AppletMenuHome = isZoom ? .view : (command.name == "open" ? .file : .applet)
+
+      XCTAssertEqual(command.key, keys[command.name], command.title)
+      XCTAssertEqual(command.home, home, command.title)
 
       let id = CommandRegistry.commandID(typeID: "image-viewer", name: command.name)
-      XCTAssertNil(registry.appletKeys[id], command.title)
+      XCTAssertEqual(registry.appletKeys[id], keys[command.name], command.title)
     }
 
     XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+  }
+
+  /// Catches a zoom key that uniterm reserves for a window command, whether now or after a later
+  /// window key is added. The menu is built from the registry, so a new window key joins the
+  /// reserved set and fails here. Cmd-9 is the terminal's last tab and Cmd-0 its Actual Size. Both
+  /// stay out of the reserved set, since each applet's keys apply only while its pane has focus.
+  func testNoImageViewerZoomKeyIsReserved() throws {
+    let registry = CommandRegistry()
+
+    for set in BuiltInApplets.commandSets { registry.register(set) }
+
+    let menu = CommandMenu(registry: registry, activeController: { nil })
+    let reserved = menu.reservedKeys()
+    let viewer = try XCTUnwrap(BuiltInApplets.commandSets.first { $0.typeID == "image-viewer" })
+
+    for command in viewer.commands {
+      guard let key = command.key else { continue }
+
+      XCTAssertFalse(reserved.contains(key), command.title)
+    }
+
+    XCTAssertEqual(viewer.commands.compactMap(\.key).count, 4)
   }
 }

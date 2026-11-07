@@ -111,3 +111,22 @@ final class FramedSocketTests: XCTestCase {
     XCTAssertEqual(taken, 4)
   }
 }
+
+final class PageBufferTests: XCTestCase {
+  /// Catches a page buffer that is not zero filled or not the size asked for. A bitmap drawn into it
+  /// relies on the transparent background, and a message body is read into it by length.
+  func testLargeAndSmallBuffersAreZeroFilledAtTheSizeAsked() {
+    for count in [10, PageBuffer.threshold - 1, PageBuffer.threshold, 3 * PageBuffer.threshold + 5]
+    {
+      var data = PageBuffer.data(count: count)
+
+      XCTAssertEqual(data.count, count)
+      XCTAssertTrue(data.allSatisfy { $0 == 0 }, "\(count)")
+
+      data[0] = 9
+      data[count - 1] = 7
+
+      XCTAssertEqual([data.first, data.last], [9, 7])
+    }
+  }
+}

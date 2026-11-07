@@ -4,6 +4,7 @@ import AppletTestSupport
 import ImageTestSupport
 import ImageViewerModel
 import ImageWire
+import SourceAccess
 import XCTest
 import os
 
@@ -437,7 +438,7 @@ final class ImageViewerNavigationTests: XCTestCase {
 
     let sleeper = ManualSleeper()
     let (applet, host) = panes.make(sleeper: sleeper)
-    applet.isZoomedPastFit = true
+    applet.prefetchOpener = Self.failingOpener
     try await openFolder(applet, showing: "a.png")
 
     applet.togglePlayback()
@@ -456,6 +457,13 @@ final class ImageViewerNavigationTests: XCTestCase {
     XCTAssertEqual(warnings(host).filter { $0.contains("no longer in the folder") }.count, 2)
   }
 
+  /// A prefetch opener that always fails, so a step has no held decode to show and meets the file
+  /// itself.
+  static let failingOpener:
+    @Sendable (OpenedFolder, String) async -> Result<OpenedImageFile, SourceAccessError> = {
+      _, name in .failure(.missing(path: name))
+    }
+
   // MARK: Deleted files
 
   /// Catches a deleted file that blocks stepping or goes unmentioned. Reaching it posts a warning
@@ -464,7 +472,7 @@ final class ImageViewerNavigationTests: XCTestCase {
     try write("a.png", "b.png", "c.png")
 
     let (applet, host) = panes.make()
-    applet.isZoomedPastFit = true
+    applet.prefetchOpener = Self.failingOpener
     try await openFolder(applet, showing: "a.png")
 
     try FileManager.default.removeItem(at: folder.appendingPathComponent("b.png"))
@@ -726,19 +734,37 @@ final class ImageViewerNavigationTests: XCTestCase {
     XCTAssertTrue(recovered, "a fresh helper decodes the next image")
   }
 
-  /// Catches a zoomed pane prefetching. A pane zoomed past fit never prefetches, so its helper keeps
-  /// the one decode it was asked for.
+  /// Catches a zoomed pane prefetching. The prefetch's open is held while the user zooms in, and
+  /// the pane drops it, so the helper keeps the one fit decode and its tiles and decodes nothing
+  /// of the next image.
   func testAPaneZoomedPastFitNeverPrefetches() async throws {
     try write("a.png", "b.png")
 
+    let gate = OpenGate()
     let (applet, _) = panes.make()
-    applet.isZoomedPastFit = true
+
+    applet.prefetchOpener = { folder, name in
+      await gate.wait()
+
+      return await SourceLoader.openImage(in: folder, named: name)
+    }
 
     try await openFolder(applet, showing: "a.png")
 
+    let waiting = await Harness.eventually { applet.prefetch != nil }
+    XCTAssertTrue(waiting)
+
+    applet.zoomIn()
+    XCTAssertTrue(applet.isZoomedPastFit)
+    XCTAssertNil(applet.prefetch)
+
+    await gate.release()
+
+    let settled = await Harness.eventually { applet.prefetchTask == nil }
+    XCTAssertTrue(settled)
     XCTAssertNil(applet.prefetch)
     XCTAssertNil(applet.cache.prefetched)
-    XCTAssertEqual(applet.client.decodesSent, 1)
+    XCTAssertFalse(applet.client.prefetchInFlight)
   }
 
   /// Catches a sort or a reload leaving a prefetch of the old neighbor behind. Sorting drops the

@@ -2,7 +2,7 @@ import Foundation
 
 /// What the protocol version means for both sides. A mismatch is refused before any image moves.
 public enum ImageProtocol {
-  public static let version: UInt16 = 1
+  public static let version: UInt16 = 2
 
   /// The descriptor the helper finds its end of the socketpair on.
   public static let socketDescriptor: Int32 = 3
@@ -51,12 +51,24 @@ public enum AppMessage: Equatable, Sendable {
 
   case ping(nonce: UInt32)
 
+  /// A rectangle of the decode whose longer side is `level` pixels, in that decode's own pixels
+  /// counted from the top left. The helper keeps the decode of the last level asked for, so the
+  /// next rectangle of the same level costs a copy and not a decode.
+  case region(
+    request: UInt32, source: UInt32, level: UInt32, x: UInt32, y: UInt32, width: UInt32,
+    height: UInt32)
+
+  /// Drops the decode a region request left in memory for `source`.
+  case release(source: UInt32)
+
   var wireType: UInt8 {
     switch self {
     case .hello: return 1
     case .open: return 2
     case .decode: return 3
     case .ping: return 4
+    case .region: return 5
+    case .release: return 6
     }
   }
 
@@ -74,6 +86,17 @@ public enum AppMessage: Equatable, Sendable {
       body.put(frame)
 
     case .ping(let nonce): body.put(nonce)
+
+    case .region(let request, let source, let level, let x, let y, let width, let height):
+      body.put(request)
+      body.put(source)
+      body.put(level)
+      body.put(x)
+      body.put(y)
+      body.put(width)
+      body.put(height)
+
+    case .release(let source): body.put(source)
     }
 
     return FrameHeader.frame(type: wireType, body: body.bytes)
@@ -94,6 +117,14 @@ public enum AppMessage: Equatable, Sendable {
         frame: try reader.u32())
 
     case 4: message = .ping(nonce: try reader.u32())
+
+    case 5:
+      message = .region(
+        request: try reader.u32(), source: try reader.u32(), level: try reader.u32(),
+        x: try reader.u32(), y: try reader.u32(), width: try reader.u32(),
+        height: try reader.u32())
+
+    case 6: message = .release(source: try reader.u32())
     default: throw WireError.unknownType(type)
     }
 
@@ -138,11 +169,21 @@ public struct SourceInfo: Equatable, Sendable {
   /// Milliseconds each frame shows. One entry for a still image, which is never played.
   public var frameDelays: [UInt32]
 
-  public init(source: UInt32, width: UInt32, height: UInt32, frameDelays: [UInt32]) {
+  /// The resolution the file declares, in dots per inch after the orientation applies. Zero means
+  /// the file declares none.
+  public var dpiX: UInt16
+  public var dpiY: UInt16
+
+  public init(
+    source: UInt32, width: UInt32, height: UInt32, frameDelays: [UInt32], dpiX: UInt16 = 0,
+    dpiY: UInt16 = 0
+  ) {
     self.source = source
     self.width = width
     self.height = height
     self.frameDelays = frameDelays
+    self.dpiX = dpiX
+    self.dpiY = dpiY
   }
 
   public var frameCount: Int { frameDelays.count }
@@ -185,6 +226,8 @@ public enum HelperMessage: Equatable, Sendable {
       body.put(info.source)
       body.put(info.width)
       body.put(info.height)
+      body.put(info.dpiX)
+      body.put(info.dpiY)
       body.put(UInt16(min(info.frameDelays.count, ImageLimits.maxFrames)))
 
       for delay in info.frameDelays.prefix(ImageLimits.maxFrames) {
@@ -270,6 +313,8 @@ public enum HelperMessage: Equatable, Sendable {
       let source = try reader.u32()
       let width = try reader.u32()
       let height = try reader.u32()
+      let dpiX = try reader.u16()
+      let dpiY = try reader.u16()
       let count = Int(try reader.u16())
 
       guard count >= 1, count <= ImageLimits.maxFrames else {
@@ -285,7 +330,9 @@ public enum HelperMessage: Equatable, Sendable {
       try reader.finished()
 
       return .opened(
-        SourceInfo(source: source, width: width, height: height, frameDelays: delays))
+        SourceInfo(
+          source: source, width: width, height: height, frameDelays: delays, dpiX: dpiX,
+          dpiY: dpiY))
 
     case 3:
       let request = try reader.u32()
@@ -379,9 +426,13 @@ public struct ImageExpectation: Equatable, Sendable {
   /// The most bytes the app agrees to hold for this image.
   public var byteCap: Int
 
+  /// The size of the rectangle asked for, when the request was a region. The app clips the
+  /// rectangle to the level before it asks, so the reply must match it exactly.
+  public var region: (width: Int, height: Int)?
+
   public init(
     request: UInt32, source: UInt32, frame: UInt32, maxPixel: Int, sourceWidth: Int,
-    sourceHeight: Int, byteCap: Int
+    sourceHeight: Int, byteCap: Int, region: (width: Int, height: Int)? = nil
   ) {
     self.request = request
     self.source = source
@@ -390,6 +441,14 @@ public struct ImageExpectation: Equatable, Sendable {
     self.sourceWidth = sourceWidth
     self.sourceHeight = sourceHeight
     self.byteCap = byteCap
+    self.region = region
+  }
+
+  public static func == (lhs: ImageExpectation, rhs: ImageExpectation) -> Bool {
+    lhs.request == rhs.request && lhs.source == rhs.source && lhs.frame == rhs.frame
+      && lhs.maxPixel == rhs.maxPixel && lhs.sourceWidth == rhs.sourceWidth
+      && lhs.sourceHeight == rhs.sourceHeight && lhs.byteCap == rhs.byteCap
+      && lhs.region?.width == rhs.region?.width && lhs.region?.height == rhs.region?.height
   }
 
   /// Checks a helper's image against what was asked. The byte count comes from the checked
@@ -411,10 +470,17 @@ public struct ImageExpectation: Equatable, Sendable {
       throw WireError.badValue("an image has impossible dimensions")
     }
 
-    let bound = maxPixel > 0 ? maxPixel : max(sourceWidth, sourceHeight)
+    if let region {
+      guard width == region.width, height == region.height else {
+        throw WireError.badValue("a region is not the size that was asked for")
+      }
+    } else {
+      let bound = maxPixel > 0 ? maxPixel : max(sourceWidth, sourceHeight)
 
-    guard max(width, height) <= max(bound, 1), width <= sourceWidth, height <= sourceHeight else {
-      throw WireError.badValue("an image is larger than was asked for")
+      guard max(width, height) <= max(bound, 1), width <= sourceWidth, height <= sourceHeight
+      else {
+        throw WireError.badValue("an image is larger than was asked for")
+      }
     }
 
     guard expected <= byteCap else {

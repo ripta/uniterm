@@ -58,9 +58,41 @@ final class OpenedImage {
       CGImageSourceCopyAuxiliaryDataInfoAtIndex(
         source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil
 
+    let dpiWidth = Self.dpi(properties[kCGImagePropertyDPIWidth])
+    let dpiHeight = Self.dpi(properties[kCGImagePropertyDPIHeight])
+
     info = SourceInfo(
       source: sourceID, width: UInt32(swapped ? height : width),
-      height: UInt32(swapped ? width : height), frameDelays: Self.delays(of: source))
+      height: UInt32(swapped ? width : height), frameDelays: Self.delays(of: source),
+      dpiX: swapped ? dpiHeight : dpiWidth, dpiY: swapped ? dpiWidth : dpiHeight)
+
+    #if DEBUG
+      regionFault = Self.regionFault(in: properties)
+    #endif
+  }
+
+  #if DEBUG
+    /// A fault the test fixtures ask for in a PNG description, which the helper performs when a
+    /// region request arrives. A file cannot carry the file-level marker and still be an image.
+    let regionFault: String?
+
+    private static func regionFault(in properties: [CFString: Any]) -> String? {
+      guard let png = properties[kCGImagePropertyPNGDictionary] as? [CFString: Any],
+        let text = png[kCGImagePropertyPNGDescription] as? String,
+        text.hasPrefix("UNITERM-REGION-FAULT ")
+      else { return nil }
+
+      return String(text.dropFirst("UNITERM-REGION-FAULT ".count))
+    }
+  #endif
+
+  /// A declared resolution as whole dots per inch, or zero when it is missing or out of range.
+  private static func dpi(_ value: Any?) -> UInt16 {
+    guard let number = (value as? NSNumber)?.doubleValue, number.isFinite, number >= 1,
+      number <= Double(UInt16.max)
+    else { return 0 }
+
+    return UInt16(number.rounded())
   }
 
   /// The delay of each frame in milliseconds, for a source that animates. A still image, or a

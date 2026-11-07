@@ -96,6 +96,17 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   var travelsForward = true
 
   var cache = FitCache<Shot>()
+
+  /// The tiles of a zoomed image, the level they are cut from, and the last viewport that showed
+  /// some. A refused zoom goes back to that viewport.
+  var tiles = TileCache<TileImage>(capacity: 1)
+  var tileLevel: TileLevel?
+  var lastGood: ZoomViewport?
+  var tileDenied: Set<TileKey> = []
+
+  /// True while a load takes the pane back to fit. The prefetch waits until the load has chosen
+  /// its image.
+  var leavingZoom = false
   var prefetch: PrefetchJob?
   var prefetchTask: Task<Void, Never>?
   var prefetchFailed: Set<String> = []
@@ -233,6 +244,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
     content.onGeometryChange = { [weak self] in self?.geometryChanged() }
     content.onKey = { [weak self] key in self?.handle(key: key) ?? false }
+    content.onViewportChange = { [weak self] _ in self?.viewportChanged() }
     client.onEvent = { [weak self] event in self?.handle(event) }
   }
 
@@ -254,6 +266,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   }
 
   func begin(path: String, bookmark: Data?, wanted: WantedImage?, origin: LoadOrigin) {
+    exitZoom()
     loading?.cancel()
     loadGeneration += 1
     loadOrigin = origin
@@ -454,6 +467,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     case .refused(let request, let text):
       if request.kind == .prefetch {
         prefetchLost(text)
+      } else if request.kind == .tile {
+        zoomRefused(text)
       } else if request.kind == .still {
         problem(text, offersRetry: true)
       } else {
@@ -463,6 +478,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     case .ended(let reason, let lost):
       if lost?.kind == .prefetch, !(prefetch?.promoted ?? false) {
         helperLostDuringPrefetch()
+      } else if lost?.kind == .tile, phase == .showing, shot != nil {
+        zoomEnded(reason)
       } else {
         ended(reason)
       }
@@ -513,6 +530,11 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       return
     }
 
+    if let request, request.kind == .tile, kind != .staleSource {
+      zoomRefused(text)
+      return
+    }
+
     switch kind {
     case .staleSource:
       guard let request, request.source == info?.source,
@@ -549,7 +571,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   private func requestedLongerSide(for info: SourceInfo) -> Int {
     let native = PixelSize(width: Int(info.width), height: Int(info.height))
-    let displayed = content.displayedPixels(for: native)
+    let displayed = content.displayedPixels(for: native, actualScale: info.actualScale)
 
     guard displayed.longer > 0 else { return min(native.longer, 2048) }
 
@@ -572,6 +594,11 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       return
     }
 
+    if request.kind == .tile {
+      tileArrived(request, header, pixels)
+      return
+    }
+
     guard let info, request.source == info.source else { return }
 
     let native = PixelSize(width: Int(info.width), height: Int(info.height))
@@ -587,6 +614,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       store(frame: Int(header.frame), image: image, bytes: pixels.count)
       return
     }
+
+    let sameImage = shot?.name == sourceName
 
     dropFrames()
     retireShown(keeping: sourceName)
@@ -605,13 +634,16 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     committedName = sourceName
     loadingName = nil
     phase = .showing
-    content.show(image: image, native: native, hdr: header.space.isHDR)
+    content.show(
+      image: image, native: native, actualScale: info.actualScale, hdr: header.space.isHDR,
+      keepingZoom: sameImage)
     frames[currentFrame] = Frame(image: image, bytes: 0)
     refresh()
 
     if plan.isAnimated { startAnimating() }
 
     shownSettled()
+    viewportChanged()
   }
 
   /// Reserves `bytes` in the bitmap budget. The images a pane keeps beside the one on screen give
@@ -661,6 +693,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
     if let old = shot { bitmapBudget.giveBack(old.bytes, lease: lease) }
 
+    resetZoomState()
     shot = nil
     info = nil
     sourceName = nil
@@ -682,6 +715,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   // MARK: Resize
 
   func geometryChanged() {
+    if shot != nil { viewportChanged() }
+
     guard phase == .showing, shot != nil, loadingName == nil else { return }
 
     resizeCheck?.cancel()
@@ -698,7 +733,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     guard let held = shot, phase == .showing, loadingName == nil else { return }
 
     let native = PixelSize(width: Int(held.info.width), height: Int(held.info.height))
-    let displayed = content.displayedPixels(for: native)
+    let displayed = content.displayedPixels(for: native, actualScale: held.info.actualScale)
 
     guard FitMath.needsSharperDecode(held: held.pixels, displayed: displayed, native: native) else {
       return
@@ -842,6 +877,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     stopAnimating()
     pauseSlideshowTimer()
     abandonPrefetchOpening()
+    content.cancelPinch()
+    releaseZoomForDetach()
   }
 
   public func reattach() {
@@ -852,6 +889,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
     resumeSlideshowTimer()
     maybePrefetch()
+    restoreZoomAfterReattach()
   }
 
   public func focus() {
@@ -927,6 +965,13 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       if plan.isAnimated {
         segments.append(
           AppletSegment(symbolName: "play.rectangle", text: "\(plan.frameCount) frames"))
+      }
+
+      if let viewport = content.viewport, !viewport.isFit {
+        let percent = Int((viewport.scale / viewport.actualScale * 100).rounded())
+
+        segments.append(
+          AppletSegment(symbolName: "magnifyingglass", text: "\(percent.formatted())%"))
       }
 
       if listing.count > 1, let index = listing.index {

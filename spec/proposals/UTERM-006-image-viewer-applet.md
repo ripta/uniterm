@@ -131,16 +131,19 @@ Decision: all three, with a fit-size backdrop and a bounded tile cache in the ap
   is not doubled.
 - Free zoom comes from pinch and from View menu commands the viewer declares in UTERM-002's registry: Zoom In (Cmd-+),
   Zoom Out (Cmd--), Actual Size (Cmd-0), and Zoom to Fit (Cmd-9). Scrolling pans. None of these is a reserved window
-  key, and the terminal's items with the same keys show only while a terminal pane has focus, per UTERM-013.
-- The decode scale is the smaller of the zoom and native 1:1. Zoom above 1:1 magnifies the native decode, with
-  nearest-neighbor sampling, and needs no larger decode.
+  key, and the terminal's items with the same keys show only while a terminal pane has focus, per UTERM-013. An
+  animated image does not zoom, and the commands are off for it. Amended 2026-11-07; see Decision Log.
+- The decode scale is the smallest power-of-two fraction of native that is not below the zoom, and never more than
+  native 1:1. Zoom above 1:1 magnifies the native decode, with nearest-neighbor sampling, and needs no larger decode.
+  Amended 2026-11-07; see Decision Log.
 - The app keeps the fit-size decode as a backdrop. The helper keeps its decode and sends tiles, and the app caches a
   bounded set around the viewport, so app memory tracks the pane, not the image. During a pinch the app scales what it
   holds, and asks for crisp tiles when the gesture ends.
 - One app-side budget covers every bitmap image panes hold: backdrops, tiles, the prefetched and previous images, and
   animation frames.
 - Zoom past what the helper cap or the app-wide helper budget allows is refused, and the status bar says the limit was
-  reached. Another pane's helper is never killed to make room. Amended 2026-11-05; see Decision Log.
+  reached. Another pane's helper is never killed to make room. A refused zoom goes back to the last zoom that showed
+  tiles, or to fit. Amended 2026-11-07; see Decision Log.
 
 Rationale: the draft names all three modes, and a viewer for screenshots and photos needs detail at 1:1. A backdrop
 keeps panning responsive while tiles arrive, as ADR-08 requires, where a viewport-only transfer would show blank edges
@@ -475,10 +478,11 @@ None.
 
 ### M3: Zoom
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Fit, actual size, and free zoom by pinch and by Zoom In, Zoom Out, Actual Size, and Zoom to Fit, which are registry
-  commands the viewer declares, with none of their keys a reserved window key
+  commands the viewer declares, with none of their keys a reserved window key. An animated image does not zoom.
+  Amended 2026-11-07; see Decision Log.
 - Fit never enlarges a small image. Actual size matches Preview's size for a small image and a Retina screenshot
 - Panning a large image at actual size never shows blank edges past the backdrop, and the main thread never waits on
   a tile
@@ -486,11 +490,60 @@ None.
 - A slow but legitimate decode of a very large image reports in the status bar that the zoom limit was reached, never a
   crash
 - Zoom past the helper cap or the app-wide helper budget is refused with a status bar warning, and no other pane's
-  helper is killed. Amended 2026-11-05; see Decision Log.
+  helper is killed. The pane goes back to the last zoom that showed tiles, or to fit. Amended 2026-11-07; see Decision
+  Log.
 - Moving the window to a display with a different scale requests new pixels
 - A user remap of the shared "Actual Size" title moves the terminal's item and the viewer's item together
 - On detach a zoomed pane releases its 1:1 decode and tiles and keeps only its backdrop
 - The helper releases a prefetched bitmap once sent, and zoom is never refused for memory a prefetch holds
+
+**As built:**
+
+- The protocol is at version 2. The helper reports each source's declared resolution as whole dots per inch, after the
+  orientation applies, and zero when the file declares none. The app shows an undeclared file at 72 dots per inch and a
+  Retina screenshot at half its pixel size. Two messages are new. A region request asks for a rectangle of the decode at
+  one level, and a release drops that decode. The helper keeps one decode, for the last level asked for, so a pan costs a
+  copy and not a decode. Its reply is an ordinary image reply, checked against a rectangle bound the app set.
+- The viewport is pure model code: a scale in points per image pixel, a center in image pixels, and a pan clamp that
+  never lets the pane show space past the image. The tile grid, the level, and the bounded tile cache are model code
+  too. A pane holds the tiles under the viewport and one ring around them, and the cache capacity follows the pane's
+  size in device pixels. A 6000 by 4000 image at 1:1 is 96 MiB. Panning across it at 300 points held at most the
+  backdrop and 25 tiles, which is the test's bound, and stayed under 40 MiB.
+- The view owns the zoom and the pan. A zoom, a pan, or a pinch moves the backdrop and every tile layer in the same
+  turn, and never waits on a tile. A pinch scales what the view holds and reports once when the fingers lift. A test
+  renders the layers and reads pixels, since a tile in the wrong corner passes any test that reads frames only.
+- Tile requests go through the scheduler. A newer tile replaces a waiting tile, a still replaces a waiting tile, and a
+  tile never replaces a waiting still. The pane asks for the nearest missing tile after each one arrives, so a step or a
+  resize is never behind more than the tile in flight.
+- A tile is charged to the one bitmap budget. When the budget is short, the images the pane keeps beside the one on
+  screen give way first. Entering free zoom also drops the prefetched image. A test with a budget that holds only the
+  backdrop and two more fit decodes shows the tiles taking the previous image's place with no warning.
+- A zoom the helper's cap or the app-wide budget cannot hold is refused on the app's side before the helper starts the
+  decode, and the status bar says the zoom limit was reached. The pane goes back to the last zoom that showed tiles. A
+  test with a shared helper budget shows another pane's helper keeps its process and keeps decoding. A decode that runs
+  past the time bound, or a helper that dies or passes its footprint cap while it makes tiles, also warns that the zoom
+  limit was reached. The pane keeps its backdrop at fit and opens the image again in a fresh helper. A debug-only fault
+  in a PNG's description makes the 1:1 decode slow, which is how the test reaches this.
+- Moving to another image returns to fit, and releases the tiles and the helper's decode while the old source is still
+  the shown one. Detach releases both sides' tiles and decode and keeps the backdrop. Reattach asks for the tiles again.
+  A new display scale changes the fit decode's size and the tile level, and a test with a stand-in for the display
+  scale shows both.
+- Found and fixed: a bitmap the helper had sent stayed in its footprint after it was freed, because the allocator keeps
+  freed blocks of that size. A 64 MiB prefetch left the helper at 67 MiB, and a released 1:1 decode did not leave
+  either. Pixel buffers now come straight from the kernel in whole pages and return to it. Two tests failed before the
+  change and pass after. The app's frame reads use the same buffers.
+- The zoom commands sit in View, with Cmd-+, Cmd--, Cmd-0, and Cmd-9. A test shows no reserved key and no warning. A
+  test applies one remap of "Actual Size" the way AppKit does, by title, and shows that it moves the terminal's item and
+  the viewer's. A UI test does the same with a real launch argument. The status bar shows the zoom as a percent of
+  actual size while the image is zoomed.
+- Arrows pan a zoomed image by a fifth of the pane, and Space still steps. Dragging pans, and a double tap on a
+  trackpad toggles actual size. Neither gesture is in the checks above.
+- New UI tests: `testZoomKeysShowActualSizeZoomInAndFit`, `testARemapOfActualSizeMovesTheViewersItemToo`, and
+  `testTheViewMenuZoomsTheImageViewer`. They were built for testing and not run in the agent's sandbox.
+- A step or resize that arrives while a level's first tile is in flight waits for that tile. See the Decision Log.
+- Left to the user: how smooth pinching and panning feel, and whether the detail at 1:1 matches Preview. Left to the run
+  coordinator: the region path against the signed, sandboxed helper, and the UI tests. No test moves a window between
+  two real displays. The HDR tile path has no real gain-map file.
 
 ### M4: Control
 
@@ -606,6 +659,38 @@ None.
   needed this reading for the stored path.
 - 2026-11-07: (work-queue best guess) The image helper keeps up to four opened sources, with no protocol change, so a
   prefetch can open the next image beside the one on screen. The alternative was a close message and a version bump.
+
+- 2026-11-07: (work-queue best guess) An animated image does not zoom, and the zoom commands are off for it. The
+  helper decodes animation frames at fit size and cuts tiles from frame 0 only, so a zoom would show blur or the wrong
+  frame. This narrowed the Zoom bullet and the M3 bullet that listed free zoom for any image. Zooming an animation needs
+  tiles per frame inside the bitmap budget, which is its own design.
+- 2026-11-07: (work-queue best guess) The decode level is the smallest power-of-two fraction of native that is not below
+  the device resolution, capped at native. The Zoom bullet said the decode scale is the smaller of the zoom and native
+  1:1. An exact scale would ask the helper for a new full decode on every pinch step. A level can be up to twice the
+  device resolution, which the layers minify.
+- 2026-11-07: (work-queue best guess) A refused zoom, or a zoom whose tiles fail, goes back to the last zoom that showed
+  tiles, or to fit when there is none. The Zoom bullet said only that the zoom is refused. The marker on that bullet
+  replaces the 2026-11-05 marker, whose status bar text the bullet still carries.
+- 2026-11-07: (work-queue best guess) Values no document set. Zoom In and Zoom Out double and halve the scale, and a step
+  that would pass actual size stops on it. The most an image magnifies is 32 device pixels per image pixel. A tile is 512
+  pixels, and the pane keeps one ring of tiles around the viewport. Actual size uses the horizontal resolution for both
+  axes. A file that declares none shows at 72 dots per inch. Arrows pan by a fifth of the pane.
+- 2026-11-07: (work-queue best guess, addition) A double tap on a trackpad toggles between fit and actual size. No check
+  or decision names it. It is UI polish that CLAUDE.md allows building directly. The user may drop it by removing the
+  smart-magnify handler.
+- 2026-11-07: (work-queue best guess, addition) While the image is zoomed, the status bar shows the zoom as a percent of
+  actual size. No check or decision names it, and the UI tests read it. The user may drop it by removing the segment.
+- 2026-11-07: (work-queue best guess) A step or a resize that arrives while the first tile of a level is in flight waits
+  for it. That tile includes the whole decode of the level, which the helper cannot cancel short of a kill. The wait is
+  bounded by the decode time bound, and by about 0.3 s for a 6000 by 4000 PNG in a debug build. A decode in flight was
+  already uncancellable for stills, so this adds no new class of wait. A step does replace every waiting tile.
+- 2026-11-07: (work-queue best guess) The helper draws a tile level at exactly the size the app computes, with one
+  shared function, and the app accepts only a tile of exactly the rectangle it asked for. ImageIO's own thumbnail size
+  differs from the app's by a pixel for many sizes, so the two disagreed at the edge.
+- 2026-11-07: (work-queue best guess) The image protocol moved to version 2. The helper reports each source's resolution
+  and answers region and release messages, since the app may not read image properties and the helper holds the decode
+  that tiles come from. The helper ships in the same bundle, so no skew applies, and the handshake still refuses a
+  mismatch with the message to relaunch uniterm.
 
 ## References
 

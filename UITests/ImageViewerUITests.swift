@@ -66,6 +66,42 @@ final class ImageViewerUITests: UnitermUITestCase {
     return file
   }
 
+  /// A large PNG of four solid quadrants. The fills are rectangles, so a big image costs four
+  /// calls and not a closure per pixel.
+  @discardableResult
+  private func writeLargePNG(
+    _ name: String, in folder: URL, width: Int = 3000, height: Int = 2000
+  ) throws -> URL {
+    let context = CGContext(
+      data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let halfWidth = CGFloat(width / 2)
+    let halfHeight = CGFloat(height / 2)
+    let quadrants: [(CGRect, [CGFloat])] = [
+      (CGRect(x: 0, y: halfHeight, width: halfWidth, height: halfHeight), [1, 0, 0]),
+      (CGRect(x: halfWidth, y: halfHeight, width: halfWidth, height: halfHeight), [0, 1, 0]),
+      (CGRect(x: 0, y: 0, width: halfWidth, height: halfHeight), [0, 0, 1]),
+      (CGRect(x: halfWidth, y: 0, width: halfWidth, height: halfHeight), [1, 1, 1]),
+    ]
+
+    for (rect, color) in quadrants {
+      context.setFillColor(red: color[0], green: color[1], blue: color[2], alpha: 1)
+      context.fill(rect)
+    }
+
+    let data = NSMutableData()
+    let destination = CGImageDestinationCreateWithData(
+      data, UTType.png.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+    CGImageDestinationFinalize(destination)
+
+    let file = folder.appendingPathComponent(name)
+    try (data as Data).write(to: file)
+
+    return file
+  }
+
   private func writeGIF(_ name: String, in folder: URL) throws -> URL {
     let data = NSMutableData()
     let destination = CGImageDestinationCreateWithData(
@@ -325,6 +361,74 @@ final class ImageViewerUITests: UnitermUITestCase {
 
     XCTAssertEqual(field.value as? String, "cab")
     XCTAssertTrue(palette(in: app).exists, "Cmd-Left closed the palette")
+  }
+
+  /// Catches zoom keys that do nothing in the real window. A 3000 by 2000 image fits the pane with
+  /// no zoom segment. Cmd-0 shows it at 100 percent, Cmd-+ doubles that, and Cmd-9 returns to fit
+  /// and drops the segment. The screenshots show the sharp detail for the person reading the run.
+  func testZoomKeysShowActualSizeZoomInAndFit() throws {
+    let file = try writeLargePNG("big.png", in: try makeFolder())
+
+    try plantViewer(path: file.path, kind: "file", current: "big.png")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0.contains("\u{00D7}") })
+    XCTAssertFalse(segment(1, in: window).exists, "a fit image shows no zoom segment")
+    viewer(in: window).click()
+
+    app.typeKey("0", modifierFlags: .command)
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "100%" })
+    attachScreenshot("image viewer, actual size", of: window)
+
+    app.typeKey("+", modifierFlags: .command)
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "200%" })
+    attachScreenshot("image viewer, 200 percent", of: window)
+
+    app.typeKey("9", modifierFlags: .command)
+    XCTAssertTrue(
+      waitUntilGone(segment(1, in: window), timeout: 10), "Zoom to Fit left the zoom segment")
+  }
+
+  /// Catches the shared Actual Size title moving only the terminal's item. With one remap of
+  /// "Actual Size" to Cmd-J, Cmd-0 no longer zooms the viewer and Cmd-J does.
+  func testARemapOfActualSizeMovesTheViewersItemToo() throws {
+    let file = try writeLargePNG("big.png", in: try makeFolder())
+
+    try plantViewer(path: file.path, kind: "file", current: "big.png")
+
+    let app = launchApp(arguments: ["-NSUserKeyEquivalents", #"{"Actual Size"="@j";}"#])
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0.contains("\u{00D7}") })
+    viewer(in: window).click()
+
+    app.typeKey("0", modifierFlags: .command)
+    XCTAssertFalse(
+      segment(1, in: window).waitForExistence(timeout: 2), "Cmd-0 still zooms the viewer")
+
+    app.typeKey("j", modifierFlags: .command)
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "100%" })
+  }
+
+  /// Catches a View menu without the viewer's zoom items, or items that do nothing. Zoom In is a
+  /// menu item of the focused viewer, and choosing it shows the zoom segment.
+  func testTheViewMenuZoomsTheImageViewer() throws {
+    let file = try writeLargePNG("big.png", in: try makeFolder())
+
+    try plantViewer(path: file.path, kind: "file", current: "big.png")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0.contains("\u{00D7}") })
+    viewer(in: window).click()
+
+    app.menuBars.menuBarItems["View"].click()
+    app.menuBars.menuItems["Zoom In"].click()
+
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0.hasSuffix("%") })
   }
 
   /// Attaches a Display P3 image for comparison with Preview. The green here lies outside sRGB, so

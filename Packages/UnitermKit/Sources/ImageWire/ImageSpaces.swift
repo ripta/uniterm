@@ -65,3 +65,21 @@ public enum ImageLimits {
     return rowOverflow || overflow ? nil : total
   }
 }
+
+/// The size of a decode whose longer side is `longerSide` pixels. The app places tiles by this
+/// size, and the helper draws its level at exactly this size, so the two never differ by a pixel
+/// at the edge. Each side rounds up, in integers, so the longer side is exactly `longerSide`.
+public enum LevelGeometry {
+  public static func size(
+    nativeWidth: Int, nativeHeight: Int, longerSide: Int
+  ) -> (width: Int, height: Int) {
+    let longer = max(nativeWidth, nativeHeight, 1)
+    let side = min(max(longerSide, 1), longer)
+
+    func scaled(_ value: Int) -> Int {
+      max(1, (value * side + longer - 1) / longer)
+    }
+
+    return (scaled(nativeWidth), scaled(nativeHeight))
+  }
+}

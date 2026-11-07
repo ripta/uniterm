@@ -29,8 +29,13 @@ final class ImageWireFuzzTests: XCTestCase {
 
     return [
       HelperMessage.hello(version: 1, types: ["public.png", "public.jpeg", "public.heic"]).frame(),
-      HelperMessage.opened(SourceInfo(source: 2, width: 40, height: 30, frameDelays: [100, 120]))
+      HelperMessage.opened(
+        SourceInfo(
+          source: 2, width: 40, height: 30, frameDelays: [100, 120], dpiX: 144, dpiY: 144)
+      ).frame(),
+      AppMessage.region(request: 4, source: 2, level: 40, x: 0, y: 8, width: 16, height: 16)
         .frame(),
+      AppMessage.release(source: 2).frame(),
       HelperMessage.image(header, pixels: Data(repeating: 7, count: 60)).frame(),
       HelperMessage.failure(request: 4, kind: .limit, text: "Past the limit.").frame(),
       HelperMessage.pong(nonce: 9).frame(),
@@ -45,6 +50,9 @@ final class ImageWireFuzzTests: XCTestCase {
     let expectation = ImageExpectation(
       request: 4, source: 2, frame: 0, maxPixel: 8, sourceWidth: 40, sourceHeight: 30,
       byteCap: 1 << 16)
+    let region = ImageExpectation(
+      request: 4, source: 2, frame: 0, maxPixel: 40, sourceWidth: 40, sourceHeight: 30,
+      byteCap: 1 << 16, region: (8, 6))
     var accepted = 0
 
     for iteration in 0..<iterations {
@@ -75,6 +83,17 @@ final class ImageWireFuzzTests: XCTestCase {
 
         XCTAssertEqual(pixels.count, expected, context)
         XCTAssertLessThanOrEqual(max(header.width, header.height), 8, context)
+      }
+
+      if case .image(let header, let pixels) = message,
+        (try? region.validate(header, pixels: pixels)) != nil
+      {
+        let expected = ImageLimits.byteCount(
+          width: Int(header.width), height: Int(header.height), format: header.space.format)
+
+        XCTAssertEqual(pixels.count, expected, context)
+        XCTAssertLessThanOrEqual(header.width, 8, context)
+        XCTAssertLessThanOrEqual(header.height, 6, context)
       }
 
       _ = try? AppMessage.decode(type: type, body: body)

@@ -205,6 +205,9 @@ extension ImageViewerApplet {
       if isZoomedPastFit { return panImage(by: key) }
       step(.previous)
 
+    case .up, .down:
+      return panImage(by: key)
+
     case .home:
       step(.first)
 
@@ -221,11 +224,6 @@ extension ImageViewerApplet {
     return true
   }
 
-  /// Moves a zoomed image under the pane. Nothing zooms past fit yet, so no key lands here.
-  private func panImage(by key: ImageKey) -> Bool {
-    false
-  }
-
   /// Loads the selection when the pane is not busy loading another image.
   func pump() {
     guard !closed, loadingName == nil, let target = listing.current,
@@ -239,6 +237,7 @@ extension ImageViewerApplet {
   /// flight for it becomes the shown image when it arrives. Otherwise the file is opened off the
   /// main thread and handed to the helper.
   func beginLoad(of image: ListedImage, bypassCache: Bool) {
+    exitZoom()
     navGeneration += 1
     navTask?.cancel()
     navTask = nil
@@ -317,7 +316,7 @@ extension ImageViewerApplet {
     content.show(
       image: next.image,
       native: PixelSize(width: Int(next.info.width), height: Int(next.info.height)),
-      hdr: next.space.isHDR)
+      actualScale: next.info.actualScale, hdr: next.space.isHDR)
     frames[0] = Frame(image: next.image, bytes: 0)
     refresh()
 

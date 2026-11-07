@@ -151,6 +151,9 @@ final class ImageHelperClient {
     }
   }
 
+  /// The helper's footprint now, for tests that check it lets go of what it sent.
+  var currentFootprint: Int? { process?.footprint() }
+
   /// The most the helper's footprint has been, for tests that measure a decode.
   var peakFootprint: Int? { process?.peakFootprint() }
 
@@ -333,6 +336,47 @@ final class ImageHelperClient {
     return request
   }
 
+  /// Asks for a rectangle of the zoomed image. A tile already waiting is replaced, so only the newest
+  /// viewport's request is ever sent after the one in flight. Returns nil when the source is not
+  /// open.
+  @discardableResult
+  func decodeRegion(_ region: TileRegion) -> DecodeRequest? {
+    guard let info, process != nil else { return nil }
+
+    requestCounter &+= 1
+
+    let request = DecodeRequest(
+      id: requestCounter, source: info.source, maxPixel: region.level, frame: 0, kind: .tile,
+      region: region)
+
+    if let toSend = submit(request) {
+      send(toSend)
+    }
+
+    return request
+  }
+
+  /// The tile in flight or waiting, if there is one. The pane does not ask twice for it.
+  var tileRegionsOutstanding: [TileRegion] {
+    [scheduler.inFlight, scheduler.pending].compactMap { $0?.kind == .tile ? $0?.region : nil }
+  }
+
+  var tileInFlight: Bool { scheduler.inFlight?.kind == .tile }
+
+  var tileInFlightRegion: TileRegion? {
+    scheduler.inFlight?.kind == .tile ? scheduler.inFlight?.region : nil
+  }
+
+  /// Tells the helper to drop the decode it keeps for tiles of the shown source. A tile waiting to
+  /// be sent is dropped too.
+  func releaseLevel() {
+    if scheduler.pending?.kind == .tile { cancelPending() }
+
+    guard let process, infos[displaySource] != nil else { return }
+
+    try? process.socket.send(AppMessage.release(source: displaySource).frame())
+  }
+
   /// Drops the waiting request without touching the one in flight.
   func cancelPending() {
     guard let inFlight = scheduler.inFlight else {
@@ -378,6 +422,17 @@ final class ImageHelperClient {
     return ImageLimits.byteCount(width: width, height: height, format: .rgbaF16) ?? Int.max
   }
 
+  /// The bytes of the whole decode a tile is cut from, in eight-bit pixels. The helper holds it
+  /// while it cuts, so it sets what the request may cost.
+  private func levelBytes(for region: TileRegion, of info: SourceInfo) -> Int {
+    let native = PixelSize(width: Int(info.width), height: Int(info.height))
+    let ratio = Double(region.level) / Double(max(native.longer, 1))
+    let width = max(1, Int((Double(native.width) * ratio).rounded(.up)))
+    let height = max(1, Int((Double(native.height) * ratio).rounded(.up)))
+
+    return ImageLimits.byteCount(width: width, height: height, format: .rgba8) ?? Int.max
+  }
+
   private func send(_ request: DecodeRequest) {
     guard let process, let info = infos[request.source] else {
       refuse(request, "The image is no longer open in the decoder.")
@@ -386,10 +441,12 @@ final class ImageHelperClient {
 
     touch(request.source)
 
-    let predicted = predictedBytes(for: request)
-    let estimate = predicted.multipliedReportingOverflow(by: 2).partialValue + (64 << 20)
+    let region = request.region
+    let held = region.map { levelBytes(for: $0, of: info) } ?? predictedBytes(for: request)
+    let predicted = region.map { $0.width * $0.height * PixelFormat.rgbaF16.bytesPerPixel } ?? held
+    let estimate = held.multipliedReportingOverflow(by: 2).partialValue + (64 << 20)
 
-    guard predicted <= settings.maxImageBytes else {
+    guard held <= settings.maxImageBytes else {
       refuse(request, "This image is past the size uniterm will decode for it.")
       return
     }
@@ -402,18 +459,28 @@ final class ImageHelperClient {
     expectation = ImageExpectation(
       request: request.id, source: request.source, frame: UInt32(request.frame),
       maxPixel: request.maxPixel, sourceWidth: Int(info.width), sourceHeight: Int(info.height),
-      byteCap: settings.maxImageBytes)
+      byteCap: region == nil ? settings.maxImageBytes : predicted,
+      region: region.map { ($0.width, $0.height) })
 
     readLimit.withLock { $0 = predicted }
     decodesSent += 1
     markBusy()
 
+    let message: AppMessage
+
+    if let region {
+      message = .region(
+        request: request.id, source: request.source, level: UInt32(region.level),
+        x: UInt32(region.x), y: UInt32(region.y), width: UInt32(region.width),
+        height: UInt32(region.height))
+    } else {
+      message = .decode(
+        request: request.id, source: request.source, maxPixel: UInt32(request.maxPixel),
+        frame: UInt32(request.frame))
+    }
+
     do {
-      try process.socket.send(
-        AppMessage.decode(
-          request: request.id, source: request.source, maxPixel: UInt32(request.maxPixel),
-          frame: UInt32(request.frame)
-        ).frame())
+      try process.socket.send(message.frame())
     } catch {
       end(.crashed("The image decoder stopped answering."), lost: request)
     }
@@ -427,7 +494,11 @@ final class ImageHelperClient {
 
     onEvent?(.refused(request, text))
 
-    if let next { send(next) } else if openingSources.isEmpty { markIdle() }
+    if let next {
+      send(next)
+    } else if openingSources.isEmpty, scheduler.inFlight == nil {
+      markIdle()
+    }
   }
 
   // MARK: Receiving

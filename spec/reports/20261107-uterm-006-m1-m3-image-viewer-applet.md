@@ -15,7 +15,7 @@ credentials.
 |---|---|---|
 | UTERM-006 M1: Show one image | DONE | "Add an image viewer that decodes in a sandboxed helper" |
 | UTERM-006 M2: Folder slideshow | DONE | "Step through a folder of images as a slideshow" |
-| UTERM-006 M3: Zoom | QUEUED | |
+| UTERM-006 M3: Zoom | DONE | "Zoom images to actual size and beyond with tiles from the helper" |
 
 ## Local checks
 
@@ -283,3 +283,129 @@ Each new or changed class was timed alone with `swift test --filter`, before the
 | Every other new or changed class | Under 0.03 s |
 
 M2's three new UI tests took 17 s together.
+
+## UTERM-006 M3: Zoom
+
+### Commit
+
+"Zoom images to actual size and beyond with tiles from the helper" holds the code, the proposal, and this report.
+
+### What was built
+
+- Fit, actual size, and free zoom.
+  - Pinch, and Zoom In (Cmd-+), Zoom Out (Cmd--), Actual Size (Cmd-0), and Zoom to Fit (Cmd-9) in the View menu.
+  - Actual size honours the declared dpi, so a 144 dpi screenshot shows at half its pixel size.
+- Panning by scroll, drag, and arrows. Space still steps, and a step returns to fit.
+- Tiles from the helper.
+  - The fit backdrop stays on screen.
+  - Tiles are 512 px, kept in a cache bounded to one ring around the viewport.
+  - Decodes stop at 1:1. Past 1:1 the view magnifies with nearest-neighbour sampling.
+- Refusals and limits.
+  - A zoom the helper cap or budget refuses posts a warning and goes back to the last zoom that worked.
+  - Another pane's helper is never killed.
+- Detach releases the tiles and the helper's level decode.
+- The helper protocol moved to version 2. The helper now reports the declared dpi, and there are region request and
+  region release messages. The handshake still refuses a mismatch.
+- Pixel buffers of 256 KiB and up come from mmap, so a freed bitmap leaves the helper's footprint.
+- One App Shortcuts remap of "Actual Size" moves the terminal's item and the viewer's item together. A package test
+  and a UI test cover this.
+
+### Checks
+
+- The implementer ran these after the review fixes, and all passed:
+  - `make fmt-check`, `make lint`, `make check`, and `make build`.
+  - `make test-package`: 1,735 tests, 5 skipped, 0 failures.
+  - `make fuzz FUZZ_ITERATIONS=500`.
+  - `build-for-testing`.
+  - `proposals.py check`, apart from the row's move to history.
+- The coordinator ran these outside the agent sandbox:
+  - `make test-helper-sandbox` and `check-sandbox-off.sh <built app>` passed, before and after the review fixes.
+  - `make test-app` on the code before the review fixes ran 120 tests, with 1 failure in M3's own new remap test.
+- The remap test's negative check called `waitFor` on a segment that correctly does not exist. That fails on an
+  absent element instead of returning false. So the remap worked, and the assertion was the bug. The test now uses
+  `waitForExistence`.
+- `make test-app` on the final code ran 120 tests with 1 failure, `WindowsUITests.testCommandWClosesOnlyTheKeyWindow`.
+  All 10 `ImageViewerUITests` passed.
+- Crash reports: nothing from uniterm, xctest, or the shipped `ImageDecoder`. The `ImageDecoderHelper` reports are
+  the package tests' deliberate aborts.
+
+### Unowned failure
+
+`WindowsUITests.testCommandWClosesOnlyTheKeyWindow` failed in M3's final full run at `WindowsUITests.swift:120`. The
+shell's `K:42:` output never appeared within 20 s.
+
+Run alone 3 times (run `61BE23`), it passed twice. The third run failed at `:116`. The app was
+`runningBackground` (state 3), not `runningForeground` (state 4).
+
+Both failures fit another app taking the foreground during the test. The test touches only terminal and window code,
+which no milestone in this run changed. It was not run on the base commit, since the run never switches branches. Its
+cause is unresolved.
+- Left to the user:
+  - how smooth pinching and panning feel;
+  - whether 1:1 detail matches Preview.
+
+### Best guesses and deviations
+
+The Decision Log holds each of these as a "(work-queue best guess)" entry.
+
+1. Animated images do not zoom, and the zoom commands are off for them.
+2. The decode level is the smallest power-of-two fraction of native that is not below the device resolution, capped
+   at native. This narrows "the smaller of zoom and native 1:1", so a pinch does not redecode on every step.
+3. A refused or failed zoom goes back to the last zoom that showed tiles, or to fit.
+4. Values:
+   - zoom steps double or halve, and stop on actual size;
+   - the largest magnification is 32 device pixels per image pixel;
+   - tiles are 512 px with one ring;
+   - the horizontal dpi applies to both axes, and an undeclared dpi counts as 72;
+   - arrows pan a fifth of the pane.
+5. The protocol moved to version 2. The helper ships in the same bundle, and the handshake refuses a mismatch.
+6. A step or resize waits behind a tile already in flight, as a known limit. The first tile of a level carries the
+   whole level decode, which only a kill can cancel. The 10 s decode bound limits the wait. A 6000 by 4000 PNG level
+   took about 0.3 s in a debug build. A step does replace every waiting tile.
+7. Additions, tagged `addition`, which the user may drop:
+   - double-tap toggles actual size;
+   - a zoom-percent status segment.
+
+   Drag to pan is not an addition, since a check covers panning.
+
+### Review findings
+
+- F1, scope: the double-tap toggle and the zoom-percent segment were additions with no tag. They are now logged as
+  additions, and the run's best guess keeps them.
+- F2, PLAUSIBLE then confirmed: the app and the helper could size a tile level differently by one pixel. That
+  happened in 80 of 208 combinations, with ImageIO's thumbnail rounding against the app's. Tile replies were checked
+  only against an upper bound. Both sides now use one shared function, and the helper draws at exactly that size. The
+  app refuses any tile that is not exactly the rectangle it asked for. Tests cover both.
+- F3, PLAUSIBLE then confirmed as a known limit: a step waits behind a tile already in flight. This is recorded as
+  best guess 6.
+- F4, PLAUSIBLE, fixed defensively: a pinch whose end event never came left tile work off. The pinch now clears when
+  the window loses key, when the view moves window, on a new image, and on detach. A test covers it.
+- F5: a pan test slept for real. It now yields.
+
+### ADR review
+
+`adr-impact` found no conflicts. ADR-04, ADR-05, ADR-07, and ADR-08 are consistent. It raised three candidates, and
+none passes the bar.
+
+- Shared menu titles moving under one remap is already UTERM-013's rule.
+- The app-wide bitmap budget belongs to one applet's internals.
+- The mmap page buffer is a mechanism.
+
+### Bug found in earlier code
+
+The helper's allocator kept freed large blocks, so a sent bitmap stayed in the helper's footprint. A 64 MiB prefetch
+left the helper at 67 MiB. Pixel buffers now come from mmap. Two tests failed before the change.
+
+### Test cost
+
+Each new or changed class was timed alone with `swift test --filter`.
+
+| Test class | Wall time |
+|---|---|
+| `ImageZoomTests` (14 tests) | 5.85 s |
+| `ImageViewerNavigationTests` (28 tests, changed) | 3.2 s |
+| `HelperServerTests` | About 0.3 s |
+| `ImageViewerViewTests` | 0.13 s |
+| Every other new class | Under 0.03 s |
+
+`ImageZoomTests` is the costliest new file. It drives real helper processes through zoom, refusal, and detach.

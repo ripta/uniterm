@@ -83,4 +83,22 @@ final class ImageExpectationTests: XCTestCase {
       ImageLimits.byteCount(width: ImageLimits.maxDimension + 1, height: 1, format: .rgba8))
     XCTAssertEqual(ImageLimits.byteCount(width: 3, height: 2, format: .rgba8), 24)
   }
+
+  /// Catches a tile reply that is not the rectangle the app asked for. The app places the layer
+  /// from the rectangle it clipped, so a smaller tile would be stretched and a larger one would
+  /// overrun its neighbor. Only an exact match is accepted.
+  func testARegionReplyMustBeExactlyTheRectangleAsked() throws {
+    let region = ImageExpectation(
+      request: 4, source: 2, frame: 0, maxPixel: 400, sourceWidth: 400, sourceHeight: 200,
+      byteCap: 512 * 512 * 8, region: (512, 300))
+
+    try region.validate(header(width: 512, height: 300), pixels: Data(count: 512 * 300 * 4))
+
+    for (width, height) in [(511, 300), (512, 299), (100, 50), (513, 300), (512, 301)] {
+      XCTAssertThrowsError(
+        try region.validate(
+          header(width: UInt32(width), height: UInt32(height)),
+          pixels: Data(count: width * height * 4)), "\(width) by \(height)")
+    }
+  }
 }

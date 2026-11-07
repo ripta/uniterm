@@ -59,7 +59,8 @@ enum PixelRenderer {
   /// A source with a gain map decodes whole and is scaled by drawing. `fullDecode` forces that path
   /// for a source without one, which is how the tests reach it.
   static func render(
-    _ image: OpenedImage, frame: Int, maxPixel: Int, fullDecode: Bool? = nil
+    _ image: OpenedImage, frame: Int, maxPixel: Int, fullDecode: Bool? = nil,
+    exactSize: (width: Int, height: Int)? = nil
   ) throws -> RenderedImage {
     let native = max(Int(image.info.width), Int(image.info.height))
     let target = min(maxPixel > 0 ? min(maxPixel, native) : native, ImageLimits.maxDimension)
@@ -117,8 +118,17 @@ enum PixelRenderer {
       }
     }
 
-    return try draw(
+    if let exactSize {
+      width = exactSize.width
+      height = exactSize.height
+    }
+
+    let rendered = try draw(
       decoded, width: width, height: height, space: space, orientation: orientation)
+
+    CGImageSourceRemoveCacheAtIndex(image.source, frame)
+
+    return rendered
   }
 
   /// The transform that turns a stored image of `width` by `height` into its upright form, with
@@ -166,7 +176,7 @@ enum PixelRenderer {
         kind: .limit, text: "This image is larger than the decoder will produce.")
     }
 
-    var pixels = Data(count: count)
+    var pixels = PageBuffer.data(count: count)
     let drawn = pixels.withUnsafeMutableBytes { raw -> Bool in
       guard
         let context = CGContext(
@@ -196,6 +206,36 @@ enum PixelRenderer {
     }
 
     return RenderedImage(width: width, height: height, space: space, pixels: pixels)
+  }
+
+  /// The rectangle of `image` that starts at (`x`, `y`) and is at most `width` by `height`, cut
+  /// where the image ends. Returns nil when no pixel of the rectangle is inside the image.
+  static func crop(
+    _ image: RenderedImage, x: Int, y: Int, width: Int, height: Int
+  ) -> RenderedImage? {
+    guard x >= 0, y >= 0, width > 0, height > 0, x < image.width, y < image.height else {
+      return nil
+    }
+
+    let cutWidth = min(width, image.width - x)
+    let cutHeight = min(height, image.height - y)
+    let bytesPerPixel = image.space.format.bytesPerPixel
+    let rowBytes = image.width * bytesPerPixel
+    let cutRow = cutWidth * bytesPerPixel
+
+    var pixels = PageBuffer.data(count: cutRow * cutHeight)
+
+    image.pixels.withUnsafeBytes { source in
+      pixels.withUnsafeMutableBytes { target in
+        for row in 0..<cutHeight {
+          let from = (y + row) * rowBytes + x * bytesPerPixel
+
+          memcpy(target.baseAddress! + row * cutRow, source.baseAddress! + from, cutRow)
+        }
+      }
+    }
+
+    return RenderedImage(width: cutWidth, height: cutHeight, space: image.space, pixels: pixels)
   }
 
   private static func failure(_ image: OpenedImage) -> SourceFailure {

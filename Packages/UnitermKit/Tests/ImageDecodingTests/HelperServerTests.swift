@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import ImageTestSupport
 import ImageWire
 import XCTest
@@ -181,5 +182,118 @@ final class HelperServerTests: XCTestCase {
 
     XCTAssertTrue(ending.ended())
     XCTAssertEqual(ending.status, 4)
+  }
+
+  private func decodeRegion(
+    _ request: UInt32, source: UInt32, level: UInt32, x: UInt32, y: UInt32, width: UInt32,
+    height: UInt32
+  ) throws -> HelperMessage {
+    try app.send(
+      AppMessage.region(
+        request: request, source: source, level: level, x: x, y: y, width: width, height: height
+      ).frame())
+
+    return try read()
+  }
+
+  /// Catches a region that is cut from the wrong place or at the wrong size. The image has a
+  /// different color in each quadrant, so a tile at the top right is green and one at the bottom
+  /// left is blue, and a tile that runs past the decode comes back cut at its edge.
+  func testARegionIsCutFromTheDecodeAtTheRequestedLevel() throws {
+    _ = try read()
+    try openFile(ImageFixtures.png(width: 64, height: 32), source: 1)
+    _ = try read()
+
+    guard
+      case .image(let topRight, let topRightPixels) = try decodeRegion(
+        1, source: 1, level: 64, x: 40, y: 0, width: 10, height: 8)
+    else { return XCTFail("no tile") }
+
+    XCTAssertEqual([topRight.width, topRight.height], [10, 8])
+    XCTAssertEqual(Array(topRightPixels.prefix(4)), [0, 255, 0, 255])
+
+    guard
+      case .image(let bottomLeft, let bottomLeftPixels) = try decodeRegion(
+        2, source: 1, level: 64, x: 0, y: 20, width: 100, height: 100)
+    else { return XCTFail("no tile") }
+
+    XCTAssertEqual([bottomLeft.width, bottomLeft.height], [64, 12], "cut at the decode's edge")
+    XCTAssertEqual(Array(bottomLeftPixels.prefix(4)), [0, 0, 255, 255])
+
+    guard
+      case .image(let half, _) = try decodeRegion(
+        3, source: 1, level: 32, x: 0, y: 0, width: 512, height: 512)
+    else { return XCTFail("no tile") }
+
+    XCTAssertEqual([half.width, half.height], [32, 16], "a smaller level decodes smaller")
+  }
+
+  /// Catches a region request for a rectangle with nothing inside the image, and for a source the
+  /// helper does not hold. Neither crashes the helper, and it keeps answering.
+  func testARegionOutsideTheImageOrOfAStaleSourceFailsAndTheHelperGoesOn() throws {
+    _ = try read()
+    try openFile(ImageFixtures.png(width: 64, height: 32), source: 1)
+    _ = try read()
+
+    guard
+      case .failure(_, let outside, _) = try decodeRegion(
+        1, source: 1, level: 64, x: 500, y: 0, width: 10, height: 10)
+    else { return XCTFail("no failure") }
+
+    XCTAssertEqual(outside, .unreadable)
+
+    guard
+      case .failure(_, let stale, _) = try decodeRegion(
+        2, source: 9, level: 64, x: 0, y: 0, width: 10, height: 10)
+    else { return XCTFail("no failure") }
+
+    XCTAssertEqual(stale, .staleSource)
+
+    try app.send(AppMessage.ping(nonce: 3).frame())
+    XCTAssertEqual(try read(), .pong(nonce: 3))
+  }
+
+  /// Catches a release that leaves the helper unable to serve the next region. After the decode is
+  /// dropped, a region of the same source decodes again.
+  func testARegionStillWorksAfterTheLevelIsReleased() throws {
+    _ = try read()
+    try openFile(ImageFixtures.png(width: 64, height: 32), source: 1)
+    _ = try read()
+
+    _ = try decodeRegion(1, source: 1, level: 64, x: 0, y: 0, width: 16, height: 16)
+    try app.send(AppMessage.release(source: 1).frame())
+
+    guard
+      case .image(let header, _) = try decodeRegion(
+        2, source: 1, level: 64, x: 0, y: 0, width: 16, height: 16)
+    else { return XCTFail("no tile after the release") }
+
+    XCTAssertEqual([header.width, header.height], [16, 16])
+  }
+
+  /// Catches a resolution that is lost or that follows the stored pixels instead of the upright
+  /// image. A PNG at 144 dots per inch reports 144 on both axes. Without a declared resolution the
+  /// helper reports none, and the app shows the image at 72.
+  func testTheOpenedReplyReportsTheDeclaredResolution() throws {
+    _ = try read()
+
+    let picture = ImageFixtures.quadrants(width: 40, height: 20)
+    let data = ImageFixtures.encode(
+      picture, as: .png,
+      properties: [
+        kCGImagePropertyDPIWidth: 144, kCGImagePropertyDPIHeight: 144,
+      ])
+
+    try openFile(data, source: 1)
+
+    guard case .opened(let info) = try read() else { return XCTFail("no opened reply") }
+
+    XCTAssertEqual([info.dpiX, info.dpiY], [144, 144])
+
+    try openFile(ImageFixtures.png(width: 40, height: 20), source: 2)
+
+    guard case .opened(let plain) = try read() else { return XCTFail("no opened reply") }
+
+    XCTAssertEqual([plain.dpiX, plain.dpiY], [0, 0])
   }
 }

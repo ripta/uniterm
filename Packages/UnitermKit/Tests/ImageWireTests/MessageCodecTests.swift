@@ -27,6 +27,8 @@ final class MessageCodecTests: XCTestCase {
     let app: [AppMessage] = [
       .hello(version: 1), .open(source: 7),
       .decode(request: 9, source: 7, maxPixel: 2048, frame: 3), .ping(nonce: 0xDEAD_BEEF),
+      .region(request: 4, source: 7, level: 4096, x: 512, y: 1024, width: 512, height: 300),
+      .release(source: 7),
     ]
 
     for message in app {
@@ -37,7 +39,9 @@ final class MessageCodecTests: XCTestCase {
       request: 9, source: 7, frame: 2, width: 3, height: 2, space: .displayP3, format: .rgba8)
     let helper: [HelperMessage] = [
       .hello(version: 1, types: ["public.png", "public.jpeg"]),
-      .opened(SourceInfo(source: 7, width: 640, height: 480, frameDelays: [100, 200, 300])),
+      .opened(
+        SourceInfo(
+          source: 7, width: 640, height: 480, frameDelays: [100, 200, 300], dpiX: 144, dpiY: 72)),
       .image(header, pixels: Data(repeating: 9, count: 24)),
       .failure(request: 9, kind: .unsupportedFormat, text: "No decoder for this HEIC image."),
       .pong(nonce: 5),
@@ -123,5 +127,32 @@ final class MessageCodecTests: XCTestCase {
     XCTAssertEqual(HelperMessage.bodyLimit(type: 3, maxImageBytes: 1000), 1064)
     XCTAssertEqual(
       HelperMessage.bodyLimit(type: 4, maxImageBytes: 1000), ImageProtocol.maxControlBody)
+  }
+}
+
+/// The protocol version the zoom messages need.
+final class ProtocolVersionTests: XCTestCase {
+  /// Catches a region request that an older helper would misread. The region and release messages
+  /// are new, and a source now carries its resolution, so the version moved to 2. A helper that
+  /// still says 1 is refused at the handshake, as any mismatch is.
+  func testTheZoomMessagesBumpTheVersionAndAnOlderHelperIsRefused() {
+    XCTAssertEqual(ImageProtocol.version, 2)
+
+    XCTAssertThrowsError(try HelperHandshake.validate(.hello(version: 1, types: []))) {
+      XCTAssertEqual($0 as? WireError, .versionMismatch(found: 1, expected: 2))
+    }
+  }
+
+  /// Catches an opened reply that drops the resolution on the way. The app computes actual size
+  /// from it, so a lost field would show every Retina screenshot at double size.
+  func testAnOpenedReplyCarriesTheDeclaredResolution() throws {
+    let info = SourceInfo(source: 1, width: 10, height: 10, frameDelays: [0], dpiX: 144, dpiY: 144)
+    let frame = HelperMessage.opened(info).frame()
+    let decoded = try HelperMessage.decode(
+      type: frame[frame.startIndex], body: frame.dropFirst(FrameHeader.size))
+
+    guard case .opened(let back) = decoded else { return XCTFail("not an opened reply") }
+
+    XCTAssertEqual([back.dpiX, back.dpiY], [144, 144])
   }
 }

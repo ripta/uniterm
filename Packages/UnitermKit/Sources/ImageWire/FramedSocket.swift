@@ -162,7 +162,7 @@ public final class FramedSocket: @unchecked Sendable {
   }
 
   private func readExactly(_ count: Int) throws -> Data {
-    var data = Data(count: count)
+    var data = PageBuffer.data(count: count)
     var offset = 0
 
     while offset < count {
