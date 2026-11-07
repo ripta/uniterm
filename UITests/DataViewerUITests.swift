@@ -142,7 +142,12 @@ final class DataViewerUITests: UnitermUITestCase {
 
     XCTAssertTrue(written.contains(file.path), "the path was not saved: \(written)")
     XCTAssertTrue(written.contains(#""filter":"x""#))
-    XCTAssertFalse(written.contains("dx"), "rows were saved in the layout")
+
+    // A bookmark is base64 that carries the file's inode, so it can spell a short value by chance.
+    let saved = written.replacingOccurrences(
+      of: #""bookmark":"[^"]*""#, with: "", options: .regularExpression)
+
+    XCTAssertFalse(saved.contains("dx"), "rows were saved in the layout: \(saved)")
   }
 
   /// Catches a nested JSON cell that does not open. A double click on an array cell opens its
