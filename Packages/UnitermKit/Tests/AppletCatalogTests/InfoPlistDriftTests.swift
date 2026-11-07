@@ -33,6 +33,16 @@ final class InfoPlistDriftTests: XCTestCase {
     XCTAssertEqual(security["NSAllowsArbitraryLoadsInWebContent"] as? Bool, true)
   }
 
+  /// Catches `LSFileQuarantineEnabled` in the app's Info.plist. It applies to the whole process, so
+  /// every file the terminal's shells create would be quarantined. The browser marks each finished
+  /// download on its own. The plist is the app's real one.
+  func testTheAppDoesNotQuarantineEveryFileItWrites() throws {
+    let plist = try loadPlist()
+
+    XCTAssertNil(plist["LSFileQuarantineEnabled"])
+    XCTAssertFalse(plist.keys.contains { $0.localizedCaseInsensitiveContains("quarantine") })
+  }
+
   /// Catches an applet that declares a type the app never registers with Launch Services, a type
   /// registered with no applet behind it, a rank above Alternate that would displace another app,
   /// and a role other than Viewer. The plist is the app's real one.

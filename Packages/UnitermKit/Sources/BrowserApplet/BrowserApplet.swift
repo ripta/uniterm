@@ -18,13 +18,12 @@ import WebKit
 /// navigation each have a source, and the policy is the one place that says what that source may
 /// load. A refused address leaves the page where it was.
 @MainActor
-public final class BrowserApplet: Applet, BrowserTabDelegate {
+public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDelegate {
   /// The type of the description this applet writes and restores.
   public nonisolated static let descriptionTypeID = BrowserDescription.typeID
 
   public let typeID = BrowserApplet.descriptionTypeID
   public weak var host: (any AppletHost)?
-  public let isRunningSomething = false
 
   public private(set) var title = BrowserApplet.untitled
   public private(set) var segments: [AppletSegment] = []
@@ -46,6 +45,24 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   private let dataStore: WKWebsiteDataStore
   private let services: BrowserServices
   private var alerts = AppletAlerts()
+
+  /// The pane's downloads. The pane holds them, not the tab.
+  let downloads: BrowserDownloads
+
+  /// The JavaScript dialogs the pane's pages raised that the user has not answered.
+  let dialogs = PageDialogs()
+
+  /// The most tabs scripts may have open at once in one pane. WebKit lets a script that holds a
+  /// user gesture open as many windows as it asks for, and each is a web view and a content
+  /// process. A tab the user asked for, with a real click or a menu choice, neither counts nor is
+  /// refused. A policy value with no setting.
+  static let popupLimit = 10
+
+  /// Whether the user heard that the limit stopped a page, so a loop of attempts says it once.
+  private var warnedAboutPopups = false
+
+  /// Whether a close question is open. A second close waits for no answer and is declined.
+  private var closingTab = false
   private var started = false
   private var closed = false
   private var lastShown: Shown?
@@ -71,6 +88,8 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     var tabIDs: [AppletTabID]
     var titles: [String]
     var selected: Int
+    var marked: [AppletTabID]
+    var dialogs: Int
   }
 
   /// The selected tab.
@@ -148,17 +167,44 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   ) {
     self.dataStore = dataStore
     self.services = services
+    self.downloads = BrowserDownloads(
+      directory: services.downloadsDirectory, files: services.downloadFiles,
+      sweeper: services.downloadSweeper, clock: services.clock,
+      cancelGrace: services.downloadCancelGrace)
     self.tabs = tabs
     self.selectedIndex = selected
     self.closedTabs = Array(closed.prefix(BrowserDescription.closedTabDepth))
 
     publishedTabs = Self.published(tabs, titles: tabs.map(Self.title(of:)), selected: selected)
 
+    downloads.delegate = self
+
     wire()
     refresh()
   }
 
   public var view: NSView { content }
+
+  /// True while a tab holds edited form input or a download is in flight, and nothing else.
+  public var isRunningSomething: Bool {
+    downloads.isRunning || tabs.contains { $0.hasUnsentInput }
+  }
+
+  /// Each tab with edited input by its title, which a page chose and is cleaned, and each download
+  /// by its file name.
+  public var runningLabels: [String] {
+    let labels =
+      tabs.filter(\.hasUnsentInput).map {
+        RunningLabel.clean(Self.title(of: $0), fallback: Self.untitled)
+      } + downloads.runningNames.map { RunningLabel.clean($0, fallback: DownloadName.fallback) }
+
+    guard labels.count > Self.labelLimit else { return labels }
+
+    return Array(labels.prefix(Self.labelLimit)) + ["and \(labels.count - Self.labelLimit) more"]
+  }
+
+  /// The most running things a dialog names. A page can start many downloads.
+  private static let labelLimit = 10
 
   private func wire() {
     for tab in tabs { tab.delegate = self }
@@ -171,8 +217,15 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     content.onSubmit = { [weak self] text in self?.submit(address: text) }
     content.onLoadOverHTTP = { [weak self] in self?.loadOverHTTP() }
     content.tabBar.onSelect = { [weak self] index in self?.selectTab(at: index) }
-    content.tabBar.onClose = { [weak self] index in _ = self?.closeTab(at: index) }
+    content.tabBar.onClose = { [weak self] index in
+      Task { @MainActor in _ = await self?.closeTab(at: index) }
+    }
     content.tabBar.onNew = { [weak self] in self?.openTab() }
+    content.dialogView.onAnswer = { [weak self] dialog, answer in
+      self?.dialogs.settle(dialog, answer)
+      self?.syncDialog(restoringFocus: true)
+      self?.refresh()
+    }
   }
 
   /// Puts the selected tab's page, buttons, warning, and address on screen. The web view reports
@@ -223,6 +276,9 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   public func close() {
     closed = true
     alerts.discard()
+    downloads.cancelAll()
+    dialogs.dismissAll()
+    content.dialogView.hide()
 
     for tab in tabs {
       tab.close()
@@ -237,18 +293,30 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     content.tabBar.onSelect = nil
     content.tabBar.onClose = nil
     content.tabBar.onNew = nil
+    content.dialogView.onAnswer = { _, _ in }
   }
 
+  /// The pane left the screen. Media in every tab pauses and stays blocked, and a dialog that a
+  /// page raised waits to be shown. Downloads keep going.
   public func detach() {
     alerts.detach()
+
+    for tab in tabs { tab.setMediaSuspended(true) }
+
+    syncDialog(restoringFocus: false)
   }
 
   /// A pane that was detached at `start`, or that selected a tab while detached, loads the selected
   /// tab now. A tab that already loaded asks nothing new.
+  ///
+  /// Media comes out of suspension so the user can start it again. What was paused stays paused.
   public func reattach() {
     alerts.reattach(from: self, to: host)
 
+    for tab in tabs { tab.setMediaSuspended(false) }
+
     loadIfNeverLoaded()
+    syncDialog(restoringFocus: false)
   }
 
   public func focus() {
@@ -503,6 +571,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
 
     showSelectedTab(replacingEdit: true)
     loadIfNeverLoaded()
+    syncDialog(restoringFocus: false)
     refresh()
 
     if hadFocus || tab.hasLoadedNothing { focus() }
@@ -536,18 +605,69 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
   }
 
   public func closeCurrentTab() async -> TabCloseResult {
-    closeTab(at: selectedIndex)
+    await closeTab(at: selectedIndex)
   }
 
-  /// Closes a tab. The last tab never closes here, since that is a pane close.
-  func closeTab(at index: Int) -> TabCloseResult {
+  /// Closes a tab. It asks first when the tab holds edited input or a download, whether or not it
+  /// is selected, and closing then cancels the download. A tab with nothing to lose closes at
+  /// once. The last tab never closes here, since that is a pane close, and the window asks about
+  /// what it holds.
+  ///
+  /// A close that waits for an answer holds the pane's one question. A second request meanwhile is
+  /// declined. The tab is looked up again after the answer, since it may have closed meanwhile.
+  func closeTab(at index: Int) async -> TabCloseResult {
     guard tabs.count > 1 else { return .nothingToClose }
 
-    guard !closed, tabs.indices.contains(index) else { return .declined }
+    guard !closed, tabs.indices.contains(index), !closingTab else { return .declined }
 
-    recordClosed(tabs[index], at: index)
-    removeTab(at: index)
+    let target = tabs[index]
+
+    if let detail = closeDetail(for: target) {
+      guard let host else { return .declined }
+
+      closingTab = true
+      defer { closingTab = false }
+
+      let request = AppletConfirmation(
+        title: "Close this tab?", detail: detail, confirmTitle: "Close Tab",
+        cancelTitle: "Cancel")
+
+      guard await host.applet(self, confirm: request), !closed else { return .declined }
+    }
+
+    guard let current = tabs.firstIndex(where: { $0 === target }) else { return .closed }
+
+    guard tabs.count > 1 else { return .nothingToClose }
+
+    recordClosed(target, at: current)
+    removeTab(at: current)
     return .closed
+  }
+
+  /// What a close of `tab` would lose, in words for the question, or nil when it loses nothing.
+  private func closeDetail(for tab: BrowserTab) -> String? {
+    var sentences: [String] = []
+
+    if tab.hasUnsentInput {
+      let label = RunningLabel.clean(Self.title(of: tab), fallback: Self.untitled)
+
+      sentences.append(
+        "\u{201C}\(label)\u{201D} has text that was not sent. Closing the tab loses it.")
+    }
+
+    let running = downloads.running(for: tab)
+
+    for entry in running.prefix(Self.labelLimit) {
+      let name = RunningLabel.clean(entry.name, fallback: DownloadName.fallback)
+
+      sentences.append("\u{201C}\(name)\u{201D} is still downloading. Closing the tab cancels it.")
+    }
+
+    if running.count > Self.labelLimit {
+      sentences.append("\(running.count - Self.labelLimit) more downloads would be cancelled too.")
+    }
+
+    return sentences.isEmpty ? nil : sentences.joined(separator: " ")
   }
 
   /// Keeps a closed tab for reopening. The stamp is taken now, so it orders the close against
@@ -567,10 +687,22 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     }
   }
 
-  private func removeTab(at index: Int) {
+  /// Removes a tab. Its downloads are cancelled and its dialogs dismissed first, since WebKit
+  /// must hear an answer to each dialog and a download has no tab to belong to. A selected tab
+  /// that closes returns the selection to `successor` when it is still open.
+  private func removeTab(at index: Int, returningTo successor: BrowserTab? = nil) {
     let hadFocus = hasFocus
     let wasSelected = index == selectedIndex
+    let leaving = tabs[index]
+
+    // The cancel tells the applet its downloads changed, and the applet redraws from the tab list
+    // and the selection, so both must still agree.
+    downloads.cancel(for: leaving)
+    dialogs.dismissAll(for: leaving)
+
     let removed = tabs.remove(at: index)
+
+    if tabs.filter(\.isScriptOpened).count < Self.popupLimit { warnedAboutPopups = false }
 
     removed.close()
     removed.delegate = nil
@@ -581,10 +713,15 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
       selectedIndex = min(selectedIndex, tabs.count - 1)
     }
 
+    if wasSelected, let successor, let position = tabs.firstIndex(where: { $0 === successor }) {
+      selectedIndex = position
+    }
+
     showSelectedTab(replacingEdit: wasSelected)
 
     if wasSelected { loadIfNeverLoaded() }
 
+    syncDialog(restoringFocus: false)
     refresh()
 
     if hadFocus { focus() }
@@ -663,6 +800,177 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     handOff(url, from: tab, typed: false)
   }
 
+  func tabUnsentInputDidChange(_ tab: BrowserTab) {
+    refresh()
+  }
+
+  func tab(_ tab: BrowserTab, download: WKDownload) {
+    guard !closed else {
+      download.cancel { _ in }
+      return
+    }
+
+    downloads.adopt(download, from: tab)
+  }
+
+  func tab(_ tab: BrowserTab, present dialog: PageDialog) {
+    guard !closed else {
+      dialog.answer(.dismissed)
+      return
+    }
+
+    dialogs.hold(dialog)
+    syncDialog(restoringFocus: false)
+    refresh()
+  }
+
+  /// Shows the selected tab's oldest waiting dialog, or hides the one on show when it is not that
+  /// tab's, or the pane is detached. A pane the user is not typing in keeps the keyboard where it
+  /// is, so a page cannot take the focus.
+  private func syncDialog(restoringFocus: Bool) {
+    let wanted = closed || alerts.isDetached ? nil : dialogs.first(for: tab)
+    let view = content.dialogView
+
+    if view.shown === wanted {
+      if wanted == nil, restoringFocus, !closed { focus() }
+
+      return
+    }
+
+    guard let wanted else {
+      view.hide()
+
+      if restoringFocus, !closed { focus() }
+
+      return
+    }
+
+    let hadFocus = hasFocus
+
+    view.show(wanted)
+
+    if hadFocus { content.window?.makeFirstResponder(view.preferredResponder) }
+  }
+
+  func tab(
+    _ opener: BrowserTab, openWindowWith configuration: WKWebViewConfiguration,
+    for action: WKNavigationAction, byUser: Bool
+  ) -> BrowserTab? {
+    guard !closed, let openerIndex = tabs.firstIndex(where: { $0 === opener }) else { return nil }
+
+    if let url = action.request.url, !url.absoluteString.isEmpty,
+      case .refuse(let refusal) = SchemePolicy.decide(url, source: .page, isMainFrame: true)
+    {
+      post(.warning, refusal.message(for: url.absoluteString), from: opener)
+      return nil
+    }
+
+    guard byUser || tabs.filter(\.isScriptOpened).count < Self.popupLimit else {
+      if !warnedAboutPopups {
+        warnedAboutPopups = true
+        post(
+          .warning,
+          "A page tried to open more than \(Self.popupLimit) tabs. The browser opened the first \(Self.popupLimit).",
+          from: opener)
+      }
+
+      return nil
+    }
+
+    let popup = BrowserTab(
+      id: .make(), adopting: configuration, opener: opener, openedByUser: byUser,
+      dataStore: dataStore, hsts: services.hsts, clock: services.clock)
+
+    popup.delegate = self
+    popup.loadOrigin = .user
+    popup.setMediaSuspended(alerts.isDetached)
+
+    let position = openerIndex + 1
+
+    tabs.insert(popup, at: position)
+
+    // A pop-up from the tab the user is looking at opens selected. One from a background tab opens
+    // beside its opener and says so, so a page the user is not looking at cannot move the
+    // selection or the keyboard.
+    if opener === tab {
+      let hadFocus = hasFocus
+
+      selectedIndex = position
+
+      showSelectedTab(replacingEdit: true)
+      syncDialog(restoringFocus: false)
+      refresh()
+
+      if hadFocus { content.window?.makeFirstResponder(popup.webView) }
+    } else {
+      if position <= selectedIndex { selectedIndex += 1 }
+
+      refresh()
+      post(.info, "A page opened a new tab in the background.", from: opener)
+    }
+
+    return popup
+  }
+
+  /// A script closed a window it opened. The last tab and the pane never close this way. A tab
+  /// that holds input or a download stays open and says why, since a page must not discard what
+  /// the user would be asked about. A tab a script closes is not kept for reopening, since a
+  /// sign-in pop-up's address can carry a one-time code.
+  func tabDidRequestClose(_ source: BrowserTab) {
+    guard !closed, source.isPopup, tabs.count > 1,
+      let index = tabs.firstIndex(where: { $0 === source })
+    else { return }
+
+    guard closeDetail(for: source) == nil else {
+      post(
+        .warning,
+        "A page tried to close this tab. It holds input that was not sent, or a download, so it stayed open.",
+        from: source)
+      return
+    }
+
+    removeTab(at: index, returningTo: source.opener)
+  }
+
+  // MARK: Downloads
+
+  func downloadsDidChange(_ downloads: BrowserDownloads) {
+    refresh()
+  }
+
+  func downloads(_ downloads: BrowserDownloads, finished name: String, at url: URL) {
+    deliverDownload(.info, DownloadMessage.finished(name))
+  }
+
+  func downloads(_ downloads: BrowserDownloads, failed name: String, reason: String) {
+    deliverDownload(.warning, DownloadMessage.failed(name, reason: reason))
+  }
+
+  /// A download's outcome reaches the user whichever tab is selected, and whichever pane has
+  /// focus. A detached pane records it at once and shows it on reattach.
+  private func deliverDownload(_ level: StatusLevel, _ text: String) {
+    guard !closed else { return }
+
+    alerts.deliver(
+      AppletNotice(level, text), origin: .user, ofLoad: false, from: self, to: host)
+  }
+
+  /// Whether a finished download is there to reveal.
+  var hasFinishedDownload: Bool { downloads.latest != nil }
+
+  /// Shows the newest finished download in Finder. A file that was moved or deleted gets a
+  /// message instead, and the command stays, so the user hears why.
+  func revealLatestDownload() {
+    guard !closed, let latest = downloads.latest else { return }
+
+    guard FileManager.default.fileExists(atPath: latest.url.path(percentEncoded: false)) else {
+      deliverDownload(.warning, DownloadMessage.moved(latest.name))
+      return
+    }
+
+    services.reveal.reveal(latest.url)
+  }
+
   func tab(_ tab: BrowserTab, historyButton: BrowserWebView.HistoryButton) {
     guard tab === self.tab else { return }
 
@@ -682,7 +990,8 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
 
     let named =
       source === tab
-      ? text : "In the tab \u{201C}\(Self.title(of: source).prefix(80))\u{201D}: \(text)"
+      ? text
+      : "In the tab \u{201C}\(RunningLabel.clean(Self.title(of: source), fallback: Self.untitled))\u{201D}: \(text)"
 
     alerts.deliver(
       AppletNotice(level, named, delivery: delivery), origin: source.loadOrigin, from: self,
@@ -719,6 +1028,28 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
 
   // MARK: Display
 
+  /// The status bar's word on downloads: one download's name and percent, or a count. The host
+  /// shows the segments of the focused pane only.
+  private func downloadSegment() -> AppletSegment? {
+    let active = downloads.active
+
+    guard let first = active.first else { return nil }
+
+    guard active.count == 1 else {
+      return AppletSegment(symbolName: "arrow.down.circle", text: "\(active.count) downloads")
+    }
+
+    let name = RunningLabel.clean(first.name, fallback: DownloadName.fallback)
+    let shown = name.count > 28 ? String(name.prefix(27)) + "\u{2026}" : name
+
+    guard let fraction = first.fraction else {
+      return AppletSegment(symbolName: "arrow.down.circle", text: shown)
+    }
+
+    return AppletSegment(
+      symbolName: "arrow.down.circle", text: "\(shown) \(Int((fraction * 100).rounded(.down)))%")
+  }
+
   private func refresh() {
     guard !closed else { return }
 
@@ -727,15 +1058,17 @@ public final class BrowserApplet: Applet, BrowserTabDelegate {
     title = titles[selectedIndex]
 
     segments =
-      tab.isLoading
-      ? [AppletSegment(symbolName: "arrow.triangle.2.circlepath", text: "Loading")] : []
+      (tab.isLoading
+        ? [AppletSegment(symbolName: "arrow.triangle.2.circlepath", text: "Loading")] : [])
+      + (downloadSegment().map { [$0] } ?? [])
 
     publishedTabs = Self.published(tabs, titles: titles, selected: selectedIndex)
     content.show(tabTitles: titles, selected: selectedIndex)
 
     let shown = Shown(
       title: title, segments: segments, records: tabs.map(\.record), tabIDs: tabs.map(\.id),
-      titles: titles, selected: selectedIndex)
+      titles: titles, selected: selectedIndex, marked: tabs.filter(\.hasUnsentInput).map(\.id),
+      dialogs: dialogs.pending.count)
 
     guard shown != lastShown else { return }
 

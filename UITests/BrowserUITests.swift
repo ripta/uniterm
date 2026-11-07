@@ -309,4 +309,22 @@ final class BrowserUITests: UnitermUITestCase {
       waitFor(status, timeout: 10) { $0.contains("Cleared") }, "the status never said cleared")
     XCTAssertTrue(button.isEnabled)
   }
+
+  /// Catches a Browser menu with no Reveal Latest Download, and one that offers it with nothing
+  /// downloaded. A new pane has no finished download, so the item is there and disabled. No UI test
+  /// downloads a file, since that would write to the user's Downloads folder. The enabled case, the
+  /// reveal, and a moved file are proved by the package tests with an injected folder and reveal.
+  func testRevealLatestDownloadIsInTheBrowserMenuAndDisabledWithNoDownload() {
+    let app = launchApp()
+    _ = openBrowser(in: app)
+
+    app.menuBars.menuBarItems["Browser"].click()
+
+    let reveal = app.menuBars.menuItems["Reveal Latest Download"]
+
+    XCTAssertTrue(reveal.waitForExistence(timeout: 5), "the Browser menu has no Reveal item")
+    XCTAssertFalse(reveal.isEnabled, "Reveal was offered with nothing downloaded")
+
+    app.typeKey(.escape, modifierFlags: [])
+  }
 }

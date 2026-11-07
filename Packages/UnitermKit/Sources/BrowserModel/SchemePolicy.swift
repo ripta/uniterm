@@ -97,6 +97,27 @@ public enum SchemePolicy {
     }
   }
 
+  /// Whether a navigation WebKit marks as a download may start. Any scheme may, so a page's own
+  /// `blob:` and `data:` exports save. `javascript:` never runs, and `file:` saves nothing, even
+  /// when a page marks the link as a download.
+  public static func decideDownload(_ url: URL) -> SchemeDecision {
+    let scheme = url.scheme?.lowercased() ?? ""
+
+    switch scheme {
+    case "javascript":
+      return .refuse(.javascript)
+
+    case "file":
+      return .refuse(.file)
+
+    case "":
+      return .refuse(.unsupported(scheme: "unknown"))
+
+    default:
+      return .allow
+    }
+  }
+
   /// True for an address a typed, restored, or controller load may use. A stored address that
   /// fails this is not worth keeping, since no restore would load it.
   public static func isLoadable(_ url: URL) -> Bool {

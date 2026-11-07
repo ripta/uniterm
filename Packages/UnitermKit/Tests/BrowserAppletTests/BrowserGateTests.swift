@@ -8,7 +8,7 @@ import XCTest
 @testable import BrowserApplet
 
 /// The gates every load passes, whichever way it starts: the button methods, WebKit's own
-/// gestures and menus, a redirect, a download, and a server that asks for credentials.
+/// gestures and menus, a redirect, and a server that asks for credentials.
 @MainActor
 final class BrowserGateTests: XCTestCase {
   private nonisolated static func server() -> FixtureServer.Handler {
@@ -31,17 +31,6 @@ final class BrowserGateTests: XCTestCase {
 
       case ("GET", "/redirect-file"):
         return .redirect(to: "file:///etc/hosts", status: 302)
-
-      case ("GET", "/zip"):
-        return FixtureServer.Response(
-          status: 200, headers: [("Content-Type", "application/zip")], body: Data("PK".utf8))
-
-      case ("GET", "/attachment"):
-        return FixtureServer.Response(
-          status: 200,
-          headers: [
-            ("Content-Type", "text/plain"), ("Content-Disposition", "attachment; filename=a.txt"),
-          ], body: Data("hello".utf8))
 
       case ("GET", "/secret"):
         return FixtureServer.Response(
@@ -159,25 +148,6 @@ final class BrowserGateTests: XCTestCase {
       XCTAssertEqual(harness.posts.count, 1, path)
       XCTAssertEqual(harness.posts.first?.level, .warning, path)
       XCTAssertEqual(harness.tab.webView.url, shown, path)
-    }
-  }
-
-  /// Catches a response the browser cannot show, or one the server marks as an attachment, that
-  /// fails with no word. WebKit reports both as an interrupted load. The user hears one warning
-  /// that downloads are not available.
-  func testAResponseThatWouldDownloadWarnsOnce() async throws {
-    let harness = try await BrowserHarness.make(handler: Self.server())
-    defer { harness.stop() }
-
-    for path in ["/zip", "/attachment"] {
-      harness.host.recording.forgetSent()
-      harness.applet.submit(address: harness.server.url(path).absoluteString)
-      await harness.host.until("the warning arrives for \(path)") { !harness.posts.isEmpty }
-
-      XCTAssertEqual(harness.posts.count, 1, path)
-      XCTAssertTrue(
-        harness.posts.first?.text.contains("Downloads are not available") ?? false,
-        "\(path): \(harness.posts)")
     }
   }
 

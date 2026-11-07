@@ -18,8 +18,8 @@ need the user's credentials.
 | UTERM-005 M3: Tabs | DONE | "Add browser tabs, keys, and a question before resending a form" |
 | UTERM-005 M4: Address bar input | DONE | "Search from the address bar, and offer plain HTTP only by the user's action" |
 | UTERM-005 M5: Website data, restore, and reopen | DONE | "Give the browser its own website data, and restore tabs lazily" |
-| UTERM-005 M6: Pop-ups, downloads, and running work | IN PROGRESS | |
-| UTERM-005 M7: Web content failure | QUEUED | |
+| UTERM-005 M6: Pop-ups, downloads, and running work | DONE | "Open pop-ups as tabs, save downloads safely, and guard unsent input" |
+| UTERM-005 M7: Web content failure | IN PROGRESS | |
 
 ## Local checks
 
@@ -362,6 +362,80 @@ ADR check: no conflicts. Its ADR-08 advisory is resolved by the cache above. Non
 required argument are mechanisms inside one component, and `describe()`'s cost is settled here. The fixed UUID stays a risk in the proposal.
 
 Test cost: the new M5 tests take about 2 s together.
+
+### M6: Pop-ups, downloads, and running work
+
+Commit: "Open pop-ups as tabs, save downloads safely, and guard unsent input".
+
+Checks, on 2026-11-06, with no other UI run on the screen:
+
+- `make test-package`, coordinator's run `49G86J`: 1,434 tests, 4 skipped, 0 failures, 68.6 s.
+- `make test-app`, coordinator's run `GZHVD7`: 110 tests, 0 failures, 887.5 s.
+- `make fmt-check`, `make lint`, `make check`, `make build`, and the UI tests' build for testing passed in the implementer's runs. `proposals.py
+  check` reports nothing, and `freeze` reports only the UTERM-013 hunk.
+
+The coordinator's crash-folder check found what no test did. Nine `ExcUserFault_xctest` reports, `EXC_GUARD` in namespace WEBKIT, showed
+`NetworkProcessProxy::didReceiveInvalidMessage`, and one fell inside a passing `make test-package`. The trace found:
+
+- `WKDownload.cancel` before WebKit has received any byte of the body makes WebKit restart its Network process. Twelve-cycle variants reproduced
+  it with the tab alive and with the pane closed. Finishing, a server abort, and a cancel after a byte made no report. The IPC message's name is
+  in a private log, so the link is by stack and correlation, not by the message itself.
+- A user would lose every browser pane's session cookies, so sites that keep a login in one log out, and a load or download in flight in another
+  pane fails. Persistent cookies and data on disk survive. A real web view measured the cookie loss in scratch runs. The committed test pins the
+  symptom but did not reproduce the loss on the unfixed code, so the structural test is the one that failed first.
+- The fix defers the cancel to the first byte, or 30 s if none comes, and the download leaves the list at once. A server that sends no byte for
+  30 s still trips it, which is accepted.
+
+For the user's review against ADR-05: a closed pane can keep a pending cancel for up to 30 s with no indicator. ADR-05 says work kept after close
+is bounded and visible. It is bounded. It is not visible, though nothing reaches disk, and its only effect is the open connection. No conflict was
+raised, because honoring visibility would need an indicator for a pane that is gone.
+
+Best guesses from the implementer:
+
+1. WebKit on macOS does not block a script with no gesture, contrary to the proposal, since a page that called `window.open` at load opened a tab.
+   The browser sets `javaScriptCanOpenWindowsAutomatically = false`, and the text is amended. No test can run a script without a gesture, so the
+   block is pinned as a preference only.
+2. Script-opened tabs are capped at ten per pane. One loop opened 41 tabs before this. A pop-up from a background tab opens unselected.
+3. A script closes only a tab a script opened, and never one with unsent input or a download. A script-closed tab is not kept for reopen, since a
+   sign-in address can carry a one-time code.
+4. A `data:` download saves only with a `download` attribute. Without one it is a top-level page and stays refused, which narrows the check's
+   "with or without". `blob:` saves both ways.
+5. Each frame's unsent-input report carries a random token and a boolean, since WebKit gives no stable frame identity. This amends "one boolean per
+   tab".
+6. Dialogs use an in-pane overlay, since the host has no text-input API. Five per page load, sixteen held.
+7. Quarantine fails closed. A Downloads folder on a volume without extended attributes fails each download at its end, with a warning naming why.
+8. Detach pauses media, then suspends it, since suspend alone let a pending `play()` resume on reattach.
+9. A cancel arriving while a finish runs removes the file the finish makes.
+
+For the user to decide, since each is new and not an amendment of earlier text: whether the ten-tab cap, the dialog bounds, and a script-closed tab
+not being kept for reopen are scope additions. Their Decision Log entry is tagged only as a best guess.
+
+Review findings and dispositions:
+
+- Fixed: the tab cap counted the user's own clicks, so an eleventh real click opened nothing and warned falsely. Only script-opened tabs count now.
+- Fixed: Risks were stale. They now state that nothing bounds how many downloads a page starts, and a hidden iframe attachment needs no gesture.
+- Fixed: name cleaning left invisible characters and space runs, so `invoice.pdf          .app` could push its extension out of view.
+- Fixed, from the ADR check: file work ran on the main thread and could stall on a network folder. It now runs off it and reports back.
+- Fixed, found by the cancel test: `removeTab` cancelled downloads after removing the tab, so the redraw indexed out of range and crashed when the
+  closed tab was the selected last one.
+- Added: a sweep of leftover `.uniterm-download-*.part` files older than 7 days, once per folder per launch, at the first download.
+- Traced and not confirmed: a removed or navigating subframe clears its mark as the document leaves. Two tests pin it.
+- Traced and confirmed, then fixed: at the 64-frame limit a dirty frame could read as clean. The tab now stays marked until a load.
+- Traced and accepted: `document.execCommand('insertText')` raises a trusted event and marks the tab with no typing. The cost is a question the user
+  can confirm. M6's check is narrowed to events a page's script dispatches.
+
+ADR check: no conflicts. The quarantine invariant is in the Decision Log, waiting on a second applet that writes fetched files. The tab limit and
+in-pane dialogs fail the bar.
+
+Crash reports from this milestone: besides the fault above, five `xctest` traps are drafts or the fixed `removeTab` crash. Two were an array index in a
+draft of `testWhileItRunsTheFileHasATemporaryNameAndTheStatusBarShowsIt`, one was `NSApp` being nil in a draft's test process, and two were `refresh()`
+indexing out of range. The later run's report at 16:20 is the last one, and the runs after the fix added none.
+
+Left to the user: a real sign-in against a real provider, how the download segment reads, Download Linked File and Download Image in the context menu,
+audio that really stops on detach, a real key press marking a tab, and the behaviour on an exFAT Downloads folder.
+
+Test cost: the download suites take about 2.5 s, `BrowserUnsentInputTests` 4.0 s, `BrowserPopupTests` 1.9 s, and `BrowserDialogTests` about 1 s. The full
+package run grew to about 69 s.
 
 ## Unowned failures
 

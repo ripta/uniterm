@@ -218,8 +218,17 @@ Decision: it opens a new tab in the same pane.
   store hold. Sign-in pop-ups work.
 - It opens right after the opener tab and is selected.
 - A script-opened tab may close itself with `window.close()`.
-- WebKit's macOS default blocks a script with no user gesture from opening a window. The browser keeps that default.
-  No public API reports such a blocked attempt, so the browser shows no indicator for it.
+- A script with no user gesture opens nothing. WKWebView's macOS default lets such a script open a window, so the
+  browser sets `javaScriptCanOpenWindowsAutomatically` to false. No public API reports a blocked attempt, so the browser
+  shows no indicator for it. Amended 2026-11-06; see Decision Log.
+- A script with a gesture may open many windows, so a pane holds at most ten tabs that scripts opened. The rest of a
+  loop opens nothing, and the pane says so once. A tab the user's own click on a link or choice from the context menu
+  opens never counts toward the limit and is never refused for it.
+- A pop-up from a tab the user is not looking at opens beside its opener, unselected, and says so. It never takes the
+  selection or the keyboard.
+- `window.close()` closes only a tab a script opened, never the last tab or the pane. A tab that holds unsent input or
+  a download stays open and says why. A tab a script closes is not kept for reopening, since a sign-in address can
+  carry a one-time code.
 
 Rationale: a tab keeps everything an OAuth flow needs, and fits the settled tab model. A new pane needs a new host call
 for an applet to request a split, and a pane built around a web view WebKit supplies. Blocking every new window breaks
@@ -234,7 +243,10 @@ Decision: downloads go to the user's Downloads folder, each file quarantined on 
 status bar.
 
 - A file downloads under a temporary name and takes its final, unique name when complete. A failed or cancelled
-  download removes its partial file.
+  download removes its partial file. Every file operation runs off the main thread, since the folder can be on a
+  network or iCloud volume. A folder that cannot take the quarantine mark fails the download at its end, and the
+  warning names the reason. The first download of a launch into a folder sweeps its leftover temporary files that are
+  more than seven days old.
 - A finished download posts an info message naming the file. A failed download posts a warning naming the file and the
   reason, since no user work is lost. One the user cancels posts nothing. The progress segment shows only for the
   focused pane, and a download can end while its pane is unfocused or detached, so the message is how the user learns
@@ -246,7 +258,10 @@ status bar.
 - A status bar segment shows progress. Reveal Latest Download, in the Browser menu and the palette, shows the newest
   finished download in Finder. Segments and status messages stay plain, so the contract does not change.
 - A download keeps going while the pane is detached.
-- A download in progress counts as running something. Closing its pane asks first, and closing cancels it.
+- A download in progress counts as running something. Closing its tab or its pane asks first, and closing cancels it.
+  Navigating the tab away does not cancel it.
+- A `blob:` download saves with or without a `download` attribute. A `data:` download saves with one. A top-level
+  `data:` navigation with none is a page, which "Schemes" refuses. Amended 2026-11-06; see Decision Log.
 
 Rationale: dashboard exports are often `blob:` URLs that exist only inside the page, and authenticated downloads need
 uniterm's store, so handing off to another browser fails. Refusing downloads breaks the same exports. A save panel for
@@ -363,8 +378,10 @@ default. Amended 2026-11-06; see Decision Log. Restore is settled in "What resto
   ADR-06. The undo-only part holds a history record for each open tab, and the closed-tab list with each closed tab's
   `interactionState`.
 - `currentDirectory` is nil. A browser pane has no directory, and a pane split from it starts in the launcher's default.
-- On detach, the browser suspends media playback in every tab and holds back JavaScript alerts and confirmations until
-  reattach. Downloads keep going. Reattach resumes nothing on its own: the user starts paused media again.
+- On detach, the browser pauses and suspends media playback in every tab and holds back JavaScript alerts, confirmations,
+  and prompts until reattach. Downloads keep going. Reattach resumes nothing on its own: the user starts paused media
+  again. A dialog shows inside the pane, never as a window sheet, and a dialog from a tab in the background waits for
+  its tab. A page that keeps raising dialogs has the rest dismissed. Amended 2026-11-06; see Decision Log.
 - Running something: see "Unsent input" and "Downloads". `runningLabels` names each such tab by title, and a download
   by file name.
 
@@ -384,8 +401,9 @@ isolated-world script tracks it. A download in progress also counts, per "Downlo
   trusted `input` events. That covers `contenteditable`.
 - A tab is marked while some edited field differs from its default value. The mark clears on load, on submit, and when
   the fields return to their defaults. Fields are re-checked on `focusout`, and after `submit` or `click`.
-- The script reports one boolean per tab through a message handler in that isolated world. The native side accepts
-  nothing else from it. Page scripts cannot reach the handler.
+- Each frame's script reports one boolean through a message handler in that isolated world, with a random token that
+  names the frame. The native side accepts nothing else from it, and the tab is marked while any frame is. One frame's
+  report never clears another's. Page scripts cannot reach the handler. Amended 2026-11-06; see Decision Log.
 - The mark clears when the tab's content process terminates, since the input is already gone.
 - It misses drafts a page keeps only in script. "Control" guards the focused tab for that reason.
 
@@ -428,7 +446,8 @@ None.
 - **Web content is untrusted input inside the app** — likelihood: high, impact: medium.
   Mitigation: WebKit runs content out of process, per "Web content failure". No native bridge is reachable from a
   page's own script world, per "WebKit". A compromised content process can still post to the isolated tracker's
-  handler, which accepts only a boolean per tab.
+  handler, which accepts only a frame token and a boolean, keeps at most 64 marked frames, and keeps the tab marked
+  when it drops one.
 - **One website data store serves every browser pane** — likelihood: high, impact: low. Logging in in one pane logs in
   every pane, including panes a program created. Accepted: sharing is the explicit choice in "Website data", for logins
   that last. What a controller may do with it is gated by "Control".
@@ -450,8 +469,11 @@ None.
   `devbox` sends it to the chosen engine. Accepted: the user types `devbox/` or `http://devbox` to go there, per
   "Search from the address bar", and picks the engine.
 - **Any page can write files to Downloads** — likelihood: medium, impact: low. A page can start a download with no
-  prompt. Accepted: each file is quarantined, so Gatekeeper checks it before it runs, and the status bar shows every
-  download.
+  prompt, and a hidden iframe whose response is an attachment starts one with no gesture at all. Nothing bounds how
+  many a page starts, and each file costs disk space and a status message. Accepted: each file is quarantined, so
+  Gatekeeper checks it before it runs. The status bar shows one download by name and percent, or a count, and only for
+  the focused pane. A crash can leave a hidden temporary file, which the first download of a later launch removes after
+  seven days. A limit on how many downloads a page may start is a design choice not yet made.
 - **The control permissions depend on an amendment to accepted UTERM-004** — likelihood: medium, impact: medium. Until
   UTERM-004 names browser navigation and browser read, its permission set and this proposal disagree. Mitigation: M8
   starts only after UTERM-004 M6, and its first check requires the amendment.
@@ -783,7 +805,7 @@ None.
 
 ### M6: Pop-ups, downloads, and running work
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A link or script that opens a window opens a tab right after its opener, selected. A script never closes the last tab
   or the pane. When a pop-up tab closes itself, selection returns to its opener while the opener exists
@@ -798,17 +820,153 @@ None.
   moved or deleted file gets a status message
 - A finished download posts an info message naming it, and a failed one posts a warning. A cancelled one posts nothing.
   Amended 2026-11-06; see Decision Log.
-- A `blob:` or `data:` download from a page saves like any other, with or without a `download` attribute, and a page's
-  own `blob:` preview opens in its tab. A page's `file:` link saves nothing, even marked as a download
+- A `blob:` download from a page saves like any other, with or without a `download` attribute, and a `data:` download
+  saves with one. A page's own `blob:` preview opens in its tab. A page's `file:` link saves nothing, even marked as a
+  download. Amended 2026-11-06; see Decision Log.
 - `srcdoc` and `data:` subframes load, while a top-level `data:` page is refused
 - A script or iframe navigation to an app's scheme asks or is refused, and never launches the app silently
 - Closing a tab or a pane during a download asks first, names the file, and cancels it. Navigating the tab away does
   not cancel it
 - A tab with edited form input, in any frame or in a `contenteditable`, asks before close and is named in the dialog. It
-  stops asking once the input is submitted or back at its defaults. Synthetic input events never mark a tab, and page
-  scripts cannot reach the tracker's handler
+  stops asking once the input is submitted or back at its defaults. An `input` event a page's script dispatches never
+  marks a tab, and page scripts cannot reach the tracker's handler. A script's `document.execCommand('insertText')` on a
+  focused field raises a trusted event and does mark the tab. Amended 2026-11-06; see Decision Log.
 - Detach suspends media and holds alerts until reattach. Reattach does not resume media. Closing a detached pane
   answers every held alert
+
+**As built:**
+
+- Pop-ups. `createWebViewWith` builds a `BrowserTab` from the configuration WebKit passes, with a fresh content
+  controller, so the opener relationship and the shared store hold. The tab is built at once, since WebKit needs the web
+  view back from the same call. It takes the same delegates, observers, scheme gate, and tracker as any tab, and its
+  first load passes the gate in its own navigation delegate. A window to a scheme the rule refuses opens nothing and
+  warns. The tab opens right after its opener. The opener's selected tab selects it, and a background opener's tab
+  does not. A real test calls `window.open` from a background tab and checks the selection and the notice. A real sign-in
+  flow runs against the fixture: the pop-up posts to `window.opener` and closes itself, the opener hears it, and the
+  selection returns to the opener. `webViewDidClose` closes only a script-opened tab. Never the last tab. A tab with unsent
+  input or a download stays and warns. A tab a script closes is not put on the reopen list. Selection returns to the opener
+  only when the pop-up was selected.
+- WKWebView on macOS does not block a script with no gesture. A page that called `window.open` at load opened a tab, so the
+  text "WebKit's macOS default blocks it" was wrong. The browser now sets `javaScriptCanOpenWindowsAutomatically` to
+  false, and a test pins it on a tab's web view and on a pop-up's. No test can run a script with no gesture, since
+  `evaluateJavaScript` and `callAsyncJavaScript` both carry one, so the block itself is left to the user. A script with a
+  gesture opened 41 tabs in one loop, so a pane holds at most ten tabs that scripts opened, and the rest of a loop gets
+  null. The limit is a policy value with no setting. A tab the user asked for does not count and is never refused: a real
+  mouse-up on a link, or a choice from the context menu, marks the next window request as the user's, once, within one
+  second, and that tab keeps `window.opener`. A real test clicks a `target=_blank` link twelve times past the limit with no
+  warning, and a script still stops at ten. Its first run failed on the eleventh click.
+- The context menu rewrites its four new-window items to new-tab items in `willOpenMenu`, by item identifier, never by
+  title. The item keeps WebKit's own action, which asks for a window, so Open Link in New Tab is the same path as a
+  `target=_blank` link and crosses the same gates. Each rewritten item first tells the web view the user chose it, through a
+  forwarder, so the tab it opens is the user's. A menu click on a link to another app is refused with a warning, as a
+  script's is. Download Linked File and Download Image in the menu are WebKit's own and may not reach the download
+  delegate, since that route has no public hook. They are unproven. No UI test reaches the web view's menu.
+- Downloads. A navigation WebKit marks as a download proceeds for any scheme except `javascript:` and `file:`, by
+  `SchemePolicy.decideDownload`. A response the browser cannot show, or an attachment, downloads too, in a frame as well. M1's interim
+  warnings are gone. The pane holds each `WKDownload` in `BrowserDownloads`, not the tab, and the status segment, the
+  running labels, and the close questions read it. A download writes under a hidden `.uniterm-download-<id>.part` name in
+  the injected Downloads folder. Preparing the folder, marking and naming the file, removing a partial file, and the sweep
+  all run off the main thread through `DownloadFileOperations`, and each reports back as a later main-actor event. A
+  download that is finishing still counts as running. A cancel that arrives then takes it out of the list at once, announces
+  nothing, and removes the file the finish makes. Tests hold the operations with a semaphore and check the thread. At the
+  end the file is marked and then renamed with `renamex_np` and `RENAME_EXCL`, trying
+  `name`, `name 2`, and on, so no check comes before the rename. A test finishes 32 downloads into one name from 32 threads, and
+  two panes share a folder in a real test. A failed download removes the partial file and posts a warning naming the file and the
+  reason. The partial file is removed again when WebKit lets go of a cancelled download, since WebKit may create it after
+  the cancel. A cancelled one posts nothing. A finished one posts an info message. A detached pane records the outcome now and
+  presents it on reattach. A download whose navigation WebKit reports as an interrupted load stays quiet about that load.
+- Names. `DownloadName.sanitize` is pure and table-tested for separators, `..`, a leading dot, bidirectional controls,
+  control characters, every format character such as zero-width marks and the byte order mark, line and paragraph
+  separators, the Hangul fillers and the blank braille pattern, trailing dots and spaces, runs of spaces and every kind of
+  space collapsed to one, an empty result, a long name that keeps its extension, and reserved characters. A long run of
+  spaces cannot push a real extension out of view.
+- Leftovers and a late failure. A crash or a quit can leave `.uniterm-download-<UUID>.part` behind. The first download into a
+  folder in a launch sweeps that folder off the main thread, removing only regular files of that exact name, with an
+  uppercase UUID, last written more than seven days before the injected clock. A second instance may still be writing, so the
+  age is generous. A test plants a user's file that resembles the name, a directory with the name, a fresh temporary file,
+  and an old ordinary file, and only the old temporary file goes. A folder that cannot take the quarantine mark, as a volume
+  with no extended attributes cannot, fails the download only at its end, after the bytes arrived. The warning names the
+  file, says the mark failed and why the volume may not support it, and carries the system's reason. A test stands in for the
+  refusal with a temporary file that is gone at the end, since no test can make a volume reject extended attributes.
+- Quarantine. Each file gets `quarantineProperties` before it takes its final name: the web-download type, the agent bundle
+  identifier and name, the origin page, and the address fetched. A `data:` address is the file's own bytes, so it names no
+  data address. Fails closed: when the mark cannot be set the download fails. A test reads the property back and checks the
+  type, the agent, and an event identifier. The system does not return the origin and data addresses on read, since it keeps
+  them in its own database, so a test pins them on the download before it ends and in the record builder. A test pins
+  that `App/Info.plist` has no quarantine key. The origin comes from the last committed page, since WebKit moves `url`
+  to the new address before it commits.
+- Schemes. A `blob:` download saves with or without a `download` attribute, and a page's own `blob:` preview opens in its tab.
+  A `data:` download saves with one. A top-level `data:` navigation with none is a page and stays refused, since the policy
+  cannot tell it from a page before the response. A page's `file:` link saves nothing, and WebKit stops it before the delegate. `srcdoc` and `data:`
+  subframes load. Each has a real web view test.
+- Download controls. A status bar segment names the one download and its percent, or counts several. Reveal Latest
+  Download is in the Browser menu and the palette, unavailable with no finished download, and a moved file gets a warning
+  with the command still offered. The Downloads folder and the reveal are injected through `BrowserServices`, with no
+  default, so no test reaches the user's folder or Finder. Closing a tab, whether selected or not, asks first and names the file,
+  and a yes cancels. Navigating the tab away does not cancel. The tab that closes releases its web view while the pane holds the
+  download, and the close cancels it. WebKit's behaviour for a download held after its web view is gone was not
+  measured, since a close always cancels.
+- What a page can do with downloads. Nothing limits how many a page starts. The pane keeps the in-flight ones and the newest
+  finished file, so its memory follows the number in flight, and a test finishes 30 downloads of one name in a row. Each file
+  costs disk space and a status message, and a hidden iframe whose response is an attachment starts a download with no
+  gesture. WebKit serialises navigations in one tab, so typed loads cancel each other, and it holds six connections to one
+  host. The close question and the running labels name at most ten downloads and a count. A limit on how many a page may start
+  needs a design choice, such as concurrent against rate and refuse against queue, so none was built.
+- A cancel before the first byte. Every download cancelled before WebKit had a byte of its body produced an `EXC_GUARD` report
+  from `NetworkProcessProxy::didReceiveInvalidMessage` in the test crash folder, about one for each run that cancelled one.
+  WebKit treats an IPC message from its network process as invalid, and the process restarts. Measured with a real web view
+  and a store that keeps its cookies only in that process: a session cookie set before the cancel was gone for a load in another
+  tab afterwards. A cancel after a byte, a download that fails, and one that finishes left the cookie and made no report. A user
+  would see: every browser pane of the app loses its session cookies, so sites that keep a login in one are logged out, and a
+  load or download in flight in another pane fails. Persistent cookies and the website data on disk survive, and the next load
+  starts the process again, so a passing test run does not show it. The cause is in WebKit, since the cancel is the documented
+  call. The browser now waits: a cancel with no byte yet takes the download out of the list at once and sends the cancel to
+  WebKit with the first byte, or after 30 seconds if none comes, at which point the hazard is accepted. A cancel that beats the
+  destination answer still gets a destination. A deferred download that finishes or fails first removes its file and says
+  nothing. Tests: one finished all 39 download tests with no new crash report where each run made one before, and a structural
+  test fails on the unfixed code. The cookie loss reproduced in scratch runs of one and of twelve cancels and did not reproduce in
+  the committed test's form, so that test pins the symptom and the structural test is the one that failed first. A pane
+  closed with a download that has no byte yet keeps the cancel pending for up to the grace, with no indicator.
+- App schemes. A script's or an iframe's navigation to an app's scheme is refused with a warning and never asks. A
+  subframe's `window.open`, the main frame's `window.open('mailto:')`, and a script's click in an iframe are real
+  web view tests. A real mouse-up followed by an iframe link was asking, since WebKit calls it a followed link, so a link
+  counts only when its source frame is the main frame. The regression test failed before that change. A real click on a
+  main-frame link still asks.
+- Unsent input. The script is `UnsentInputScript`, in an isolated `WKContentWorld`, in every frame. It watches fields, which
+  include a `contenteditable` element by its text against the text at first focus. Only a trusted `input` event adds
+  a field. Fields are re-checked on `focusout`, a click, `reset`, a trusted `submit`, and `pagehide`. It posts only on a change, at
+  most once in 250 milliseconds, and a loop of 2,000 flips cost one post. The native side takes a frame token and a real
+  boolean, nothing else, and keeps the marked frames, at most 64, so a frame clears only its own mark. A dirty frame past the
+  bound cannot be remembered, so the tab stays marked until the next load, which fails on the side of asking. A marked
+  subframe that its parent removes, and one that navigates away, each clear their mark as the document leaves, which a test
+  measures with a real web view. Each web view has its
+  own content controller. The handler is a proxy that holds the tracker weakly, and `close` removes it. A load clears the mark.
+  Tests use a real web view. A page-world post throws. A page-made `input` event is untrusted, and its regression test failed
+  with the check removed. A limit, measured: a script's `document.execCommand('insertText')` on a focused field raises a
+  trusted `input` event and marks the tab with no typing. No detector was built, since the cost is a question the user can
+  confirm, and a test pins the behaviour. Strict-body checks go through the isolated world. A subframe's edit survives the main frame's clear.
+  A closed tab and its tracker are released. A trusted event cannot come from script, so the tests type through the web
+  view's `NSTextInputClient`, the path of a key press or an input method, in an offscreen window. That proves the script and the
+  handler in the real isolated world. It does not prove a key press through the window server.
+- Running something. `isRunningSomething` is true for edited input or a download in flight, and nothing else. `runningLabels`
+  names a tab by its page title, cleaned of bidirectional and control characters and cut, and a download by its file name, at
+  most ten and a count. The window's pane, window, and quit paths read these two properties, and Cmd-W reaches the applet through
+  `closeCurrentTab`, which answers `nothingToClose` for the last tab so the window asks. The window paths are unchanged and
+  tested with a fake applet, so no window-level test with a real browser was added. `saveUnsavedWork` is unchanged.
+- Detach and reattach. Detach pauses media and then suspends it in every tab. Suspending alone let a pending play resume when
+  the suspension lifted, which the test caught, so the tab pauses first and sends the suspend and resume in pairs. Reattach lifts
+  the suspension and starts nothing. Under `swift test` the page's `play()` stays pending, so no real playing audio
+  is proved. The state goes to suspended and back, and the element stays paused. Alerts, confirmations, and prompts
+  show in an overlay inside the pane, never in a window sheet or through the host, so no other pane waits. A dialog waits while
+  the pane is detached and while its tab is in the background. Every completion handler runs exactly once, by the dialog
+  object, and a tab close, a pane close, and the held bound each answer it. A page gets five dialogs between loads and the rest
+  are dismissed with one warning, and at most 16 wait. These two bounds are policy values with no setting. Nothing in the host sends
+  detach or reattach, so the tests call them.
+- Not built, and still out of scope: file upload pickers and HTTP authentication dialogs. An upload input does nothing, and a
+  basic-auth page shows its 401.
+- Left to the user. A real sign-in against a real provider. How the download segment looks and reads in the status bar, and
+  the Download Linked File item. Sound that stops on detach and stays stopped. The UI test for the Browser menu's Reveal item is
+  built and not run, and no UI test reaches the context menu.
 
 ### M7: Web content failure
 
@@ -985,6 +1143,9 @@ Starts after UTERM-004 M6.
   read live, and never through the applet reading the settings store or UserDefaults. Waits on the second applet that
   takes a setting, since this one instance cannot yet show whether settings belong in a per-applet bundle or on the applet
   contract. Found in UTERM-005 M4.
+- 2026-11-06: ADR candidate (cuts across the system): content an applet saves from the network is quarantined per file and
+  fails closed, and uniterm never sets the process-wide `LSFileQuarantineEnabled`, which could quarantine what the
+  terminal's shells create. Waits on the second applet that writes fetched files. Found in UTERM-005 M6.
 
 - 2026-11-06: M5 as built (work-queue best guess). The pane's undo-only part now carries a history record for each open
   tab. The text said it carried each tab's record, and M3 built only the closed tabs', so a closed pane came back with
@@ -1001,6 +1162,39 @@ Starts after UTERM-004 M6.
   so a pane close can carry a scroll position older than the last history change. A debug build reads `UNITERM_BROWSER_STORE=memory` so UI tests never reach the user's store. If
   wrong, a pane undo that should carry less history costs one description field to drop, and a clear that should ignore
   a newer HSTS file would report success while the file still holds hosts.
+
+- 2026-11-06: M6 as built (work-queue best guess). "New windows and pop-ups" said WebKit's macOS default blocks a script with
+  no gesture and the browser keeps it. WKWebView's macOS default allows it, and a script at page load opened a tab, so the
+  browser now sets the preference to false. The same loop with a gesture opened 41 tabs, so a pane holds ten script-opened
+  tabs, which the text did not bound. A pop-up from a background tab opens unselected and says so, a script closes only a tab a
+  script opened, never the last, and never one with input or a download, and such a tab is not kept for reopen because its
+  address can carry a code. "Schemes" and M6 said a `data:` download saves with or without a `download` attribute. A top-level
+  `data:` navigation with none is a page before any response is known, so only `blob:` saves both ways. "Unsent input" said
+  the script reports one boolean per tab. WebKit gives the native side no stable frame identity, so each frame sends a random
+  token and a boolean, and the tab is marked while any frame is, which keeps one frame from clearing another's mark. A link
+  in a subframe is never counted as the user's click, which closes a gap that let a real click in an iframe ask to open an
+  app. Detach pauses then suspends media, since suspension alone let a pending play resume. Dialogs show in an overlay in the pane
+  with bounds of five per load and sixteen held. The finished-download message cannot carry the origin and data addresses on
+  read, since the system keeps them privately. If wrong, a stricter pop-up limit costs one constant, a download limit is a design
+  choice left open, and a `data:` link with no attribute would need a response-time decision.
+
+- 2026-11-06: M6 review fixes (work-queue best guess). The limit of ten tabs counted every tab WebKit asked for, so a user's
+  eleventh click on a link opened nothing and warned falsely. It now counts only tabs a script opened. A real click on a
+  link and a choice from the context menu are the user's, and those tabs never count and are never refused. The unsent-input
+  ledger dropped a dirty frame past 64 and could read it as clean. It now keeps the tab marked until the next load, which
+  fails on the side of asking. A script's `execCommand('insertText')` on a focused field raises a trusted event, so the
+  check "synthetic input events never mark a tab" is narrowed to events a page dispatches, and the limit stays. The name
+  cleaner drops every format and line-separator character, the invisible filler letters, and collapses every run of
+  spaces. File work moved off the main thread, per ADR-08, with a finishing download still counted as running and a cancel
+  that resolves once. A sweep removes leftover temporary files older than seven days at the first download of a launch. The
+  Risks said the handler takes one boolean per tab and the status bar shows every download, and both now say what is built,
+  with the downloads finding stated: nothing bounds how many a page starts. If wrong, the sweep age is one constant, and a
+  download limit stays a design choice for the user.
+- 2026-11-06: Cancelling a download waits for its first byte (work-queue best guess). A cancel of a download that WebKit had
+  received no byte for restarted WebKit's network process, which dropped session cookies and in-flight loads for every pane.
+  "Closing a tab or a pane during a download asks first and cancels it" now holds with one wait: the download leaves the list and
+  the running count at once, and the cancel goes to WebKit with the first byte, or after 30 seconds. The text said nothing about
+  the moment of the cancel. If wrong, the cost is a download that lingers up to 30 seconds after its pane closes.
 
 ## References
 

@@ -199,7 +199,9 @@ final class BrowserLazyRestoreTests: XCTestCase {
 
     applet.detach()
 
-    XCTAssertEqual(applet.closeTab(at: 0), .closed)
+    let closedResult = await applet.closeTab(at: 0)
+
+    XCTAssertEqual(closedResult, .closed)
     XCTAssertEqual(server.requests.map(\.path), ["/a"], "a close loaded a tab in a detached pane")
 
     applet.reattach()
@@ -223,7 +225,9 @@ final class BrowserLazyRestoreTests: XCTestCase {
       applet.title == "B" && !applet.tab.isLoading
     }
 
-    XCTAssertEqual(applet.closeTab(at: 1), .closed)
+    let closedResult = await applet.closeTab(at: 1)
+
+    XCTAssertEqual(closedResult, .closed)
 
     let stamp = try XCTUnwrap(applet.closedTabStamps.first)
 
