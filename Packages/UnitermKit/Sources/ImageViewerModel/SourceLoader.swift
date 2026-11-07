@@ -19,16 +19,25 @@ public struct WantedImage: Sendable, Equatable {
   }
 }
 
-/// A source, found and opened, with the image to show first.
+/// A source, found and opened, with what is known about its folder.
+///
+/// The listing is not part of it. A folder is scanned after the load, so the pane can show an
+/// image before the scan ends.
 public struct LoadedSource: Sendable {
   public let resolved: ResolvedSource
   public let kind: SourceKind
-  public let folder: OpenedFolder?
-  public let listing: [ListedImage]
-  public let index: Int?
 
-  /// The first image, opened for the helper. Nil when the folder holds none.
-  public let file: OpenedImageFile?
+  /// The folder to scan. A single file's folder is scanned too, so its siblings can be stepped
+  /// through. Nil when that folder cannot be opened.
+  public let folder: OpenedFolder?
+
+  /// True when a single file's folder could not be opened, for example under macOS privacy
+  /// protection. The pane shows the file and cannot step.
+  public let folderNotListed: Bool
+
+  /// The image to show now. Nil when only the scan can say which one, as for a folder opened
+  /// fresh, or a restore whose stored image is gone.
+  public let image: OpenedImageFile?
 }
 
 public enum SourceLoadFailure: Error, Sendable, Equatable, LocalizedError {
@@ -69,6 +78,15 @@ public enum SourceLoader {
       types: types)
   }
 
+  /// Opens the image named `name` in `folder` off the calling thread, as a step or a prefetch
+  /// does. A file deleted since the scan reports as missing.
+  @concurrent
+  public static func openImage(in folder: OpenedFolder, named name: String) async -> Result<
+    OpenedImageFile, SourceAccessError
+  > {
+    folder.openFile(named: name)
+  }
+
   public static func loadBlocking(
     path: String, bookmark: Data?, storedKind: SourceKind?, wanted: WantedImage?,
     sort: ImageSort, types: SupportedImageTypes
@@ -76,8 +94,15 @@ public enum SourceLoader {
     var resolved: ResolvedSource
 
     switch SourceResolver.resolveBlocking(path: path, bookmark: bookmark) {
-    case .success(let found): resolved = found
-    case .failure(let error): return .failure(.access(error))
+    case .success(let found):
+      resolved = found
+
+    case .failure(let error):
+      guard storedKind == .file, let sibling = siblingInOldFolder(of: path, wanted: wanted) else {
+        return .failure(.access(error))
+      }
+
+      resolved = sibling
     }
 
     var opened: OpenedSource
@@ -105,49 +130,68 @@ public enum SourceLoader {
         return .failure(.notAnImage(name: file.name))
       }
 
-      return .success(
-        LoadedSource(
-          resolved: resolved, kind: .file, folder: nil,
-          listing: [ListedImage(name: file.name, modified: file.modified)], index: 0, file: file))
+      return loadFile(file, resolved: resolved, wanted: wanted, types: types)
 
     case .folder(let folder):
-      return loadFolder(folder, resolved: resolved, wanted: wanted, sort: sort, types: types)
+      var image: OpenedImageFile?
+
+      if let wanted, types.supports(fileName: wanted.name),
+        case .success(let file) = folder.openFile(named: wanted.name)
+      {
+        image = file
+      }
+
+      return .success(
+        LoadedSource(
+          resolved: resolved, kind: .folder, folder: folder, folderNotListed: false, image: image))
     }
   }
 
-  private static func loadFolder(
-    _ folder: OpenedFolder, resolved: ResolvedSource, wanted: WantedImage?, sort: ImageSort,
+  /// A file opened by the user, or restored. Its folder is opened so the scan can list its siblings.
+  /// A restore asks for the image that was showing, which may be a sibling of the stored file.
+  private static func loadFile(
+    _ file: OpenedImageFile, resolved: ResolvedSource, wanted: WantedImage?,
     types: SupportedImageTypes
   ) -> Result<LoadedSource, SourceLoadFailure> {
-    var listing: [ListedImage]
+    let parent = (file.path as NSString).deletingLastPathComponent
 
-    switch folder.list(supporting: types, sort: sort) {
-    case .success(let images): listing = images
-    case .failure(let error): return .failure(.access(error))
+    guard case .success(.folder(let folder)) = SourceOpener.open(path: parent) else {
+      return .success(
+        LoadedSource(
+          resolved: resolved, kind: .file, folder: nil, folderNotListed: true, image: file))
     }
 
-    guard !listing.isEmpty else { return .failure(.noImages(folder: folder.path)) }
+    var image: OpenedImageFile? = file
 
-    var index =
-      wanted.flatMap {
-        FolderListing.nearest(toName: $0.name, modified: $0.modified, in: listing, sort: sort)
-      } ?? 0
+    if let wanted, wanted.name != file.name {
+      image = nil
 
-    while !listing.isEmpty {
-      switch folder.openFile(named: listing[index].name) {
-      case .success(let file):
-        return .success(
-          LoadedSource(
-            resolved: resolved, kind: .folder, folder: folder, listing: listing, index: index,
-            file: file))
-
-      case .failure:
-        listing.remove(at: index)
-        index = min(index, listing.count - 1)
+      if types.supports(fileName: wanted.name),
+        case .success(let sibling) = folder.openFile(named: wanted.name)
+      {
+        image = sibling
       }
     }
 
-    return .failure(.noImages(folder: folder.path))
+    return .success(
+      LoadedSource(
+        resolved: resolved, kind: .file, folder: folder, folderNotListed: false, image: image))
+  }
+
+  /// The wanted image in the folder the stored path used to be in, when the stored file and its
+  /// bookmark are both gone. The result names that image as where the source moved to.
+  private static func siblingInOldFolder(of path: String, wanted: WantedImage?)
+    -> ResolvedSource?
+  {
+    guard let wanted, !wanted.name.contains("/"), !wanted.name.isEmpty else { return nil }
+
+    let candidate = ((path as NSString).deletingLastPathComponent as NSString)
+      .appendingPathComponent(wanted.name)
+
+    guard case .success(let found) = SourceResolver.resolveBlocking(path: candidate, bookmark: nil)
+    else { return nil }
+
+    return ResolvedSource(file: found.file, bookmark: found.bookmark, movedFrom: candidate)
   }
 
   private static func kind(of source: OpenedSource) -> SourceKind {

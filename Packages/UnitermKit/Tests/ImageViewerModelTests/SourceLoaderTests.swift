@@ -23,8 +23,10 @@ final class SourceLoaderTests: XCTestCase {
       types: SupportedImageTypes())
   }
 
-  /// Catches a folder that opens on anything but its first image in Finder order.
-  func testAFolderOpensOnItsFirstImage() throws {
+  /// Catches a load that waits for the whole listing, or that guesses an image for a fresh folder.
+  /// A folder opened fresh comes back with its handle and no image, since only the scan can say
+  /// which image is first. The bookmark is made at load.
+  func testAFreshFolderLoadsWithoutChoosingAnImage() throws {
     for name in ["img10.png", "img2.png"] {
       try ImageFixtures.write(ImageFixtures.png(), named: name, in: folder)
     }
@@ -32,10 +34,40 @@ final class SourceLoaderTests: XCTestCase {
     let loaded = try load(folder).get()
 
     XCTAssertEqual(loaded.kind, .folder)
-    XCTAssertEqual(loaded.index, 0)
-    XCTAssertEqual(loaded.file?.name, "img2.png")
-    XCTAssertEqual(loaded.listing.count, 2)
+    XCTAssertNotNil(loaded.folder)
+    XCTAssertNil(loaded.image)
+    XCTAssertFalse(loaded.folderNotListed)
     XCTAssertNotNil(loaded.resolved.bookmark)
+  }
+
+  /// Catches a single file that cannot step. Its folder is opened for the scan, and the file is the
+  /// image to show at once.
+  func testASingleFileOpensItsFolderForTheScanAndShowsItselfAtOnce() throws {
+    let file = try ImageFixtures.write(ImageFixtures.png(), named: "b.png", in: folder)
+    try ImageFixtures.write(ImageFixtures.png(), named: "a.png", in: folder)
+
+    let loaded = try load(file).get()
+
+    XCTAssertEqual(loaded.kind, .file)
+    XCTAssertEqual(loaded.image?.name, "b.png")
+    XCTAssertNotNil(loaded.folder)
+    XCTAssertFalse(loaded.folderNotListed)
+  }
+
+  /// Catches a folder that cannot be opened leaving an empty pane. A folder with no read bit still
+  /// lets the file inside be opened by name, so the load shows the file and says the folder was not
+  /// listed. This is what macOS privacy protection looks like to the app.
+  func testAFileInAFolderThatCannotBeListedStillLoadsAndSaysSo() throws {
+    let file = try ImageFixtures.write(ImageFixtures.png(), named: "a.png", in: folder)
+
+    XCTAssertEqual(chmod(folder.path, 0o311), 0)
+    defer { chmod(folder.path, 0o755) }
+
+    let loaded = try load(file).get()
+
+    XCTAssertEqual(loaded.image?.name, "a.png")
+    XCTAssertNil(loaded.folder)
+    XCTAssertTrue(loaded.folderNotListed)
   }
 
   /// Catches a single file that is not an image being opened on the strength of its bytes. The type
@@ -50,29 +82,79 @@ final class SourceLoaderTests: XCTestCase {
     XCTAssertEqual(name, "notes.txt")
   }
 
-  /// Catches an empty folder showing a blank pane. The failure says the folder has no images.
-  func testAFolderWithNoImagesIsAFailureThatSaysSo() throws {
+  /// Catches a folder with no images being listed as if it had some. The load itself succeeds, and
+  /// its listing is empty, which the pane reports once the scan ends.
+  func testAFolderWithNoImagesListsNothing() throws {
     try ImageFixtures.write(Data("x".utf8), named: "a.txt", in: folder)
 
-    guard case .failure(let failure) = load(folder) else {
-      return XCTFail("an empty folder opened")
-    }
+    let loaded = try load(folder).get()
 
-    XCTAssertEqual(failure, .noImages(folder: folder.path))
-    XCTAssertTrue(failure.localizedDescription.contains("no images"))
+    XCTAssertEqual(
+      try loaded.folder?.list(supporting: SupportedImageTypes(), sort: .name).get(), [])
+    XCTAssertTrue(
+      SourceLoadFailure.noImages(folder: folder.path).localizedDescription.contains("no images"))
   }
 
-  /// Catches a restore that forgets which image was showing. The stored name comes back when it is
-  /// there, and the next image in order comes back when it is gone.
-  func testARestoreLandsOnTheStoredImageOrTheNearestOne() throws {
+  /// Catches a restore that waits for the listing before showing an image it can open at once. The
+  /// stored name is opened straight from the folder. A name that is gone comes back with no image,
+  /// so the pane waits for the scan and lands on the nearest one.
+  func testARestoreOpensTheStoredImageAtOnceOrLeavesTheChoiceToTheScan() throws {
     for name in ["a.png", "c.png", "e.png"] {
       try ImageFixtures.write(ImageFixtures.png(), named: name, in: folder)
     }
 
     XCTAssertEqual(
-      try load(folder, wanted: WantedImage(name: "c.png", modified: nil)).get().file?.name, "c.png")
+      try load(folder, wanted: WantedImage(name: "c.png", modified: nil)).get().image?.name, "c.png"
+    )
+    XCTAssertNil(try load(folder, wanted: WantedImage(name: "d.png", modified: nil)).get().image)
+  }
+
+  /// Catches a restore of a single file that lands on the file instead of the image the user had
+  /// stepped to. The stored file is a sibling of the current image, and the current image wins.
+  func testARestoredFileOpensTheCurrentImageOfItsFolder() throws {
+    let stored = try ImageFixtures.write(ImageFixtures.png(), named: "a.png", in: folder)
+    try ImageFixtures.write(ImageFixtures.png(), named: "c.png", in: folder)
+
+    let loaded = try load(stored, kind: .file, wanted: WantedImage(name: "c.png", modified: nil))
+      .get()
+
+    XCTAssertEqual(loaded.image?.name, "c.png")
+    XCTAssertEqual(loaded.kind, .file)
+  }
+
+  /// Catches a single-file restore that gives up when the stored file is gone. After the path and
+  /// the bookmark both fail, the old folder is tried for the current image, and the result says the
+  /// source moved there.
+  func testARestoreFallsBackToTheOldFolderForTheCurrentImage() throws {
+    let stored = try ImageFixtures.write(ImageFixtures.png(), named: "a.png", in: folder)
+    try ImageFixtures.write(ImageFixtures.png(), named: "c.png", in: folder)
+
+    try FileManager.default.removeItem(at: stored)
+
+    let loaded = try load(stored, kind: .file, wanted: WantedImage(name: "c.png", modified: nil))
+      .get()
+
+    XCTAssertEqual(loaded.image?.name, "c.png")
     XCTAssertEqual(
-      try load(folder, wanted: WantedImage(name: "d.png", modified: nil)).get().file?.name, "e.png")
+      loaded.resolved.movedFrom.map { URL(fileURLWithPath: $0).lastPathComponent }, "c.png")
+    XCTAssertNotNil(loaded.folder)
+  }
+
+  /// Catches the fallback running when it should not. With no image remembered, or a folder source,
+  /// a missing path is a plain failure.
+  func testAMissingSourceIsAFailureWhenThereIsNoOldFolderImageToFind() throws {
+    let stored = try ImageFixtures.write(ImageFixtures.png(), named: "a.png", in: folder)
+
+    try FileManager.default.removeItem(at: stored)
+
+    guard case .failure(.access) = load(stored, kind: .file, wanted: nil) else {
+      return XCTFail("a missing file opened")
+    }
+
+    guard
+      case .failure(.access) = load(
+        stored, kind: .file, wanted: WantedImage(name: "gone.png", modified: nil))
+    else { return XCTFail("a missing sibling opened") }
   }
 
   /// Catches a stored folder that is now a file being opened as if nothing changed. The stored kind
@@ -97,12 +179,15 @@ final class SourceLoaderTests: XCTestCase {
     try FileManager.default.moveItem(at: folder, to: moved)
     defer { try? FileManager.default.removeItem(at: moved) }
 
-    let again = try load(folder, bookmark: first.resolved.bookmark, kind: .folder).get()
+    let again = try load(
+      folder, bookmark: first.resolved.bookmark, kind: .folder,
+      wanted: WantedImage(name: "a.png", modified: nil)
+    ).get()
 
     XCTAssertEqual(
       again.resolved.movedFrom.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
       moved.resolvingSymlinksInPath().path)
-    XCTAssertEqual(again.file?.name, "a.png")
+    XCTAssertEqual(again.image?.name, "a.png")
   }
 
   /// Catches the bookmark winning over a new file at the stored path. The path is what the user

@@ -14,7 +14,7 @@ credentials.
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-006 M1: Show one image | DONE | "Add an image viewer that decodes in a sandboxed helper" |
-| UTERM-006 M2: Folder slideshow | QUEUED | |
+| UTERM-006 M2: Folder slideshow | DONE | "Step through a folder of images as a slideshow" |
 | UTERM-006 M3: Zoom | QUEUED | |
 
 ## Local checks
@@ -173,3 +173,113 @@ The proposal's Decision Log holds each of these as a "(work-queue best guess)" e
   the user.
 - The UI test's screenshot captures the whole screen, including the user's other windows. It stays local in the
   `.xcresult`, but it should capture only the window. This is folded into M2's brief.
+
+## UTERM-006 M2: Folder slideshow
+
+### Commit
+
+"Step through a folder of images as a slideshow" holds the code, the proposal, and this report.
+
+### What was built
+
+- Stepping by keys and by registry commands in an "Image Viewer" applet menu with no chords.
+- A 5-second slideshow that pauses on detach.
+- Name and date order, partial listing, and Reload.
+- Skipping deleted files, and the "Folder not listed" segment.
+- Restore into folders.
+- An idle-slot prefetch.
+- The helper now keeps up to four opened sources in an LRU, keyed by the source ID the protocol already carried.
+- The UI test screenshots now capture only the window.
+
+### Checks
+
+- The implementer's checks:
+  - `make fmt-check`, `make lint`, `make check`, and `make build` passed.
+  - `make test-package` passed after the review fixes: 1,688 tests, 5 skipped, 0 failures.
+  - `proposals.py check` passed.
+- The coordinator's checks:
+  - `make test-helper-sandbox` passed against the signed helper with the LRU change.
+  - `make test-app` ran twice:
+    - On the code before the review fixes: 117 tests, 1 failure.
+    - On the fixed code: 1 failure, in a different test. XCTest restarted after that failure and ran the rest
+      cleanly.
+    - All 7 `ImageViewerUITests` passed both times, including M2's three new tests. See "Unowned failures" below.
+  - Crash reports: no new uniterm, xctest, or shipped-helper reports. The `ImageDecoderHelper` reports all come from
+    the package tests' deliberate aborts, and all predate the UI runs.
+
+### Unowned failures
+
+Two data viewer UI tests each failed once in a full suite. Each passed 3 of 3 times run alone on the fixed build.
+Neither touches image viewer code.
+
+1. `DataViewerUITests.testEditFindExistsAndIsDisabledWithNoFile`
+   - It failed in the first run, at `DataViewerUITests.swift:365`.
+   - XCUITest raised "Invalid parameter not satisfying: point.x != INFINITY" when it clicked Edit > Find. The menu
+     item had no hit point.
+   - It passed in M1's full run and in the second full run.
+   - Run alone 3 times: run `72S6TD`.
+2. `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile`
+   - It failed in the second run, at `DataViewerUITests.swift:60`.
+   - The open panel's go-to field autocompleted the typed temporary path. `dev.uniterm.app.UITests.xctrunner` became
+     the neighbouring container directory `dev.uniterm.UITests.xctrunner`, which also exists on disk.
+   - Run alone 3 times: run `4VFZCV`.
+
+What stays uncertain:
+- The first failure appears only in suite order. An earlier test may leave the menu bar in a state XCUITest cannot hit.
+  M2 is the first change to add an applet menu, so a link to M2 is not ruled out for it.
+- The second failure is a race between the go-to field's autocomplete and the test's typing. It is independent of this
+  run. A fix would use a temporary directory whose path no other container's path is a prefix of.
+
+### Best guesses and deviations
+
+The proposal's Decision Log holds each one as a "(work-queue best guess)" entry.
+
+1. Play and Pause is one command, "Play or Pause Slideshow", because a registry command has a fixed title.
+2. A partial listing keeps arrival order, and each 256-entry batch is sorted within itself. The full order applies when
+   the scan ends. A fresh large folder may first show an image that is not first in Finder order.
+3. A step to a cached image, the previous one or the prefetched one, skips the disk check for deletion. A stalled
+   mount would otherwise block the step. The deletion is found at the next step that needs the file.
+4. The helper keeps four sources in an LRU with no protocol version bump. The helper ships in the same bundle, so no
+   skew applies.
+5. A bug in M1's client cleared the in-flight decode's expectation on open. It is fixed.
+6. When a single file and its bookmark are both gone, restore opens the current image in the old folder.
+7. Reload re-lists through the held folder handle.
+8. The selection moves at once, and the pane loads one image at a time.
+9. Up to three fit bitmaps are charged to the bitmap budget.
+10. A failed prefetch is not retried until a reload or a new source.
+
+### Review findings
+
+- F1, CONFIRMED: the scheduler replaced a pending prefetch with a frame request without telling the applet. A later
+  step hung. Fixed with a `prefetchDropped` event. The regression test failed before the fix.
+- F2, CONFIRMED by trace: a detach during a prefetch's file open stranded the job, and a later step hung. Fixed. The
+  regression test, with a gated opener, failed before the fix.
+- F3, PLAUSIBLE then confirmed: the full-listing sort ran on the main actor. 100,000 names took 0.66 s in a debug
+  build. The sort now runs on the scan thread or off-main. The linear position lookups per step were not measured.
+- F4, PLAUSIBLE then confirmed: the client's mirror of the helper's source LRU drifted on reverse travel. A cached
+  animated image could then freeze on frame 0. Fixed. The regression test failed when the bug was re-added.
+- F5, PLAUSIBLE then not confirmed: a step already saves the layout, through `appletDidChange` and
+  `notifyLayoutIfDescriptionChanged`. A pinning test was added.
+- F6, proposal: the amendment marker on the deleted-file bullet. Fixed, and the bullet keeps the folder-not-listed
+  behavior.
+
+### ADR review
+
+`adr-impact` found no conflicts. ADR-03, ADR-04, and ADR-05 are consistent, and ADR-07 and ADR-08 are advisory. It
+raised two candidates, and neither passes the bar.
+
+- The rule that applet commands carry no chord and plain keys are view-local applies UTERM-013 and ADR-04. It is not a
+  new invariant.
+- One fixed title per registry command is a mechanism of the registry contract. The map viewer already follows it.
+
+### Test cost
+
+Each new or changed class was timed alone with `swift test --filter`, before the review fixes.
+
+| Test class | Wall time |
+|---|---|
+| `ImageViewerNavigationTests` (25 tests) | 2.4 s |
+| `ImageViewerAppletTests` | 1.6 s |
+| Every other new or changed class | Under 0.03 s |
+
+M2's three new UI tests took 17 s together.

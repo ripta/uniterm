@@ -14,8 +14,11 @@ public final class ImageHelperServer: @unchecked Sendable {
   private let types: [String]
   private let queue = DispatchQueue(label: "uniterm.image-decoder.work")
 
-  private var current: OpenedImage?
-  private var fault: String?
+  private var opened: [UInt32: OpenedImage] = [:]
+  private var faults: [UInt32: String] = [:]
+
+  /// Source IDs from the one used longest ago to the one used last.
+  private var used: [UInt32] = []
 
   /// Serves on `socket`. Tests pass `types` to shorten the list.
   public init(socket: FramedSocket, types: [String]? = nil) {
@@ -76,9 +79,23 @@ public final class ImageHelperServer: @unchecked Sendable {
     _ = try? socket.send(message.frame())
   }
 
+  private func forget(_ source: UInt32) {
+    opened[source] = nil
+    faults[source] = nil
+    used.removeAll { $0 == source }
+  }
+
+  private func remember(_ source: UInt32) {
+    used.removeAll { $0 == source }
+    used.append(source)
+
+    while used.count > ImageProtocol.retainedSources, let oldest = used.first {
+      forget(oldest)
+    }
+  }
+
   private func open(source: UInt32, descriptor: Int32?) {
-    current = nil
-    fault = nil
+    forget(source)
 
     guard let descriptor else {
       reply(.failure(request: 0, kind: .noSource, text: "No file came with the open request."))
@@ -90,15 +107,17 @@ public final class ImageHelperServer: @unchecked Sendable {
 
       #if DEBUG
         if let kind = FaultInjection.fault(in: mapping.data) {
-          fault = kind
+          faults[source] = kind
+          remember(source)
           reply(.opened(SourceInfo(source: source, width: 100, height: 100, frameDelays: [0])))
           return
         }
       #endif
 
-      let opened = try OpenedImage(mapping: mapping, sourceID: source)
-      current = opened
-      reply(.opened(opened.info))
+      let image = try OpenedImage(mapping: mapping, sourceID: source)
+      opened[source] = image
+      remember(source)
+      reply(.opened(image.info))
     } catch let error as SourceFailure {
       reply(.failure(request: 0, kind: kind(of: error), text: error.text))
     } catch {
@@ -108,15 +127,17 @@ public final class ImageHelperServer: @unchecked Sendable {
 
   private func decode(request: UInt32, source: UInt32, maxPixel: Int, frame: Int) {
     #if DEBUG
-      if let fault {
+      if let fault = faults[source] {
         FaultInjection.perform(fault)
       }
     #endif
 
-    guard let image = current, image.info.source == source else {
+    guard let image = opened[source] else {
       reply(.failure(request: request, kind: .staleSource, text: "The source was replaced."))
       return
     }
+
+    remember(source)
 
     guard frame >= 0, frame < image.info.frameCount else {
       reply(.failure(request: request, kind: .unreadable, text: "The frame does not exist."))

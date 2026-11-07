@@ -7,7 +7,7 @@ import StatusKit
 import Theme
 import UniformTypeIdentifiers
 
-/// Shows one image, or the first image of a folder.
+/// Shows one image, or steps through the images of a folder.
 ///
 /// Every load goes through `replaceSource`. The open panel, a drop, the router, and a restore all
 /// reach the same path. It finds and opens the source off the main thread, then hands the image's
@@ -16,57 +16,112 @@ import UniformTypeIdentifiers
 ///
 /// The description holds the source's path and bookmark and the current image's name, never
 /// pixels. `describe()` reads memory only.
+///
+/// Stepping, the slideshow, and the prefetch live in extensions beside this file. They share the
+/// state below, which is why it is not private.
 @MainActor
 public final class ImageViewerApplet: Applet, SourceReplacing {
   public let typeID = ImageViewerDescription.typeID
   public weak var host: (any AppletHost)?
   public let isRunningSomething = false
 
-  public private(set) var title = ImageViewerApplet.untitled
-  public private(set) var segments: [AppletSegment] = []
-  public private(set) var publishedTabs: AppletTabList
+  public internal(set) var title = ImageViewerApplet.untitled
+  public internal(set) var segments: [AppletSegment] = []
+  public internal(set) var publishedTabs: AppletTabList
 
-  private static let untitled = "Image viewer"
+  static let untitled = "Image viewer"
 
   let content: ImageViewerView
   let client: ImageHelperClient
 
-  private let bitmapBudget: ImageBitmapBudget
-  private let lease: ImageBitmapBudget.Lease
+  let bitmapBudget: ImageBitmapBudget
+  let lease: ImageBitmapBudget.Lease
+  let scanPace: ScanPace
+  let slideshowSleep: SlideshowSleep
 
-  private var record: ImageViewerDescription
-  private var describesFromRecord: Bool
-  private var restoreWaitsForStart: Bool
-  private var closed = false
-  private var alerts = AppletAlerts()
-  private var palette = ThemePalette.latte
-  private var loadOrigin = LoadOrigin.user
-  private var loading: Task<Void, Never>?
-  private var loadGeneration = 0
-  private var resizeCheck: Task<Void, Never>?
+  var record: ImageViewerDescription
+  var describesFromRecord: Bool
+  var restoreWaitsForStart: Bool
+  var closed = false
+  var alerts = AppletAlerts()
+  var palette = ThemePalette.latte
+  var loadOrigin = LoadOrigin.user
+  var loading: Task<Void, Never>?
+  var loadGeneration = 0
+  var resizeCheck: Task<Void, Never>?
 
   private(set) var types = SupportedImageTypes()
-  private(set) var phase = Phase.empty
-  private var folder: OpenedFolder?
-  private var openFile: OpenedImageFile?
-  private(set) var listing: [ListedImage] = []
-  private(set) var index: Int?
+  var phase = Phase.empty
+
+  var folder: OpenedFolder?
+  var openFile: OpenedImageFile?
+  var listing = ImageListing(sort: .name)
+  var folderNotListed = false
+  var notListedNoticePosted = false
+  var scanTask: Task<Void, Never>?
+  var scanGeneration = 0
+  var reloadBuffer: [ListedImage]?
+  var scannedOrder: (sort: ImageSort, images: [ListedImage])?
+  var sortGeneration = 0
+
+  /// The image a restore or a reload wants back when only the scan can find it.
+  var landing: WantedImage?
 
   /// What is on screen, and the bytes the bitmap budget holds for it.
-  private(set) var info: SourceInfo?
-  private(set) var shownPixels: PixelSize?
-  private(set) var shownSpace: OutputSpace?
-  private var shownBytes = 0
+  struct Shot {
+    var name: String
+    var modified: Double?
+    var info: SourceInfo
+    var image: CGImage
+    var pixels: PixelSize
+    var space: OutputSpace
+    var bytes: Int
+  }
 
-  private var plan = AnimationPlan(delays: [0])
-  private var frames: [Int: Frame] = [:]
-  private var currentFrame = 0
-  private var waitingFor: Int?
-  private var playing: Task<Void, Never>?
-  private var isDetached = false
+  var shot: Shot?
+
+  /// The source the helper last opened for the pane to show.
+  var info: SourceInfo?
+
+  /// The name and modification time of the image the display source was opened for.
+  var sourceName: String?
+  var sourceModified: Double?
+
+  /// The image whose load last finished, shown or failed. `loadingName` is the one in progress.
+  /// The selection may be ahead of both while the user holds a key.
+  var committedName: String?
+  var loadingName: String?
+  var navTask: Task<Void, Never>?
+  var navGeneration = 0
+  var travelsForward = true
+
+  var cache = FitCache<Shot>()
+  var prefetch: PrefetchJob?
+  var prefetchTask: Task<Void, Never>?
+  var prefetchFailed: Set<String> = []
+
+  /// Opens the file a prefetch asks for. Tests replace it to hold the open.
+  var prefetchOpener:
+    @Sendable (OpenedFolder, String) async -> Result<OpenedImageFile, SourceAccessError> =
+      { folder, name in await SourceLoader.openImage(in: folder, named: name) }
+
+  var isPlaying = false
+  var slideshowTask: Task<Void, Never>?
+
+  var plan = AnimationPlan(delays: [0])
+  var frames: [Int: Frame] = [:]
+  var currentFrame = 0
+  var waitingFor: Int?
+  var playing: Task<Void, Never>?
+  var isDetached = false
 
   /// Frames kept ahead of the one showing. The bitmap budget can cut it to none.
-  private static let framesAhead = 2
+  static let framesAhead = 2
+
+  /// Whether the pane shows more than a fit. A pane that does never prefetches.
+  var isZoomedPastFit = false {
+    didSet { client.isZoomedPastFit = isZoomedPastFit }
+  }
 
   enum Phase: Equatable {
     case empty
@@ -90,7 +145,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   init(
     startDirectory: String?, settings: HelperSettings, helperBudget: ImageHelperBudget,
-    bitmapBudget: ImageBitmapBudget
+    bitmapBudget: ImageBitmapBudget, scanPace: ScanPace = ScanPace(),
+    slideshowSleep: @escaping SlideshowSleep = ImageViewerApplet.realSleep
   ) {
     record = ImageViewerDescription(startDirectory: startDirectory)
     restoreWaitsForStart = false
@@ -99,6 +155,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     content = ImageViewerView(frame: .zero)
     client = ImageHelperClient(settings: settings, budget: helperBudget)
     self.bitmapBudget = bitmapBudget
+    self.scanPace = scanPace
+    self.slideshowSleep = slideshowSleep
     lease = bitmapBudget.makeLease()
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
@@ -116,7 +174,9 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   init(
     restoring description: AppletDescription, settings: HelperSettings,
-    helperBudget: ImageHelperBudget, bitmapBudget: ImageBitmapBudget
+    helperBudget: ImageHelperBudget, bitmapBudget: ImageBitmapBudget,
+    scanPace: ScanPace = ScanPace(),
+    slideshowSleep: @escaping SlideshowSleep = ImageViewerApplet.realSleep
   ) throws {
     record = try ImageViewerDescription.decode(description)
     restoreWaitsForStart = record.path != nil
@@ -125,8 +185,11 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     content = ImageViewerView(frame: .zero)
     client = ImageHelperClient(settings: settings, budget: helperBudget)
     self.bitmapBudget = bitmapBudget
+    self.scanPace = scanPace
+    self.slideshowSleep = slideshowSleep
     lease = bitmapBudget.makeLease()
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
+    listing = ImageListing(sort: record.sort)
 
     wire()
     refresh()
@@ -169,14 +232,18 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     content.onRetry = { [weak self] in self?.retry() }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
     content.onGeometryChange = { [weak self] in self?.geometryChanged() }
+    content.onKey = { [weak self] key in self?.handle(key: key) ?? false }
     client.onEvent = { [weak self] event in self?.handle(event) }
   }
+
+  var shownPixels: PixelSize? { shot?.pixels }
+  var shownSpace: OutputSpace? { shot?.space }
 
   // MARK: Source
 
   /// Shows `file`, or the first image of it when it is a folder, in place of what the pane shows.
-  /// A playing animation stops. Nothing here touches the disk, so a missing or unreadable source
-  /// shows its message in the pane.
+  /// A playing slideshow or animation stops. Nothing here touches the disk, so a missing or
+  /// unreadable source shows its message in the pane.
   public func replaceSource(with file: URL, startDirectory: String) throws {
     record = ImageViewerDescription(
       startDirectory: startDirectory, path: file.path, sort: record.sort)
@@ -186,17 +253,23 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     begin(path: file.path, bookmark: nil, wanted: nil, origin: .user)
   }
 
-  private func begin(path: String, bookmark: Data?, wanted: WantedImage?, origin: LoadOrigin) {
+  func begin(path: String, bookmark: Data?, wanted: WantedImage?, origin: LoadOrigin) {
     loading?.cancel()
     loadGeneration += 1
     loadOrigin = origin
     alerts.replaceLoad()
+    stopSlideshow()
     clearImage()
+    cancelNavigation()
 
     folder = nil
     openFile = nil
-    listing = []
-    index = nil
+    listing = ImageListing(sort: record.sort)
+    folderNotListed = false
+    notListedNoticePosted = false
+    committedName = nil
+    prefetchFailed = []
+    landing = wanted
     phase = .opening
     refresh()
 
@@ -213,15 +286,18 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       guard let self, generation == self.loadGeneration, !self.closed else { return }
 
       self.loading = nil
-      self.finishLoading(result)
+      self.finishLoading(result, wanted: wanted)
     }
   }
 
-  private func finishLoading(_ result: Result<LoadedSource, SourceLoadFailure>) {
+  private func finishLoading(
+    _ result: Result<LoadedSource, SourceLoadFailure>, wanted: WantedImage?
+  ) {
     describesFromRecord = false
 
     switch result {
     case .failure(let failure):
+      landing = nil
       phase = .problem(
         PaneMessage(text: failure.localizedDescription, offersOpen: true, offersRetry: false))
       notify(.warning, failure.localizedDescription, delivery: .historyOnly)
@@ -237,40 +313,72 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       }
 
       folder = loaded.folder
-      listing = loaded.listing
-      index = loaded.index
+      folderNotListed = loaded.folderNotListed
+      listing = ImageListing(sort: record.sort)
 
-      if let file = loaded.file {
+      if let file = loaded.image {
+        landing = nil
+        listing.seed(ListedImage(name: file.name, modified: file.modified))
         show(file: file)
       }
+
+      if loaded.folderNotListed {
+        listing.finish()
+        postNotListedNotice()
+      } else {
+        startScan()
+      }
+
+      refresh()
     }
   }
 
-  private func show(file: OpenedImageFile) {
+  func postNotListedNotice() {
+    guard !notListedNoticePosted else { return }
+
+    notListedNoticePosted = true
+
+    let name = record.current.map { "\u{201C}\($0)\u{201D}" } ?? "this image"
+
+    notify(
+      .warning,
+      "The folder of \(name) could not be listed, so only this image is shown. macOS may be protecting the folder.",
+      delivery: .message)
+  }
+
+  /// Starts showing `file` as the image the helper decodes. What the pane showed stays on screen
+  /// until the new image arrives.
+  func show(file: OpenedImageFile) {
     openFile = file
+    sourceName = file.name
+    sourceModified = file.modified
     record.current = file.name
     record.currentModified = file.modified
-    phase = .opening
-    refresh()
+    loadingName = file.name
+    info = nil
 
-    client.open(file)
+    stopAnimating()
+    dropFrames()
+
+    if phase != .showing { phase = .opening }
+
+    refresh()
+    client.open(file, role: .display)
   }
 
   /// Opens the shown image again, as after a helper crash.
   func retry() {
-    guard let file = openFile else {
-      if let path = record.path {
-        begin(
-          path: path, bookmark: record.bookmark,
-          wanted: record.current.map { WantedImage(name: $0, modified: record.currentModified) },
-          origin: .user)
-      }
-
+    if let current = listing.current, folder != nil || openFile != nil {
+      beginLoad(of: current, bypassCache: true)
       return
     }
 
-    clearImage()
-    show(file: file)
+    if let path = record.path {
+      begin(
+        path: path, bookmark: record.bookmark,
+        wanted: record.current.map { WantedImage(name: $0, modified: record.currentModified) },
+        origin: .user)
+    }
   }
 
   /// A drop of one file or folder replaces the pane's source. Several items are refused with a
@@ -324,8 +432,18 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       info = opened
       plan = AnimationPlan(delays: opened.frameDelays)
       currentFrame = 0
+      reapPrefetch()
       requestStill()
       refresh()
+
+    case .prefetchOpened(let opened):
+      prefetchOpened(opened)
+
+    case .prefetchDropped(let request):
+      prefetchDropped(request)
+
+    case .prefetchOpenFailed(let source, let text):
+      prefetchOpenFailed(source, text)
 
     case .image(let request, let header, let pixels):
       received(request, header, pixels)
@@ -334,20 +452,28 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       failed(request, kind, text)
 
     case .refused(let request, let text):
-      if request.kind == .still {
+      if request.kind == .prefetch {
+        prefetchLost(text)
+      } else if request.kind == .still {
         problem(text, offersRetry: true)
       } else {
         stopAnimating()
       }
 
-    case .ended(let reason, _):
-      ended(reason)
+    case .ended(let reason, let lost):
+      if lost?.kind == .prefetch, !(prefetch?.promoted ?? false) {
+        helperLostDuringPrefetch()
+      } else {
+        ended(reason)
+      }
     }
   }
 
   private var imageName: String { record.current ?? title }
 
   private func ended(_ reason: HelperEnd) {
+    if let failing = loadingName ?? sourceName { committedName = failing }
+
     clearImage()
     stopAnimating()
 
@@ -382,9 +508,18 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   }
 
   private func failed(_ request: DecodeRequest?, _ kind: FailureKind, _ text: String) {
+    if let request, request.kind == .prefetch {
+      prefetchLost(text)
+      return
+    }
+
     switch kind {
     case .staleSource:
-      return
+      guard let request, request.source == info?.source,
+        let current = listing.current
+      else { return }
+
+      beginLoad(of: current, bypassCache: true)
 
     case .noSource:
       problem(text, offersRetry: true)
@@ -399,10 +534,15 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     }
   }
 
-  private func problem(_ text: String, offersRetry: Bool) {
+  /// Shows `text` in place of the image. The load in progress, if any, is finished.
+  func problem(_ text: String, offersRetry: Bool) {
+    if let loadingName { committedName = loadingName }
+
+    loadingName = nil
     phase = .problem(PaneMessage(text: text, offersOpen: true, offersRetry: offersRetry))
     notify(.warning, text, delivery: .historyOnly)
     refresh()
+    pump()
   }
 
   // MARK: Decoding
@@ -416,6 +556,10 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     return FitMath.requestedLongerSide(displayed: displayed, native: native)
   }
 
+  func fitLongerSide(of info: SourceInfo) -> Int {
+    requestedLongerSide(for: info)
+  }
+
   private func requestStill() {
     guard let info else { return }
 
@@ -423,6 +567,11 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   }
 
   private func received(_ request: DecodeRequest, _ header: ImageHeader, _ pixels: Data) {
+    if request.kind == .prefetch {
+      prefetchArrived(request, header, pixels)
+      return
+    }
+
     guard let info, request.source == info.source else { return }
 
     let native = PixelSize(width: Int(info.width), height: Int(info.height))
@@ -439,47 +588,89 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       return
     }
 
-    releaseShown()
     dropFrames()
+    retireShown(keeping: sourceName)
 
-    guard bitmapBudget.reserve(pixels.count, lease: lease) else {
+    guard reserve(pixels.count) else {
       problem(
         "There is not enough memory to show \u{201C}\(imageName)\u{201D} right now. Close an image pane and retry.",
         offersRetry: true)
       return
     }
 
-    shownBytes = pixels.count
-    shownPixels = size
-    shownSpace = header.space
     currentFrame = Int(header.frame)
+    shot = Shot(
+      name: sourceName ?? imageName, modified: sourceModified, info: info, image: image,
+      pixels: size, space: header.space, bytes: pixels.count)
+    committedName = sourceName
+    loadingName = nil
     phase = .showing
     content.show(image: image, native: native, hdr: header.space.isHDR)
     frames[currentFrame] = Frame(image: image, bytes: 0)
     refresh()
 
     if plan.isAnimated { startAnimating() }
+
+    shownSettled()
+  }
+
+  /// Reserves `bytes` in the bitmap budget. The images a pane keeps beside the one on screen give
+  /// way first, so a pane can always show the image the user asked for.
+  func reserve(_ bytes: Int) -> Bool {
+    if bitmapBudget.reserve(bytes, lease: lease) { return true }
+
+    releaseCache()
+
+    return bitmapBudget.reserve(bytes, lease: lease)
+  }
+
+  /// Puts what the pane shows aside. A different image becomes the previous one, which the cache
+  /// keeps. The same image, decoded again at another size, gives its bytes back.
+  func retireShown(keeping next: String?) {
+    guard let old = shot else { return }
+
+    shot = nil
+
+    if old.name == next {
+      bitmapBudget.giveBack(old.bytes, lease: lease)
+      return
+    }
+
+    let entry = FitCache<Shot>.Entry(name: old.name, modified: old.modified, value: old)
+
+    if let evicted = cache.keepPrevious(entry) {
+      bitmapBudget.giveBack(evicted.value.bytes, lease: lease)
+    }
+  }
+
+  func releaseCache() {
+    for entry in cache.removeAll() {
+      bitmapBudget.giveBack(entry.value.bytes, lease: lease)
+    }
   }
 
   /// Releases the bitmap the budget holds for the image on screen, and the frames behind it.
-  private func clearImage() {
+  func clearImage() {
     resizeCheck?.cancel()
     stopAnimating()
     dropFrames()
-    releaseShown()
-    shownPixels = nil
-    shownSpace = nil
+    releaseCache()
+    prefetchTask?.cancel()
+    prefetchTask = nil
+    prefetch = nil
+
+    if let old = shot { bitmapBudget.giveBack(old.bytes, lease: lease) }
+
+    shot = nil
     info = nil
+    sourceName = nil
+    sourceModified = nil
+    loadingName = nil
     plan = AnimationPlan(delays: [0])
     content.show(message: PaneMessage(text: "", offersOpen: false, offersRetry: false))
   }
 
-  private func releaseShown() {
-    bitmapBudget.giveBack(shownBytes, lease: lease)
-    shownBytes = 0
-  }
-
-  private func dropFrames() {
+  func dropFrames() {
     for frame in frames.values {
       bitmapBudget.giveBack(frame.bytes, lease: lease)
     }
@@ -490,8 +681,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   // MARK: Resize
 
-  private func geometryChanged() {
-    guard phase == .showing, info != nil else { return }
+  func geometryChanged() {
+    guard phase == .showing, shot != nil, loadingName == nil else { return }
 
     resizeCheck?.cancel()
     resizeCheck = Task { @MainActor [weak self] in
@@ -504,14 +695,21 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   }
 
   private func sharpenIfNeeded() {
-    guard let info, let held = shownPixels, phase == .showing else { return }
+    guard let held = shot, phase == .showing, loadingName == nil else { return }
 
-    let native = PixelSize(width: Int(info.width), height: Int(info.height))
+    let native = PixelSize(width: Int(held.info.width), height: Int(held.info.height))
     let displayed = content.displayedPixels(for: native)
 
-    if FitMath.needsSharperDecode(held: held, displayed: displayed, native: native) {
-      requestStill()
+    guard FitMath.needsSharperDecode(held: held.pixels, displayed: displayed, native: native) else {
+      return
     }
+
+    guard client.source?.source == held.info.source, info?.source == held.info.source else {
+      if let current = listing.current { beginLoad(of: current, bypassCache: true) }
+      return
+    }
+
+    requestStill()
   }
 
   // MARK: Animation
@@ -521,14 +719,14 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   /// The animation frame on screen.
   var frameIndex: Int { currentFrame }
 
-  private func startAnimating() {
+  func startAnimating() {
     guard plan.isAnimated, !isDetached, !closed, playing == nil else { return }
 
     fillWindow()
     scheduleNextFrame()
   }
 
-  private func stopAnimating() {
+  func stopAnimating() {
     playing?.cancel()
     playing = nil
   }
@@ -624,6 +822,9 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     closed = true
     loading?.cancel()
     resizeCheck?.cancel()
+    scanTask?.cancel()
+    cancelNavigation()
+    stopSlideshow()
     stopAnimating()
     alerts.discard()
     clearImage()
@@ -633,11 +834,14 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     openFile = nil
   }
 
-  /// Pauses an animation and holds back alerts while the pane is off screen.
+  /// Pauses an animation and the slideshow, and holds back alerts while the pane is off screen. The
+  /// slideshow remembers that it was playing.
   public func detach() {
     isDetached = true
     alerts.detach()
     stopAnimating()
+    pauseSlideshowTimer()
+    abandonPrefetchOpening()
   }
 
   public func reattach() {
@@ -645,6 +849,9 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     alerts.reattach(from: self, to: host)
 
     if phase == .showing, plan.isAnimated { startAnimating() }
+
+    resumeSlideshowTimer()
+    maybePrefetch()
   }
 
   public func focus() {
@@ -665,12 +872,12 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   // MARK: Display
 
-  private func notify(_ level: StatusLevel, _ text: String, delivery: AppletNotice.Delivery) {
+  func notify(_ level: StatusLevel, _ text: String, delivery: AppletNotice.Delivery) {
     alerts.deliver(
       AppletNotice(level, text, delivery: delivery), origin: loadOrigin, from: self, to: host)
   }
 
-  private func refresh() {
+  func refresh() {
     guard !closed else { return }
 
     switch phase {
@@ -709,22 +916,37 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   }
 
   private func segmentsForState() -> [AppletSegment] {
-    guard phase == .showing, let info else { return [] }
+    var segments: [AppletSegment] = []
 
-    var segments = [
-      AppletSegment(
-        symbolName: "photo", text: "\(info.width.formatted()) \u{00D7} \(info.height.formatted())")
-    ]
-
-    if plan.isAnimated {
-      segments.append(
-        AppletSegment(symbolName: "play.rectangle", text: "\(plan.frameCount) frames"))
-    }
-
-    if listing.count > 1, let index {
+    if phase == .showing, let held = shot {
       segments.append(
         AppletSegment(
-          symbolName: "folder", text: "\((index + 1).formatted()) of \(listing.count.formatted())"))
+          symbolName: "photo",
+          text: "\(held.info.width.formatted()) \u{00D7} \(held.info.height.formatted())"))
+
+      if plan.isAnimated {
+        segments.append(
+          AppletSegment(symbolName: "play.rectangle", text: "\(plan.frameCount) frames"))
+      }
+
+      if listing.count > 1, let index = listing.index {
+        let more = listing.isComplete ? "" : "+"
+
+        segments.append(
+          AppletSegment(
+            symbolName: "folder",
+            text: "\((index + 1).formatted()) of \(listing.count.formatted())\(more)"))
+      }
+    }
+
+    if isPlaying {
+      segments.append(AppletSegment(symbolName: "play.fill", text: "Slideshow"))
+    }
+
+    if folderNotListed {
+      segments.append(
+        AppletSegment(
+          symbolName: "folder.badge.questionmark", text: "Folder not listed", style: .warning))
     }
 
     return segments

@@ -42,6 +42,48 @@ final class SchedulerAndBudgetTests: XCTestCase {
     XCTAssertEqual(scheduler.pending, request(3))
   }
 
+  /// Catches a prefetch that takes a slot a step needs. It takes the idle slot, waits behind a decode
+  /// in flight when nothing else waits, and is dropped when another request already waits.
+  func testAPrefetchTakesTheIdleSlotAndYieldsToEveryOtherRequest() {
+    var scheduler = RequestScheduler()
+
+    XCTAssertEqual(scheduler.submit(request(1, .prefetch)), request(1, .prefetch))
+    XCTAssertNil(scheduler.submit(request(2, .prefetch)))
+    XCTAssertEqual(scheduler.pending, request(2, .prefetch))
+
+    XCTAssertNil(scheduler.submit(request(3)), "a step replaces the waiting prefetch")
+    XCTAssertEqual(scheduler.pending, request(3))
+    XCTAssertEqual(scheduler.inFlight, request(1, .prefetch), "the one decoding runs to completion")
+
+    XCTAssertNil(scheduler.submit(request(4, .prefetch)), "a waiting step is not displaced")
+    XCTAssertEqual(scheduler.pending, request(3))
+    XCTAssertEqual(scheduler.finish(), request(3))
+  }
+
+  /// Catches a pane zoomed past fit prefetching. The gate refuses new prefetches and drops one that
+  /// waits, while leaving other requests alone.
+  func testAPaneZoomedPastFitNeverPrefetches() {
+    var scheduler = RequestScheduler()
+
+    _ = scheduler.submit(request(1))
+    XCTAssertNil(scheduler.submit(request(2, .prefetch)))
+    XCTAssertEqual(scheduler.pending?.kind, .prefetch)
+
+    scheduler.isZoomedPastFit = true
+
+    XCTAssertNil(scheduler.pending)
+    XCTAssertNil(scheduler.submit(request(3, .prefetch)))
+    XCTAssertNil(scheduler.pending)
+    XCTAssertNil(scheduler.submit(request(4)))
+    XCTAssertEqual(scheduler.pending, request(4))
+
+    scheduler.reset()
+    scheduler.isZoomedPastFit = true
+
+    XCTAssertNil(scheduler.submit(request(5, .prefetch)), "an idle zoomed pane still refuses")
+    XCTAssertTrue(scheduler.isIdle)
+  }
+
   /// Catches a reset that leaves a request behind, as when a helper dies with one in flight.
   func testResetForgetsBothRequests() {
     var scheduler = RequestScheduler()

@@ -36,10 +36,26 @@ public enum HelperEnd: Equatable, Sendable {
   }
 }
 
+/// Why the pane opens a file: to show it, or to have it ready for the next step.
+enum OpenRole: Equatable, Sendable {
+  case display
+  case prefetch
+}
+
 /// What the client tells the pane.
 enum HelperEvent: Equatable, Sendable {
   case types([String])
   case opened(SourceInfo)
+
+  /// The helper opened a file the pane asked for ahead of time. The pane decides what to decode.
+  case prefetchOpened(SourceInfo)
+
+  /// A prefetch decode that was waiting for the helper was replaced or dropped before it was sent.
+  /// The ID is the request's.
+  case prefetchDropped(UInt32)
+
+  /// The helper could not open a file the pane asked for ahead of time.
+  case prefetchOpenFailed(UInt32, String)
 
   /// A decoded image that matched its request. The pane builds the bitmap from the bytes.
   case image(DecodeRequest, ImageHeader, Data)
@@ -87,8 +103,18 @@ final class ImageHelperClient {
   private var generation = 0
   private var scheduler = RequestScheduler()
   private var sourceID: UInt32 = 0
-  private var info: SourceInfo?
-  private var openingSources: [UInt32] = []
+
+  /// The source the pane shows. Its info is in `infos` once the helper has opened it.
+  private var displaySource: UInt32 = 0
+
+  /// The sources the helper has opened and still keeps, with what it said about each. It mirrors
+  /// the helper's own limit, so a source the helper dropped is gone here too. The mirror follows
+  /// the helper's order of use: an open and a decode touch a source, and selecting one does not,
+  /// since the helper never hears of a selection. An open that the helper has not answered yet
+  /// already counts, because the helper orders requests as they arrive.
+  private var infos: [UInt32: SourceInfo] = [:]
+  private var recentSources: [UInt32] = []
+  private var openingSources: [(id: UInt32, role: OpenRole)] = []
   private var busySince: ContinuousClock.Instant?
   private var watchdog: Task<Void, Never>?
   private var nonce: UInt32 = 0
@@ -104,6 +130,10 @@ final class ImageHelperClient {
   /// How many tasks still read a helper's events. Each helper has one, and it ends when the helper
   /// is gone.
   private(set) var activePumps = 0
+
+  /// How many decode requests reached the helper. A step to an image the pane already holds adds
+  /// none.
+  private(set) var decodesSent = 0
 
   /// The footprint last read, which tests report as the helper's resting size.
   private(set) var lastFootprint: Int?
@@ -129,7 +159,42 @@ final class ImageHelperClient {
 
   var isRunning: Bool { process != nil }
   var processID: pid_t? { process?.pid }
-  var source: SourceInfo? { info }
+  var source: SourceInfo? { infos[displaySource] }
+
+  /// True while a prefetch decode is the one in flight.
+  var prefetchInFlight: Bool { scheduler.inFlight?.kind == .prefetch }
+
+  /// Whether the pane shows more than a fit. A pane that does is never prefetched for.
+  var isZoomedPastFit: Bool {
+    get { scheduler.isZoomedPastFit }
+    set {
+      let waiting = scheduler.pending
+
+      scheduler.isZoomedPastFit = newValue
+      reportDropped(waiting)
+    }
+  }
+
+  /// Offers `request` to the scheduler. A prefetch it was holding that the request replaced is
+  /// reported, since nothing else would tell the pane it will never be decoded.
+  private func submit(_ request: DecodeRequest) -> DecodeRequest? {
+    let waiting = scheduler.pending
+    let toSend = scheduler.submit(request)
+
+    reportDropped(waiting)
+
+    return toSend
+  }
+
+  private func reportDropped(_ waiting: DecodeRequest?) {
+    guard let waiting, waiting.kind == .prefetch, scheduler.pending?.id != waiting.id,
+      scheduler.inFlight?.id != waiting.id
+    else { return }
+
+    onEvent?(.prefetchDropped(waiting.id))
+  }
+
+  private var info: SourceInfo? { infos[displaySource] }
 
   /// Starts the helper if it is not running, and returns whether it is.
   @discardableResult
@@ -179,24 +244,74 @@ final class ImageHelperClient {
     }
   }
 
-  /// Opens `file` as the new source. Anything the pane shows from an earlier source is stale.
-  func open(_ file: OpenedImageFile) {
-    guard ensureRunning(), let process else { return }
+  /// Opens `file` in the helper. A display open makes it the source the pane shows, and anything
+  /// the pane shows from an earlier source is stale. A prefetch open leaves the shown source alone.
+  /// Returns the source ID, or nil when the helper could not start or the descriptor could not go.
+  @discardableResult
+  func open(_ file: OpenedImageFile, role: OpenRole = .display) -> UInt32? {
+    guard ensureRunning(), let process else { return nil }
 
     sourceID &+= 1
-    info = nil
-    expectation = nil
-    openingSources.append(sourceID)
+
+    let id = sourceID
+
+    if role == .display { displaySource = id }
+
+    openingSources.append((id, role))
+    touch(id)
 
     if busySince == nil { markBusy() }
 
     do {
       try withExtendedLifetime(file) {
-        try process.socket.send(
-          AppMessage.open(source: sourceID).frame(), descriptor: file.descriptor)
+        try process.socket.send(AppMessage.open(source: id).frame(), descriptor: file.descriptor)
       }
     } catch {
       end(.crashed("The image decoder stopped answering."), lost: nil)
+      return nil
+    }
+
+    return id
+  }
+
+  /// Shows a source the helper opened earlier, as when the pane steps to an image it already holds.
+  /// Returns false when the helper no longer keeps it.
+  func select(source: UInt32) -> Bool {
+    guard infos[source] != nil else { return false }
+
+    displaySource = source
+
+    return true
+  }
+
+  /// Asks for the fit decode of a source that is not the one on screen. Returns false when the
+  /// scheduler drops the request, as it does for a pane zoomed past fit or one with a request
+  /// already waiting.
+  @discardableResult
+  func prefetch(_ opened: SourceInfo, maxPixel: Int) -> UInt32? {
+    guard infos[opened.source] != nil, process != nil else { return nil }
+
+    requestCounter &+= 1
+
+    let request = DecodeRequest(
+      id: requestCounter, source: opened.source, maxPixel: maxPixel, frame: 0, kind: .prefetch)
+
+    if let toSend = submit(request) {
+      send(toSend)
+    }
+
+    let accepted = scheduler.inFlight?.id == request.id || scheduler.pending?.id == request.id
+
+    return accepted ? request.id : nil
+  }
+
+  private func touch(_ source: UInt32) {
+    recentSources.removeAll { $0 == source }
+    recentSources.append(source)
+
+    while recentSources.count > ImageProtocol.retainedSources, let oldest = recentSources.first {
+      recentSources.removeFirst()
+      infos[oldest] = nil
     }
   }
 
@@ -211,7 +326,7 @@ final class ImageHelperClient {
     let request = DecodeRequest(
       id: requestCounter, source: info.source, maxPixel: maxPixel, frame: frame, kind: kind)
 
-    if let toSend = scheduler.submit(request) {
+    if let toSend = submit(request) {
       send(toSend)
     }
 
@@ -242,6 +357,8 @@ final class ImageHelperClient {
 
     generation += 1
     scheduler.reset()
+    infos = [:]
+    recentSources = []
     readLimit.withLock { $0 = 0 }
     budget.release(owner: owner)
     onEvent = nil
@@ -250,7 +367,7 @@ final class ImageHelperClient {
   // MARK: Sending
 
   private func predictedBytes(for request: DecodeRequest) -> Int {
-    guard let info else { return 0 }
+    guard let info = infos[request.source] else { return 0 }
 
     let native = PixelSize(width: Int(info.width), height: Int(info.height))
     let longer = request.maxPixel > 0 ? min(request.maxPixel, native.longer) : native.longer
@@ -262,7 +379,12 @@ final class ImageHelperClient {
   }
 
   private func send(_ request: DecodeRequest) {
-    guard let process, let info else { return }
+    guard let process, let info = infos[request.source] else {
+      refuse(request, "The image is no longer open in the decoder.")
+      return
+    }
+
+    touch(request.source)
 
     let predicted = predictedBytes(for: request)
     let estimate = predicted.multipliedReportingOverflow(by: 2).partialValue + (64 << 20)
@@ -283,6 +405,7 @@ final class ImageHelperClient {
       byteCap: settings.maxImageBytes)
 
     readLimit.withLock { $0 = predicted }
+    decodesSent += 1
     markBusy()
 
     do {
@@ -348,7 +471,7 @@ final class ImageHelperClient {
 
       if openingSources.isEmpty && scheduler.inFlight == nil { markIdle() }
 
-      guard opened.source == expected else {
+      guard opened.source == expected.id else {
         end(.misbehaved("an open reply for the wrong source"), lost: scheduler.inFlight)
         return
       }
@@ -358,10 +481,15 @@ final class ImageHelperClient {
         return
       }
 
-      guard expected == sourceID else { return }
+      infos[opened.source] = opened
 
-      info = opened
-      onEvent?(.opened(opened))
+      switch expected.role {
+      case .display:
+        if opened.source == displaySource { onEvent?(.opened(opened)) }
+
+      case .prefetch:
+        onEvent?(.prefetchOpened(opened))
+      }
 
     case .image(let header, let pixels):
       guard let request = scheduler.inFlight, let expectation, expectation.request == header.request
@@ -392,7 +520,11 @@ final class ImageHelperClient {
 
         if openingSources.isEmpty && scheduler.inFlight == nil { markIdle() }
 
-        if failed == sourceID { onEvent?(.failed(nil, kind, text)) }
+        if failed.role == .display, failed.id == displaySource {
+          onEvent?(.failed(nil, kind, text))
+        } else if failed.role == .prefetch {
+          onEvent?(.prefetchOpenFailed(failed.id, text))
+        }
 
         return
       }
@@ -520,7 +652,8 @@ final class ImageHelperClient {
     expectation = nil
     scheduler.reset()
     openingSources = []
-    info = nil
+    infos = [:]
+    recentSources = []
     process = nil
     generation += 1
 

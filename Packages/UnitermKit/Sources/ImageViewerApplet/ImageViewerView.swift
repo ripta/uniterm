@@ -10,6 +10,37 @@ struct PaneMessage: Equatable {
   var offersRetry: Bool
 }
 
+/// A key the image view acts on.
+enum ImageKey: Equatable {
+  case left
+  case right
+  case home
+  case end
+  case space
+  case shiftSpace
+
+  /// The key an event stands for, or nil when the view leaves it alone. A command, option, or
+  /// control chord is never an image key, so the menu and the palette's own text keys are not
+  /// taken from them.
+  static func key(for event: NSEvent) -> ImageKey? {
+    guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+      return nil
+    }
+
+    switch event.specialKey {
+    case .leftArrow: return .left
+    case .rightArrow: return .right
+    case .home: return .home
+    case .end: return .end
+    default: break
+    }
+
+    guard event.charactersIgnoringModifiers == " " else { return nil }
+
+    return event.modifierFlags.contains(.shift) ? .shiftSpace : .space
+  }
+}
+
 /// The image viewer's body. A layer holds the bitmap and is sized to fit the pane. A message and
 /// its buttons stand in for the image when there is none.
 ///
@@ -18,6 +49,9 @@ struct PaneMessage: Equatable {
 final class ImageViewerView: NSView {
   var onOpen: (() -> Void)?
   var onRetry: (() -> Void)?
+
+  /// Gets a key the view acts on. Returns false to leave it unhandled.
+  var onKey: ((ImageKey) -> Bool)?
 
   /// Gets the dropped file URLs, which may be none. Returns false to refuse them.
   var onDrop: (([URL]) -> Bool)?
@@ -159,6 +193,12 @@ final class ImageViewerView: NSView {
     guard !imageLayer.isHidden else { return nil }
 
     return imageLayer.frame
+  }
+
+  override func keyDown(with event: NSEvent) {
+    if let key = ImageKey.key(for: event), onKey?(key) == true { return }
+
+    super.keyDown(with: event)
   }
 
   override func layout() {

@@ -48,6 +48,67 @@ final class HelperClientTests: XCTestCase {
     XCTAssertEqual(log.images.first.map { [$0.width, $0.height] }, [50, 25])
   }
 
+  /// Catches a client that forgets which sources the helper still keeps. The helper drops the one
+  /// decoded or opened longest ago, so selecting a source on the client side must not make it look
+  /// newer. After four sources are open and the first is selected, a fifth drops the first on both
+  /// sides.
+  func testSelectingASourceDoesNotKeepItAliveOnlyOnTheClientSide() async throws {
+    let (client, log) = makeClient()
+    var ids: [UInt32] = []
+
+    for index in 1...ImageProtocol.retainedSources {
+      let file = try openedFile(ImageFixtures.png(), named: "f\(index).png", in: folder)
+
+      ids.append(try XCTUnwrap(client.open(file, role: .prefetch)))
+    }
+
+    await expectEventually {
+      log.events.filter { if case .prefetchOpened = $0 { return true } else { return false } }.count
+        == ImageProtocol.retainedSources
+    }
+
+    XCTAssertTrue(client.select(source: ids[0]))
+
+    let fifth = try openedFile(ImageFixtures.png(), named: "f5.png", in: folder)
+    client.open(fifth, role: .prefetch)
+
+    await expectEventually {
+      log.events.filter { if case .prefetchOpened = $0 { return true } else { return false } }.count
+        == ImageProtocol.retainedSources + 1
+    }
+
+    XCTAssertFalse(client.select(source: ids[0]), "the helper dropped it, so the client must too")
+    XCTAssertTrue(client.select(source: ids[1]))
+  }
+
+  /// Catches a prefetch the scheduler replaced going unreported. A frame request that replaces a
+  /// waiting prefetch tells the pane, which would otherwise wait for a decode that never comes.
+  func testAReplacedPrefetchIsReported() async throws {
+    let (client, log) = makeClient()
+
+    client.open(try openedFile(ImageFixtures.png(), named: "a.png", in: folder))
+    await expectEventually { log.opened != nil }
+
+    let spare = try XCTUnwrap(
+      client.open(try openedFile(ImageFixtures.png(), named: "b.png", in: folder), role: .prefetch))
+    await expectEventually {
+      log.events.contains { if case .prefetchOpened = $0 { return true } else { return false } }
+    }
+
+    let held = try XCTUnwrap(
+      log.events.compactMap { event -> SourceInfo? in
+        if case .prefetchOpened(let info) = event { return info } else { return nil }
+      }.first)
+    XCTAssertEqual(held.source, spare)
+
+    client.decode(maxPixel: 16, frame: 0, kind: .still)
+    let waiting = try XCTUnwrap(client.prefetch(held, maxPixel: 16))
+
+    client.decode(maxPixel: 16, frame: 0, kind: .frame)
+
+    XCTAssertTrue(log.events.contains(.prefetchDropped(waiting)))
+  }
+
   /// Catches a crashing file taking more than its own pane down. One helper aborts on a crafted
   /// file, the pane's client reports a crash that offers a retry, and a second client keeps
   /// decoding. The first client then starts a fresh helper.

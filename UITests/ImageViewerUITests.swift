@@ -111,8 +111,10 @@ final class ImageViewerUITests: UnitermUITestCase {
     window.descendants(matching: .any).matching(identifier: "status-applet-\(index)").firstMatch
   }
 
-  private func attachScreenshot(_ name: String) {
-    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+  /// Attaches a screenshot of the uniterm window only, so it carries nothing of the user's other
+  /// windows.
+  private func attachScreenshot(_ name: String, of window: XCUIElement) {
+    let attachment = XCTAttachment(screenshot: window.screenshot())
     attachment.name = name
     attachment.lifetime = .keepAlways
     add(attachment)
@@ -167,7 +169,7 @@ final class ImageViewerUITests: UnitermUITestCase {
       "the image never showed. The sandboxed helper may not have started.")
     XCTAssertFalse(
       window.buttons["image-viewer-open"].exists, "the Open button stays over the image")
-    attachScreenshot("image viewer, sRGB PNG")
+    attachScreenshot("image viewer, sRGB PNG", of: window)
   }
 
   /// Catches a layout that loses the folder or its current image over a relaunch, and a restore that
@@ -217,12 +219,112 @@ final class ImageViewerUITests: UnitermUITestCase {
     let window = mainWindow(in: app)
 
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "64 \u{00D7} 64" })
-    attachScreenshot("image viewer, animated GIF")
+    attachScreenshot("image viewer, animated GIF", of: window)
 
     app.typeKey("w", modifierFlags: .command)
 
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 3), "closing the viewer asked a question")
     XCTAssertTrue(window.exists)
+  }
+
+  private func palette(in app: XCUIApplication) -> XCUIElement {
+    app.descendants(matching: .any)["command-palette"]
+  }
+
+  /// Catches view keys that do not step the folder in the real window. The arrows, Space,
+  /// Shift-Space, Home, and End move through three differently sized images, and the position
+  /// segment follows.
+  func testViewKeysStepThroughAFolder() throws {
+    let folder = try makeFolder()
+
+    try writePNG("a.png", in: folder, width: 100, height: 100)
+    try writePNG("b.png", in: folder, width: 200, height: 100)
+    try writePNG("c.png", in: folder, width: 300, height: 100)
+    try plantViewer(path: folder.path, kind: "folder", current: "a.png")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 20) { $0 == "1 of 3" })
+    viewer(in: window).click()
+
+    app.typeKey(.rightArrow, modifierFlags: [])
+    XCTAssertTrue(waitFor(segment(0, in: window), timeout: 10) { $0 == "200 \u{00D7} 100" })
+
+    app.typeKey(.end, modifierFlags: [])
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "3 of 3" })
+
+    app.typeKey(.leftArrow, modifierFlags: [])
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "2 of 3" })
+
+    app.typeKey(.home, modifierFlags: [])
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "1 of 3" })
+
+    app.typeKey(" ", modifierFlags: [])
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "2 of 3" })
+
+    app.typeKey(" ", modifierFlags: [.shift])
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "1 of 3" })
+  }
+
+  /// Catches registry commands that are missing from the viewer's menu, or that do nothing. Next
+  /// Image steps, and Play or Pause Slideshow shows and hides the slideshow segment.
+  func testTheImageViewerMenuStepsAndTogglesTheSlideshow() throws {
+    let folder = try makeFolder()
+
+    try writePNG("a.png", in: folder, width: 100, height: 100)
+    try writePNG("b.png", in: folder, width: 200, height: 100)
+    try plantViewer(path: folder.path, kind: "folder", current: "a.png")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 20) { $0 == "1 of 2" })
+    viewer(in: window).click()
+
+    let menu = app.menuBars.menuBarItems["Image Viewer"]
+    XCTAssertTrue(menu.waitForExistence(timeout: 5), "no Image Viewer menu")
+
+    menu.click()
+    app.menuBars.menuItems["Next Image"].click()
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "2 of 2" })
+
+    menu.click()
+    app.menuBars.menuItems["Play or Pause Slideshow"].click()
+    XCTAssertTrue(waitFor(segment(2, in: window), timeout: 10) { $0 == "Slideshow" })
+
+    menu.click()
+    app.menuBars.menuItems["Play or Pause Slideshow"].click()
+    XCTAssertTrue(
+      waitUntilGone(segment(2, in: window), timeout: 10), "pausing left the slideshow segment")
+  }
+
+  /// Catches an image viewer chord that reaches the menu before the palette's search field. With an
+  /// image pane focused, Cmd-Left in the field moves the caret to the start, so the next letter
+  /// lands in front of what was typed. The palette stays open.
+  func testCommandLeftInThePaletteSearchFieldMovesTheCaretWhileAnImagePaneHasFocus() throws {
+    let folder = try makeFolder()
+    let file = try writePNG("a.png", in: folder)
+
+    try plantViewer(path: file.path, kind: "file", current: "a.png")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "400 \u{00D7} 200" })
+
+    app.typeKey("k", modifierFlags: .command)
+    XCTAssertTrue(palette(in: app).waitForExistence(timeout: 5), "the palette never showed")
+
+    let field = app.descendants(matching: .any)["command-palette-field"]
+    XCTAssertTrue(field.waitForExistence(timeout: 5))
+
+    app.typeText("ab")
+    app.typeKey(.leftArrow, modifierFlags: [.command])
+    app.typeText("c")
+
+    XCTAssertEqual(field.value as? String, "cab")
+    XCTAssertTrue(palette(in: app).exists, "Cmd-Left closed the palette")
   }
 
   /// Attaches a Display P3 image for comparison with Preview. The green here lies outside sRGB, so
@@ -248,6 +350,6 @@ final class ImageViewerUITests: UnitermUITestCase {
     let window = mainWindow(in: app)
 
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "400 \u{00D7} 200" })
-    attachScreenshot("image viewer, Display P3 image (compare with Preview)")
+    attachScreenshot("image viewer, Display P3 image (compare with Preview)", of: window)
   }
 }

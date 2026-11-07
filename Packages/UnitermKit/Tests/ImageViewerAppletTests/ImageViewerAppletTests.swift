@@ -157,7 +157,9 @@ final class ImageViewerAppletTests: XCTestCase {
     let opened = await showing(applet)
     XCTAssertTrue(opened)
     XCTAssertEqual(applet.title, "img1.png")
-    XCTAssertEqual(applet.segments.last?.text, "1 of 3")
+
+    let counted = await Harness.eventually { applet.segments.last?.text == "1 of 3" }
+    XCTAssertTrue(counted)
     XCTAssertEqual(applet.currentDirectory, folder.path)
   }
 
@@ -314,7 +316,9 @@ final class ImageViewerAppletTests: XCTestCase {
     let shown = await showing(applet)
     XCTAssertTrue(shown)
     XCTAssertEqual(applet.title, "b.png")
-    XCTAssertEqual(applet.segments.last?.text, "2 of 3")
+
+    let counted = await Harness.eventually { applet.segments.last?.text == "2 of 3" }
+    XCTAssertTrue(counted)
     XCTAssertFalse(applet.isAnimating)
   }
 

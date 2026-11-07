@@ -115,6 +115,39 @@ final class HelperServerTests: XCTestCase {
       [request, UInt32(kind.rawValue)], [2, UInt32(FailureKind.staleSource.rawValue)])
   }
 
+  /// Catches a helper that forgets the image on screen when the next one is opened for a prefetch,
+  /// and one that keeps every source forever. Sources decode by ID while they are kept, and the one
+  /// decoded longest ago is dropped past the limit, so a decode for it fails as stale.
+  func testTheHelperKeepsSeveralSourcesAndDropsTheOneUsedLongestAgo() throws {
+    _ = try read()
+
+    let kept = ImageProtocol.retainedSources
+
+    for source in 1...UInt32(kept) {
+      try openFile(ImageFixtures.png(), source: source)
+
+      guard case .opened = try read() else { return XCTFail("no opened reply for \(source)") }
+    }
+
+    try app.send(AppMessage.decode(request: 1, source: 1, maxPixel: 16, frame: 0).frame())
+
+    guard case .image = try read() else { return XCTFail("the first source was dropped early") }
+
+    try openFile(ImageFixtures.png(), source: UInt32(kept) + 1)
+
+    guard case .opened = try read() else { return XCTFail("no opened reply") }
+
+    try app.send(AppMessage.decode(request: 2, source: 2, maxPixel: 16, frame: 0).frame())
+
+    guard case .failure(_, let kind, _) = try read() else { return XCTFail("source 2 survived") }
+
+    XCTAssertEqual(kind, .staleSource)
+
+    try app.send(AppMessage.decode(request: 3, source: 1, maxPixel: 16, frame: 0).frame())
+
+    guard case .image = try read() else { return XCTFail("the source used last was dropped") }
+  }
+
   /// Catches an open that arrives without a descriptor. The helper reports it and keeps serving.
   func testAnOpenWithoutADescriptorIsReported() throws {
     _ = try read()

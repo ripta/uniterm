@@ -195,21 +195,30 @@ and a folder listing taken once, with Reload.
 
 - While the image view has focus, Right and Left arrows and Space and Shift-Space step next and previous, and Home and
   End go to the first and last image. When zoomed past fit, arrows pan instead, and Space still steps.
-- Next Image, Previous Image, First Image, Last Image, Play Slideshow, Sort by Name, Sort by Date Modified, and Reload
-  Folder are registry commands in an applet menu named for the viewer. None carries a default chord. A text-editing
-  chord such as Cmd-Left would reach the menu before the palette's search field, and the palette would close and run it.
+- Next Image, Previous Image, First Image, Last Image, Play or Pause Slideshow, Sort by Name, Sort by Date Modified, and
+  Reload Folder are registry commands in an applet menu named for the viewer. None carries a default chord. A
+  text-editing chord such as Cmd-Left would reach the menu before the palette's search field, and the palette would
+  close and run it. Amended 2026-11-07; see Decision Log.
 - Manual stepping stops at the first and last image.
-- Play Slideshow toggles to Pause Slideshow. Playback advances every 5 seconds and wraps at the end. A manual step stops
-  it. It pauses on detach and resumes on reattach only if it was playing. A status segment shows it is playing. The
-  interval is fixed, with no setting, and playing state is never saved.
+- Play or Pause Slideshow is one command, since a registry command has one title. Playback advances every 5 seconds and
+  wraps at the end. A manual step stops it. It pauses on detach and resumes on reattach only if it was playing. A status
+  segment shows it is playing. The interval is fixed, with no setting, and playing state is never saved. Amended
+  2026-11-07; see Decision Log.
 - Name order is Finder's: localized and numeric-aware, so `img2` comes before `img10`. Date order is the file's
   modification time, newest first, with ties in name order. Capture dates would mean reading EXIF in the app, which
   "Rendering" rules out.
 - The folder is listed once, off the main thread, when it opens. The user can step while the listing runs, through what
-  is listed so far, and the index and count stay provisional until it ends. Reload Folder lists it again and keeps the
-  current image, or lands on the image nearest its old position when it is gone.
-- A file deleted since the listing posts a status bar warning when reached and is skipped. Given one file, its siblings
-  are listed the same way, starting at that file. Subfolders and hidden files are not included. Amended 2026-11-05; see Decision Log.
+  is listed so far, and the index and count stay provisional until it ends. While it runs, images keep the order they
+  arrive in and each batch is ordered within itself, so nothing already listed moves. The listing takes the chosen order
+  when it ends, and the selection follows its image. A folder opened fresh shows the first image of the first batch
+  until then. The position segment marks a provisional count with a plus sign. Reload Folder lists it again and keeps
+  the current image, or lands on the image nearest its old position when it is gone. Amended 2026-11-07; see
+  Decision Log.
+- A file deleted since the listing posts a status bar warning when reached and is skipped. An image the pane already
+  holds a decode of, the one it just left or the prefetched one, shows from that decode, and a deletion is found at the
+  next step that needs the file. Given one file, its siblings are listed the same way, starting at that file. When that
+  folder cannot be listed, the pane shows the file, the status bar says so once, and a "Folder not listed" warning
+  segment shows while that holds. Subfolders and hidden files are not included. Amended 2026-11-07; see Decision Log.
 
 Rationale: plain keys cover the focused case, as Preview does, and registry commands give the menu and palette a way in
 without claiming a chord the palette's text field needs. A timer is what makes a folder a slideshow, and one fixed
@@ -250,7 +259,9 @@ bookmark fallback, the current image, the sort, and the start directory, and nev
   pane started in, which the factory passes. It has its own version, per ADR-06.
 - Restore opens the stored path when it is there and of the stored kind. It uses the bookmark only when the path is
   missing, and then says where it found the source. When the current image is gone, it lands on the nearest image in
-  sort order, using the stored name and modification time.
+  sort order, using the stored name and modification time. For a single file, restore shows the stored current image of
+  the file's folder. When the file and its bookmark are both gone, it opens the current image in the file's old folder,
+  and the pane says where it found it. Amended 2026-11-07; see Decision Log.
 - Zoom, scroll position, and playing state are not saved. A restored pane shows its image at fit, paused.
 - An empty pane reports its start directory as `currentDirectory`. With a source open, the pane reports the viewed
   folder. The open panel starts in `currentDirectory`, never in AppKit's remembered folder.
@@ -390,7 +401,7 @@ None.
 
 ### M2: Folder slideshow
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Given a folder, the viewer steps forward and back through its images by keyboard
 - Non-image files in the folder are skipped, judged by extension and UTType only
@@ -420,6 +431,47 @@ None.
 - When a single-file source is gone but its folder and the current image remain, restore opens the current image in
   that folder
 - When the current image is gone, restore lands on the nearest image in the stored sort, by name or by date
+
+**As built:**
+
+- The helper keeps up to four opened sources, keyed by the IDs the protocol already carries, and drops the one decoded
+  longest ago past the limit. This lets the pane open the next image for a prefetch without losing the one on screen.
+  The wire format and the protocol version are unchanged. A decode of a dropped source fails as stale, and the pane
+  reopens the image.
+- The pane keeps at most three fit-size bitmaps: the one on screen, the one it just left, and the prefetched one. All
+  three are charged to the bitmap budget. A decode for the image on screen gives way to the other two when the budget is
+  short, so the pane never goes blank for memory a prefetch holds.
+- A step to a held decode shows it at once with no request to the helper. A step to the image being prefetched waits for
+  that decode and shows it, with no second decode. The prefetch runs only when the pane shows an image and nothing is
+  loading. A prefetch pending behind a decode is replaced by any other request. A prefetch that fails, hangs, or
+  overruns leaves the image on screen with no message and is not tried again until a reload. Stepping to the file shows
+  the failure.
+- The scheduler holds the zoom gate as `isZoomedPastFit`, which is false until free zoom lands. It refuses prefetches
+  and drops a waiting one while it holds. The view keeps an arrow-key hook for panning that does nothing yet.
+- A step moves the selection at once, and the pane loads one image at a time. When one finishes, it loads whatever is
+  selected then. A held key through large images shows each image as it arrives, and one helper decodes them all.
+- A scan reports in batches of 256 images from its own thread. A test hook holds it between batches.
+- Play or Pause Slideshow is one command, and its sort and reload siblings carry no chord. A test pins the commands'
+  names, titles, menus, and absent keys.
+- The slideshow takes its sleep as an injected function. Tests release it by hand.
+- Reload lists again through the folder handle the pane already holds. A single file whose folder was not listed tries
+  to open its folder again.
+- A file whose folder cannot be listed shows the file, posts one warning, and shows a "Folder not listed" warning
+  segment. A test uses a folder with no read bit. Under macOS privacy protection the real cause was not exercised.
+- The screenshot attachments of the UI tests capture the uniterm window only. The attachment names are unchanged.
+- New UI tests: `testViewKeysStepThroughAFolder`, `testTheImageViewerMenuStepsAndTogglesTheSlideshow`, and
+  `testCommandLeftInThePaletteSearchFieldMovesTheCaretWhileAnImagePaneHasFocus`. They were built for testing and not
+  run in the agent's sandbox.
+- The scheduler reports a waiting prefetch that another request replaced, and the pane then loads a step that was
+  waiting on it the usual way. A detach abandons a prefetch whose file is still opening the same way. Tests cover both:
+  an animation whose frame requests replace the prefetch, and a held open that a detach cancels.
+- The scan sorts the listing on its own thread, and a sort command sorts off the main thread. A synthetic 100,000-name
+  listing took 0.66 s to sort in a debug build, so the main thread sorts nothing large. The pane reorders at the end of
+  the scan or when the sort finishes.
+- The client mirrors the helper's source order exactly, and selecting a cached source does not touch it. A stale frame
+  request reopens the image like a stale still.
+- No test times the 5-second interval in real time. The in-flight prefetch handoff is covered by the tests that replace
+  or abandon the prefetch, and by one that proves no image decodes twice.
 
 ### M3: Zoom
 
@@ -536,6 +588,24 @@ None.
   the sandbox check allows. The shipped helper proves its sandbox with a debug-only probe mode.
 - 2026-11-07: ADR candidate (cuts across the system): the app runs outside the App Sandbox, and a helper that needs no
   file or network access runs inside it, with `check-sandbox-off.sh` guarding both. Undecided. Found in UTERM-006 M1.
+- 2026-11-07: (work-queue best guess) Play or Pause Slideshow is one command, since a registry command has one title and
+  the registry keeps no per-command state. This narrowed the Navigation bullets that said Play Slideshow toggles to Pause
+  Slideshow. The status segment shows whether it plays.
+- 2026-11-07: (work-queue best guess) A listing in progress keeps images in arrival order, with each batch ordered within
+  itself, and takes the chosen order when the scan ends. A folder opened fresh shows the first image of its first batch.
+  This narrowed "stable order while it runs" and "first image", which cannot both hold for a folder larger than one
+  batch. The first image shown may differ from the first in Finder order until the scan ends.
+- 2026-11-07: (work-queue best guess) A step to an image the pane already holds a decode of, the previous or the
+  prefetched one, shows that decode without opening the file. A file deleted since the listing is found at the next step
+  that needs it. This narrowed "a file deleted since the listing is skipped when reached". Checking the file first would
+  put a disk call on the step's path, on a mount that may stall. The marker on that bullet replaces the 2026-11-05
+  marker, whose folder-not-listed text the bullet now carries.
+- 2026-11-07: (work-queue best guess) Restore of a single file shows the stored current image of the file's folder. When
+  the file and its bookmark are gone, it opens the current image in the file's old folder, makes the stored path that
+  image, and says where it found it. The restore chain was path, then bookmark, then the old folder, and the last step
+  needed this reading for the stored path.
+- 2026-11-07: (work-queue best guess) The image helper keeps up to four opened sources, with no protocol change, so a
+  prefetch can open the next image beside the one on screen. The alternative was a close message and a version bump.
 
 ## References
 

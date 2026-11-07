@@ -123,4 +123,46 @@ final class BuiltInCommandsTests: XCTestCase {
 
     XCTAssertTrue(warnings.isEmpty, "\(warnings)")
   }
+
+  /// Catches an image viewer command that gains a key or lands in the wrong menu. The stepping,
+  /// slideshow, sort, and reload commands sit in the viewer's own menu with no chord, because a
+  /// text-editing chord such as Cmd-Left would reach the menu before the palette's search field and
+  /// the palette would close and run it. Open stays in File with no key.
+  func testTheImageViewerCommandsSitInTheirMenuWithNoKeys() throws {
+    var warnings: [String] = []
+    let registry = CommandRegistry(app: AppCommandHooks(warn: { warnings.append($0) }))
+
+    for set in BuiltInApplets.commandSets {
+      registry.register(set)
+    }
+
+    let menu = CommandMenu(registry: registry, activeController: { nil })
+    menu.refreshKeys()
+
+    let viewer = try XCTUnwrap(BuiltInApplets.commandSets.first { $0.typeID == "image-viewer" })
+
+    XCTAssertEqual(viewer.menuTitle, "Image Viewer")
+    XCTAssertEqual(
+      viewer.commands.map(\.name),
+      [
+        "open", "next", "previous", "first", "last", "play-pause", "sort-by-name", "sort-by-date",
+        "reload",
+      ])
+    XCTAssertEqual(
+      viewer.commands.map(\.title),
+      [
+        "Open\u{2026}", "Next Image", "Previous Image", "First Image", "Last Image",
+        "Play or Pause Slideshow", "Sort by Name", "Sort by Date Modified", "Reload Folder",
+      ])
+
+    for command in viewer.commands {
+      XCTAssertNil(command.key, command.title)
+      XCTAssertEqual(command.home, command.name == "open" ? .file : .applet, command.title)
+
+      let id = CommandRegistry.commandID(typeID: "image-viewer", name: command.name)
+      XCTAssertNil(registry.appletKeys[id], command.title)
+    }
+
+    XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+  }
 }

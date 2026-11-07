@@ -11,6 +11,11 @@ public enum ImageProtocol {
   public static let mismatchText =
     "The image decoder and uniterm come from different versions. Relaunch uniterm."
 
+  /// How many opened sources a helper keeps. Opening one past the limit drops the one decoded from
+  /// longest ago. A pane holds the image on screen, the one it left, and the next one, so a source
+  /// it still needs is not dropped. A decode of a dropped source reports a stale source.
+  public static let retainedSources = 4
+
   /// The largest body a message other than an image may carry.
   public static let maxControlBody = 256 * 1024
 }

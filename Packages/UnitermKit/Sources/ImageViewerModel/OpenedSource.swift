@@ -43,6 +43,22 @@ public final class OpenedFolder: @unchecked Sendable {
   public func list(supporting types: SupportedImageTypes, sort: ImageSort) -> Result<
     [ListedImage], SourceAccessError
   > {
+    var images: [ListedImage] = []
+
+    let result = scan(
+      supporting: types, batchSize: 256, isCancelled: { false },
+      deliver: { images.append(contentsOf: $0) })
+
+    return result.map { FolderListing.sorted(images, by: sort) }
+  }
+
+  /// Reads the folder and hands the images over in batches of up to `batchSize`, in the order the
+  /// disk gives them. A scan of a large folder reports as it goes, so the caller can show an image
+  /// before the scan ends. It stops early when `isCancelled` says so.
+  public func scan(
+    supporting types: SupportedImageTypes, batchSize: Int, isCancelled: () -> Bool,
+    deliver: ([ListedImage]) -> Void
+  ) -> Result<Void, SourceAccessError> {
     let copy = dup(descriptor)
 
     guard copy >= 0, let stream = fdopendir(copy) else {
@@ -57,9 +73,20 @@ public final class OpenedFolder: @unchecked Sendable {
 
     rewinddir(stream)
 
-    var images: [ListedImage] = []
+    var batch: [ListedImage] = []
 
-    while let entry = readdir(stream) {
+    var failure: Int32 = 0
+
+    while true {
+      errno = 0
+
+      guard let entry = readdir(stream) else {
+        failure = errno
+        break
+      }
+
+      if isCancelled() { return .success(()) }
+
       let name = withUnsafePointer(to: &entry.pointee.d_name) {
         $0.withMemoryRebound(to: CChar.self, capacity: Int(entry.pointee.d_namlen) + 1) {
           String(cString: $0)
@@ -74,10 +101,17 @@ public final class OpenedFolder: @unchecked Sendable {
         continue
       }
 
-      images.append(ListedImage(name: name, modified: Self.seconds(info.st_mtimespec)))
+      batch.append(ListedImage(name: name, modified: Self.seconds(info.st_mtimespec)))
+
+      if batch.count >= batchSize {
+        deliver(batch)
+        batch = []
+      }
     }
 
-    return .success(FolderListing.sorted(images, by: sort))
+    if !batch.isEmpty { deliver(batch) }
+
+    return failure == 0 ? .success(()) : .failure(.posix(failure, path: path))
   }
 
   /// Opens the file named `name` in this folder. A name with a slash is refused.
