@@ -123,3 +123,13 @@ Still open for the proposal:
   has to deal with existing grants.
 - Browser profiles from the idea above fix a web view's data store at creation, so
   a live move between profiles has to be refused.
+
+## Scriptable sidebar
+
+A sidebar that scripts can program. It is a UI component, the way the palette and
+the status bar are, and not a pane. Each window has at most one, and the user can
+set it to the left or the right. This is not well fleshed out yet. It would come
+after uniterm has proper scripting support.
+
+The sidebars in the map viewer and the text viewer plans are a different thing:
+each belongs to one applet and lives inside its pane.
