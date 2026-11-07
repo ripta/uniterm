@@ -17,6 +17,9 @@ struct TileImage {
 /// requests go through the same latest-wins scheduler as every other request, and a step or a
 /// resize goes ahead of them.
 ///
+/// A zoomed animation has no tiles. Its frames decode at the same level instead, through the frame
+/// path, so it keeps playing with sharp detail. See `retargetFrames`.
+///
 /// A pane zoomed past fit never prefetches. A zoom the helper's cap or the app-wide budget cannot
 /// hold is refused with a status bar warning, and the pane goes back to the last zoom that worked.
 /// No other pane's helper is touched.
@@ -24,7 +27,7 @@ extension ImageViewerApplet {
   // MARK: Commands
 
   var canZoom: Bool {
-    phase == .showing && shot != nil && info != nil && !plan.isAnimated && !closed
+    phase == .showing && shot != nil && info != nil && !closed
   }
 
   func zoomIn() {
@@ -78,7 +81,7 @@ extension ImageViewerApplet {
   func viewportChanged() {
     guard let viewport = content.viewport else { return }
 
-    let free = !viewport.isFit && !plan.isAnimated
+    let free = !viewport.isFit
 
     if free != isZoomedPastFit {
       isZoomedPastFit = free
@@ -96,7 +99,43 @@ extension ImageViewerApplet {
 
     if free, !content.isPinching { refreshTiles() }
 
+    retargetFrames()
     refresh()
+  }
+
+  /// Keeps an animation's frames at the size the zoom needs. A frame decodes at the level a still's
+  /// tiles are cut from, so a zoom that crosses to another level, or back to fit, asks for the
+  /// window again. The frame on screen stays until its replacement arrives, so the animation never
+  /// blanks. A pinch changes nothing until the fingers lift.
+  func retargetFrames() {
+    guard plan.isAnimated, let info, let viewport = content.viewport, !content.isPinching else {
+      return
+    }
+
+    if leavingZoom {
+      zoomLevel = nil
+      return
+    }
+
+    var wanted: Int?
+
+    if !viewport.isFit {
+      let level = TileLevel(
+        native: viewport.native, scale: viewport.scale, backing: Double(content.backingScale))
+
+      if level.longerSide > fitLongerSide(of: info) { wanted = level.longerSide }
+    }
+
+    guard wanted != zoomLevel else { return }
+
+    zoomLevel = wanted
+
+    for (index, frame) in frames where frame.zoomLevel != wanted && index != currentFrame {
+      bitmapBudget.giveBack(frame.bytes, lease: lease)
+      frames[index] = nil
+    }
+
+    fillWindow()
   }
 
   /// Returns the pane to fit before another image takes its place. The helper drops the decode it
@@ -107,6 +146,11 @@ extension ImageViewerApplet {
     leavingZoom = true
     defer { leavingZoom = false }
 
+    if plan.isAnimated {
+      stopAnimating()
+      framesFrozen = true
+    }
+
     content.zoom(.fit)
   }
 
@@ -114,6 +158,7 @@ extension ImageViewerApplet {
   func resetZoomState() {
     releaseTiles()
     lastGood = nil
+    zoomLevel = nil
     isZoomedPastFit = false
   }
 
@@ -290,11 +335,25 @@ extension ImageViewerApplet {
 
     releaseTiles()
     client.releaseLevel()
+    releaseZoomedFrames()
+  }
+
+  /// Puts an animation back on its fit-size backdrop and lets go of the frames made for the zoom.
+  /// The viewport stays zoomed, so the backdrop shows scaled, as a still does without its tiles.
+  private func releaseZoomedFrames() {
+    guard plan.isAnimated, zoomLevel != nil, let held = shot else { return }
+
+    dropFrames()
+    zoomLevel = nil
+    currentFrame = 0
+    frames[0] = Frame(image: held.image, bytes: 0)
+    content.swap(image: held.image)
   }
 
   func restoreZoomAfterReattach() {
     guard isZoomedPastFit else { return }
 
     refreshTiles()
+    retargetFrames()
   }
 }

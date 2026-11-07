@@ -132,18 +132,23 @@ Decision: all three, with a fit-size backdrop and a bounded tile cache in the ap
 - Free zoom comes from pinch and from View menu commands the viewer declares in UTERM-002's registry: Zoom In (Cmd-+),
   Zoom Out (Cmd--), Actual Size (Cmd-0), and Zoom to Fit (Cmd-9). Scrolling pans. None of these is a reserved window
   key, and the terminal's items with the same keys show only while a terminal pane has focus, per UTERM-013. An
-  animated image does not zoom, and the commands are off for it. Amended 2026-11-07; see Decision Log.
+  animated image zooms by the same commands and gestures. Amended 2026-11-07; see Decision Log.
 - The decode scale is the smallest power-of-two fraction of native that is not below the zoom, and never more than
   native 1:1. Zoom above 1:1 magnifies the native decode, with nearest-neighbor sampling, and needs no larger decode.
   Amended 2026-11-07; see Decision Log.
 - The app keeps the fit-size decode as a backdrop. The helper keeps its decode and sends tiles, and the app caches a
   bounded set around the viewport, so app memory tracks the pane, not the image. During a pinch the app scales what it
   holds, and asks for crisp tiles when the gesture ends.
+- An animation has no tiles. While it is zoomed past fit, the helper decodes each frame whole at the zoom's decode
+  scale, capped at 1:1, and the animation keeps playing from those frames. The fit-size still stays as its backdrop. A
+  frame costs its size times the zoom, and the window of frames is charged to the bitmap budget. Zoom to Fit brings the
+  fit-size frames back. Amended 2026-11-07; see Decision Log.
 - One app-side budget covers every bitmap image panes hold: backdrops, tiles, the prefetched and previous images, and
   animation frames.
-- Zoom past what the helper cap or the app-wide helper budget allows is refused, and the status bar says the limit was
-  reached. Another pane's helper is never killed to make room. A refused zoom goes back to the last zoom that showed
-  tiles, or to fit. Amended 2026-11-07; see Decision Log.
+- Zoom past what the helper cap, the app-wide helper budget, or the bitmap budget allows is refused, and the status bar
+  says the limit was reached. Another pane's helper is never killed to make room. A refused zoom goes back to the last
+  zoom that showed tiles, or to fit. An animation goes back to the last zoom whose whole window of frames was held, or
+  to fit. Amended 2026-11-07; see Decision Log.
 
 Rationale: the draft names all three modes, and a viewer for screenshots and photos needs detail at 1:1. A backdrop
 keeps panning responsive while tiles arrive, as ADR-08 requires, where a viewport-only transfer would show blank edges
@@ -482,20 +487,21 @@ None.
 **Status:** DONE
 
 - Fit, actual size, and free zoom by pinch and by Zoom In, Zoom Out, Actual Size, and Zoom to Fit, which are registry
-  commands the viewer declares, with none of their keys a reserved window key. An animated image does not zoom.
-  Amended 2026-11-07; see Decision Log.
+  commands the viewer declares, with none of their keys a reserved window key. An animated image zooms too, with frames
+  decoded at the zoom scale. Amended 2026-11-07; see Decision Log.
 - Fit never enlarges a small image. Actual size matches Preview's size for a small image and a Retina screenshot
 - Panning a large image at actual size never shows blank edges past the backdrop, and the main thread never waits on
   a tile
 - Peak app memory on a very large image stays bounded while zoomed and panned
 - A slow but legitimate decode of a very large image reports in the status bar that the zoom limit was reached, never a
   crash
-- Zoom past the helper cap or the app-wide helper budget is refused with a status bar warning, and no other pane's
-  helper is killed. The pane goes back to the last zoom that showed tiles, or to fit. Amended 2026-11-07; see Decision
-  Log.
+- Zoom past the helper cap, the app-wide helper budget, or the bitmap budget is refused with a status bar warning,
+  and no other pane's helper is killed. The pane goes back to the last zoom that showed tiles, or to fit. An animation
+  goes back to the last zoom whose whole window of frames was held. Amended 2026-11-07; see Decision Log.
 - Moving the window to a display with a different scale requests new pixels
 - A user remap of the shared "Actual Size" title moves the terminal's item and the viewer's item together
-- On detach a zoomed pane releases its 1:1 decode and tiles and keeps only its backdrop
+- On detach a zoomed pane releases its 1:1 decode, its tiles, and an animation's zoomed frames, and keeps only its
+  backdrop. Amended 2026-11-07; see Decision Log.
 - The helper releases a prefetched bitmap once sent, and zoom is never refused for memory a prefetch holds
 
 **As built:**
@@ -542,10 +548,22 @@ None.
 - New UI tests: `testZoomKeysShowActualSizeZoomInAndFit`, `testARemapOfActualSizeMovesTheViewersItemToo`, and
   `testTheViewMenuZoomsTheImageViewer`. They were built for testing and not run in the agent's sandbox.
 - A step or resize that arrives while a level's first tile is in flight waits for that tile. See the Decision Log.
-- The view keeps an animation at fit, so a pinch, a double tap, a drag, and a scroll do nothing to it, as the menu
-  commands do nothing. Zooming a still past fit stops a playing slideshow. The client sizes the helper's kept level from
+- Zooming past fit stops a playing slideshow. The client sizes the helper's kept level from
   the output space of the source's last decode, and as sixteen-bit floats while that is unknown. A refused request no
   longer moves its source up the client's recency list.
+- Landed after the row review, as the user's decision in a hands-on review: an animation zooms. See the Decision Log.
+  The viewport and the commands are the stills'. Frames go through the existing frame path with the zoom's level as the
+  decode size, so the protocol stays at version 2. A zoomed frame is a whole frame, with no viewport region, since the
+  helper keeps a level and cuts regions for frame 0 only. The pane keeps the window of the frame on screen and two
+  ahead, drops the others at a level change, and keeps the frame on screen until its replacement arrives. A frame too
+  big for the helper's cap or app-wide budget, a window the bitmap budget cannot hold, or a helper that overruns or dies
+  while it decodes one, ends in the same refusal as a tile and the same return to the last zoom that held its whole
+  window, or to fit. A request for a frame already in flight or waiting is no longer sent again. A frame magnifies with
+  nearest-neighbor sampling past its level. A result for a zoomed frame whose level the pane has already left is
+  dropped, not counted as a limit. A sharper fit still for a zoomed animation does not replace the zoomed frame on
+  screen. Stepping away from a zoomed animation stops it until the next image is chosen. Eight-bit frames of a 1200
+  by 1200 animation at 1:1 are 5.76 MB each, so the window is 17.3 MB beside the 1.44 MB still, whatever the frame
+  count. A 500 by 500 animation shows at its native size in a 300 point pane, so zooming asks for no new frames.
 - Left to the user: how smooth pinching and panning feel, and whether the detail at 1:1 matches Preview. Left to the run
   coordinator: the region path against the signed, sandboxed helper, and the UI tests. No test moves a window between
   two real displays. The HDR tile path has no real gain-map file.
@@ -700,6 +718,27 @@ None.
   detail the user zoomed in to see within 5 seconds. Zoom is a manual action, and the proposal had no rule for it. This
   amended the Navigation slideshow bullet, which keeps its single 2026-11-07 marker. A pinch reports its viewport only
   when the fingers lift, so the start of a pinch stops the show.
+- 2026-11-07: An animated image zooms, with each frame decoded at the zoom's decode scale and capped at 1:1, so the
+  zoomed animation keeps playing with sharp detail. This was the user's choice in a hands-on review. It replaces the
+  work-queue best guess above that animations stay at fit, whose reason was that tiles are cut from frame 0 only. The
+  Zoom bullet on the commands keeps its single 2026-11-07 marker, with its text replaced. The Zoom refusal bullet, a
+  new Zoom bullet on animations, M3's first, refusal, and detach bullets, and the M3 As built bullet that kept
+  animations at fit are amended to match. The new animation bullet, M3's detach bullet, and both refusal bullets
+  carry the marker. The
+  refusal bullets said the helper cap and the app-wide helper budget refuse a zoom, and that it goes back to the last
+  zoom that showed tiles. They now add the bitmap budget, and the return to the last zoom whose whole window of frames
+  was held, for an animation. The user turned down three alternatives: pause the animation and tile its current
+  frame, magnify the fit-size frames, and keep animations at fit. The first needs a frame-aware tile path and loses
+  the motion. The second is blurry, and the third drops the commands the viewer declares. Cost scales with frame size
+  times zoom, and the bitmap budget and the per-helper cap bound it. A zoom past either is refused as a still's is.
+  Whole frames at the level were built, not viewport regions of frame N, since a region needs a new message and a
+  per-frame level in the helper. The protocol stays at version 2. Region frames are the next step if whole frames
+  prove too big in use.
+- 2026-11-07: (best guess under that choice) A refused or failed zoom of an animation goes back to the last zoom whose
+  whole window of frames was held, or to fit. A zoom whose first frame fit and whose next did not is not a zoom that
+  worked. The level an animation decodes at is used only when it is larger than the fit-size frame, so a small
+  animation that already shows at native size asks for nothing new. The view magnifies zoomed frames with
+  nearest-neighbor sampling, as it does tiles.
 
 ## References
 

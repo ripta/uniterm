@@ -366,6 +366,16 @@ final class ImageHelperClient {
     [scheduler.inFlight, scheduler.pending].compactMap { $0?.kind == .tile ? $0?.region : nil }
   }
 
+  /// The frame requests in flight or waiting, so the pane does not ask for one twice.
+  var outstandingFrames: [DecodeRequest] {
+    [scheduler.inFlight, scheduler.pending].compactMap { $0?.kind == .frame ? $0 : nil }
+  }
+
+  /// The frame request waiting for the helper, if one is.
+  var pendingFrame: DecodeRequest? {
+    scheduler.pending?.kind == .frame ? scheduler.pending : nil
+  }
+
   var tileInFlightRegion: TileRegion? {
     scheduler.inFlight?.kind == .tile ? scheduler.inFlight?.region : nil
   }

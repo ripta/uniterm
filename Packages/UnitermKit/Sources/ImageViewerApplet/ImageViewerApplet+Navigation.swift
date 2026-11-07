@@ -299,6 +299,7 @@ extension ImageViewerApplet {
     navTask = nil
     stopAnimating()
     dropFrames()
+    framesFrozen = false
     retireShown(keeping: next.name)
 
     shot = next
@@ -316,7 +317,7 @@ extension ImageViewerApplet {
     content.show(
       image: next.image,
       native: PixelSize(width: Int(next.info.width), height: Int(next.info.height)),
-      actualScale: next.info.actualScale, hdr: next.space.isHDR, zoomable: !plan.isAnimated)
+      actualScale: next.info.actualScale, hdr: next.space.isHDR)
     frames[0] = Frame(image: next.image, bytes: 0)
     refresh()
 
@@ -355,6 +356,11 @@ extension ImageViewerApplet {
       notify(
         .warning, "The slideshow stopped because the rest of the images were deleted.",
         delivery: .message)
+    }
+
+    if framesFrozen {
+      framesFrozen = false
+      startAnimating()
     }
 
     refresh()

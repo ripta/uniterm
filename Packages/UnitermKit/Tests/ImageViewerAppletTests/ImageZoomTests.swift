@@ -77,6 +77,70 @@ final class ImageZoomTests: XCTestCase {
     applet.segments.first { $0.symbolName == "magnifyingglass" }?.text
   }
 
+  /// A pane at a backing scale of 2 that plays an animated GIF of `size` pixels, one frame per
+  /// color, with delays short enough to watch it advance.
+  private func openAnimation(
+    size: Int, settings: HelperSettings? = nil,
+    helperBudget: ImageHelperBudget = ImageHelperBudget(limit: 8 << 30, floor: 1 << 30),
+    bitmapBudget: ImageBitmapBudget = ImageBitmapBudget(limit: 1 << 30, floor: 256 << 20)
+  ) async throws -> (ImageViewerApplet, RecordingHost) {
+    let gif = try ImageFixtures.write(
+      ImageFixtures.animatedGIF(
+        colors: [ImageFixtures.red, ImageFixtures.green, ImageFixtures.blue, ImageFixtures.white],
+        delays: [0.06, 0.06, 0.06, 0.06], size: size),
+      named: "loop.gif", in: folder)
+
+    let (applet, host) = try await open(
+      gif, settings: settings, helperBudget: helperBudget, bitmapBudget: bitmapBudget)
+
+    let playing = await Harness.eventually { applet.isAnimating && applet.frames.count >= 2 }
+    XCTAssertTrue(playing)
+
+    return (applet, host)
+  }
+
+  /// True when the window of frames is held at the zoom's level and the animation plays.
+  private func framesAreSharp(_ applet: ImageViewerApplet) -> Bool {
+    guard let level = applet.zoomLevel, applet.isAnimating else { return false }
+
+    let sharp = applet.frames.values.filter { $0.zoomLevel == level && $0.image.width == level }
+
+    return sharp.count >= ImageViewerApplet.framesAhead + 1
+  }
+
+  private func frameSummary(_ applet: ImageViewerApplet) -> [String] {
+    applet.frames.sorted { $0.key < $1.key }.map {
+      "\($0.key):\($0.value.bytes):\($0.value.zoomLevel ?? 0)"
+    }
+  }
+
+  private func request(_ applet: ImageViewerApplet, id: UInt32, frame: Int, side: Int)
+    -> DecodeRequest
+  {
+    DecodeRequest(
+      id: id, source: applet.info?.source ?? 0, maxPixel: side, frame: frame, kind: .frame)
+  }
+
+  /// Hands the applet an event as its client would.
+  private func deliver(_ event: HelperEvent, to applet: ImageViewerApplet) {
+    applet.client.onEvent?(event)
+  }
+
+  private func tinyImage(
+    _ applet: ImageViewerApplet, frame: Int, space: OutputSpace, format: PixelFormat
+  ) -> (ImageHeader, Data) {
+    let header = ImageHeader(
+      request: 1, source: applet.info?.source ?? 0, frame: UInt32(frame), width: 4, height: 4,
+      space: space, format: format)
+
+    return (header, Data(count: 16 * format.bytesPerPixel))
+  }
+
+  /// True once the animation has moved off its first frame, which only a tick does.
+  private func framesAdvance(_ applet: ImageViewerApplet) -> Bool {
+    applet.isAnimating && applet.currentFrame != 0
+  }
+
   private func pixel(_ image: CGImage, x: Int, y: Int) -> [UInt8] {
     var bytes = [UInt8](repeating: 0, count: 4)
 
@@ -147,51 +211,430 @@ final class ImageZoomTests: XCTestCase {
     XCTAssertTrue(applet.content.viewport?.isFit == true, "zoom out stops at fit")
   }
 
-  /// Catches the zoom commands staying on while they cannot act. An empty pane and an animation
-  /// have nothing to zoom, so the registry turns the commands off.
-  func testZoomCommandsAreOffWithoutAnImageAndForAnAnimation() async throws {
+  /// Catches the zoom commands staying on while they cannot act. An empty pane has nothing to
+  /// zoom, and an animation does zoom, so the registry turns the commands on for it.
+  func testZoomCommandsAreOffWithoutAnImageAndOnForAnAnimation() async throws {
     let (empty, _) = panes.make()
     XCTAssertFalse(empty.canZoom)
 
-    let gif = try ImageFixtures.write(
-      ImageFixtures.animatedGIF(colors: [ImageFixtures.red, ImageFixtures.blue], delays: [5, 5]),
-      named: "loop.gif", in: folder)
-    let (animated, _) = try await open(gif)
+    let (animated, _) = try await openAnimation(size: 1200)
 
     XCTAssertTrue(animated.plan.isAnimated)
-    XCTAssertFalse(animated.canZoom)
+    XCTAssertTrue(animated.canZoom)
 
     animated.zoomIn()
-    XCTAssertTrue(animated.content.viewport?.isFit == true)
+
+    XCTAssertFalse(animated.content.viewport?.isFit ?? true)
+    XCTAssertEqual(zoomSegment(animated), "50%")
   }
 
-  /// Catches a gesture zooming an animation that the menu commands refuse. A pinch and a double
-  /// tap on a GIF leave it at fit, and no tile is asked for, so none overlays the playing frames.
-  func testPinchAndDoubleTapLeaveAnAnimationAtFit() async throws {
-    let gif = try ImageFixtures.write(
-      ImageFixtures.animatedGIF(
-        colors: [ImageFixtures.red, ImageFixtures.blue], delays: [5, 5], size: 600),
-      named: "loop.gif", in: folder)
-    let (animated, _) = try await open(gif)
+  /// Catches a gesture that the menu commands do not share. A pinch zooms an animation as it does a
+  /// still. The pinch scales what the view holds and asks for the new size only when the fingers
+  /// lift, and zoom to fit brings the fit-size frames back.
+  func testAPinchZoomsAnAnimationAndZoomToFitBringsTheFitFramesBack() async throws {
+    let (animated, _) = try await openAnimation(size: 1200)
     let center = CGPoint(x: 150, y: 150)
 
     animated.content.pinch(.began, magnification: 0, at: center)
     animated.content.pinch(.changed, magnification: 1.5, at: center)
+
+    XCTAssertTrue(animated.content.isPinching)
+    XCTAssertFalse(animated.content.viewport?.isFit ?? true, "the view scaled what it holds")
+    XCTAssertNil(animated.zoomLevel, "no new size is asked for while the fingers are down")
+
     animated.content.pinch(.ended, magnification: 0, at: center)
 
-    XCTAssertFalse(animated.content.zoom(.actual, anchor: center), "the double tap does nothing")
-    XCTAssertFalse(animated.content.pan(byPoints: CGSize(width: 10, height: 10)))
+    XCTAssertNotNil(animated.zoomLevel)
+    XCTAssertTrue(animated.isZoomedPastFit)
 
-    XCTAssertTrue(animated.content.viewport?.isFit == true)
+    let sharp = await Harness.eventually { self.framesAreSharp(animated) }
+    XCTAssertTrue(sharp)
+
+    XCTAssertTrue(animated.content.zoom(.fit), "zoom to fit toggles back")
+    XCTAssertNil(animated.zoomLevel)
     XCTAssertFalse(animated.isZoomedPastFit)
-    XCTAssertFalse(animated.content.isPinching)
 
-    animated.refreshTiles()
-
-    XCTAssertTrue(animated.client.tileRegionsOutstanding.isEmpty)
-    XCTAssertNil(animated.tileLevel)
-    XCTAssertEqual(animated.content.tileCount, 0)
+    let fit = await Harness.eventually {
+      animated.frames.values.allSatisfy { $0.zoomLevel == nil && $0.image.width <= 600 }
+        && animated.frames.count >= 2
+    }
+    XCTAssertTrue(fit, "fit-size frames return")
     XCTAssertNil(zoomSegment(animated))
+  }
+
+  /// Catches a zoomed animation that freezes or plays blurry. At actual size a 1200 pixel GIF
+  /// keeps advancing, and every frame it shows has the 1200 pixel size the zoom needs, where a fit
+  /// frame is 600. The animation never goes through tiles.
+  func testAZoomedAnimationKeepsAdvancingWithFramesAtTheZoomedSize() async throws {
+    let (animated, _) = try await openAnimation(size: 1200)
+    let fitWidth = try XCTUnwrap(animated.frames[animated.currentFrame]).image.width
+
+    XCTAssertEqual(fitWidth, 600)
+
+    animated.zoomToActualSize()
+
+    XCTAssertEqual(animated.content.tileCount, 0)
+
+    var shown: [Int] = []
+    let advanced = await Harness.eventually {
+      guard let frame = animated.frames[animated.currentFrame], frame.zoomLevel == 1200 else {
+        return false
+      }
+
+      XCTAssertEqual(frame.image.width, 1200)
+      XCTAssertEqual(frame.image.height, 1200)
+      XCTAssertEqual(frame.bytes, 1200 * 1200 * 4, "eight-bit pixels, charged to the budget")
+
+      if shown.last != animated.currentFrame { shown.append(animated.currentFrame) }
+
+      return shown.count >= 4
+    }
+    XCTAssertTrue(advanced, "frames shown at the zoomed size: \(shown)")
+    XCTAssertNotEqual(Set(shown).count, 1)
+    XCTAssertEqual(animated.zoomLevel, 1200)
+    XCTAssertEqual(animated.content.tileCount, 0)
+    XCTAssertTrue(animated.tiles.entries.isEmpty)
+
+    let held = animated.frames.values.reduce(0) { $0 + $1.bytes }
+    let backdrop = try XCTUnwrap(animated.shot).bytes
+
+    XCTAssertEqual(animated.bitmapBudget.held(by: animated.lease), backdrop + held)
+    XCTAssertLessThanOrEqual(
+      animated.frames.count, ImageViewerApplet.framesAhead + 1,
+      "only the window of frames is kept")
+  }
+
+  /// Catches a zoom that a cap cannot hold being applied anyway. A zoomed frame larger than the
+  /// helper's per-image cap is refused with the zoom warning, the pane goes back to fit and keeps
+  /// playing there, and the neighbor's helper keeps its process.
+  func testZoomingAnAnimationPastTheHelperCapIsRefusedAndKillsNoOtherHelper() async throws {
+    let shared = ImageHelperBudget(limit: 8 << 30, floor: 1 << 30)
+    let neighbor = try ImageFixtures.write(ImageFixtures.png(), named: "n.png", in: folder)
+    let (calm, calmHost) = try await open(neighbor, helperBudget: shared)
+    let process = calm.client.processID
+
+    let (animated, host) = try await openAnimation(
+      size: 1200, settings: Harness.settings(maxImageBytes: 8 << 20), helperBudget: shared)
+
+    animated.zoomToActualSize()
+
+    let warned = await Harness.eventually {
+      self.warnings(host).contains { $0.contains("zoom limit was reached") }
+    }
+    XCTAssertTrue(warned, "\(warnings(host))")
+    XCTAssertTrue(animated.content.viewport?.isFit == true, "back to fit, as a still goes")
+    XCTAssertNil(animated.zoomLevel)
+    XCTAssertEqual(animated.phase, .showing)
+
+    let playing = await Harness.eventually { self.framesAdvance(animated) }
+    XCTAssertTrue(playing, "the animation goes on at fit")
+
+    XCTAssertTrue(calm.client.isRunning)
+    XCTAssertEqual(calm.client.processID, process)
+    XCTAssertTrue(warnings(calmHost).isEmpty)
+  }
+
+  /// Catches a zoom that the bitmap budget cannot hold. Fit frames fit in the budget and a window
+  /// of 1200 pixel frames does not, so the zoom is refused with the warning and the pane goes back
+  /// to fit with the budget back at the fit frames.
+  func testZoomingAnAnimationPastTheBitmapBudgetIsRefusedAndRevertsToFit() async throws {
+    let shared = ImageHelperBudget(limit: 8 << 30, floor: 1 << 30)
+    let neighbor = try ImageFixtures.write(ImageFixtures.png(), named: "n.png", in: folder)
+    let (calm, calmHost) = try await open(neighbor, helperBudget: shared)
+    let process = calm.client.processID
+
+    let (animated, host) = try await openAnimation(
+      size: 1200, helperBudget: shared,
+      bitmapBudget: ImageBitmapBudget(limit: 8 << 20, floor: 8 << 20))
+
+    animated.zoomToActualSize()
+
+    let warned = await Harness.eventually {
+      self.warnings(host).contains { $0.contains("zoom limit was reached") }
+    }
+    XCTAssertTrue(warned, "\(warnings(host))")
+    XCTAssertTrue(animated.content.viewport?.isFit == true)
+    XCTAssertNil(animated.zoomLevel)
+    XCTAssertFalse(animated.isZoomedPastFit)
+
+    let back = await Harness.eventually {
+      self.framesAdvance(animated) && animated.frames.values.allSatisfy { $0.zoomLevel == nil }
+    }
+    XCTAssertTrue(
+      back,
+      "the animation plays at fit again: \(animated.isAnimating) \(animated.currentFrame) \(frameSummary(animated)) \(animated.client.outstandingFrames) \(animated.phase)"
+    )
+
+    let backdrop = try XCTUnwrap(animated.shot).bytes
+    let fitFrames = animated.frames.values.reduce(0) { $0 + $1.bytes }
+
+    XCTAssertEqual(
+      animated.bitmapBudget.held(by: animated.lease), backdrop + fitFrames,
+      "the zoomed frames' bytes went back to the budget")
+
+    XCTAssertTrue(calm.client.isRunning)
+    XCTAssertEqual(calm.client.processID, process)
+    XCTAssertTrue(warnings(calmHost).isEmpty)
+  }
+
+  /// Catches a detached animation that keeps its zoomed frames. Detach pauses and gives back every
+  /// frame made for the zoom, leaving the backdrop, and reattach asks for the zoomed frames again.
+  func testDetachReleasesTheZoomedFramesAndReattachRestoresThem() async throws {
+    let (animated, _) = try await openAnimation(size: 1200)
+    let backdrop = try XCTUnwrap(animated.shot).bytes
+
+    animated.zoomToActualSize()
+
+    let sharp = await Harness.eventually { self.framesAreSharp(animated) }
+    XCTAssertTrue(sharp)
+    XCTAssertGreaterThan(animated.bitmapBudget.held(by: animated.lease), backdrop)
+
+    animated.detach()
+
+    XCTAssertFalse(animated.isAnimating)
+    XCTAssertNil(animated.zoomLevel)
+    XCTAssertTrue(animated.frames.values.allSatisfy { $0.zoomLevel == nil && $0.bytes == 0 })
+    XCTAssertEqual(animated.bitmapBudget.held(by: animated.lease), backdrop)
+    XCTAssertTrue(animated.content.viewport?.isFit == false, "the zoom itself stays")
+
+    let drained = await Harness.eventually { animated.client.outstandingFrames.isEmpty }
+    XCTAssertTrue(drained)
+
+    let held = frameSummary(animated)
+
+    for _ in 0..<5 { await Task.yield() }
+
+    XCTAssertEqual(frameSummary(animated), held, "a detached pane asks for no frames")
+    XCTAssertEqual(animated.bitmapBudget.held(by: animated.lease), backdrop, "nothing refills")
+
+    animated.reattach()
+
+    let back = await Harness.eventually {
+      self.framesAreSharp(animated) && self.framesAdvance(animated)
+    }
+    XCTAssertTrue(back)
+  }
+
+  // MARK: Late results and leaving a zoom
+
+  /// Catches a late failure of a zoomed frame stopping the animation. The zoom has not yet shown a
+  /// whole window of frames, so a failure sends the pane back to fit. The second and third results
+  /// then belong to a level it has left. They are dropped, the warning is posted once, and the
+  /// animation goes on at fit.
+  func testLateResultsForZoomedFramesAfterTheRevertLeaveTheAnimationPlayingAtFit() async throws {
+    let (animated, host) = try await openAnimation(size: 1200)
+
+    animated.zoomToActualSize()
+
+    let level = try XCTUnwrap(animated.zoomLevel)
+
+    deliver(
+      .failed(request(animated, id: 9001, frame: 1, side: level), .limit, "too big"), to: animated)
+    XCTAssertNil(animated.zoomLevel)
+    XCTAssertTrue(animated.content.viewport?.isFit == true)
+
+    deliver(.refused(request(animated, id: 9002, frame: 2, side: level), "too big"), to: animated)
+    deliver(
+      .failed(request(animated, id: 9003, frame: 3, side: level), .unreadable, "bad"), to: animated)
+
+    let playing = await Harness.eventually {
+      self.framesAdvance(animated) && animated.frames.values.allSatisfy { $0.zoomLevel == nil }
+    }
+    XCTAssertTrue(playing, "the animation goes on at fit")
+    XCTAssertEqual(warnings(host).filter { $0.contains("zoom limit was reached") }.count, 1)
+    XCTAssertEqual(animated.phase, .showing)
+  }
+
+  /// Catches a helper lost on a zoomed frame showing an error pane once the zoom has changed. The
+  /// pane recovers by the zoom path, as it does for a tile: it warns, stays on fit, and opens the
+  /// image again.
+  func testAHelperLostOnAZoomedFrameRecoversByTheZoomPathAfterTheLevelMoved() async throws {
+    for reason in [HelperEnd.crashed("stopped"), .overranTimeBound] {
+      let (animated, host) = try await openAnimation(size: 1200)
+
+      animated.zoomToActualSize()
+
+      let level = try XCTUnwrap(animated.zoomLevel)
+
+      deliver(
+        .failed(request(animated, id: 9001, frame: 1, side: level), .limit, "too big"), to: animated
+      )
+      XCTAssertNil(animated.zoomLevel)
+
+      deliver(
+        .ended(reason, lost: request(animated, id: 9002, frame: 2, side: level)), to: animated)
+
+      XCTAssertEqual(animated.phase, .showing, "\(reason): no error pane")
+      XCTAssertTrue(
+        warnings(host).contains { $0.contains("while zooming") || $0.contains("zoom limit") })
+
+      let again = await Harness.eventually {
+        animated.phase == .showing && animated.loadingName == nil && self.framesAdvance(animated)
+      }
+      XCTAssertTrue(again, "\(reason): the image opens again and plays")
+
+      animated.close()
+    }
+  }
+
+  /// Catches the old animation going on asking for frames while a step loads the next image. The
+  /// step stops it at once and holds the frames until the next image is chosen, and the load runs
+  /// once.
+  func testSteppingAwayFromAZoomedAnimationStopsItAndLoadsOnce() async throws {
+    try ImageFixtures.write(ImageFixtures.png(), named: "z.png", in: folder)
+
+    let (animated, host) = try await openAnimation(size: 1200)
+
+    let listed = await Harness.eventually {
+      animated.listing.isComplete && animated.listing.count == 2
+    }
+    XCTAssertTrue(listed)
+
+    animated.zoomToActualSize()
+
+    let sharp = await Harness.eventually { self.framesAreSharp(animated) }
+    XCTAssertTrue(sharp)
+
+    let loads = animated.navGeneration
+
+    animated.step(.next)
+
+    XCTAssertFalse(animated.isAnimating, "the old animation asks for nothing during the step")
+    XCTAssertTrue(animated.framesFrozen)
+
+    let stepped = await Harness.eventually {
+      animated.phase == .showing && animated.committedName == "z.png"
+    }
+    XCTAssertTrue(stepped)
+    XCTAssertEqual(animated.navGeneration, loads + 1, "one load and no reload")
+    XCTAssertFalse(animated.framesFrozen)
+    XCTAssertTrue(animated.content.viewport?.isFit == true)
+    XCTAssertTrue(warnings(host).isEmpty, "\(warnings(host))")
+  }
+
+  /// Catches a sharper backdrop replacing the zoomed frame on screen. A larger pane asks for a
+  /// sharper fit still of the animation. The zoomed frames stay valid when it arrives, so the
+  /// display does not flip to the scaled fit image.
+  func testASharperBackdropDoesNotReplaceTheZoomedFrames() async throws {
+    let (animated, _) = try await openAnimation(size: 1200)
+
+    animated.zoomToActualSize()
+
+    let sharp = await Harness.eventually { self.framesAreSharp(animated) }
+    XCTAssertTrue(sharp)
+
+    final class Tally { var stills = 0, flips = 0 }
+    let tally = Tally()
+    let original = animated.client.onEvent
+
+    animated.client.onEvent = { [weak animated] event in
+      original?(event)
+
+      guard let animated, case .image(let request, _, _) = event, request.kind == .still else {
+        return
+      }
+
+      tally.stills += 1
+
+      if animated.frames[animated.currentFrame]?.zoomLevel != animated.zoomLevel {
+        tally.flips += 1
+      }
+    }
+
+    let level = animated.zoomLevel
+
+    animated.content.frame = NSRect(x: 0, y: 0, width: 450, height: 450)
+    animated.content.layoutSubtreeIfNeeded()
+
+    let arrived = await Harness.eventually { tally.stills >= 1 }
+    XCTAssertTrue(arrived, "the larger pane asks for a sharper still")
+    XCTAssertEqual(tally.flips, 0, "the zoomed frame stayed the frame on screen")
+    XCTAssertEqual(animated.zoomLevel, level)
+    XCTAssertEqual(animated.shownPixels?.longer, 900)
+  }
+
+  /// Catches stale frames holding the request slots. Two requests for a size the pane left are out.
+  /// The next window request goes out anyway, in place of the waiting one.
+  func testRequestsForAnOldSizeDoNotBlockTheNextWindow() async throws {
+    let (animated, _) = try await openAnimation(size: 1200)
+
+    animated.stopAnimating()
+
+    let drained = await Harness.eventually { animated.client.outstandingFrames.isEmpty }
+    XCTAssertTrue(drained)
+
+    animated.client.decode(maxPixel: 1200, frame: 1, kind: .frame)
+    animated.client.decode(maxPixel: 1200, frame: 2, kind: .frame)
+    XCTAssertEqual(animated.client.outstandingFrames.count, 2)
+
+    animated.dropFrames()
+    animated.fillWindow()
+
+    let side = animated.fitLongerSide(of: try XCTUnwrap(animated.info))
+
+    XCTAssertTrue(animated.client.outstandingFrames.contains { $0.maxPixel == side })
+  }
+
+  /// Catches a frame for a level the pane left being shown or kept. A frame made for half the
+  /// current level arrives after a retarget. It is not stored and the budget does not change.
+  func testAFrameForAnOldLevelArrivingLateIsNeitherShownNorKept() async throws {
+    let (animated, _) = try await openAnimation(size: 1200)
+
+    animated.zoomToActualSize()
+
+    let sharp = await Harness.eventually { self.framesAreSharp(animated) }
+    XCTAssertTrue(sharp)
+
+    let level = try XCTUnwrap(animated.zoomLevel)
+    let index = animated.plan.next(after: animated.currentFrame)
+    let held = animated.bitmapBudget.held(by: animated.lease)
+    let before = frameSummary(animated)
+
+    let (header, pixels) = tinyImage(animated, frame: index, space: .sRGB, format: .rgba8)
+
+    deliver(
+      .image(request(animated, id: 9001, frame: index, side: level / 2), header, pixels),
+      to: animated)
+
+    XCTAssertEqual(animated.bitmapBudget.held(by: animated.lease), held)
+    XCTAssertNotEqual(animated.frames[index]?.image.width, 4)
+    XCTAssertEqual(frameSummary(animated).count, before.count)
+  }
+
+  /// Catches a half-float frame charged as eight-bit. A zoomed frame in an extended-linear space
+  /// arrives as sixteen-bit floats, and the budget is charged for the bytes it holds. The size the
+  /// app predicts for the level uses the same pixel width.
+  func testAZoomedFrameInAnHDRSpaceIsChargedAtHalfFloatSize() async throws {
+    let (animated, _) = try await openAnimation(size: 1200)
+
+    animated.zoomToActualSize()
+
+    let sharp = await Harness.eventually { self.framesAreSharp(animated) }
+    XCTAssertTrue(sharp)
+
+    let level = try XCTUnwrap(animated.zoomLevel)
+    let index = animated.plan.next(after: animated.currentFrame)
+    let old = animated.frames[index]?.bytes ?? 0
+    let held = animated.bitmapBudget.held(by: animated.lease)
+
+    let (header, pixels) = tinyImage(
+      animated, frame: index, space: .extendedLinearDisplayP3, format: .rgbaF16)
+
+    deliver(
+      .image(request(animated, id: 9001, frame: index, side: level), header, pixels), to: animated)
+
+    XCTAssertEqual(animated.frames[index]?.bytes, 4 * 4 * 8)
+    XCTAssertEqual(animated.bitmapBudget.held(by: animated.lease), held - old + 4 * 4 * 8)
+
+    let native = PixelSize(width: 1200, height: 1200)
+
+    XCTAssertEqual(
+      ImageHelperClient.levelBytes(
+        longerSide: level, native: native, space: .extendedLinearDisplayP3),
+      level * level * 8)
+    XCTAssertEqual(
+      ImageHelperClient.levelBytes(longerSide: level, native: native, space: .sRGB),
+      level * level * 4)
   }
 
   /// Catches Actual Size ignoring the declared resolution. A 3000 by 2000 PNG at 144 dots per

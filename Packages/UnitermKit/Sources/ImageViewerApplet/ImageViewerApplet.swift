@@ -126,6 +126,14 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   var playing: Task<Void, Never>?
   var isDetached = false
 
+  /// The longer side the animation's frames are decoded at while the pane is zoomed past what a fit
+  /// frame shows, or nil while frames are fit size. Frames made for another level are stale.
+  var zoomLevel: Int?
+
+  /// True from the moment a zoomed animation is left for another image until the next image is
+  /// chosen. The old animation stays on screen and asks for nothing.
+  var framesFrozen = false
+
   /// Frames kept ahead of the one showing. The bitmap budget can cut it to none.
   static let framesAhead = 2
 
@@ -144,6 +152,9 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   struct Frame {
     var image: CGImage
     var bytes: Int
+
+    /// The decode level of the zoom the frame was made for, or nil for a frame at fit size.
+    var zoomLevel: Int?
   }
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
@@ -373,6 +384,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
     stopAnimating()
     dropFrames()
+    framesFrozen = false
 
     if phase != .showing { phase = .opening }
 
@@ -470,6 +482,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
         prefetchLost(text)
       } else if request.kind == .tile {
         zoomRefused(text)
+      } else if isZoomedFrame(request) {
+        zoomedFrameLost(request, text)
       } else if request.kind == .still {
         problem(text, offersRetry: true)
       } else {
@@ -479,7 +493,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     case .ended(let reason, let lost):
       if lost?.kind == .prefetch, !(prefetch?.promoted ?? false) {
         helperLostDuringPrefetch()
-      } else if lost?.kind == .tile, phase == .showing, shot != nil {
+      } else if let lost, lost.kind == .tile || isZoomedFrame(lost), phase == .showing, shot != nil
+      {
         zoomEnded(reason)
       } else {
         ended(reason)
@@ -533,6 +548,11 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
     if let request, request.kind == .tile, kind != .staleSource {
       zoomRefused(text)
+      return
+    }
+
+    if let request, isZoomedFrame(request), kind != .staleSource {
+      zoomedFrameLost(request, text)
       return
     }
 
@@ -612,13 +632,17 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     let size = PixelSize(width: Int(header.width), height: Int(header.height))
 
     if request.kind == .frame {
-      store(frame: Int(header.frame), image: image, bytes: pixels.count)
+      store(frame: Int(header.frame), request: request, image: image, bytes: pixels.count)
       return
     }
 
     let sameImage = shot?.name == sourceName
 
-    dropFrames()
+    // A sharper backdrop for a zoomed animation must not replace the zoomed frame on screen.
+    let keepsZoomedFrames = sameImage && plan.isAnimated && zoomLevel != nil
+
+    if !keepsZoomedFrames { dropFrames() }
+
     retireShown(keeping: sourceName)
 
     guard reserve(pixels.count) else {
@@ -628,20 +652,28 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       return
     }
 
-    currentFrame = Int(header.frame)
+    if !keepsZoomedFrames { currentFrame = Int(header.frame) }
+
     shot = Shot(
       name: sourceName ?? imageName, modified: sourceModified, info: info, image: image,
       pixels: size, space: header.space, bytes: pixels.count)
     committedName = sourceName
     loadingName = nil
     phase = .showing
-    content.show(
-      image: image, native: native, actualScale: info.actualScale, hdr: header.space.isHDR,
-      zoomable: !plan.isAnimated, keepingZoom: sameImage)
-    frames[currentFrame] = Frame(image: image, bytes: 0)
+
+    if !keepsZoomedFrames {
+      content.show(
+        image: image, native: native, actualScale: info.actualScale, hdr: header.space.isHDR,
+        keepingZoom: sameImage)
+      frames[currentFrame] = Frame(image: image, bytes: 0)
+    }
+
     refresh()
 
-    if plan.isAnimated { startAnimating() }
+    if plan.isAnimated {
+      startAnimating()
+      fillWindow()
+    }
 
     shownSettled()
     viewportChanged()
@@ -684,6 +716,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   /// Releases the bitmap the budget holds for the image on screen, and the frames behind it.
   func clearImage() {
+    framesFrozen = false
     resizeCheck?.cancel()
     stopAnimating()
     dropFrames()
@@ -784,7 +817,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   private func advance() {
     let next = plan.next(after: currentFrame)
 
-    guard let frame = frames[next] else {
+    guard let frame = frames[next], frame.zoomLevel == zoomLevel else {
       waitingFor = next
       fillWindow()
       return
@@ -796,7 +829,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   private func showFrame(_ index: Int, _ frame: Frame) {
     currentFrame = index
     waitingFor = nil
-    content.swap(image: frame.image)
+    content.swap(image: frame.image, zoomed: frame.zoomLevel != nil)
 
     let keep = Set(plan.window(from: index, ahead: Self.framesAhead))
 
@@ -810,22 +843,76 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     scheduleNextFrame()
   }
 
-  /// Asks for the next frame of the window that is not held. Frame requests yield to a still.
-  private func fillWindow() {
-    guard let info else { return }
+  /// The longer side a frame is decoded at now: the zoom's level, or the fit size.
+  func frameSide(for info: SourceInfo) -> Int {
+    zoomLevel ?? fitLongerSide(of: info)
+  }
+
+  /// True for a frame request made for a zoom. Only a zoom asks for frames larger than the fit
+  /// size, so the size tells it from a fit request, whatever the zoom has become since.
+  func isZoomedFrame(_ request: DecodeRequest) -> Bool {
+    guard request.kind == .frame, let info, request.source == info.source else { return false }
+
+    return request.maxPixel > fitLongerSide(of: info)
+  }
+
+  /// A limit or a failure hit a zoomed frame. The zoom it was made for is refused like a tile. A
+  /// request for a level the pane has already left says nothing about the current one, so it is
+  /// dropped and the window is asked for again.
+  func zoomedFrameLost(_ request: DecodeRequest, _ text: String) {
+    if request.maxPixel == zoomLevel {
+      zoomRefused(text)
+    } else {
+      fillWindow()
+    }
+  }
+
+  private func holdsCurrentFrame(_ index: Int) -> Bool {
+    frames[index].map { $0.zoomLevel == zoomLevel } ?? false
+  }
+
+  /// Asks for the first frame of the window that is not held at the current size. Frame requests
+  /// yield to a still. A frame already in flight or waiting is not asked for twice.
+  func fillWindow() {
+    guard let info, !isDetached, !framesFrozen else { return }
+
+    let side = frameSide(for: info)
+
+    // A request waiting for the current size keeps its place, since a newer one would replace it.
+    // Requests for a size the pane has left still run to the end and are replaced when they wait.
+    guard client.pendingFrame?.maxPixel != side else { return }
+
+    let outstanding = client.outstandingFrames
 
     for wanted in plan.window(from: currentFrame, ahead: Self.framesAhead)
-    where frames[wanted] == nil {
-      client.decode(maxPixel: requestedLongerSide(for: info), frame: wanted, kind: .frame)
+    where !holdsCurrentFrame(wanted) {
+      if outstanding.contains(where: { $0.frame == wanted && $0.maxPixel == side }) { continue }
+
+      client.decode(maxPixel: side, frame: wanted, kind: .frame)
       return
     }
   }
 
-  private func store(frame index: Int, image: CGImage, bytes: Int) {
-    guard plan.isAnimated, plan.window(from: currentFrame, ahead: Self.framesAhead).contains(index)
+  private func store(frame index: Int, request: DecodeRequest, image: CGImage, bytes: Int) {
+    guard plan.isAnimated, plan.window(from: currentFrame, ahead: Self.framesAhead).contains(index),
+      let info
     else { return }
 
+    guard request.maxPixel == frameSide(for: info) else {
+      fillWindow()
+      return
+    }
+
+    if let old = frames.removeValue(forKey: index) {
+      bitmapBudget.giveBack(old.bytes, lease: lease)
+    }
+
     guard bitmapBudget.reserve(bytes, lease: lease) else {
+      if zoomLevel != nil {
+        zoomRefused("There is not enough memory to keep the animation's frames at this zoom.")
+        return
+      }
+
       stopAnimating()
       notify(
         .warning, "The animation paused because there is not enough memory to keep its frames.",
@@ -833,13 +920,23 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       return
     }
 
-    frames[index] = Frame(image: image, bytes: bytes)
+    let frame = Frame(image: image, bytes: bytes, zoomLevel: zoomLevel)
+    frames[index] = frame
 
-    if waitingFor == index, let frame = frames[index], playing != nil {
-      showFrame(index, frame)
-    } else {
-      fillWindow()
+    if zoomLevel != nil,
+      plan.window(from: currentFrame, ahead: Self.framesAhead).allSatisfy(holdsCurrentFrame)
+    {
+      lastGood = content.viewport
     }
+
+    if waitingFor == index, playing != nil {
+      showFrame(index, frame)
+      return
+    }
+
+    if index == currentFrame { content.swap(image: image, zoomed: frame.zoomLevel != nil) }
+
+    fillWindow()
   }
 
   // MARK: Applet
@@ -885,12 +982,12 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   public func reattach() {
     isDetached = false
     alerts.reattach(from: self, to: host)
+    restoreZoomAfterReattach()
 
     if phase == .showing, plan.isAnimated { startAnimating() }
 
     resumeSlideshowTimer()
     maybePrefetch()
-    restoreZoomAfterReattach()
   }
 
   public func focus() {
