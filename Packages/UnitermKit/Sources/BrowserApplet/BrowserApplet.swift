@@ -1131,16 +1131,31 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     }
   }
 
-  /// The index of the last tab that `page`'s script opened and the pane still holds, or the page's
-  /// own index when it has none. A new script-opened tab goes right after it, so a loop reads in
-  /// the order it asked, and a closed or moved tab leaves the rest of the group together.
+  /// The index of the last tab that `page`'s script opened and the pane still holds, or the last one
+  /// those tabs opened in turn, or the page's own index when it has none. A new script-opened tab
+  /// goes right after it, so a loop reads in the order it asked, a pop-up's own tabs stay beside it,
+  /// and a closed or moved tab leaves the rest of the group together.
   private func endOfScriptGroup(of page: BrowserTab) -> Int {
-    tabs.lastIndex { $0.scriptGroup === page }
+    tabs.lastIndex { Self.isInScriptGroup($0, of: page) }
       ?? tabs.firstIndex { $0 === page } ?? tabs.count - 1
   }
 
-  /// A yes. The remembered addresses open as ordinary tabs after the page's own tab, in order,
-  /// with no opener and no selection. Each address meets the scheme rule as any page's link does.
+  /// A tab's group is set once, to a tab that already exists, so the walk always ends.
+  private static func isInScriptGroup(_ tab: BrowserTab, of page: BrowserTab) -> Bool {
+    var group = tab.scriptGroup
+
+    while let current = group {
+      if current === page { return true }
+
+      group = current.scriptGroup
+    }
+
+    return false
+  }
+
+  /// A yes. The remembered addresses open as ordinary tabs after the page's last script-opened tab,
+  /// in order, with no opener and no selection. They join its group. Each address meets the scheme
+  /// rule as any page's link does.
   private func openHeldTabs(of page: BrowserTab) {
     let attempts = page.scriptTabs.attempts
     let addresses = page.scriptTabs.takeAddresses()

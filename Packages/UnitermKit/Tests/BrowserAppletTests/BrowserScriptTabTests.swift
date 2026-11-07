@@ -200,6 +200,32 @@ final class BrowserScriptTabTests: XCTestCase {
     XCTAssertEqual(order(harness), ["PAGE", "P/0", "P/2", "Q/0"])
   }
 
+  /// Catches a pop-up cut off from the tabs it opened. A page's next tab goes after the whole
+  /// family, so a tab its pop-up opened stays beside that pop-up.
+  func testATabAPopUpOpenedStaysWithItWhenThePageOpensAnother() async throws {
+    let harness = try await make()
+    defer { harness.stop() }
+
+    let page = harness.tab
+
+    try await open(1, in: page, harness)
+    await harness.eventually("the pop-up has a title") {
+      harness.applet.tabCount == 2 && !harness.applet.tabs.contains { $0.pageTitle == nil }
+    }
+
+    try await open(1, prefix: "/c", in: harness.applet.tabs[1], harness)
+    await harness.eventually("its tab has a title") {
+      harness.applet.tabCount == 3 && !harness.applet.tabs.contains { $0.pageTitle == nil }
+    }
+
+    try await open(1, prefix: "/q", in: page, harness)
+    await harness.eventually("every tab has a title") {
+      harness.applet.tabCount == 4 && !harness.applet.tabs.contains { $0.pageTitle == nil }
+    }
+
+    XCTAssertEqual(order(harness), ["PAGE", "P/0", "C/0", "Q/0"])
+  }
+
   /// Catches a no that drops nothing, warns twice, or asks again. A no drops the list, posts one
   /// warning, and refuses the page's further calls with no further question. The next load of the
   /// page starts over, so its next call past the limit asks again.

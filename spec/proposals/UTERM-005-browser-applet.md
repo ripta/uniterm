@@ -1526,7 +1526,8 @@ Starts after UTERM-004 M6.
 - 2026-11-06: Script-opened tabs read in order (the user's choice in a hands-on review, not a best guess). "New windows
   and pop-ups" said a pop-up opens right after its opener. A loop of script-opened tabs therefore read backwards, and the
   tabs a yes opens went ahead of the others. Now a script-opened tab goes after the last tab that page's script opened
-  and the pane still holds. A tab that was closed leaves the rest of the group together, and a page with none falls
+  and the pane still holds, or after the last tab one of those opened, so a pop-up's own tabs stay beside it. A tab
+  that was closed leaves the rest of the group together, and a page with none falls
   back to the opener. The tabs a yes opens join the same group. The same code places a tab a link click opens, and that
   placement is unchanged: right after the opener. Selection and the return to the opener on close are unchanged.
 
@@ -1543,7 +1544,7 @@ Starts after UTERM-004 M6.
   reached, and why stays unknown. The user chose to make requests fail at once, so sites show their normal blocked
   message. This is an addition: a script injected in each page's own world, with no handler, that replaces the capture
   calls. The delegate's `.deny` stays as the backstop. If wrong, a page that defines its own replacement after document
-  start can undo the script, and the delegate still denies a request that reaches it.
+  start can undo the script, and the delegate still denies a request that reaches it. (addition)
 
 ## References
 
