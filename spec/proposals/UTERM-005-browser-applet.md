@@ -435,6 +435,13 @@ Decision: a failed tab shows a stopped-page message, and recovery always rebuild
   tab the user is not looking at, or in a detached pane, drops the view and loads nothing until the tab is selected or
   attached. In the tab the user is looking at, a typed address then loads in the new web view, and a reload, back, or
   forward loads the page again.
+- When the bound replaces a hung view, the tab ends that view's content process with SIGKILL first, so the new view
+  cannot land in a process that still spins. A tab that shares the process recovers as from any stopped process. A tab
+  or pane the user closes arms no bound, so the close probes the page with a trivial script call. No reply within the same
+  bound ends the process, and a reply or an error that says the process ended cancels it. The web view is kept alive only
+  until the probe settles. A closed tab with no web view starts no probe. The process id is read before the view is
+  released. The read uses a private WebKit property, so a macOS that drops it leaves the old behaviour. See Risks.
+  Amended 2026-11-06; see Decision Log.
 - No recovery resends a POST.
 - A stop clears the tab's unsent mark and answers its held dialogs and questions. A download belongs to the network
   process, so it keeps running and still asks on close. A page that came from a form comes back blank, since showing it
@@ -489,15 +496,20 @@ None.
 - **The control permissions depend on an amendment to accepted UTERM-004** — likelihood: medium, impact: medium. Until
   UTERM-004 names browser navigation and browser read, its permission set and this proposal disagree. Mitigation: M8
   starts only after UTERM-004 M6, and its first check requires the amendment.
-- **A hung content process outlives its web view** — likelihood: low, impact: medium. Replacing the web view of a hung
-  page releases the view, and WebKit leaves the hung process running. Measured under `swift test`: the process was still
-  spinning 100 seconds after the release, and it was gone about 20 seconds after the test host exited. A rebuilt view and
-  four new tabs each got a different process, so a new view did not land in the hung one. Each hung page costs one core
-  and its battery for as long as the app runs. Accepted: no public WebKit call ends a process, the private ones cannot
-  ship, and a hang needs a page that spins and a user who reloads it. ADR-05 says work an applet keeps after close is
-  bounded and visible. The applet does not choose this. WebKit keeps the process, so the bound is not met, and nothing in
-  the pane shows it. The user can end the process in Activity Monitor. Not verified: whether the app's own exit ends it
-  as it ended the test host's, and whether a real hang in the running app behaves as it did under `swift test`.
+- **A hung content process is ended with a private WebKit property** — likelihood: medium, impact: low. WebKit leaves a
+  hung process running after its web view is released. Measured under `swift test`: the process survived release of its
+  view for 61 seconds, a non-persistent store, a navigation to `about:blank`, WebKit's private `_close`, and its private
+  `_killWebContentProcess`, which lasted 30 seconds. SIGKILL to the process id that `_webProcessIdentifier` names ends
+  it. The product reads that property in one type, `WebContentProcess`, and uses it when the hang bound replaces a view
+  and when a hung tab or pane is closed without a reload. The read is guarded by `responds(to:)`. A macOS update can
+  remove or rename the property, and the browser then falls back to the old behaviour: a hung page costs one core and
+  its battery until the app quits. The type refuses ids at or below 1, since `kill(0, ...)` signals the app's own process
+  group. It also refuses any process whose path is not a WebKit content process, so a recycled id is left alone.
+  Mitigation: one type owns the private name, tests spin real pages and prove the process is gone, and a missing property
+  degrades to the old behaviour with no crash. Not verified: whether the app's own exit ends a process this does not
+  reach, and whether a real hang in the running app behaves as it did under `swift test`. A tab sharing the hung process
+  hears it end and recovers as from any content process that stops. A closed hung tab keeps its web view for up to the
+  10-second bound so the probe can run. ADR-05 says work an applet keeps after close is bounded, and this is.
 - **Two WebKit applets have not chosen their stores** — likelihood: low, impact: low. UTERM-007 and UTERM-010 are drafts.
   Accepted: the browser's store is its own, so whatever they choose cannot share or clear it.
 
@@ -1004,7 +1016,8 @@ None.
 - Killing a selected tab's content process shows the stopped-page message, and Reload brings the page back with its
   history
 - Killing an unselected tab's content process leaves it not yet loaded, and selecting it loads the page
-- A page that hangs its content process comes back on Reload
+- A page that hangs its content process comes back on Reload, and the hung process is gone after the bound, whether the
+  user reloaded or closed the tab. Amended 2026-11-06; see Decision Log.
 - No recovery resends a POST, and a stopped tab no longer counts as running something
 
 **As built:**
@@ -1028,8 +1041,8 @@ None.
   the message again and a page that crashes on load cannot loop. A test stops a tab twice in a row, the second time
   before its page commits, and the history comes back.
 - Measured. WebKit's `_killWebContentProcess` is present on this macOS and the navigation delegate never hears of it. The
-  tests send SIGKILL to the process that `_webProcessIdentifier` names, which is a real crash from WebKit's side. Both
-  names are private and live in test code only. A process id of 0 means no process exists yet, and `kill(0, ...)` would
+  tests send SIGKILL to the process that `_webProcessIdentifier` names, which is a real crash from WebKit's side. The
+  tests have their own read, apart from the product's guarded one. A process id of 0 means no process exists yet, and `kill(0, ...)` would
   end the test run's own process group, so the helper waits for an id above 1. SIGKILL leaves no crash report.
 - The history record at a stop. `interactionData` returns the tab's pending record first, and a stop stores the record it
   reads into that slot, so the description keeps the history until Reload applies it. Measured: a view that has not
@@ -1069,11 +1082,18 @@ None.
   for a typed address, which starts the hung page's own load before the typed one replaces it. A page that hangs on load
   could in principle hang the new view too. Recovery never repeats on its own, so the user's next action arms the bound
   again.
-- The hung process outlives its view. The old web view is released after a hang, and the process kept spinning. A scratch
-  test measured it still alive 100 seconds later, and gone about 20 seconds after the test host exited. A rebuilt view and
-  four new tabs each got a different process from the hung one. No public call ends it, so the tests send it SIGKILL
-  at the end and production code cannot. Not tried, since the rebuild already builds a fresh configuration: a new
-  `WKProcessPool`, which macOS 15 and later treat as a no-op. See Risks. The user should confirm in the running app.
+- The hung process outlives its view. A scratch test measured the process alive after release of its view for 61 seconds,
+  and after a non-persistent store, a navigation to `about:blank`, `_close`, and `_killWebContentProcess` for 30 seconds.
+  A rebuilt view and four new tabs each got a different process from the hung one. SIGKILL to the id from
+  `_webProcessIdentifier` ends it, and the user chose to ship that in a hands-on review. `WebContentProcess` owns the
+  private read, guarded by `responds(to:)`, and the kill. It refuses ids at or below 1 and any process whose path does
+  not name a WebKit content process. The hang bound kills the process before it builds the new view. A close of a tab
+  or pane reads the id before the view is released, and probes the page with `evaluateJavaScript`. No reply within the bound
+  kills the process, if the kept view still reports the same id. The probe holds the view strongly, since a released view
+  answers a pending call at once, which would look like a reply. `HangPolicy` carries the type, so a test injects a
+  recorder. Tests spin real pages from the fixture server and prove the process is gone on replace and on close. They
+  prove a pop-up sharing the process recovers as a stopped tab, and that a live page closed normally cancels the probe
+  and sends no signal. A unit test proves ids 0, 1, -1, and the test's own are never signalled. See Risks.
 - No recovery resends a POST. Recovery restores history and never sets the resubmit intent, so the gate refuses the
   repeated post. Measured: a rebuilt view restores a post result as a blank page with its history, the gate refuses the
   repeat with one notice, and the server's count of posts stays one. The page is blank, so the message says so. A stopped
@@ -1262,7 +1282,8 @@ Starts after UTERM-004 M6.
   can lag a renewal by an hour.
 - 2026-11-06: ADR candidate (cuts across the system): web content hosted anywhere in uniterm may load plain HTTP, with
   no App Transport Security floor, so each applet that hosts a web view owns its own scheme gate. The key is app-wide,
-  so the text viewer in UTERM-007 and the canvas in UTERM-010 inherit it. Undecided. Found in UTERM-005 M1.
+  so the text viewer in UTERM-007 and the canvas in UTERM-010 inherit it. Declined by the user on 2026-11-06 as
+  inconsequential. Found in UTERM-005 M1.
 - 2026-11-06: ADR candidate (cuts across the system): a setting reaches an applet only through its factory, explicit and
   read live, and never through the applet reading the settings store or UserDefaults. Waits on the second applet that
   takes a setting, since this one instance cannot yet show whether settings belong in a per-applet bundle or on the applet
@@ -1334,9 +1355,11 @@ Starts after UTERM-004 M6.
 
 - 2026-11-06: ADR candidate (cuts across the system): a web view whose content process hangs cannot be ended by public
   WebKit API, so any applet that hosts a web view and recovers from a hang leaves the hung process running until the app
-  quits. Declined: a known issue, not a decision. The Risks carry it. Found in UTERM-005 M7.
+  quits. Declined: a known issue, not a decision. The Risks carry it. Found in UTERM-005 M7. Overtaken on 2026-11-06 by
+  the SIGKILL decision below.
 - 2026-11-06: ADR candidate (cuts across the system): shipping code uses no private WebKit or AppKit API, and private calls
-  are allowed in test code only. Undecided. Found in UTERM-005 M7.
+  are allowed in test code only. Declined by the user on 2026-11-06 as inconsequential, and no longer true: the product
+  reads one private WebKit property to end a hung process. Found in UTERM-005 M7.
 - 2026-11-06: M7 review fixes (work-queue best guess). The hang rule said any callback of the navigation delegate cancels the
   bound. It now counts the UI delegate's callbacks too, and the bound never replaces a page that holds a dialog. The prior
   rule would have rebuilt a page that waits for the user. The prior rule also replaced a busy page with unsent input without
@@ -1376,6 +1399,24 @@ Starts after UTERM-004 M6.
   is built. The identifier `browser-profile` stays, and the accessibility label and tooltip read "Profile: Default
   Profile". The reason is that a text label took toolbar width and had no place to grow into a profile control. M5's
   As built and its UI test note now describe the button. M5 stays DONE.
+
+- 2026-11-06: End a hung content process with SIGKILL (the user's choice in a hands-on review, not a best guess). The
+  Risks said a hung process outlives its web view, that no public call ends it, that the private ones cannot ship, and
+  that the loss was accepted. M7's As built said production code cannot end it. "Web content failure" said nothing about
+  the process. Measured under `swift test`: the process survived release of its view for 61 seconds, a non-persistent
+  store, a navigation to `about:blank`, private `_close`, and private `_killWebContentProcess` for 30 seconds. SIGKILL to
+  the id from `_webProcessIdentifier` works, and the user chose to ship it. The tab now kills the process when the hang
+  bound replaces its view. A tab or pane the user closes without a reload also leaves the process, since only a reload
+  arms the bound. So a close probes the page, and no reply within the same 10-second bound kills the process. The
+  Risks, "Web content failure", M7's check and As built, and the test comment that said nothing private ships are
+  rewritten. The private read lives in one type behind `responds(to:)`, refuses ids at or below 1 and non-WebKit paths,
+  and falls back to the old behaviour when a macOS drops the property. If wrong, a signal that reaches a recycled id is
+  stopped by the path check, and a probe that kills a live page needs a page that is alive and silent for 10 seconds.
+- 2026-11-06: Three ADR candidates declined (the user's choice, since the user called them inconsequential). No private
+  API in shipping code is declined, and the SIGKILL decision above ships one. Plain HTTP in hosted web content with no
+  App Transport Security floor is declined. One question per pane is declined as an ADR, and it stays a rule of this
+  proposal. The two candidates that wait on a second applet, the settings factory and the download quarantine, stay as
+  they were.
 
 ## References
 

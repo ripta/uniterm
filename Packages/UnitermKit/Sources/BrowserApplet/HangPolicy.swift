@@ -3,7 +3,9 @@ import Foundation
 /// How a tab notices a content process that no longer answers.
 ///
 /// A user's reload or navigation arms one bound. Any sign of life from the process cancels it, so a
-/// slow server never fires it. Nothing arms it in the background. The schedule is injected so a
+/// slow server never fires it. Nothing arms it in the background. When it runs out, the tab ends
+/// the hung content process. A tab the user closes while its page spins gets the same bound, armed
+/// at the close. The schedule is injected so a
 /// test fires the bound by hand and the production code sleeps for it.
 public struct HangPolicy: Sendable {
   public typealias Cancel = @MainActor @Sendable () -> Void
@@ -15,6 +17,9 @@ public struct HangPolicy: Sendable {
   public var bound: Duration
 
   public var schedule: Schedule
+
+  /// Reads a content process's id and ends it. A test supplies one that signals nothing real.
+  var process = WebContentProcess.live
 
   public init(bound: Duration = .seconds(10), schedule: @escaping Schedule = HangPolicy.sleeping) {
     self.bound = bound

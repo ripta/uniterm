@@ -45,8 +45,9 @@ final class ManualHangTimer {
 
 /// How the tests end a content process and name it. WebKit's `_killWebContentProcess` exists on
 /// this macOS and does nothing the navigation delegate hears about, so the tests send SIGKILL to
-/// the process that `_webProcessIdentifier` names. That is a real crash from WebKit's side. Both
-/// private names live in test code only, and nothing private ships in the product.
+/// the process that `_webProcessIdentifier` names. That is a real crash from WebKit's side. The
+/// product reads the same property in `WebContentProcess`. This helper has its own read and its
+/// own signal, so a test that crashes a process does not depend on the product's guards.
 @MainActor
 enum WebContent {
   /// Sends SIGKILL to the view's content process once it has one. A process id of 0 means none was
@@ -632,7 +633,8 @@ final class BrowserRecoveryTests: XCTestCase {
   /// the server sees nothing and no sign of life cancels the bound. When it runs out the tab
   /// replaces the web view, the page loads again with its history, and the old web view is
   /// released. Measured: WebKit does not end the hung process when its web view is released, and it
-  /// was still spinning 100 seconds later. No public call ends it, so the test ends it itself.
+  /// was still spinning 100 seconds later. The tab ends the process itself, and
+  /// `BrowserHungProcessTests` proves that. This test keeps its own cleanup as a safety net.
   func testAHangThatIgnoresReloadIsReplacedWhenTheBoundRunsOut() async throws {
     let timer = ManualHangTimer()
     let harness = try await make(services: .testing(hang: timer.policy))

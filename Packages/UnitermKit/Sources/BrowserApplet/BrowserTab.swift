@@ -131,6 +131,8 @@ final class BrowserTab: NSObject {
   /// The bound on a reload or navigation the content process never answers.
   private let hangRecovery: HangRecovery
 
+  private let hangPolicy: HangPolicy
+
   weak var delegate: (any BrowserTabDelegate)?
 
   /// The tab whose page opened this one. A pop-up tab that closes itself returns the selection to
@@ -241,6 +243,7 @@ final class BrowserTab: NSObject {
     self.dataStore = dataStore
     self.hsts = hsts
     self.hangRecovery = HangRecovery(policy: hang)
+    self.hangPolicy = hang
     self.clock = clock
     self.loadState = .idle(history: restoredState)
     self.isPopup = false
@@ -266,6 +269,7 @@ final class BrowserTab: NSObject {
     self.dataStore = dataStore
     self.hsts = hsts
     self.hangRecovery = HangRecovery(policy: hang)
+    self.hangPolicy = hang
     self.clock = clock
     self.loadState = .loading(error: nil, history: nil)
     self.isPopup = true
@@ -586,8 +590,13 @@ final class BrowserTab: NSObject {
 
     guard isMaterialized else { return }
 
-    webView.stopLoading()
-    detach(webView)
+    let view = webView
+    let pid = hangPolicy.process.identifier(of: view)
+
+    view.stopLoading()
+    detach(view)
+
+    if let pid { ClosedViewProbe.watch(view, pid: pid, policy: hangPolicy) }
   }
 
   /// Takes every reference between the web view and this tab away, and the web view off the screen.
@@ -676,6 +685,8 @@ final class BrowserTab: NSObject {
   /// hung view and waits to be selected or attached, since a reload there would wake a tab nobody
   /// is looking at.
   func replaceHung(_ replay: HangRecovery.Replay?) {
+    endHungProcess()
+
     guard delegate?.tabIsViewed(self) == true else {
       lose(recovering: false)
       return
@@ -690,6 +701,15 @@ final class BrowserTab: NSObject {
     case .restore, nil:
       _ = reload()
     }
+  }
+
+  /// Ends the content process of the hung view before the tab builds another. A new view for the
+  /// same site could otherwise land in the process that still spins. A tab that shares the process
+  /// hears it end, and recovers as it does from any content process that stops.
+  private func endHungProcess() {
+    guard let view = current, let pid = hangPolicy.process.identifier(of: view) else { return }
+
+    hangPolicy.process.kill(pid)
   }
 
   /// Replaces the web view, then tells the applet. `hadFocus` is read before the old view leaves.
