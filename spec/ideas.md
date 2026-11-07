@@ -98,3 +98,28 @@ position, so a move has to keep the same tab selected.
 Move Tab Left and Move Tab Right commands would give the palette a keyboard route.
 They need no default shortcut. Tabs past the edge of a full bar are clipped, so a
 drag cannot reach them.
+
+## Move tabs between panes
+
+Drag a live tab from one pane to another of the same type. The work starts with a
+spike, then a proposal. The spike moves a live terminal surface and a live web
+view between panes in one window, and watches for rendering, focus, and video
+problems. Nothing has been tried yet, and only this could rule the idea out.
+
+The proposal covers terminals first, since they hold far less state, then browsers
+and any other applet with tabs. It changes the applet contract: a pane gives up a
+tab and another adopts it. Rebuilding a tab from its description is no substitute,
+since that kills the shell and reloads the page.
+
+Still open for the proposal:
+
+- Browser downloads, pending dialogs, and the script-opened tab limit belong to the
+  pane. Opener links can end up pointing at a tab in another pane.
+- Dragging a pane's last tab away should close the pane with no question and no
+  undo entry. That path does not exist today.
+- What undo means after a move.
+- Moving between windows, since close stamps are per window.
+- Control and trust in UTERM-004 depends on which pane a process runs in, so a move
+  has to deal with existing grants.
+- Browser profiles from the idea above fix a web view's data store at creation, so
+  a live move between profiles has to be refused.
