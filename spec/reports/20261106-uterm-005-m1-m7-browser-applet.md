@@ -13,16 +13,16 @@ milestone carries a `Live after` line. Nothing is held, blocked, or skipped, and
 
 Commits, in order:
 1. "Add a single-page browser applet"
-2. "Allow single browser test runs in the cg allowlist"
-3. "Warn in the address bar when a page is not fully secure"
-4. "Add browser tabs, keys, and a question before resending a form"
-5. "Search from the address bar, and offer plain HTTP only by the user's action"
-6. "Give the browser its own website data, and restore tabs lazily"
-7. "Open pop-ups as tabs, save downloads safely, and guard unsent input"
-8. "Recover a stopped or hung page by rebuilding its web view"
-9. "Close the seams between the browser milestones", the row review
-10. "Finish the browser applet row"
-11. "Say what owns the retired browser UI tests, and tidy M8's checks", the final review
+2. "Warn in the address bar when a page is not fully secure"
+3. "Add browser tabs, keys, and a question before resending a form"
+4. "Search from the address bar, and offer plain HTTP only by the user's action"
+5. "Give the browser its own website data, and restore tabs lazily"
+6. "Open pop-ups as tabs, save downloads safely, and guard unsent input"
+7. "Recover a stopped or hung page by rebuilding its web view"
+8. "Close the seams between the browser milestones", the row review
+9. "Finish the browser applet row"
+10. "Say what owns the retired browser UI tests, and tidy M8's checks", the final review
+11. "Remove personal paths from the session reports"
 
 `make test-package` on the last code: run `ZFBXZK`, 1,467 tests, 4 skipped, 0 failures. `make test-app` on the code before the final review: run `3HGMPE`, 108 tests, 0 failures. The final review
 changed one doc comment and proposal text, so the UI suite was not rerun.
@@ -92,8 +92,8 @@ Adding either of these would be a scope addition, so the run leaves them out.
 
 ### M1: Single-page browser
 
-Commit: "Add a single-page browser applet". A separate commit, "Allow single browser test runs in the cg allowlist",
-carries the rules approved at cg's prompt during this milestone.
+Commit: "Add a single-page browser applet". The per-test rules approved at cg's prompt during this milestone were committed at first, then
+dropped from the unpushed history, since each named an absolute path and only `swift test --filter` is needed.
 
 Checks, on 2026-11-06, with the display on and the screen unlocked:
 
@@ -543,7 +543,6 @@ No correctness or security defect was found. The refactor had no lost guard, and
 - Fixed: the row review commit's body opened on the prior state, against `commit-style.md`. It was unpushed, so it was reworded with its tree, author, and date unchanged, and the next commit was rebuilt on it.
 - Fixed: two retired UI tests were unrecorded. `BrowserAddressTests` and `BrowserLazyRestoreTests` own those contracts, and the second was mutation-checked. As built says so.
 - Fixed: one doc comment, and M8's checks, which repeated themselves and held as-built facts. M8 still names all three things to build.
-- For the user: the commit "Allow single browser test runs in the cg allowlist" carries absolute paths under this repo in `.cg.yaml`, unpushed.
 
 The final ADR check found no conflict. It raised one more candidate for the user: one question per pane, if every applet should be bound by it. It stays in the proposal otherwise.
 
@@ -553,7 +552,8 @@ The final ADR check found no conflict. It raised one more candidate for the user
   one-line exception, or an amendment covering work the platform keeps alive. Otherwise the next WebKit applet will assume ADR-05 is met.
 - ADR candidates in the Decision Log, all waiting or undecided: plain HTTP with no transport floor for hosted web content, a setting reaching an applet only through its factory, per-file quarantine that fails closed, and no private API in
   shipping code.
-- `.cg.yaml` holds uncommitted rules this run did not add, from other sessions' approvals, including `prefix: [cp]`, which allows a write command. It is left uncommitted for the user.
+- `.cg.yaml` holds one uncommitted rule this run did not add, `prefix: [cp]`, which allows a write command. It is left uncommitted for the user. Rules naming an absolute path were removed.
+- Personal paths remain on the remotes until this branch lands. `upstream/main` has them in eight older reports, and `origin/main` has them in `.cg.yaml` and three reports. Landing fixes each branch's latest files. Removing them from history needs a force-push.
 
 ## Unowned failures
 

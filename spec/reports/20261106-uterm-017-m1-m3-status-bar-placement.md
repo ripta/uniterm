@@ -4,7 +4,7 @@ Started 2026-11-06. This report covers a `/work-queue` run with no arguments, wh
 row, `UTERM-017 M1-M3`, from `spec/proposals/UTERM-017-status-bar-placement.md`. UTERM-017 settles where an applet's
 notice goes and what level it gets. It also adds typed window slots, a shared queue and history, and one rule for
 detached panes and restore. The specs live in the code repo, so every commit below is in
-`/Users/ripta/projects/uniterm`, on the `agent/petunia` branch.
+this repo, on the `agent/petunia` branch.
 
 ## Run state
 
