@@ -74,8 +74,14 @@ option, and the form is still open.
 Take a screenshot of the current browser tab, and of the current pane or tab of
 any applet. Nothing here has been tried yet. The browser can use `takeSnapshot`,
 though a full-length page needs more work. AppKit's view capture should cover
-ordinary views, and will likely miss web, map, and Metal content. The likely shape
-is an optional snapshot method on the applet contract, since capturing the screen
-would need Screen Recording permission. The terminal is the open question: its
-Metal drawing needs a libghostty call, if one exists. A tab that is not showing
-may have nothing current to capture.
+ordinary views, and will likely miss web, map, and Metal content. The terminal is
+the open question: its Metal drawing needs a libghostty call, if one exists. A tab
+that is not showing may have nothing current to capture.
+
+Chosen so far. Each applet handles its own screenshots through an optional method
+on the applet contract, since capturing the screen would need Screen Recording
+permission. An applet with no method does not offer the command. AppKit capture is
+a shared helper that an applet opts in to, never an automatic default, since it
+would save a blank area for content it cannot see. A screenshot of a tab is just
+the tab's content. A screenshot of a pane includes the pane's chrome, such as its
+tab bar and toolbar.
