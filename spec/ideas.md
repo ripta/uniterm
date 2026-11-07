@@ -84,4 +84,5 @@ permission. An applet with no method does not offer the command. AppKit capture 
 a shared helper that an applet opts in to, never an automatic default, since it
 would save a blank area for content it cannot see. A screenshot of a tab is just
 the tab's content. A screenshot of a pane includes the pane's chrome, such as its
-tab bar and toolbar.
+tab bar and toolbar, and leaves out the host's frame around the pane, such as the
+focus border.
