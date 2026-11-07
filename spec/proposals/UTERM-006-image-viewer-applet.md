@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-03
+**Updated:** 2026-11-07
 
 ## Dependencies
 
@@ -68,7 +68,9 @@ Decision: a custom view, fed by ImageIO decoding in a sandboxed helper process, 
   completion, and the waiting request goes next, so the added wait is at most one fit decode. A pane zoomed past fit
   does not prefetch. The previous image's fit decode is kept after a step.
 - The view steps animated frames itself, and pauses them on detach, per ADR-05.
-- The supported set is whatever `CGImageSourceCopyTypeIdentifiers` reports on the running macOS.
+- The supported set is whatever `CGImageSourceCopyTypeIdentifiers` reports on the running macOS, kept to the types that
+  conform to `public.image`. Before the helper answers, the open panel and the folder listing accept any type that
+  conforms to `public.image`. Amended 2026-11-07; see Decision Log.
 
 Rationale: ADR-07 asks each new applet that hosts code uniterm does not control to show how its failures are contained,
 and here isolation is possible. Images arrive from Downloads and mail. ImageIO has had memory-corruption bugs exploited
@@ -307,7 +309,7 @@ None.
 
 ### M1: Show one image
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A pane can run the image viewer and show a chosen image
 - The image fits the pane and rescales when the pane resizes
@@ -348,6 +350,43 @@ None.
   start directory, or nil when that is gone too
 - A layout save never touches the disk to describe a pane, and an unchanged pane describes itself the same way twice
 - Closing an image pane never asks, even while the slideshow plays
+
+**As built:**
+
+- The helper is a native Xcode tool target with its entitlements file outside `App/`. The build setting
+  `ENABLE_APP_SANDBOX` is left unset for it, so `check-sandbox-off.sh` still sees `NO` on every line. Xcode signs the
+  debug copy under `Contents/Helpers/ImageDecoder` with `com.apple.security.app-sandbox` and `get-task-allow`.
+  `codesign -d --entitlements -` on the built app confirmed it. A release build was not signed in this run.
+  The script now also asserts that the helper holds the sandbox and no file, network, or exception entitlement, in the
+  source file and in a built app.
+- Crash, stopped process, overrun, and over-cap behavior is proved against an unsandboxed SwiftPM build of the helper,
+  with faults that a debug build reads from a marker at the start of a file. The shipped helper's sandbox probe, the type
+  sample, and the signed entitlements are checked by `make test-helper-sandbox` and `check-sandbox-off.sh <app>`, which
+  need a shell outside the agent's own sandbox.
+- A hung helper and a slow one are told apart by a ping the helper answers from its reader thread. A helper that stops
+  answering is a hang and offers a retry. One that answers past the time bound reports a limit and offers none.
+- Spawn to first reply took about 27 ms, and a helper's resting footprint was 3 MiB, for the unsandboxed debug SwiftPM
+  build. The shipped sandboxed helper was not measured.
+- Run-wide guesses: the per-helper cap is 1 GiB, the app-wide helper budget is the smaller of 4 GiB and a quarter of RAM
+  with a 256 MiB floor per pane, the bitmap budget is the smaller of 1 GiB and a quarter of RAM with a 256 MiB floor per
+  pane, and the decode time bound is 10 seconds. See Decision Log.
+- The HDR path decodes a source that carries a gain map or an HDR color space into extended-linear Display P3 half-float
+  pixels, and the layer asks for high dynamic range. Tests cover the space mapping and that values above white survive in
+  half float. No test decodes a real gain-map file, so an HDR image's match with Preview is left to the screenshots.
+- The sandboxed run sampled 18 of the 58 image types the helper reports. The other 40 cannot be sampled, because they
+  have no encoder or the encoder writes an empty file: the RAW formats, `com.microsoft.dds`, `com.apple.pict`,
+  `com.sgi.sgi-image`, `org.nema.dicom`, `org.webmproject.webp`, `public.avci`, `public.heif`, `public.jpeg-xl`,
+  `public.mpo-image`, and `public.radiance`. A file of one of those types that fails to decode shows the helper's
+  message, which names the format.
+- Orientation on the whole-image decode path, which a gain-map image takes, is applied by drawing, since ImageIO applies
+  it only when it makes a thumbnail. A test compares all eight orientations on that path with the thumbnail path.
+- The helper writes an image reply as a prefix and the pixels, so no joined copy of the image is made. On a 3000 by
+  2000 native decode the helper's peak footprint was 72 MiB for 22 MiB of pixels in the unsandboxed debug build. The
+  decode sets that peak, so it did not change.
+- The open panel gained content types through `SourceReplacing.openPanelContentTypes`. Folders stay choosable.
+- Left to the person reading a run: the Display P3 and animation screenshots from the UI tests, compared with Preview.
+  No UI test resizes the window, since package tests prove the rescale and the sharper decode on resize.
+- The launcher entry is last, after the browser, so the browser keeps Cmd-5 and the image viewer takes Cmd-6.
 
 ### M2: Folder slideshow
 
@@ -486,6 +525,17 @@ None.
   stopped slideshow, and the zoom limit now post warnings. A folder that cannot be listed posts once and shows a
   "Folder not listed" warning segment while it holds. The pane keeps the image in each case. This follows the rule the
   user set for the map and data viewers. The 2026-11-03 marker on "Input sources" is replaced by this one.
+- 2026-11-07: (work-queue best guess) Supported types: the helper's list is kept to types that conform to `public.image`,
+  and the open panel and folder listing use that conformance until the helper answers. This narrowed the Rendering
+  bullet that said the set is whatever ImageIO reports. It keeps PDF unopened, which an M1 check requires.
+- 2026-11-07: (work-queue best guess) Values no document set. The per-helper footprint cap is 1 GiB. The app-wide helper
+  budget is the smaller of 4 GiB and a quarter of RAM, with a 256 MiB floor per pane. The bitmap budget is the smaller of
+  1 GiB and a quarter of RAM, with a 256 MiB floor per pane. The decode time bound is 10 seconds. The applet menu is
+  titled "Image Viewer" and its command IDs are `image-viewer.<name>`. The launcher lists the image viewer last. The
+  sandbox comes from an entitlements file outside `App/` with the build setting unset, which is the first of the two ways
+  the sandbox check allows. The shipped helper proves its sandbox with a debug-only probe mode.
+- 2026-11-07: ADR candidate (cuts across the system): the app runs outside the App Sandbox, and a helper that needs no
+  file or network access runs inside it, with `check-sandbox-off.sh` guarding both. Undecided. Found in UTERM-006 M1.
 
 ## References
 

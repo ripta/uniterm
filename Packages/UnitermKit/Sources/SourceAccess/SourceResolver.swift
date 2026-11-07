@@ -10,6 +10,12 @@ public struct ResolvedSource: Sendable, Equatable {
 
   /// Set when the stored path was missing and the bookmark found the file elsewhere.
   public let movedFrom: String?
+
+  public init(file: URL, bookmark: Data?, movedFrom: String?) {
+    self.file = file
+    self.bookmark = bookmark
+    self.movedFrom = movedFrom
+  }
 }
 
 /// Turns a stored path and bookmark into the file to open. It touches the disk, so callers run it

@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// What an open panel is asked to show. The start directory is always explicit, so the panel never
 /// falls back to the folder AppKit remembers from the last time it ran.
@@ -6,17 +7,25 @@ public struct OpenPanelRequest: Sendable, Equatable {
   public var directory: URL
   public var allowsMultipleSelection: Bool
 
-  public init(directory: URL, allowsMultipleSelection: Bool) {
+  /// The file types the panel lets the user pick. Folders stay choosable whatever this says. Nil
+  /// lets every file be picked.
+  public var contentTypes: [UTType]?
+
+  public init(directory: URL, allowsMultipleSelection: Bool, contentTypes: [UTType]? = nil) {
     self.directory = directory
     self.allowsMultipleSelection = allowsMultipleSelection
+    self.contentTypes = contentTypes
   }
 
   /// The request for a pane that reports `currentDirectory`. A pane with none, or one whose folder
   /// is gone, starts the panel in the home folder.
-  public init(startingIn currentDirectory: String?, allowsMultipleSelection: Bool) {
+  public init(
+    startingIn currentDirectory: String?, allowsMultipleSelection: Bool,
+    contentTypes: [UTType]? = nil
+  ) {
     self.init(
       directory: Self.startDirectory(for: currentDirectory),
-      allowsMultipleSelection: allowsMultipleSelection)
+      allowsMultipleSelection: allowsMultipleSelection, contentTypes: contentTypes)
   }
 
   static func startDirectory(for path: String?) -> URL {
@@ -47,6 +56,8 @@ public enum SystemOpenPanel {
     panel.allowsMultipleSelection = request.allowsMultipleSelection
     panel.treatsFilePackagesAsDirectories = false
     panel.directoryURL = request.directory
+
+    if let types = request.contentTypes { panel.allowedContentTypes = types }
 
     let response: NSApplication.ModalResponse
 

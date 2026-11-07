@@ -28,7 +28,8 @@ final class LauncherModelTests: XCTestCase {
   func testTheFilterMatchesNamesIgnoringCaseAndSpace() {
     var model = LauncherModel()
     XCTAssertEqual(
-      model.visible.map(\.kind), [.terminal, .program, .dataViewer, .mapViewer, .browser])
+      model.visible.map(\.kind),
+      [.terminal, .program, .dataViewer, .mapViewer, .browser, .imageViewer])
 
     model.filter = "RUNNING"
     XCTAssertEqual(model.visible.map(\.kind), [.program])
@@ -76,10 +77,13 @@ final class LauncherModelTests: XCTestCase {
     XCTAssertEqual(model.selection?.kind, .browser)
 
     model.move(by: 1)
+    XCTAssertEqual(model.selection?.kind, .imageViewer)
+
+    model.move(by: 1)
     XCTAssertEqual(model.selection?.kind, .terminal)
 
     model.move(by: -1)
-    XCTAssertEqual(model.selection?.kind, .browser)
+    XCTAssertEqual(model.selection?.kind, .imageViewer)
 
     model.filter = "zzz"
     model.move(by: 1)
@@ -425,8 +429,14 @@ final class LauncherTests: XCTestCase {
     XCTAssertEqual(view.model.selection?.kind, .browser)
 
     send(#selector(NSResponder.moveDown(_:)), from: view.filterField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .imageViewer)
+
+    send(#selector(NSResponder.moveDown(_:)), from: view.filterField, in: view)
     XCTAssertEqual(view.model.selection?.kind, .terminal)
     XCTAssertTrue(view.isFocused(view.filterField))
+
+    send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
+    XCTAssertEqual(view.model.selection?.kind, .imageViewer)
 
     send(#selector(NSResponder.moveUp(_:)), from: view.filterField, in: view)
     XCTAssertEqual(view.model.selection?.kind, .browser)

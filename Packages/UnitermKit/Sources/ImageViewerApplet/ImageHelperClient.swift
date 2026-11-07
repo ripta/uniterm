@@ -1,0 +1,532 @@
+import Darwin
+import Foundation
+import ImageViewerModel
+import ImageWire
+import os
+
+/// Why a helper stopped. The pane words each one, and only some offer a retry.
+public enum HelperEnd: Equatable, Sendable {
+  /// The process died or exited. A retry may work, since the cause was one file or one fault.
+  case crashed(String)
+
+  /// The process stopped answering pings, so it hung. A retry may work.
+  case unresponsive
+
+  /// The decode ran past the time bound while the helper still answered. That is a limit, so a
+  /// retry would repeat it.
+  case overranTimeBound
+
+  /// The helper's footprint passed the per-helper cap. That is a limit.
+  case overFootprint
+
+  /// The helper sent bytes the app refused.
+  case misbehaved(String)
+
+  case versionMismatch
+
+  /// The helper could not be started.
+  case unavailable(String)
+
+  /// True when trying again is likely to behave differently.
+  public var offersRetry: Bool {
+    switch self {
+    case .crashed, .unresponsive, .misbehaved: return true
+    case .overranTimeBound, .overFootprint, .versionMismatch, .unavailable: return false
+    }
+  }
+}
+
+/// What the client tells the pane.
+enum HelperEvent: Equatable, Sendable {
+  case types([String])
+  case opened(SourceInfo)
+
+  /// A decoded image that matched its request. The pane builds the bitmap from the bytes.
+  case image(DecodeRequest, ImageHeader, Data)
+
+  /// The helper declined a request or an open and kept running.
+  case failed(DecodeRequest?, FailureKind, String)
+
+  /// The decode was not started because a memory limit would be passed.
+  case refused(DecodeRequest, String)
+
+  /// The helper is gone. The request in flight, if any, was lost with it.
+  case ended(HelperEnd, lost: DecodeRequest?)
+}
+
+/// Tuning for one client. Tests shorten the times and the cap to reach each limit.
+struct HelperSettings: Sendable {
+  var location: HelperLocation
+  var timeBound: Duration = ImageHelperPolicy.decodeTimeBound
+
+  /// How often a request in flight is probed and its footprint read.
+  var probeInterval: Duration = .milliseconds(250)
+
+  /// How long a ping may go unanswered before the helper counts as stopped.
+  var pongGrace: Duration = .seconds(3)
+
+  var footprintCap = ImageHelperPolicy.perHelperCap
+  var maxImageBytes = 512 << 20
+}
+
+/// One pane's connection to its image helper.
+///
+/// The helper starts when the pane first needs it. The client sends one open and one decode at a
+/// time through `RequestScheduler`, validates every reply against the request, and watches the
+/// request in flight. A crash, a stopped process, a decode past the time bound, and a footprint
+/// past the cap each end only this pane's helper. The next request starts a fresh one.
+@MainActor
+final class ImageHelperClient {
+  var onEvent: ((HelperEvent) -> Void)?
+
+  private let settings: HelperSettings
+  private let budget: ImageHelperBudget
+  private let owner: Int
+
+  private var process: HelperProcess?
+  private var generation = 0
+  private var scheduler = RequestScheduler()
+  private var sourceID: UInt32 = 0
+  private var info: SourceInfo?
+  private var openingSources: [UInt32] = []
+  private var busySince: ContinuousClock.Instant?
+  private var watchdog: Task<Void, Never>?
+  private var nonce: UInt32 = 0
+  private var pingOutstanding: (nonce: UInt32, since: ContinuousClock.Instant)?
+  private var lastPong: ContinuousClock.Instant?
+  private var requestCounter: UInt32 = 0
+  private var expectation: ImageExpectation?
+
+  private let readLimit: OSAllocatedUnfairLock<Int>
+
+  private static let owners = OSAllocatedUnfairLock(initialState: 0)
+
+  /// How many tasks still read a helper's events. Each helper has one, and it ends when the helper
+  /// is gone.
+  private(set) var activePumps = 0
+
+  /// The footprint last read, which tests report as the helper's resting size.
+  private(set) var lastFootprint: Int?
+
+  /// Types the helper listed at hello, once it has.
+  private(set) var types: [String]?
+
+  init(settings: HelperSettings, budget: ImageHelperBudget) {
+    self.settings = settings
+    self.budget = budget
+    self.readLimit = OSAllocatedUnfairLock(initialState: 0)
+    self.owner = Self.owners.withLock {
+      $0 += 1
+      return $0
+    }
+  }
+
+  /// The most the helper's footprint has been, for tests that measure a decode.
+  var peakFootprint: Int? { process?.peakFootprint() }
+
+  /// The most bytes the reader accepts for an image body now.
+  var imageReadLimit: Int { readLimit.withLock { $0 } }
+
+  var isRunning: Bool { process != nil }
+  var processID: pid_t? { process?.pid }
+  var source: SourceInfo? { info }
+
+  /// Starts the helper if it is not running, and returns whether it is.
+  @discardableResult
+  func ensureRunning() -> Bool {
+    if process != nil { return true }
+
+    guard let url = settings.location.url else {
+      end(.unavailable("The image decoder is missing from this copy of uniterm."), lost: nil)
+      return false
+    }
+
+    do {
+      let spawned = try HelperProcess.spawn(executable: url)
+      generation += 1
+
+      let current = generation
+      let stream = AsyncStream<HelperRead>.makeStream()
+      let limit = readLimit
+
+      spawned.startReading(
+        limit: { limit.withLock { $0 } },
+        deliver: { event in
+          stream.continuation.yield(event)
+
+          if case .exited = event { stream.continuation.finish() }
+        })
+
+      process = spawned
+      types = nil
+
+      try spawned.socket.send(AppMessage.hello(version: ImageProtocol.version).frame())
+
+      activePumps += 1
+
+      Task { @MainActor [weak self] in
+        for await event in stream.stream {
+          self?.handle(event, generation: current)
+        }
+
+        self?.activePumps -= 1
+      }
+
+      return true
+    } catch {
+      end(.unavailable("The image decoder could not start (\(error))."), lost: nil)
+      return false
+    }
+  }
+
+  /// Opens `file` as the new source. Anything the pane shows from an earlier source is stale.
+  func open(_ file: OpenedImageFile) {
+    guard ensureRunning(), let process else { return }
+
+    sourceID &+= 1
+    info = nil
+    expectation = nil
+    openingSources.append(sourceID)
+
+    if busySince == nil { markBusy() }
+
+    do {
+      try withExtendedLifetime(file) {
+        try process.socket.send(
+          AppMessage.open(source: sourceID).frame(), descriptor: file.descriptor)
+      }
+    } catch {
+      end(.crashed("The image decoder stopped answering."), lost: nil)
+    }
+  }
+
+  /// Asks for `frame` of the current source with the longer side at most `maxPixel`. Returns the
+  /// request, or nil when the source is not open.
+  @discardableResult
+  func decode(maxPixel: Int, frame: Int, kind: DecodeRequest.Kind) -> DecodeRequest? {
+    guard let info, process != nil else { return nil }
+
+    requestCounter &+= 1
+
+    let request = DecodeRequest(
+      id: requestCounter, source: info.source, maxPixel: maxPixel, frame: frame, kind: kind)
+
+    if let toSend = scheduler.submit(request) {
+      send(toSend)
+    }
+
+    return request
+  }
+
+  /// Drops the waiting request without touching the one in flight.
+  func cancelPending() {
+    guard let inFlight = scheduler.inFlight else {
+      scheduler.reset()
+      return
+    }
+
+    scheduler.reset()
+    _ = scheduler.submit(inFlight)
+  }
+
+  /// Ends the helper at once, as when the pane closes.
+  func shutdown() {
+    watchdog?.cancel()
+    watchdog = nil
+    busySince = nil
+
+    if let process {
+      process.kill()
+      self.process = nil
+    }
+
+    generation += 1
+    scheduler.reset()
+    readLimit.withLock { $0 = 0 }
+    budget.release(owner: owner)
+    onEvent = nil
+  }
+
+  // MARK: Sending
+
+  private func predictedBytes(for request: DecodeRequest) -> Int {
+    guard let info else { return 0 }
+
+    let native = PixelSize(width: Int(info.width), height: Int(info.height))
+    let longer = request.maxPixel > 0 ? min(request.maxPixel, native.longer) : native.longer
+    let scale = Double(longer) / Double(max(native.longer, 1))
+    let width = max(1, Int((Double(native.width) * scale).rounded(.up)))
+    let height = max(1, Int((Double(native.height) * scale).rounded(.up)))
+
+    return ImageLimits.byteCount(width: width, height: height, format: .rgbaF16) ?? Int.max
+  }
+
+  private func send(_ request: DecodeRequest) {
+    guard let process, let info else { return }
+
+    let predicted = predictedBytes(for: request)
+    let estimate = predicted.multipliedReportingOverflow(by: 2).partialValue + (64 << 20)
+
+    guard predicted <= settings.maxImageBytes else {
+      refuse(request, "This image is past the size uniterm will decode for it.")
+      return
+    }
+
+    guard budget.admits(owner: owner, estimate: estimate) else {
+      refuse(request, "Image decoding is using all the memory it may. Close an image pane.")
+      return
+    }
+
+    expectation = ImageExpectation(
+      request: request.id, source: request.source, frame: UInt32(request.frame),
+      maxPixel: request.maxPixel, sourceWidth: Int(info.width), sourceHeight: Int(info.height),
+      byteCap: settings.maxImageBytes)
+
+    readLimit.withLock { $0 = predicted }
+    markBusy()
+
+    do {
+      try process.socket.send(
+        AppMessage.decode(
+          request: request.id, source: request.source, maxPixel: UInt32(request.maxPixel),
+          frame: UInt32(request.frame)
+        ).frame())
+    } catch {
+      end(.crashed("The image decoder stopped answering."), lost: request)
+    }
+  }
+
+  private func refuse(_ request: DecodeRequest, _ text: String) {
+    expectation = nil
+    readLimit.withLock { $0 = 0 }
+
+    let next = scheduler.finish()
+
+    onEvent?(.refused(request, text))
+
+    if let next { send(next) } else if openingSources.isEmpty { markIdle() }
+  }
+
+  // MARK: Receiving
+
+  private func handle(_ event: HelperRead, generation current: Int) {
+    guard current == generation else { return }
+
+    switch event {
+    case .message(let message):
+      handle(message)
+
+    case .violation(let text):
+      end(.misbehaved(text), lost: scheduler.inFlight)
+
+    case .exited(let status):
+      end(
+        .crashed("The image decoder \(HelperProcess.describe(status: status))."),
+        lost: scheduler.inFlight)
+    }
+  }
+
+  private func handle(_ message: HelperMessage) {
+    switch message {
+    case .hello:
+      do {
+        types = try HelperHandshake.validate(message)
+      } catch {
+        end(.versionMismatch, lost: nil)
+        return
+      }
+
+      if let types { onEvent?(.types(types)) }
+
+    case .opened(let opened):
+      guard !openingSources.isEmpty else {
+        end(.misbehaved("an unrequested open reply"), lost: scheduler.inFlight)
+        return
+      }
+
+      let expected = openingSources.removeFirst()
+
+      if openingSources.isEmpty && scheduler.inFlight == nil { markIdle() }
+
+      guard opened.source == expected else {
+        end(.misbehaved("an open reply for the wrong source"), lost: scheduler.inFlight)
+        return
+      }
+
+      guard validate(opened) else {
+        end(.misbehaved("a source with impossible dimensions"), lost: scheduler.inFlight)
+        return
+      }
+
+      guard expected == sourceID else { return }
+
+      info = opened
+      onEvent?(.opened(opened))
+
+    case .image(let header, let pixels):
+      guard let request = scheduler.inFlight, let expectation, expectation.request == header.request
+      else {
+        end(.misbehaved("an image nobody asked for"), lost: scheduler.inFlight)
+        return
+      }
+
+      do {
+        try expectation.validate(header, pixels: pixels)
+      } catch {
+        end(.misbehaved("\(error)"), lost: request)
+        return
+      }
+
+      self.expectation = nil
+      completeDecode()
+      onEvent?(.image(request, header, pixels))
+
+    case .failure(let id, let kind, let text):
+      if id == 0 {
+        guard !openingSources.isEmpty else {
+          end(.misbehaved("an unrequested failure"), lost: scheduler.inFlight)
+          return
+        }
+
+        let failed = openingSources.removeFirst()
+
+        if openingSources.isEmpty && scheduler.inFlight == nil { markIdle() }
+
+        if failed == sourceID { onEvent?(.failed(nil, kind, text)) }
+
+        return
+      }
+
+      guard let request = scheduler.inFlight, request.id == id else {
+        end(.misbehaved("a failure nobody asked for"), lost: scheduler.inFlight)
+        return
+      }
+
+      expectation = nil
+      completeDecode()
+      onEvent?(.failed(request, kind, text))
+
+    case .pong(let value):
+      if pingOutstanding?.nonce == value {
+        pingOutstanding = nil
+        lastPong = .now
+      }
+    }
+  }
+
+  private func validate(_ opened: SourceInfo) -> Bool {
+    let limit = 1 << 20
+
+    return opened.width > 0 && opened.height > 0 && Int(opened.width) <= limit
+      && Int(opened.height) <= limit && opened.frameCount >= 1
+  }
+
+  private func completeDecode() {
+    readLimit.withLock { $0 = 0 }
+
+    let next = scheduler.finish()
+
+    if let next {
+      send(next)
+    } else if openingSources.isEmpty {
+      markIdle()
+    }
+  }
+
+  // MARK: Watching
+
+  private func markBusy() {
+    busySince = .now
+    pingOutstanding = nil
+    lastPong = nil
+
+    guard watchdog == nil else { return }
+
+    let interval = settings.probeInterval
+    let current = generation
+
+    watchdog = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: interval)
+
+        guard let self, !Task.isCancelled, current == self.generation else { return }
+
+        self.probe()
+      }
+    }
+  }
+
+  private func markIdle() {
+    busySince = nil
+    pingOutstanding = nil
+    watchdog?.cancel()
+    watchdog = nil
+
+    if let footprint = process?.footprint() {
+      lastFootprint = footprint
+      budget.record(owner: owner, footprint: footprint)
+    }
+  }
+
+  private func probe() {
+    guard let process, let busySince else { return }
+
+    if let footprint = process.footprint() {
+      lastFootprint = footprint
+      budget.record(owner: owner, footprint: footprint)
+
+      if footprint > settings.footprintCap {
+        end(.overFootprint, lost: scheduler.inFlight)
+        return
+      }
+    }
+
+    let now = ContinuousClock.now
+
+    if let outstanding = pingOutstanding, now - outstanding.since > settings.pongGrace {
+      end(.unresponsive, lost: scheduler.inFlight)
+      return
+    }
+
+    if now - busySince > settings.timeBound, let ponged = lastPong, ponged > busySince,
+      now - ponged < settings.pongGrace
+    {
+      end(.overranTimeBound, lost: scheduler.inFlight)
+      return
+    }
+
+    if pingOutstanding == nil { sendPing() }
+  }
+
+  private func sendPing() {
+    guard let process else { return }
+
+    nonce &+= 1
+    pingOutstanding = (nonce, .now)
+
+    try? process.socket.send(AppMessage.ping(nonce: nonce).frame())
+  }
+
+  /// Ends the helper and tells the pane why.
+  private func end(_ reason: HelperEnd, lost: DecodeRequest?) {
+    let had = process
+
+    readLimit.withLock { $0 = 0 }
+
+    watchdog?.cancel()
+    watchdog = nil
+    busySince = nil
+    pingOutstanding = nil
+    expectation = nil
+    scheduler.reset()
+    openingSources = []
+    info = nil
+    process = nil
+    generation += 1
+
+    had?.kill()
+    budget.release(owner: owner)
+
+    onEvent?(.ended(reason, lost: lost))
+  }
+}

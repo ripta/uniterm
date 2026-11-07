@@ -38,6 +38,8 @@ let package = Package(
     .library(name: "PlaceSearch", targets: ["PlaceSearch"]),
     .library(name: "BrowserModel", targets: ["BrowserModel"]),
     .library(name: "BrowserApplet", targets: ["BrowserApplet"]),
+    .library(name: "ImageDecoding", targets: ["ImageDecoding"]),
+    .library(name: "ImageViewerApplet", targets: ["ImageViewerApplet"]),
   ],
   dependencies: [
     // The first third-party Swift package. Only TableData uses it. The version is exact, and
@@ -109,10 +111,28 @@ let package = Package(
     .target(
       name: "BrowserApplet",
       dependencies: ["AppletKit", "BrowserModel", "Preferences", "StatusKit", "Theme"]),
+    // The image helper's decode-only wire format: framing, the protocol version, the named output
+    // color spaces, and the checks on sizes. It has no AppKit and no ImageIO, so the app and the
+    // helper share one codec and the fuzzers can reach it alone.
+    .target(name: "ImageWire"),
+    // The helper side of image viewing. It is the only code that calls ImageIO.
+    .target(name: "ImageDecoding", dependencies: ["ImageWire"]),
+    // A thin main over ImageDecoding, so the supervisor's tests can run a helper without the App
+    // Sandbox. The shipped helper is the Xcode target of the same name.
+    .executableTarget(name: "ImageDecoderHelper", dependencies: ["ImageDecoding"]),
+    // The image viewer's pure rules: folder listing and order, the request scheduler, the
+    // budgets, and fit math. It has no AppKit and no ImageIO.
+    .target(name: "ImageViewerModel", dependencies: ["ImageWire", "SourceAccess"]),
+    .target(
+      name: "ImageViewerApplet",
+      dependencies: [
+        "AppletKit", "ImageViewerModel", "ImageWire", "SourceAccess", "StatusKit", "Theme",
+      ]),
     .target(
       name: "AppletCatalog",
       dependencies: [
-        "AppletKit", "BrowserApplet", "DataViewerApplet", "MapViewerApplet", "TerminalApplet",
+        "AppletKit", "BrowserApplet", "DataViewerApplet", "ImageViewerApplet", "MapViewerApplet",
+        "TerminalApplet",
       ]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
@@ -149,6 +169,23 @@ let package = Package(
         "Theme", "TableTestSupport", "AppletTestSupport",
       ]),
     .testTarget(name: "BrowserModelTests", dependencies: ["BrowserModel"]),
+    // Generates image files in code for the image tests, and finds the unsandboxed helper that
+    // SwiftPM builds beside the test bundle.
+    .target(name: "ImageTestSupport", path: "Tests/ImageTestSupport"),
+    .testTarget(name: "ImageWireTests", dependencies: ["ImageWire", "TableTestSupport"]),
+    .testTarget(
+      name: "ImageDecodingTests",
+      dependencies: ["ImageDecoding", "ImageWire", "ImageTestSupport"]),
+    .testTarget(
+      name: "ImageViewerModelTests",
+      dependencies: ["ImageViewerModel", "ImageWire", "SourceAccess", "ImageTestSupport"]),
+    .testTarget(
+      name: "ImageViewerAppletTests",
+      dependencies: [
+        "ImageViewerApplet", "ImageViewerModel", "ImageWire", "ImageDecoding", "ImageDecoderHelper",
+        "AppletKit",
+        "StatusKit", "Theme", "SourceAccess", "AppletTestSupport", "ImageTestSupport",
+      ]),
     .testTarget(
       name: "BrowserAppletTests",
       dependencies: [

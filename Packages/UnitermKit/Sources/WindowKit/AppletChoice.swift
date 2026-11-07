@@ -16,6 +16,9 @@ public enum AppletChoice: Sendable, Equatable {
   /// and its own default view otherwise.
   case mapViewer(region: GeoRegion?)
 
+  /// An image viewer with nothing open, started in the pane's directory.
+  case imageViewer
+
   /// A browser with no page loaded. It has no directory, so the pane's directory goes unused.
   case browser
 }

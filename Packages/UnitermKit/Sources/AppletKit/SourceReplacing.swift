@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// An applet that shows one source and can swap it for another. A viewer adopts this to get the
 /// pane-local Open command.
@@ -13,6 +14,14 @@ import AppKit
 @MainActor
 public protocol SourceReplacing: Applet {
   func replaceSource(with file: URL, startDirectory: String) throws
+
+  /// The file types the pane's open panel accepts, or nil for any file. Folders are always
+  /// choosable.
+  var openPanelContentTypes: [UTType]? { get }
+}
+
+extension SourceReplacing {
+  public var openPanelContentTypes: [UTType]? { nil }
 }
 
 extension AppletCommand {
@@ -49,7 +58,8 @@ public enum SourceOpening {
     guard let target = applet as? any SourceReplacing else { return }
 
     let request = OpenPanelRequest(
-      startingIn: applet.currentDirectory, allowsMultipleSelection: false)
+      startingIn: applet.currentDirectory, allowsMultipleSelection: false,
+      contentTypes: target.openPanelContentTypes)
 
     guard let file = await picker(request, applet.view.window).first else { return }
 

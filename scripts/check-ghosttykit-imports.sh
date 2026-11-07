@@ -52,7 +52,7 @@ while IFS= read -r file; do
     fi
     ;;
   esac
-done < <(grep -rlE "$import_pattern" "$ROOT/App" "$ROOT/UITests" "$ROOT/Packages/UnitermKit/Sources" "$ROOT/Packages/UnitermKit/Tests" --include='*.swift' 2>/dev/null || true)
+done < <(grep -rlE "$import_pattern" "$ROOT/App" "$ROOT/Helpers" "$ROOT/UITests" "$ROOT/Packages/UnitermKit/Sources" "$ROOT/Packages/UnitermKit/Tests" --include='*.swift' 2>/dev/null || true)
 
 # Only TerminalSurface may list GhosttyKit as a dependency in the package manifest.
 manifest="$ROOT/Packages/UnitermKit/Package.swift"

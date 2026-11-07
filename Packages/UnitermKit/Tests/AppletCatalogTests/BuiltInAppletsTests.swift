@@ -29,7 +29,37 @@ final class BuiltInAppletsTests: XCTestCase {
           opens: [OpenedType("public.geojson", rank: .owner)]),
         AppletTypeDeclaration(
           typeID: "browser", displayName: "Browser", symbolName: "safari", opens: []),
+        AppletTypeDeclaration(
+          typeID: "image-viewer", displayName: "Image Viewer", symbolName: "photo",
+          opens: [
+            OpenedType("public.image", rank: .owner),
+            OpenedType("public.folder", rank: .alternate),
+          ]),
       ])
+  }
+
+  /// Catches an image that routes anywhere but the image viewer, and a folder that stops routing to
+  /// the terminal because the image viewer also declares folders. The viewer's folder claim is an
+  /// alternate, so the terminal stays the default.
+  func testImagesRouteToTheImageViewerAndFoldersStayWithTheTerminal() throws {
+    let folder = try makeFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let router = FileRouter(declarations: BuiltInApplets.declarations)
+    let png = folder.appendingPathComponent("a.png")
+    try Data([0x89, 0x50, 0x4E, 0x47]).write(to: png)
+
+    guard case .open(_, let imageApplet, _, _) = router.decide(png) else {
+      return XCTFail("a PNG did not route")
+    }
+
+    XCTAssertEqual(imageApplet, "image-viewer")
+
+    guard case .open(_, let folderApplet, _, _) = router.decide(folder) else {
+      return XCTFail("a folder did not route")
+    }
+
+    XCTAssertEqual(folderApplet, "terminal")
   }
 
   /// Catches a misspelled symbol name. The system returns no image for a name it lacks, and the
