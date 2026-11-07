@@ -63,3 +63,8 @@ is the least settled idea here, and no use for it is decided yet. A Janet script
 is the most likely thing to serve it, which would make it wait on Janet
 scripting. Still open: who defines a scheme, and what a scheme page can reach,
 including whether ordinary web pages can link to it.
+
+## Terminal: call out a bell
+
+When a terminal rings its bell, call out its pane and its tab. A highlight is one
+option, and the form is still open.
