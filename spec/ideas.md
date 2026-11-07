@@ -28,3 +28,14 @@ a fixed list today.
 Suggest pages from the user's history while typing in the address bar. The
 browser keeps no history across tabs today, only each tab's own back and
 forward list.
+
+## Browser: file upload pickers
+
+Let a page's `<input type=file>` open a file picker. An upload input does
+nothing today, so sites that take a file upload do not work.
+
+## Browser: HTTP login dialogs
+
+Ask for a username and password when a server requests HTTP authentication. The
+browser answers no such request today, so a page behind a basic-auth login shows
+the server's own 401.
