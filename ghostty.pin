@@ -3,6 +3,9 @@
 GHOSTTY_TAG=v1.3.1
 GHOSTTY_COMMIT=332b2aefc6e72d363aa93ab6ecfc86eeeeb5ed28
 ZIG_VERSION=0.15.2
+# The sha256 of zig-aarch64-macos-$ZIG_VERSION.tar.xz from ziglang.org. The build downloads that Zig
+# into its cache, so it never uses or changes a Zig installed on the machine.
+ZIG_SHA256=3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
 # Zig 0.15 cannot link against the macOS 26 SDK. It compiles against this older SDK from the Command Line Tools.
 ZIG_SDK_VERSION=15.4
 XCODE_VERSION=26.6

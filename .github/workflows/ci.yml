@@ -65,9 +65,6 @@ jobs:
     if: needs.changes.outputs.build_required == 'true'
     runs-on: macos-26
     timeout-minutes: 60
-    env:
-      ZIG_VERSION: 0.15.2
-      ZIG_SHA256: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -89,15 +86,6 @@ jobs:
       - name: Install the Metal toolchain
         run: xcodebuild -downloadComponent MetalToolchain
 
-      - name: Install Zig
-        run: |
-          archive="zig-aarch64-macos-$ZIG_VERSION.tar.xz"
-          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/$archive" \
-            "https://ziglang.org/download/$ZIG_VERSION/$archive"
-          echo "$ZIG_SHA256  $RUNNER_TEMP/$archive" | shasum -a 256 --check
-          tar -xJf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/zig-aarch64-macos-$ZIG_VERSION" >>"$GITHUB_PATH"
-
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macosx15.4-sdk
@@ -110,8 +98,8 @@ jobs:
           tar -xzf "$RUNNER_TEMP/MacOSX15.4.sdk.tar.gz" -C "$sdk"
           echo "GHOSTTY_ZIG_SDK_PATH=$sdk" >>"$GITHUB_ENV"
 
-      # The source tarball, Zig's package cache, and the built artifact. The offline check rebuilds
-      # from the first two, so all three are kept together.
+      # The source tarball, the pinned Zig, Zig's package cache, and the built artifact. The offline
+      # check rebuilds from the first three, so all four are kept together.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/ghostty
