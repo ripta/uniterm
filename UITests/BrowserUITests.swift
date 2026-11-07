@@ -211,15 +211,27 @@ final class BrowserUITests: UnitermUITestCase {
     XCTAssertEqual(control.radioButtons["Kagi"].value as? Int, 1)
   }
 
-  /// Catches a browser pane that hides which profile it uses. Every pane shows the default profile
-  /// in its toolbar, with no selector. The user confirms where it sits in a hands-on review.
+  /// Catches a browser pane that hides which profile it uses. Every pane shows a profile button at
+  /// the end of its toolbar. Clicking it shows a popover that names the default profile, and Escape
+  /// dismisses it. The user confirms where the button sits in a hands-on review.
   func testEveryBrowserPaneShowsItsProfile() {
     let app = launchApp()
     let window = openBrowser(in: app)
-    let profile = window.descendants(matching: .any)["browser-profile"]
+    let button = window.descendants(matching: .any)["browser-profile"]
+    let name = app.descendants(matching: .any)["browser-profile-name"]
 
-    XCTAssertTrue(profile.waitForExistence(timeout: 10), "the pane shows no profile")
-    XCTAssertEqual(profile.value as? String, "Default Profile")
+    XCTAssertTrue(button.waitForExistence(timeout: 10), "the pane shows no profile button")
+    XCTAssertEqual(button.label, "Profile: Default Profile")
+    XCTAssertFalse(name.exists, "the profile popover shows before the click")
+
+    button.click()
+
+    XCTAssertTrue(name.waitForExistence(timeout: 5), "the click shows no profile name")
+    XCTAssertEqual(name.value as? String, "Default Profile")
+
+    app.typeKey(.escape, modifierFlags: [])
+
+    XCTAssertTrue(waitForGone(name, timeout: 5), "Escape does not dismiss the profile popover")
   }
 
   /// Catches a layout that restores every tab as the first one, or a selection that is lost. Three

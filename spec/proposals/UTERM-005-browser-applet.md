@@ -102,10 +102,11 @@ a Clear Website Data action.
   between stores. See Risks.
 - Sharing is hidden state flow between panes: logging in in one pane logs in the others. CLAUDE.md asks for that to be
   an explicit decision. The user kept it at the review gate on 2026-11-03.
-- The pane shows its active profile, so the sharing is visible. With one store, every pane shows the default profile,
-  labelled "Default Profile". M5 puts the label at the trailing end of the browser's own toolbar, with no selector. The
-  user confirms the placement in hands-on review, and whether a profile selector appears on the new pane sheet or on
-  the browser pane stays open until then. A second profile would need its own store, and its profile ID would flow
+- The pane shows its active profile, so the sharing is visible. With one store, every pane shows the default profile.
+  M5 puts a profile button at the trailing end of the browser's own toolbar. Its icon is the SF Symbol
+  `person.crop.circle`. Clicking it shows a transient popover that names "Default Profile" and says every browser pane
+  shares the profile's logins and site data. The popover has no controls yet. The user expects it to hold creating and
+  switching profiles later. Whether a profile selector also appears on the new pane sheet stays open. A second profile would need its own store, and its profile ID would flow
   through the pane's description, per CLAUDE.md "Applet Attributes". Adding one is a decision for the user, not an
   implementation detail. Chosen by the user on 2026-11-03. Amended 2026-11-06; see Decision Log.
 - A browser pane a program creates uses the same store. "Control" decides what a controller may do with it.
@@ -789,10 +790,11 @@ None.
   chooses whole. Each state is announced to VoiceOver. A failure never reads as a
   success, and a retry replaces it. A standing note says open tabs keep their current session until they are reloaded or
   closed. Tests hold the closure at a gate to prove the double click, and prove the failure text and the retry.
-- The profile label reads "Default Profile". It sits at the trailing end of the browser's toolbar and is a label with no
-  selector. It carries the identifier `browser-profile` and is read once by assistive technology, by its text. Its
-  placement is left to the user's hands-on review, and so is how it fares in a narrow pane, where it keeps its width
-  and the address bar gives way.
+- The profile button is a borderless icon button, `person.crop.circle`, at the trailing end of the browser's toolbar. It
+  carries the identifier `browser-profile`, the accessibility label and tooltip "Profile: Default Profile", and keeps
+  its width in a narrow pane while the address bar gives way. Clicking it shows a transient popover with the profile
+  name and the line "Every browser pane shares this profile's logins and site data." The popover has no controls. Both
+  follow the palette, and `apply(_:)` updates an open popover in place.
 - A detached pane loads nothing. `start` on a detached pane marks the pane started and loads nothing, and a tab selected
   or reopened while detached waits. `reattach` loads the selected tab if it never loaded, once. Detach has no host
   trigger, so the rule is proved by calling the events in tests, as M3 expected. The tab's own load origin survives to
@@ -825,10 +827,10 @@ None.
 - A pane split from a browser asks the factory for no directory. A test builds a real window around a real browser pane
   and splits it, and checks that the factory ran. This needed the catalog tests to link the browser and the fixture server, so `Package.swift`
   changed.
-- Three UI tests are built and not run: the profile label, restoring three tabs with the second selected, and the
+- Three UI tests are built and not run: the profile button, restoring three tabs with the second selected, and the
   Settings action with its note. The coordinator runs them. The UI test for a refused restored address was retired after
   the row. `BrowserLazyRestoreTests` owns that contract, in the error view's visible text, which names the address.
-- Left to the user. Whether the profile label's placement is right, and whether logins survive a real relaunch.
+- Left to the user. Whether the profile button's placement is right, and whether logins survive a real relaunch.
   Reaching `forIdentifier:` store data across two launches needs a persistent store that the UI tests avoid.
 
 ### M6: Pop-ups, downloads, and running work
@@ -1365,6 +1367,15 @@ Starts after UTERM-004 M6.
   interrupted load only for a download here, and each download sets the slot itself, so no genuine failure was seen
   swallowed. Nothing changed. If wrong, a stale slot could hide one failure notice for an address a policy refused
   earlier, and the fix is to key the slot to the navigation.
+
+- 2026-11-06: Profile button (the user's choice in a hands-on review, not a best guess). "Website data" said every pane
+  shows the default profile as a text label, "Default Profile", at the trailing end of the toolbar with no selector.
+  M5's As built said the same. The label is now a borderless icon button using `person.crop.circle`. Clicking it shows a
+  transient popover that names "Default Profile" and says every browser pane shares the profile's logins and site data.
+  The popover has no controls. The user expects it to hold creating and switching profiles later, and nothing for that
+  is built. The identifier `browser-profile` stays, and the accessibility label and tooltip read "Profile: Default
+  Profile". The reason is that a text label took toolbar width and had no place to grow into a profile control. M5's
+  As built and its UI test note now describe the button. M5 stays DONE.
 
 ## References
 

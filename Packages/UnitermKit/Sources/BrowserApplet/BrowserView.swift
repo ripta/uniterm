@@ -22,9 +22,13 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   let securityIcon = NSImageView()
 
   /// The profile every browser pane shows. There is one store, so every pane shows the default
-  /// profile. It is a label and not a control, since a second profile is a decision for the user.
+  /// profile. The button opens a popover that names it. The popover has no controls, since a second
+  /// profile is a decision for the user.
   static let profileName = "Default Profile"
-  let profileLabel = NSTextField(labelWithString: BrowserView.profileName)
+  let profileButton = BrowserView.makeButton(
+    symbol: "person.crop.circle", label: "Profile: \(BrowserView.profileName)",
+    identifier: "browser-profile")
+  let profilePopover = ProfilePopover(profileName: BrowserView.profileName)
 
   var onBack: () -> Void = {}
   var onForward: () -> Void = {}
@@ -79,14 +83,9 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     securityIcon.isHidden = true
     securityIcon.setContentHuggingPriority(.required, for: .horizontal)
 
-    profileLabel.font = .systemFont(ofSize: 11)
-    profileLabel.lineBreakMode = .byTruncatingTail
-    profileLabel.setAccessibilityIdentifier("browser-profile")
-    profileLabel.setAccessibilityHelp(
-      "Every browser pane shares this profile's logins and site data.")
-    profileLabel.toolTip = "Every browser pane shares this profile's logins and site data."
-    profileLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-    profileLabel.setContentHuggingPriority(.required, for: .horizontal)
+    profileButton.target = self
+    profileButton.action = #selector(showProfile)
+    profileButton.setContentHuggingPriority(.required, for: .horizontal)
 
     backButton.target = self
     backButton.action = #selector(back)
@@ -99,7 +98,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     toolbar.spacing = 6
     toolbar.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
     toolbar.setViews(
-      [backButton, forwardButton, reloadButton, securityIcon, addressField, profileLabel],
+      [backButton, forwardButton, reloadButton, securityIcon, addressField, profileButton],
       in: .leading)
     toolbar.translatesAutoresizingMaskIntoConstraints = false
 
@@ -237,7 +236,8 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     dialogView.apply(palette)
     addressField.textColor = addressIsInvalid ? palette[.red].nsColor : palette[.text].nsColor
     securityIcon.contentTintColor = palette[.yellow].nsColor
-    profileLabel.textColor = palette[.subtext0].nsColor
+    profileButton.contentTintColor = palette[.subtext0].nsColor
+    profilePopover.apply(palette)
   }
 
   var isEditingAddress: Bool {
@@ -251,6 +251,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   @objc private func back() { onBack() }
   @objc private func forward() { onForward() }
   @objc private func reload() { onReload() }
+  @objc private func showProfile() { profilePopover.toggle(relativeTo: profileButton) }
 
   func control(
     _ control: NSControl, textView: NSTextView, doCommandBy selector: Selector
