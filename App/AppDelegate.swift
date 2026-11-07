@@ -50,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     self.defaults = defaults
     self.settings = SettingsStore(defaults: defaults)
     super.init()
+
+    #if DEBUG
+      ImageViewerScrollLog.enabled = debugEnvironment["UNITERM_DEBUG_SCROLL"] == "1"
+    #endif
   }
 
   /// UI tests set `UNITERM_DEFAULTS_PATH` to a plist path inside the test runner's container, so

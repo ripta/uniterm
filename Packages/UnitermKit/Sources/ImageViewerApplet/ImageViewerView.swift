@@ -2,6 +2,7 @@ import AppKit
 import ImageViewerModel
 import QuartzCore
 import Theme
+import os
 
 /// What the pane shows apart from the image: a message, and the buttons that go with it.
 struct PaneMessage: Equatable {
@@ -435,6 +436,10 @@ final class ImageViewerView: NSView {
 
   override func scrollWheel(with event: NSEvent) {
     guard viewport?.isFit == false else {
+      #if DEBUG
+        ImageViewerScrollLog.log(event, unit: 0, viewport: viewport)
+      #endif
+
       super.scrollWheel(with: event)
       return
     }
@@ -442,6 +447,10 @@ final class ImageViewerView: NSView {
     let unit: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
 
     pan(byPoints: CGSize(width: event.scrollingDeltaX * unit, height: event.scrollingDeltaY * unit))
+
+    #if DEBUG
+      ImageViewerScrollLog.log(event, unit: unit, viewport: viewport)
+    #endif
   }
 
   enum PinchPhase {
@@ -560,3 +569,36 @@ final class ImageViewerView: NSView {
     onDrop?(droppedFiles(sender)) ?? false
   }
 }
+
+#if DEBUG
+  /// Logs one line per scroll event the image view pans with, for capturing what a real trackpad
+  /// sends. The app turns it on at start when `UNITERM_DEBUG_SCROLL=1` was in its environment.
+  /// The app scrubs `UNITERM_` variables from the process, so the view cannot read them itself.
+  public enum ImageViewerScrollLog {
+    @MainActor public static var enabled = false
+
+    private static let logger = Logger(subsystem: "dev.uniterm.app", category: "scroll")
+
+    @MainActor
+    static func log(_ event: NSEvent, unit: CGFloat, viewport: ZoomViewport?) {
+      guard enabled else { return }
+
+      let dx = event.scrollingDeltaX
+      let dy = event.scrollingDeltaY
+      let precise = event.hasPreciseScrollingDeltas
+      let inverted = event.isDirectionInvertedFromDevice
+      let phase = event.phase.rawValue
+      let momentum = event.momentumPhase.rawValue
+      let isFit = viewport?.isFit ?? true
+
+      logger.notice(
+        """
+        scroll dx=\(dx, privacy: .public) dy=\(dy, privacy: .public) \
+        precise=\(precise, privacy: .public) inverted=\(inverted, privacy: .public) \
+        phase=\(phase, privacy: .public) momentum=\(momentum, privacy: .public) \
+        isFit=\(isFit, privacy: .public) \
+        pan=(\(dx * unit, privacy: .public), \(dy * unit, privacy: .public))
+        """)
+    }
+  }
+#endif

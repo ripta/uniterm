@@ -135,4 +135,111 @@ final class ImageViewerScrollTests: XCTestCase {
       XCTAssertEqual(origin.y, y)
     }
   }
+
+  /// The scroll phase field of a scroll CGEvent. Its values are 1 began, 2 changed, 4 ended.
+  private static let scrollPhaseField = CGEventField(rawValue: 99)!
+
+  private func phasedEvent(
+    dy: Int32, inverted: Bool, phase: Int64, momentum: Int64
+  ) throws -> NSEvent {
+    let cg = try XCTUnwrap(
+      CGEvent(
+        scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: 0,
+        wheel3: 0))
+
+    cg.setIntegerValueField(Self.directionInvertedField, value: inverted ? 1 : 0)
+    cg.setIntegerValueField(Self.scrollPhaseField, value: phase)
+    cg.setIntegerValueField(Self.momentumPhaseField, value: momentum)
+    cg.setIntegerValueField(CGEventField(rawValue: 88)!, value: 1)
+
+    return try XCTUnwrap(NSEvent(cgEvent: cg))
+  }
+
+  /// A fixture whose red channel grows to the right and green channel grows downward, so the
+  /// rendered pixel under a point says which part of the image is there.
+  private func gradientView() throws -> (NSWindow, ImageViewerView) {
+    let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+    let window = NSWindow(
+      contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+
+    window.isReleasedWhenClosed = false
+    window.contentView = view
+    view.backingScaleSource = { 1 }
+    view.show(
+      image: ImageFixtures.bitmap(width: 1000, height: 1000) { x, y in
+        (UInt8(x * 255 / 999), UInt8(y * 255 / 999), 0, 255)
+      }, native: PixelSize(width: 1000, height: 1000), actualScale: 1, hdr: false)
+    view.layoutSubtreeIfNeeded()
+
+    XCTAssertTrue(view.zoom(.actual))
+    view.pan(byPoints: CGSize(width: -300, height: -300))
+
+    return (window, view)
+  }
+
+  /// The red and green channels under the middle of the view, as drawn.
+  private func renderedCenter(_ view: ImageViewerView) throws -> (r: Int, g: Int) {
+    let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+
+    view.cacheDisplay(in: view.bounds, to: rep)
+
+    let color = try XCTUnwrap(
+      rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+
+    return (Int((color.redComponent * 255).rounded()), Int((color.greenComponent * 255).rounded()))
+  }
+
+  /// Catches an inverted pan axis between the viewport and the layers. A downward scroll delta
+  /// drags the image down, as a scroll view's flipped document moves, so the middle of the pane
+  /// then shows a part of the image nearer its top.
+  func testRenderedImageFollowsTheScrollDelta() throws {
+    let (window, view) = try gradientView()
+
+    defer { window.close() }
+
+    let start = try renderedCenter(view)
+
+    view.scrollWheel(with: try scrollEvent(dx: 0, dy: 100, units: .pixel, inverted: false))
+
+    let down = try renderedCenter(view)
+
+    XCTAssertLessThan(down.g, start.g - 10, "downward delta did not drag the image down")
+    XCTAssertEqual(down.r, start.r, accuracy: 6, "color conversion leaks across channels")
+
+    view.scrollWheel(with: try scrollEvent(dx: 100, dy: 0, units: .pixel, inverted: false))
+
+    let right = try renderedCenter(view)
+
+    XCTAssertLessThan(right.r, down.r - 10, "rightward delta did not drag the image right")
+    XCTAssertEqual(right.g, down.g, accuracy: 6)
+  }
+
+  /// Catches a phase-dependent branch in the pan. A two-finger gesture arrives as began, changed,
+  /// and ended events, then as momentum events. Every one of them moves the image by its delta,
+  /// whichever way the user's scroll direction setting points.
+  func testPhasedGestureAndMomentumPanTheImageByEveryDelta() throws {
+    let view = try zoomedView()
+
+    for inverted in [false, true] {
+      view.pan(byPoints: CGSize(width: 1e7, height: 1e7))
+      view.pan(byPoints: CGSize(width: -1000, height: -1000))
+
+      let stream: [(phase: Int64, momentum: Int64)] = [
+        (1, 0), (2, 0), (2, 0), (2, 0), (4, 0), (0, 1), (0, 2), (0, 2), (0, 3),
+      ]
+
+      for (phase, momentum) in stream {
+        let event = try phasedEvent(dy: 10, inverted: inverted, phase: phase, momentum: momentum)
+        let before = try XCTUnwrap(view.imageFrame).origin
+
+        view.scrollWheel(with: event)
+
+        let after = try XCTUnwrap(view.imageFrame).origin
+
+        XCTAssertEqual(
+          after.y - before.y, 10, "phase \(event.phase) momentum \(event.momentumPhase)")
+        XCTAssertEqual(after.x, before.x)
+      }
+    }
+  }
 }
