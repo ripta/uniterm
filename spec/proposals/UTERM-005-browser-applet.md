@@ -216,7 +216,9 @@ Decision: it opens a new tab in the same pane.
 
 - The tab is built with the configuration WebKit passes to the UI delegate, so the opener relationship and the shared
   store hold. Sign-in pop-ups work.
-- It opens right after the opener tab and is selected.
+- A tab a link click opens goes right after the opener tab and is selected. A tab a script opens goes after the last tab
+  that page's script opened and the pane still holds, or after the opener when it has none, so a loop reads in the
+  order it asked, the tabs a yes opens included. Amended 2026-11-06; see Decision Log.
 - A script-opened tab may close itself with `window.close()`.
 - A script with no user gesture opens nothing. WKWebView's macOS default lets such a script open a window, so the
   browser sets `javaScriptCanOpenWindowsAutomatically` to false. No public API reports a blocked attempt, so the browser
@@ -905,7 +907,8 @@ None.
   controller, so the opener relationship and the shared store hold. The tab is built at once, since WebKit needs the web
   view back from the same call. It takes the same delegates, observers, scheme gate, and tracker as any tab, and its
   first load passes the gate in its own navigation delegate. A window to a scheme the rule refuses opens nothing and
-  warns. The tab opens right after its opener. The opener's selected tab selects it, and a background opener's tab
+  warns. A tab a click opens goes right after its opener, and a tab a script opens goes after the page's last script-opened tab,
+  so a loop reads left to right. The opener's selected tab selects it, and a background opener's tab
   does not. A real test calls `window.open` from a background tab and checks the selection and the notice. A real sign-in
   flow runs against the fixture: the pop-up posts to `window.opener` and closes itself, the opener hears it, and the
   selection returns to the opener. `webViewDidClose` closes only a script-opened tab. Never the last tab. A tab with unsent
@@ -1120,12 +1123,12 @@ None.
   for a typed address, which starts the hung page's own load before the typed one replaces it. A page that hangs on load
   could in principle hang the new view too. Recovery never repeats on its own, so the user's next action arms the bound
   again.
-- The hung process outlives its view. A scratch test measured the process alive after release of its view for 61 seconds,
-  and after a non-persistent store, a navigation to `about:blank`, `_close`, and `_killWebContentProcess` for 30 seconds.
-  A rebuilt view and four new tabs each got a different process from the hung one. SIGKILL to the id from
 - A rebuilt view starts with no title. The tab kept the old view's title after a stop or a hang, so a rebuilt page that
   never names itself, or whose title arrives a moment after its load ends, showed the old page's name in the tab bar.
   `replaceWebView` now clears it, and the tab shows its stored title until the new page reports one.
+- The hung process outlives its view. A scratch test measured the process alive after release of its view for 61 seconds,
+  and after a non-persistent store, a navigation to `about:blank`, `_close`, and `_killWebContentProcess` for 30 seconds.
+  A rebuilt view and four new tabs each got a different process from the hung one. SIGKILL to the id from
   `_webProcessIdentifier` ends it, and the user chose to ship that in a hands-on review. `WebContentProcess` owns the
   private read, guarded by `responds(to:)`, and the kill. It refuses ids at or below 1 and any process whose path does
   not name a WebKit content process. The hang bound kills the process before it builds the new view. A close of a tab
@@ -1505,6 +1508,19 @@ Starts after UTERM-004 M6.
   navigates after a click's action is allowed and before WebKit confirms it could pass for the click's. A frame's
   attachment is never the user's. If wrong, the three is one constant, and a stricter rule needs the response tied to
   its action, which WebKit does not offer.
+
+- 2026-11-06: Script-opened tabs read in order (the user's choice in a hands-on review, not a best guess). "New windows
+  and pop-ups" said a pop-up opens right after its opener. A loop of script-opened tabs therefore read backwards, and the
+  tabs a yes opens went ahead of the others. Now a script-opened tab goes after the last tab that page's script opened
+  and the pane still holds. A tab that was closed leaves the rest of the group together, and a page with none falls
+  back to the opener. The tabs a yes opens join the same group. The same code places a tab a link click opens, and that
+  placement is unchanged: right after the opener. Selection and the return to the opener on close are unchanged.
+
+- 2026-11-06: A rebuilt view no longer keeps the old page's title (found by a flaky test, a correction of fact). M7's
+  As built said nothing about the title. The tab kept the title of the view it dropped, so after a stop or a hang the
+  tab bar showed the old page's name until the new page reported its own, and for good if the new page had none. A
+  repeat of the typed-address recovery test saw it in 6 of 60 runs. The tab now clears the title when it drops the view.
+  If wrong, the tab shows its stored title or its host for a moment longer, and the fix is one line.
 
 ## References
 

@@ -977,7 +977,9 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     popup.loadOrigin = .user
     popup.setMediaSuspended(alerts.isDetached)
 
-    let position = openerIndex + 1
+    let position = byUser ? openerIndex + 1 : endOfScriptGroup(of: opener) + 1
+
+    if !byUser { popup.scriptGroup = opener }
 
     tabs.insert(popup, at: position)
 
@@ -1129,6 +1131,14 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     }
   }
 
+  /// The index of the last tab that `page`'s script opened and the pane still holds, or the page's
+  /// own index when it has none. A new script-opened tab goes right after it, so a loop reads in
+  /// the order it asked, and a closed or moved tab leaves the rest of the group together.
+  private func endOfScriptGroup(of page: BrowserTab) -> Int {
+    tabs.lastIndex { $0.scriptGroup === page }
+      ?? tabs.firstIndex { $0 === page } ?? tabs.count - 1
+  }
+
   /// A yes. The remembered addresses open as ordinary tabs after the page's own tab, in order,
   /// with no opener and no selection. Each address meets the scheme rule as any page's link does.
   private func openHeldTabs(of page: BrowserTab) {
@@ -1137,7 +1147,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
     page.scriptTabs.setPhase(.granted)
 
-    var position = tabs.firstIndex(where: { $0 === page }).map { $0 + 1 } ?? tabs.count
+    var position = endOfScriptGroup(of: page) + 1
 
     for url in addresses {
       if case .refuse(let refusal) = SchemePolicy.decide(url, source: .page, isMainFrame: true) {
@@ -1151,6 +1161,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
       opened.delegate = self
       opened.loadOrigin = .user
+      opened.scriptGroup = page
       opened.setMediaSuspended(alerts.isDetached)
 
       tabs.insert(opened, at: position)

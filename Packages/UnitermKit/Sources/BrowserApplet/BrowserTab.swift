@@ -144,6 +144,11 @@ final class BrowserTab: NSObject {
   /// it while it exists.
   weak var opener: BrowserTab?
 
+  /// The page whose script opened this tab, directly or through the question that let it open
+  /// more. The pane places such tabs in the order they were asked for, after the group's last tab.
+  /// A tab the user opened by a click is not in a group.
+  weak var scriptGroup: BrowserTab?
+
   /// Whether WebKit built this tab's web view for a new window. Only such a tab is closed by
   /// `window.close()`.
   let isPopup: Bool
@@ -659,12 +664,12 @@ final class BrowserTab: NSObject {
     if let old { detach(old) }
 
     current = nil
+    pageTitle = nil
     holdsMediaSuspension = false
     loadState = .idle(history: state)
     keptInteraction = nil
     isLoading = false
     currentURL = nil
-    pageTitle = nil
     committedURL = nil
     canGoBack = false
     canGoForward = false
