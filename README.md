@@ -31,10 +31,9 @@ Prerequisites:
 
 - macOS 26 and Xcode 26.6 (build 17F113). Select it with `xcode-select`.
 - The Metal toolchain: `xcodebuild -downloadComponent MetalToolchain`.
-- The Command Line Tools with the macOS 15.4 SDK, only on a cold cache. The first build and every Ghostty upgrade need
-  them. Zig 0.15 cannot link against the macOS 26 SDK, so the build compiles against that older SDK. The build
-  downloads the Zig that `ghostty.pin` names into its own cache. It never uses or changes a Zig installed on the
-  machine.
+- Network access on a cold cache, so the build can download the Zig that `ghostty.pin` names. The first build and
+  every Ghostty upgrade need it. That Zig lives in the build's own cache, and the build never uses or changes a Zig
+  installed on the machine.
 
 Commands:
 

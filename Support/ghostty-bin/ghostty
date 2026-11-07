@@ -1,0 +1,70 @@
+#!/bin/sh
+#
+# uniterm's stand-in for the `ghostty` command that Ghostty's shell integration calls.
+#
+# Ghostty's ssh wrapper runs `"$GHOSTTY_BIN_DIR/ghostty" +ssh [flags] -- <ssh args>`, and uniterm
+# ships no Ghostty CLI. uniterm points GHOSTTY_BIN_DIR at this folder. Only `+ssh` is handled, with
+# the options the shell integration passes. Any other command fails with a message.
+#
+# The remote session gets TERM=xterm-256color, since this never installs Ghostty's terminfo on
+# the remote host. With --forward-env, ssh also sends COLORTERM, TERM_PROGRAM, and
+# TERM_PROGRAM_VERSION. The remote sshd accepts them only when its AcceptEnv allows them. When both
+# --forward-env and --terminfo are false, ssh runs with the environment unchanged.
+
+set -eu
+
+fail() {
+  echo "uniterm: $*" >&2
+  exit 2
+}
+
+flag_value() {
+  case "$1" in
+  *=true | "") echo true ;;
+  *=false) echo false ;;
+  *) fail "ghostty +ssh: $2 takes true or false" ;;
+  esac
+}
+
+[ "${1:-}" = "+ssh" ] || fail "ghostty ${1:-} is not available in uniterm. Only +ssh is."
+shift
+
+forward_env=true
+terminfo=true
+ssh=ssh
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --)
+    shift
+    break
+    ;;
+  --forward-env | --forward-env=*)
+    forward_env="$(flag_value "${1#--forward-env}" --forward-env)"
+    ;;
+  --terminfo | --terminfo=*)
+    terminfo="$(flag_value "${1#--terminfo}" --terminfo)"
+    ;;
+  --cache | --cache=* | --verbose) ;;
+  --ssh=*)
+    ssh="${1#--ssh=}"
+    ;;
+  --*)
+    fail "ghostty +ssh: unknown option $1"
+    ;;
+  *)
+    break
+    ;;
+  esac
+  shift
+done
+
+if [ "$forward_env" = false ] && [ "$terminfo" = false ]; then
+  exec "$ssh" "$@"
+fi
+
+if [ "$forward_env" = true ]; then
+  TERM=xterm-256color exec "$ssh" -o "SendEnv COLORTERM TERM_PROGRAM TERM_PROGRAM_VERSION" "$@"
+fi
+
+TERM=xterm-256color exec "$ssh" "$@"

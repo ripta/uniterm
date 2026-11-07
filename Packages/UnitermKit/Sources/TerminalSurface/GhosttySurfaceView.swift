@@ -1,5 +1,6 @@
 import AppKit
 internal import GhosttyKit
+import UniformTypeIdentifiers
 
 /// One libghostty surface hosted in an NSView.
 ///
@@ -18,6 +19,11 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   private var focused = false
   private var visible = true
   private var windowObservers: [any NSObjectProtocol] = []
+
+  /// True only while the view's own paste call runs. libghostty asks for the clipboard
+  /// synchronously inside that call, which is how a read tells the user's paste apart from a read
+  /// a program asked for.
+  private var pasting = false
 
   /// How many times libghostty has applied a new config to this surface.
   private(set) var configChangeCount = 0
@@ -127,6 +133,9 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     case .clearScreen: name = "clear_screen"
     }
 
+    pasting = action == .paste
+    defer { pasting = false }
+
     _ = bindingAction(name)
   }
 
@@ -229,14 +238,35 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     }
   }
 
-  func answerClipboardRead(state: OpaqueToken) -> Bool {
-    guard let surface, let text = NSPasteboard.general.string(forType: .string), !text.isEmpty
-    else { return false }
+  /// Answers a read without asking. libghostty still asks the confirm callback before it sends a
+  /// program any clipboard data, so serving the text here with `confirmed` false is safe.
+  ///
+  /// Two kinds of read never reach that callback, so they are settled here. A paste event during
+  /// the user's own paste gets the clipboard's type names. A Kitty read for anything but plain text
+  /// is denied, since a Kitty read for the type names alone is sent no prompt.
+  func answerClipboardRead(
+    _ request: ClipboardRead, state: OpaqueToken
+  ) -> ghostty_clipboard_read_result_e {
+    guard let surface else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
 
-    text.withCString {
-      ghostty_surface_complete_clipboard_request(surface, $0, state.pointer, false)
+    if pasting && request.isListingOnly {
+      complete(state, surface: surface, text: nil, available: Self.pasteboardMIMETypes())
+      return GHOSTTY_CLIPBOARD_READ_STARTED
     }
-    return true
+
+    guard request.isPlainText else {
+      ghostty_surface_deny_clipboard_request(surface, state.pointer)
+      return GHOSTTY_CLIPBOARD_READ_STARTED
+    }
+
+    // An empty clipboard tells a program only that there is no text. libghostty answers it
+    // without a prompt, so a Kitty read learns that much.
+    guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+      return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
+    }
+
+    complete(state, surface: surface, text: text, confirmed: false)
+    return GHOSTTY_CLIPBOARD_READ_STARTED
   }
 
   func askAboutClipboard(
@@ -244,36 +274,84 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   ) {
     let request = TerminalClipboardRequest(kind: kind, text: text) { [weak self] allow in
       DispatchQueue.main.async {
-        MainActor.assumeIsolated { self?.completeClipboard(text: text, state: state, allow: allow) }
+        MainActor.assumeIsolated { self?.answerClipboard(text: text, state: state, allow: allow) }
       }
     }
 
     guard let onEvent else {
-      completeClipboard(text: text, state: state, allow: false)
+      denyClipboard(state: state)
       return
     }
 
     onEvent(.clipboardRequest(request))
   }
 
-  /// A denied request still completes, with empty data, because libghostty keeps the request until
-  /// the embedder answers. Empty data pastes nothing and reveals nothing.
-  private func completeClipboard(text: String, state: OpaqueToken, allow: Bool) {
+  /// libghostty keeps every request until the embedder answers it. A denial sends an OSC 52 read
+  /// empty data, a Kitty request an `EPERM` status, and a paste nothing.
+  func denyClipboard(state: OpaqueToken) {
     guard let surface else { return }
 
-    (allow ? text : "").withCString {
-      ghostty_surface_complete_clipboard_request(surface, $0, state.pointer, true)
+    ghostty_surface_deny_clipboard_request(surface, state.pointer)
+  }
+
+  private func answerClipboard(text: String, state: OpaqueToken, allow: Bool) {
+    guard allow, let surface else {
+      denyClipboard(state: state)
+      return
+    }
+
+    complete(state, surface: surface, text: text, confirmed: true)
+  }
+
+  /// Every pointer handed to libghostty is borrowed for this call only.
+  private func complete(
+    _ state: OpaqueToken, surface: ghostty_surface_t, text: String?, available: [String] = [],
+    confirmed: Bool = false
+  ) {
+    let availablePointers: [UnsafePointer<CChar>?] = available.map { UnsafePointer(strdup($0)) }
+    defer {
+      for pointer in availablePointers {
+        free(UnsafeMutablePointer(mutating: pointer))
+      }
+    }
+
+    ClipboardRead.plainText.withCString { mime in
+      (text ?? "").withCString { data in
+        var content = ghostty_clipboard_content_s(
+          mime: mime, data: data, len: text?.utf8.count ?? 0)
+
+        withUnsafePointer(to: &content) { contentPointer in
+          availablePointers.withUnsafeBufferPointer { availableBuffer in
+            var completion = ghostty_clipboard_complete_s(
+              contents: text == nil ? nil : contentPointer,
+              contents_len: text == nil ? 0 : 1,
+              available: availableBuffer.baseAddress,
+              available_len: availableBuffer.count,
+              confirmed: confirmed,
+              remember: false)
+
+            ghostty_surface_complete_clipboard_request(surface, &completion, state.pointer)
+          }
+        }
+      }
     }
   }
 
-  /// OSC 52 writes are allowed without asking. The config sets `clipboard-write` to `allow`, so
-  /// libghostty never asks for one. A write that did arrive as a question is answered yes, to match.
-  func writeClipboard(_ text: String) {
-    Self.store(text)
+  /// The clipboard's types as MIME types, for a paste event. A type with no MIME equivalent is
+  /// left out.
+  private static func pasteboardMIMETypes() -> [String] {
+    var seen: Set<String> = []
+    return (NSPasteboard.general.types ?? []).compactMap { type in
+      guard let mime = UTType(type.rawValue)?.preferredMIMEType, seen.insert(mime).inserted
+      else { return nil }
+
+      return mime
+    }
   }
 
-  func allowClipboardWrite(text: String, state: OpaqueToken) {
-    completeClipboard(text: text, state: state, allow: true)
+  /// Copies and OSC 52 writes are allowed without asking.
+  func writeClipboard(_ text: String) {
+    Self.store(text)
   }
 
   private static func store(_ text: String) {

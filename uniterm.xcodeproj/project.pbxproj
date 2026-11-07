@@ -266,16 +266,18 @@
 			inputPaths = (
 				"$(SRCROOT)/ghostty.pin",
 				"$(SRCROOT)/Packages/UnitermKit/Frameworks/GhosttyKit.xcframework/Info.plist",
+				"$(SRCROOT)/Support/ghostty-bin/ghostty",
 			);
 			name = "Copy Ghostty resources and licenses";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/terminfo/78/xterm-ghostty",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ghostty-bin/ghostty",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nresources=\"${SRCROOT}/Packages/UnitermKit/Frameworks/GhosttyResources\"\ndest=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$dest\"\nrsync -a --delete \"$resources/ghostty/\" \"$dest/ghostty/\"\nrsync -a --delete \"$resources/terminfo/\" \"$dest/terminfo/\"\nrsync -a --delete \"${SRCROOT}/Licenses/\" \"$dest/Licenses/\"\n";
+			shellScript = "set -euo pipefail\nresources=\"${SRCROOT}/Packages/UnitermKit/Frameworks/GhosttyResources\"\ndest=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$dest\"\nrsync -a --delete \"$resources/ghostty/\" \"$dest/ghostty/\"\nrsync -a --delete \"$resources/terminfo/\" \"$dest/terminfo/\"\nrsync -a --delete \"${SRCROOT}/Support/ghostty-bin/\" \"$dest/ghostty-bin/\"\nrsync -a --delete \"${SRCROOT}/Licenses/\" \"$dest/Licenses/\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

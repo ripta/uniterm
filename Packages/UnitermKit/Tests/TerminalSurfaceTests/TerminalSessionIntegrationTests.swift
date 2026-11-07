@@ -13,6 +13,7 @@ import XCTest
 final class TerminalSessionIntegrationTests: XCTestCase {
   private var sandbox: URL!
   private var resources: URL!
+  private var helper: URL!
   private var engine: GhosttyTerminalEngine!
   private var window: NSWindow!
   private var sessions: [any TerminalSession] = []
@@ -38,6 +39,14 @@ final class TerminalSessionIntegrationTests: XCTestCase {
       FileManager.default.fileExists(atPath: resources.appending(path: "shell-integration").path),
       "run `make build` so Ghostty's resources exist")
 
+    helper = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+      .deletingLastPathComponent().deletingLastPathComponent()
+      .appending(path: "Support/ghostty-bin", directoryHint: .isDirectory)
+    XCTAssertTrue(
+      FileManager.default.isExecutableFile(atPath: helper.appending(path: "ghostty").path),
+      "uniterm's ghostty helper is missing or not executable")
+
     // The shell must not read the developer's dotfiles, which may prompt for an ssh passphrase.
     // ZDOTDIR goes in the process environment, since Ghostty's zsh integration reads it there and
     // restores it for the user's startup files. A ZDOTDIR passed as a launch variable would
@@ -54,7 +63,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     unsetenv("SSH_ASKPASS")
     engine = try GhosttyTerminalEngine(
       configStore: TerminalConfigStore(directory: sandbox.appending(path: "config")),
-      resourcesDirectory: resources, palette: .latte)
+      resourcesDirectory: resources, helperDirectory: helper, palette: .latte)
 
     window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 800, height: 400), styleMask: [.titled],
@@ -225,6 +234,11 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   /// TERM=xterm-256color. The probe uses ssh's ProxyCommand, which runs locally with ssh's own
   /// environment, so no remote host is needed. A real host without the terminfo entry is not
   /// reachable from here.
+  ///
+  /// Ghostty's wrapper runs `$GHOSTTY_BIN_DIR/ghostty +ssh`, so this also catches a shell whose
+  /// `GHOSTTY_BIN_DIR` is not uniterm's helper, whose `PATH` gained uniterm's executable directory,
+  /// and a helper that stops forwarding the terminal variables. `ssh -G` prints the options the
+  /// helper added without connecting.
   func testTermTerminfoAndSshFallback() async throws {
     let session = try startShell()
     try await waitUntil("an idle prompt") { !session.isRunningSomething }
@@ -245,15 +259,45 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     try await waitUntil("the TERM that ssh passes on") {
       self.screen(session).contains("PT:xterm-256color:")
     }
+
+    try run(
+      "ssh -F /dev/null -G nowhere | grep -c '^sendenv TERM_PROGRAM' | sed 's/^/SE:/'", in: session)
+    try await waitUntil("the forwarded variables") { self.screen(session).contains("SE:2") }
+
+    let executableDirectory = Bundle.main.executableURL!.deletingLastPathComponent().path
+    try run(
+      #"[ "$GHOSTTY_BIN_DIR" = '\#(helper.path)' ] && echo "BD:$((6*7)):"; "#
+        + #"case ":$PATH:" in *':\#(executableDirectory):'*) ;; *) echo "PA:$((5*5)):" ;; esac"#,
+      in: session)
+    try await waitUntil("the helper and PATH checks") {
+      let text = self.screen(session)
+      return text.contains("BD:42:") && text.contains("PA:25:")
+    }
   }
 
   /// Catches a resize that never reaches the shell. The shell's own `stty size` reports the grid.
+  ///
+  /// libghostty applies a resize to the pty 25 ms later, so a command typed right after the resize
+  /// can still see the old size. The script waits for the SIGWINCH that the kernel sends once the
+  /// size changes, and only then asks.
   func testShellSeesTheNewSize() async throws {
+    let script = sandbox.appending(path: "winch-\(getpid()).sh")
+    try """
+    trap 'stty size | sed "s/^/S:/;s/ /x/"; kill "$pid"; exit' WINCH
+    sleep 30 &
+    pid=$!
+    printf 'W:%s\\n' ready
+    wait "$pid"
+    """.write(to: script, atomically: true, encoding: .utf8)
+
     let session = try startShell()
     try await waitUntil("an idle prompt") { !session.isRunningSomething }
 
     let before = session.gridSize
     XCTAssertGreaterThan(before.columns, 20)
+
+    try run("sh '\(script.path)'", in: session)
+    try await waitUntil("the size watcher") { self.screen(session).contains("W:ready") }
 
     session.resize(to: CGSize(width: 400, height: 200))
 
@@ -261,7 +305,6 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     XCTAssertLessThan(after.columns, before.columns)
     XCTAssertLessThan(after.rows, before.rows)
 
-    try run("stty size | sed 's/^/S:/;s/ /x/'", in: session)
     let expected = "S:\(after.rows)x\(after.columns)"
     try await waitUntil("stty to report \(expected)") { self.screen(session).contains(expected) }
   }
@@ -396,6 +439,78 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     try await waitUntil("the clipboard after confirmation") {
       self.screen(session).contains(encoded)
     }
+  }
+
+  /// Catches a Kitty clipboard read that is answered, or that asks the user, instead of being
+  /// denied. Both a read for text and a read for the type names alone must get an `EPERM` status.
+  /// The second kind reaches no confirm callback, so it proves the denial in the read callback.
+  func testKittyClipboardReadsAreDenied() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("SECRET-KITTY", forType: .string)
+    let encoded = Data("SECRET-KITTY".utf8).base64EncodedString()
+
+    let session = try startShell()
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    // The payload names the MIME types, base64 encoded: "text/plain", then "." for the type names.
+    let reads = [("T", "dGV4dC9wbGFpbg=="), ("L", "Lg==")]
+    for (marker, payload) in reads {
+      try run(
+        "printf '\\033]5522;type=read;\(payload)\\a'; IFS= read -rs -t 8 -d $'\\a' reply; "
+          + "echo \"\(marker):${reply#*status=}:\"", in: session)
+      try await waitUntil("the \(marker) reply") {
+        self.screen(session).contains("\(marker):EPERM:")
+      }
+    }
+
+    XCTAssertTrue(requests.isEmpty, "a Kitty read asked the user")
+    XCTAssertFalse(screen(session).contains(encoded), "a Kitty read received the clipboard")
+  }
+
+  /// Catches an OSC 52 write that asks the user, or that stops landing, now that `clipboard-write`
+  /// is `ask`. It also catches a Kitty write that reaches the pasteboard instead of an `EPERM`.
+  func testOSC52WritesLandAndKittyWritesAreDenied() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+
+    let session = try startShell()
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    let osc52 = Data("WROTE-52".utf8).base64EncodedString()
+    try run("printf '\\033]52;c;\(osc52)\\a'", in: session)
+    try await waitUntil("the OSC 52 write") {
+      NSPasteboard.general.string(forType: .string) == "WROTE-52"
+    }
+
+    // A Kitty write is a begin packet, a data packet for each MIME type, and an empty commit.
+    let kitty = Data("WROTE-KITTY".utf8).base64EncodedString()
+    try run(
+      "printf '\\033]5522;type=write\\a\\033]5522;type=wdata:mime=dGV4dC9wbGFpbg==;\(kitty)\\a"
+        + "\\033]5522;type=wdata\\a'; IFS= read -rs -t 8 -d $'\\a' reply; "
+        + "echo \"W:${reply#*status=}:\"", in: session)
+    try await waitUntil("the Kitty write reply") { self.screen(session).contains("W:EPERM:") }
+
+    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "WROTE-52")
+    XCTAssertTrue(requests.isEmpty, "a clipboard write asked the user")
   }
 
   /// Catches libghostty bindings that survive in the generated config. With them, Cmd-Z, Cmd-W,
@@ -720,7 +835,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
 
     engine = try GhosttyTerminalEngine(
       configStore: TerminalConfigStore(directory: sandbox.appending(path: "config-env")),
-      resourcesDirectory: resources, palette: .latte)
+      resourcesDirectory: resources, helperDirectory: helper, palette: .latte)
 
     let session = try startShell()
     try await waitUntil("an idle prompt") { !session.isRunningSomething }

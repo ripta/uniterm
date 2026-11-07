@@ -111,6 +111,7 @@ fmt-select: ## Format only the named files, e.g. make fmt-select FILES='App/AppD
 .PHONY: lint
 lint: fmt-check ## Lint Swift sources and check the scripts parse
 	for script in scripts/*.sh; do bash -n "$$script" || exit 1; done
+	sh -n Support/ghostty-bin/ghostty
 
 .PHONY: check
 check: check-ghosttykit-imports ## Check the Swift language mode, the GhosttyKit boundary, and that the sandbox is off
