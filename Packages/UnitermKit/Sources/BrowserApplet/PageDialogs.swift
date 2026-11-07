@@ -28,18 +28,23 @@ final class PageDialog {
   /// Who asks: the host of the frame that called, cleaned.
   let source: String
 
+  /// Whether the dialog offers to stop the page's later dialogs. The page's first dialog in a load
+  /// offers nothing. Every later one does.
+  let offersToStop: Bool
+
   weak var tab: BrowserTab?
 
   private var completion: (@MainActor (Answer) -> Void)?
 
   init(
-    kind: Kind, message: String, source: String, tab: BrowserTab,
+    kind: Kind, message: String, source: String, tab: BrowserTab, offersToStop: Bool = false,
     completion: @escaping @MainActor (Answer) -> Void
   ) {
     self.kind = kind
     self.message = DialogText.bounded(message)
     self.source = AddressDisplay.bounded(source)
     self.tab = tab
+    self.offersToStop = offersToStop
     self.completion = completion
   }
 
@@ -58,15 +63,12 @@ final class PageDialog {
 ///
 /// A dialog waits while its pane is detached, and while its tab is not the selected one. It is
 /// bounded, so a page that raises dialogs in many frames cannot grow the list without end. A
-/// dialog over the bound is dismissed at once.
+/// dialog over the bound is dismissed at once. The bound guards memory only. A page that keeps
+/// asking is stopped by the user, through the offer on its second and later dialogs.
 @MainActor
 final class PageDialogs {
   /// The most dialogs held at once, across every tab. A policy value.
   static let heldLimit = 16
-
-  /// The most dialogs one tab shows between two loads. A page that keeps asking after this has
-  /// its dialogs dismissed. A policy value.
-  static let perLoadLimit = 5
 
   private(set) var pending: [PageDialog] = []
 
@@ -121,11 +123,17 @@ final class BrowserDialogView: NSView {
   let field = NSTextField()
   let okButton = NSButton(title: "OK", target: nil, action: nil)
   let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+  let stopButton = NSButton(
+    title: "Don\u{2019}t show more from this page", target: nil, action: nil)
 
   private(set) var shown: PageDialog?
 
   /// The user answered the dialog on show.
   var onAnswer: (PageDialog, PageDialog.Answer) -> Void = { _, _ in }
+
+  /// The user chose to stop the page's later dialogs. The dialog on show is answered as Cancel
+  /// would answer it.
+  var onStop: (PageDialog) -> Void = { _ in }
 
   private let card = NSView()
   private var palette = ThemePalette.latte
@@ -158,11 +166,20 @@ final class BrowserDialogView: NSView {
     cancelButton.action = #selector(cancel)
     cancelButton.setAccessibilityIdentifier("browser-dialog-cancel")
 
+    stopButton.bezelStyle = .inline
+    stopButton.target = self
+    stopButton.action = #selector(stop)
+    stopButton.setAccessibilityIdentifier("browser-dialog-stop")
+    stopButton.setAccessibilityLabel("Don\u{2019}t show more dialogs from this page")
+    stopButton.setAccessibilityHelp(
+      "Dismisses this dialog and every later one from this page until it loads again.")
+    stopButton.isHidden = true
+
     let buttons = NSStackView(views: [cancelButton, okButton])
     buttons.orientation = .horizontal
     buttons.spacing = 8
 
-    let stack = NSStackView(views: [sourceLabel, messageLabel, field, buttons])
+    let stack = NSStackView(views: [sourceLabel, messageLabel, field, buttons, stopButton])
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 10
@@ -206,6 +223,7 @@ final class BrowserDialogView: NSView {
     sourceLabel.stringValue = dialog.source.isEmpty ? "A page says" : "\(dialog.source) says"
     messageLabel.stringValue = dialog.message
     cancelButton.isHidden = dialog.kind == .alert
+    stopButton.isHidden = !dialog.offersToStop
 
     if case .prompt(let defaultText) = dialog.kind {
       field.stringValue = DialogText.bounded(defaultText)
@@ -245,6 +263,12 @@ final class BrowserDialogView: NSView {
     } else {
       onAnswer(shown, .accepted)
     }
+  }
+
+  @objc func stop() {
+    guard let shown, shown.offersToStop else { return }
+
+    onStop(shown)
   }
 
   @objc func cancel() {

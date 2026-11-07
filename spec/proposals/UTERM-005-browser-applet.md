@@ -381,7 +381,9 @@ default. Restore is settled in "What restore loads".
 - On detach, the browser pauses and suspends media playback in every tab and holds back JavaScript alerts, confirmations,
   and prompts until reattach. Downloads keep going. Reattach resumes nothing on its own: the user starts paused media
   again. A dialog shows inside the pane, never as a window sheet, and a dialog from a tab in the background waits for
-  its tab. A page that keeps raising dialogs has the rest dismissed. Amended 2026-11-06; see Decision Log.
+  its tab. From a page's second dialog in one load, the overlay offers "Don't show more from this page". Choosing it
+  answers the dialog as Cancel would, and every later dialog from that page is dismissed until its next load, with one
+  warning. There is no count limit, and at most 16 dialogs wait. Amended 2026-11-06; see Decision Log.
 - Running something: see "Unsent input" and "Downloads". `runningLabels` names each such tab by title, and a download
   by file name.
 
@@ -1000,8 +1002,11 @@ None.
   is proved. The state goes to suspended and back, and the element stays paused. Alerts, confirmations, and prompts
   show in an overlay inside the pane, never in a window sheet or through the host, so no other pane waits. A dialog waits while
   the pane is detached and while its tab is in the background. Every completion handler runs exactly once, by the dialog
-  object, and a tab close, a pane close, and the held bound each answer it. A page gets five dialogs between loads and the rest
-  are dismissed with one warning, and at most 16 wait. These two bounds are policy values with no setting. Nothing in the host sends
+  object, and a tab close, a pane close, and the held bound each answer it. The user stops a page's dialogs. From a
+  page's second dialog in a load, the overlay shows "Don't show more from this page", with the identifier
+  `browser-dialog-stop` and the label "Don't show more dialogs from this page". Choosing it answers the dialog as Cancel,
+  dismisses the tab's other waiting dialogs, and dismisses every later one until the next load, with one warning posted at
+  the first dismissal. At most 16 dialogs wait, a policy value with no setting that guards memory only. Nothing in the host sends
   detach or reattach, so the tests call them.
 - Not built, and still out of scope: file upload pickers and HTTP authentication dialogs. An upload input does nothing, and a
   basic-auth page shows its 401.
@@ -1417,6 +1422,15 @@ Starts after UTERM-004 M6.
   App Transport Security floor is declined. One question per pane is declined as an ADR, and it stays a rule of this
   proposal. The two candidates that wait on a second applet, the settings factory and the download quarantine, stay as
   they were.
+
+- 2026-11-06: Dialogs offer to stop (the user's choice in a hands-on review, not a best guess). "The applet contract" and
+  M6's As built said a page gets five dialogs between loads and the rest are dismissed with one warning. The browser decided
+  for the user and a legitimate page lost its sixth dialog. The limit and its automatic dismissal are removed. From a
+  page's second dialog in one load, the overlay offers "Don't show more from this page". Choosing it answers the current
+  dialog as Cancel would. It also dismisses the tab's other waiting dialogs, which the choice did not name, since the
+  user said stop. Every further dialog from that page is dismissed until its next load, with one warning through the
+  notice path used before. The 16 waiting dialogs stay as a memory guard. If wrong, a stop that should leave waiting
+  dialogs alone costs one line in the applet.
 
 ## References
 

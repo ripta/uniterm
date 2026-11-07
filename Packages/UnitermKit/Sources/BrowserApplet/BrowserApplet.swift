@@ -227,6 +227,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
       self?.syncDialog(restoringFocus: true)
       self?.refresh()
     }
+    content.dialogView.onStop = { [weak self] dialog in self?.stopDialogs(from: dialog) }
   }
 
   /// Puts the selected tab's page, buttons, warning, and address on screen. The web view reports
@@ -298,6 +299,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     content.tabBar.onClose = nil
     content.tabBar.onNew = nil
     content.dialogView.onAnswer = { _, _ in }
+    content.dialogView.onStop = { _ in }
   }
 
   /// The pane left the screen. Media in every tab pauses and stays blocked, and a dialog that a
@@ -902,6 +904,20 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
     dialogs.hold(dialog)
     syncDialog(restoringFocus: false)
+    refresh()
+  }
+
+  /// The user chose to stop a page's dialogs. The tab learns first, so a script that continues at
+  /// once finds its next dialog dismissed. The dialog on show is answered as Cancel would answer
+  /// it, and the page's other waiting dialogs are dismissed too.
+  private func stopDialogs(from dialog: PageDialog) {
+    dialog.tab?.stopDialogs()
+
+    dialogs.settle(dialog, .dismissed)
+
+    if let tab = dialog.tab { dialogs.dismissAll(for: tab) }
+
+    syncDialog(restoringFocus: true)
     refresh()
   }
 
