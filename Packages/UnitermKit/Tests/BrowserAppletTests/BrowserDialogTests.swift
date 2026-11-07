@@ -339,7 +339,7 @@ final class BrowserDialogTests: XCTestCase {
     XCTAssertEqual(view.messageLabel.stringValue, "n6", "a seventh dialog shows after six")
     XCTAssertTrue(harness.posts.filter { $0.level == .warning }.isEmpty)
 
-    view.stop()
+    view.stopButton.performClick(nil)
 
     let value = await result.value.value
 
@@ -386,7 +386,7 @@ final class BrowserDialogTests: XCTestCase {
     view.accept()
     await harness.host.until("the first dialog goes") { self.shown(harness) == nil }
     await waitForDialog(harness)
-    view.stop()
+    view.stopButton.performClick(nil)
 
     let value = await result.value.value
 
@@ -413,7 +413,7 @@ final class BrowserDialogTests: XCTestCase {
     view.accept()
     await harness.host.until("the dialog goes") { self.shown(harness) == nil }
     await waitForDialog(harness)
-    view.stop()
+    view.stopButton.performClick(nil)
 
     _ = await loop.value.value
 

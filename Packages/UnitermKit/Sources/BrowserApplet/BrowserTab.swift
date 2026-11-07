@@ -41,6 +41,10 @@ protocol BrowserTabDelegate: AnyObject {
   /// WebKit turned a navigation into a download. The applet holds it from here.
   func tab(_ tab: BrowserTab, download: WKDownload)
 
+  /// The tab holds a download decision for a page that passed the free limit, and wants the
+  /// pane to ask.
+  func tabNeedsDownloadQuestion(_ tab: BrowserTab)
+
   /// A page raised an alert, a confirmation, or a prompt. The applet owns the answer.
   func tab(_ tab: BrowserTab, present dialog: PageDialog)
 
@@ -165,6 +169,13 @@ final class BrowserTab: NSObject {
   /// The tabs this page's script tried to open past the pane's limit. It ends at the page's next
   /// load.
   var scriptTabs = ScriptTabHold()
+
+  /// The downloads this page started without a click, and the decisions held for the question
+  /// about more. It ends at the page's next load.
+  var downloadHold = DownloadHold()
+
+  /// Whether the navigation in progress is the one a click or a load of the user's started.
+  private var userNavigation = UserNavigation()
 
   /// Whether the tab's media is suspended, as a detached pane's is.
   private(set) var isMediaSuspended = false
@@ -472,6 +483,8 @@ final class BrowserTab: NSObject {
 
     if let held { webView.interactionState = held }
 
+    if byUser { userNavigation.typedLoad() } else { userNavigation.end() }
+
     webView.load(URLRequest(url: url))
 
     if byUser, existed { hangRecovery.arm(.typed(url, assumed)) }
@@ -588,6 +601,7 @@ final class BrowserTab: NSObject {
 
     hangRecovery.cancel()
     gate.cancelPending()
+    resetDownloads()
     loadState = loadState.withoutHistory().withoutError()
     failedLoad = nil
     assumed = nil
@@ -658,6 +672,7 @@ final class BrowserTab: NSObject {
     dialogsStopped = false
     warnedAboutDialogs = false
     scriptTabs.reset()
+    resetDownloads()
     gesture = LinkGesture()
     windowGesture = LinkGesture()
     generation &+= 1
@@ -793,6 +808,7 @@ final class BrowserTab: NSObject {
   }
 
   private func committed() {
+    userNavigation.end()
     historyChanged()
     loadState = loadState.withoutError()
     failedLoad = nil
@@ -801,6 +817,7 @@ final class BrowserTab: NSObject {
     dialogsStopped = false
     warnedAboutDialogs = false
     scriptTabs.reset()
+    resetDownloads()
     committedURL = webView.url
     unsent.clear()
     gate.noteCommit(item: webView.backForwardList.currentItem)
@@ -902,13 +919,18 @@ extension BrowserTab: WKNavigationDelegate {
       windowGesture.noteMouseUp(at: clock())
     }
 
+    let byUserAction = userNavigation.decideAction(
+      followedByUser: followedByUser, isMainFrame: isMainFrame,
+      isRedirectLike: navigationAction.navigationType == .other)
+
     if navigationAction.shouldPerformDownload {
       switch SchemePolicy.decideDownload(url) {
       case .allow:
         // WebKit reports the navigation a download replaced as an interrupted load. The download
         // has its own outcome, so the load stays quiet.
-        gate.cancelledAddress = url.absoluteString
-        decisionHandler(.download)
+        decideDownload(url, name: url.lastPathComponent, byUser: byUserAction) { allowed in
+          decisionHandler(allowed ? .download : .cancel)
+        }
 
       case .refuse(let refusal):
         cancel(url, notice: refusal.message(for: url.absoluteString), decisionHandler)
@@ -984,11 +1006,15 @@ extension BrowserTab: WKNavigationDelegate {
       .trimmingCharacters(in: .whitespaces).lowercased()
     let isAttachment = disposition?.hasPrefix("attachment") ?? false
 
+    let byUser = userNavigation.response(isMainFrame: navigationResponse.isForMainFrame)
+
     guard navigationResponse.canShowMIMEType, !isAttachment else {
       switch SchemePolicy.decideDownload(url) {
       case .allow:
-        gate.cancelledAddress = url.absoluteString
-        decisionHandler(.download)
+        decideDownload(url, name: navigationResponse.response.suggestedFilename, byUser: byUser) {
+          allowed in
+          decisionHandler(allowed ? .download : .cancel)
+        }
 
       case .refuse(let refusal):
         gate.cancelledAddress = url.absoluteString
@@ -1012,6 +1038,84 @@ extension BrowserTab: WKNavigationDelegate {
     _ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload
   ) {
     adopt(download)
+  }
+
+  /// Decides a download the policy allows. A download of the user's own click or load starts at
+  /// once. The first few that a page starts by itself start as well. The next one waits for the
+  /// pane's question, and a refused page has its downloads cancelled at the decision, where
+  /// cancelling is safe.
+  private func decideDownload(
+    _ url: URL, name: String?, byUser: Bool, resolve: @escaping @MainActor (Bool) -> Void
+  ) {
+    let answer: @MainActor (Bool) -> Void = { [weak self] allowed in
+      self?.gate.cancelledAddress = url.absoluteString
+      resolve(allowed)
+    }
+
+    if byUser {
+      answer(true)
+      return
+    }
+
+    switch downloadHold.phase {
+    case .granted:
+      answer(true)
+
+    case .refused:
+      answer(false)
+
+    case .waiting, .asking:
+      holdDownload(DownloadHold.Held(name: name, resolve: answer))
+
+    case .counting:
+      guard !downloadHold.countStart() else {
+        answer(true)
+        return
+      }
+
+      guard delegate != nil else {
+        answer(false)
+        return
+      }
+
+      holdDownload(DownloadHold.Held(name: name, resolve: answer))
+      downloadHold.setPhase(.waiting)
+      delegate?.tabNeedsDownloadQuestion(self)
+    }
+  }
+
+  private func holdDownload(_ decision: DownloadHold.Held) {
+    if !downloadHold.hold(decision) { decision.resolve(false) }
+  }
+
+  /// The user let the page download until its next load. Every held decision starts its download.
+  func grantDownloads() {
+    downloadHold.setPhase(.granted)
+
+    for decision in downloadHold.takeHeld() { decision.resolve(true) }
+  }
+
+  /// The user refused. Every held decision is cancelled, and the page's further downloads are
+  /// cancelled until its next load. Returns how many were held.
+  @discardableResult
+  func refuseDownloads() -> Int {
+    downloadHold.setPhase(.refused)
+
+    let held = downloadHold.takeHeld()
+
+    for decision in held { decision.resolve(false) }
+
+    return held.count
+  }
+
+  /// Cancels every held decision and forgets the page's count. A close, a loss of the web view, or
+  /// a new load ends what the page asked for, so nothing waits on a handler that has no page.
+  private func resetDownloads() {
+    let held = downloadHold.takeHeld()
+
+    downloadHold.reset()
+
+    for decision in held { decision.resolve(false) }
   }
 
   /// A download no pane holds would run with nobody to name it, so a tab with no delegate ends it.
@@ -1114,6 +1218,8 @@ extension BrowserTab: WKNavigationDelegate {
   func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
     hangRecovery.sawLife()
 
+    userNavigation.started()
+
     guard let page = errorPage else { return }
 
     if case .formNotSent = page { return }
@@ -1151,6 +1257,8 @@ extension BrowserTab: WKNavigationDelegate {
   ) {
     hangRecovery.sawLife()
 
+    userNavigation.end()
+
     gate.intent = nil
     report(error, for: nil, isProvisional: true)
   }
@@ -1159,6 +1267,8 @@ extension BrowserTab: WKNavigationDelegate {
     _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error
   ) {
     hangRecovery.sawLife()
+
+    userNavigation.end()
 
     gate.intent = nil
     report(error, for: webView.url)
