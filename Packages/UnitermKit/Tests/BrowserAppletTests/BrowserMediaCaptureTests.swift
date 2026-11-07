@@ -4,8 +4,11 @@ import XCTest
 
 @testable import BrowserApplet
 
-/// Camera and microphone requests fail at once with `NotAllowedError`. Without the script, a real
-/// request returns a promise that never settles, so each call is raced against a short timer.
+/// Camera and microphone requests fail at once with `NotAllowedError`, through a stand-in for
+/// `navigator.mediaDevices`. The app has no usage strings, so WebKit hides the native API there.
+/// This test runner has strings of its own, so it has the native API, and the stand-in must replace
+/// it. Each call is raced against a short timer, since a native request here never settles. These
+/// tests cannot show the app's own missing API. The app's plist is pinned in `InfoPlistDriftTests`.
 @MainActor
 final class BrowserMediaCaptureTests: XCTestCase {
   private nonisolated static let handler: FixtureServer.Handler = { request in
@@ -46,24 +49,28 @@ final class BrowserMediaCaptureTests: XCTestCase {
     "navigator.mediaDevices.getDisplayMedia({ video: true })",
   ]
 
-  /// Catches a request that never settles. `mediaDevices` exists on the fixture's origin, since
-  /// 127.0.0.1 is a secure context. Each form of the main page gets the error.
+  /// Catches a page left with the native API, or a stand-in missing what a site calls. 127.0.0.1 is
+  /// a secure context, so the page gets the stand-in. Each request gets the error, listing devices
+  /// finds none, and a site can still listen for device changes.
   func testEachRequestInThePageFailsAtOnceWithNotAllowedError() async throws {
     let harness = try await BrowserHarness.make(hosting: .window, handler: Self.handler)
     defer { harness.stop() }
 
     await harness.load("/page", expecting: "Page")
 
-    let present = try await harness.tab.webView.evaluateJavaScript(
-      "typeof navigator.mediaDevices.getUserMedia + ' ' + typeof navigator.mediaDevices.getDisplayMedia"
-    )
+    let native = try await harness.tab.webView.evaluateJavaScript(
+      "navigator.mediaDevices instanceof MediaDevices")
 
-    XCTAssertEqual(present as? String, "function function", "the origin has no mediaDevices")
+    XCTAssertEqual(native as? Bool, false, "the page still has the native API")
 
-    let listing = try await harness.tab.webView.evaluateJavaScript(
-      "String(navigator.mediaDevices.enumerateDevices).includes('[native code]')")
+    let listed = try await harness.tab.webView.callAsyncJavaScript(
+      """
+      navigator.mediaDevices.addEventListener('devicechange', function () {});
+      var found = await navigator.mediaDevices.enumerateDevices();
+      return found.length + ' ' + typeof navigator.mediaDevices.getSupportedConstraints();
+      """, arguments: [:], in: nil, contentWorld: .page)
 
-    XCTAssertEqual(listing as? Bool, true, "listing devices was replaced")
+    XCTAssertEqual(listed as? String, "0 object")
 
     for call in forms {
       let result = try await outcome(of: call, in: harness.tab.webView)
@@ -108,13 +115,8 @@ final class BrowserMediaCaptureTests: XCTestCase {
     }
   }
 
-  private func plainView(scripts: [String]) -> WKWebView {
+  private func plainView() -> WKWebView {
     let controller = WKUserContentController()
-
-    for source in scripts {
-      controller.addUserScript(
-        WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false))
-    }
 
     MediaCaptureScript.install(in: controller)
 
@@ -125,36 +127,10 @@ final class BrowserMediaCaptureTests: XCTestCase {
     return WKWebView(frame: .zero, configuration: configuration)
   }
 
-  /// Catches legacy callback forms that stay pending. WebKit here exposes neither
-  /// `navigator.getUserMedia` nor `webkitGetUserMedia`, so a stub script runs first and defines
-  /// them. That proves the replacement logic and not the real WebKit objects.
-  func testTheLegacyCallbackFormsCallTheErrorCallback() async throws {
-    let stub = """
-      navigator.getUserMedia = function () {};
-      navigator.webkitGetUserMedia = function () {};
-      """
-    let view = plainView(scripts: [stub])
-
-    view.loadHTMLString("<title>x</title>", baseURL: URL(string: "https://secure.example/"))
-    try await settle(view)
-
-    for name in ["getUserMedia", "webkitGetUserMedia"] {
-      let call = """
-        new Promise(function (resolve, reject) {
-          navigator.\(name)({ audio: true }, function () { resolve('stream'); },
-            function (error) { reject(error); });
-        })
-        """
-      let result = try await outcome(of: call, in: view)
-
-      XCTAssertEqual(result, "NotAllowedError", name)
-    }
-  }
-
-  /// Catches a script that defines `mediaDevices` where WebKit does not. A page on an insecure
-  /// origin has none, and keeps none.
+  /// Catches a stand-in on a page where no browser has the API. A page on an insecure origin has
+  /// none, and keeps none.
   func testAnInsecurePageStaysWithoutMediaDevices() async throws {
-    let view = plainView(scripts: [])
+    let view = plainView()
 
     view.loadHTMLString("<title>x</title>", baseURL: URL(string: "http://insecure.example/"))
     try await settle(view)

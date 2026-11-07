@@ -1286,9 +1286,9 @@ extension BrowserTab: WKNavigationDelegate {
 }
 
 extension BrowserTab: WKUIDelegate {
-  /// Camera and microphone are denied. The app has no usage strings, so a request must not reach
-  /// the system's privacy prompt. This is the backstop. In practice a request never gets here, and
-  /// `MediaCaptureScript` rejects it in the page first.
+  /// Camera and microphone are denied. This is the backstop. The app has no usage strings, so WebKit
+  /// hides the native API, and `MediaCaptureScript` answers a page's request. With usage strings,
+  /// WebKit asks macOS before this method, so it cannot keep a system prompt away.
   func webView(
     _ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,

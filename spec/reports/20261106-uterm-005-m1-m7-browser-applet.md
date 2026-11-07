@@ -559,7 +559,8 @@ After the run, on 2026-11-06, the user tried the browser and chose these changes
 - "Clear a rebuilt view's title with the old page". `make test-package` run `FGDRBX` failed once on a stale title. A repeat of the scenario showed the stale title in 6 of 60 rounds, and a page with no title kept it for good. The flake exposed a real bug from M7.
 - "Open a page's script tabs in order". A loop read backwards.
 - "Give the browser toolbar its padding back". The stack's vertical insets sit below its own hugging priority, so the page clipped the address field. A screenshot from the UI test shows the fix.
-- "Fail microphone and camera requests at once". On `http://localhost`, `navigator.mediaDevices` is missing in the running app. On a real HTTPS page a request got no answer, no prompt, and no audio. The cause is unknown. The fix is proven against the loopback fixture, and the real HTTPS page is left to the user.
+- "Fail microphone and camera requests at once". This commit did nothing in the app. It rested on a diagnosis that a request stalled, and it was tested only under `swift test`. The user's test on a real page still showed no error.
+- "Give secure pages a stand-in for the media API". Measured in the running app on a real HTTPS page: with no usage strings `navigator.mediaDevices` is undefined, and with them a request raises the macOS prompt before the delegate. `xctest` carries its own usage strings, which is why the package tests passed. The sample page now shows `NotAllowedError`, with no prompt. The proposal's Decision Log corrects the earlier entry.
 
 - "Keep a pop-up's own tabs beside it". A final review found a page's next tab could split a pop-up from the tabs it opened. Its test failed first.
 
