@@ -66,7 +66,10 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     didSet {
       guard oldValue, !isQuestionUp else { return }
 
-      Task { @MainActor [weak self] in self?.askAboutScriptTabs() }
+      Task { @MainActor [weak self] in
+        self?.askAboutScriptTabs()
+        self?.askAboutDownloads()
+      }
     }
   }
   private var started = false
@@ -1067,6 +1070,62 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
       } else {
         refuseHeldTabs(of: page)
       }
+    }
+  }
+
+  func tabNeedsDownloadQuestion(_ tab: BrowserTab) {
+    askAboutDownloads()
+  }
+
+  /// Asks about the first page whose download decision waits, when the pane has no other question
+  /// up. A page that finds another question up keeps its held decisions and its place, and this
+  /// runs again when the pane is free. Closing the tab or the pane resolves its held decisions as
+  /// cancelled, so a late answer finds nothing to start.
+  private func askAboutDownloads() {
+    guard !closed, !isQuestionUp,
+      let page = tabs.first(where: { $0.downloadHold.phase == .waiting })
+    else { return }
+
+    guard let host else {
+      page.refuseDownloads()
+      return
+    }
+
+    page.downloadHold.setPhase(.asking)
+    isQuestionUp = true
+
+    let epoch = page.downloadHold.epoch
+    let waiting = page.downloadHold.held
+    let named = waiting.first?.name.map { RunningLabel.clean($0, fallback: DownloadName.fallback) }
+    let file = named.map { " It started with \u{201C}\($0)\u{201D}." } ?? ""
+    let request = AppletConfirmation(
+      title: "Let this page download more files?",
+      detail: """
+        \u{201C}\(Self.title(of: page))\u{201D} started downloads without a click.\(file) \
+        Allow it to download, and to start more until it loads again?
+        """,
+      confirmTitle: "Download", cancelTitle: "Don\u{2019}t Download")
+
+    Task { @MainActor [weak page] in
+      let allowed = await host.applet(self, confirm: request)
+
+      isQuestionUp = false
+
+      guard !closed, let page, tabs.contains(where: { $0 === page }), !page.isClosed,
+        page.downloadHold.epoch == epoch, page.downloadHold.phase == .asking
+      else { return }
+
+      if allowed {
+        page.grantDownloads()
+        return
+      }
+
+      let refused = page.refuseDownloads()
+
+      post(
+        .warning,
+        "Did not download \(refused) files that a page started without a click. It cannot start more until it loads again.",
+        from: page)
     }
   }
 

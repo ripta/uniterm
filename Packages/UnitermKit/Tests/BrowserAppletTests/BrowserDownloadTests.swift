@@ -64,7 +64,11 @@ final class BrowserDownloadTests: XCTestCase {
     try await BrowserHarness.make(services: services, handler: Self.handler(hold: hold))
   }
 
+  /// A click of the user's own: the view saw a mouse-up, then the script clicks the link. A page's
+  /// own script clicks are counted, so only a real click can start many downloads.
   private func clickLink(_ harness: BrowserHarness) async {
+    harness.tab.noteMouseUp()
+
     await harness.run("document.getElementById('l').click()")
   }
 

@@ -264,6 +264,14 @@ status bar.
 - A status bar segment shows progress. Reveal Latest Download, in the Browser menu and the palette, shows the newest
   finished download in Finder. Segments and status messages stay plain, so the contract does not change.
 - A download keeps going while the pane is detached.
+- A page's downloads that no click of the user's started count per load. The first three start as before. The fourth
+  holds its policy decision and the pane asks, through the host's confirmation, whether the page may download more,
+  naming the page and the file when it is known. Yes starts it and lets the page download until its next load. No
+  cancels it at the decision, before WebKit starts a download, posts one warning, and cancels the page's further such
+  downloads with no further question until its next load. A click on a link, a typed address, and a load the user asked
+  for never count and never ask. The decisions held for the question resolve as cancelled when the tab or the pane
+  closes or the page loads again. At most 16 wait. A page that finds another question up keeps its held decisions
+  and is asked once the pane is free. Amended 2026-11-06; see Decision Log.
 - A download in progress counts as running something. Closing its tab or its pane asks first, and closing cancels it.
   Navigating the tab away does not cancel it.
 - A `blob:` download saves with or without a `download` attribute. A `data:` download saves with one. A top-level
@@ -494,13 +502,16 @@ None.
   `devbox` sends it to the chosen engine. Accepted: the user types `devbox/` or `http://devbox` to go there, per
   "Search from the address bar", and picks the engine.
 - **Any page can write files to Downloads** — likelihood: medium, impact: low. A page can start a download with no
-  prompt, and a hidden iframe whose response is an attachment starts one with no gesture at all. Nothing bounds how
-  many a page starts, and each file costs disk space and a status message. Accepted: each file is quarantined, so
-  Gatekeeper checks it before it runs. The status bar shows one download by name and percent, or a count, and only for
-  the focused pane. A crash can leave a hidden temporary file, which the first download of a later launch removes after
-  seven days. Accepted gap: nothing limits how many downloads a page may start. Likelihood: medium, impact: low. Revisit
-  hook: add a per-page limit when a user reports a page that floods Downloads, or when M8 lets a controller start
-  downloads, whichever comes first. A work-queue best guess; see Decision Log.
+  prompt, and a hidden iframe whose response is an attachment starts one with no gesture at all. The first three such
+  downloads of a load start, and the fourth asks the user, per "Downloads". A page the user lets through, or one whose
+  downloads follow a click of the user's, can still start as many as it likes, and each file costs disk space and a
+  status message. Accepted: each file is quarantined, so Gatekeeper checks it before it runs. The status bar shows one
+  download by name and percent, or a count, and only for the focused pane. A crash can leave a hidden temporary file,
+  which the first download of a later launch removes after seven days. A click is judged by the same mouse-up note that
+  judges links, and the tab follows the navigation that click started. A click that starts no main-frame navigation
+  earns nothing for a later script. One window stays open: a script that navigates after a real click has started its
+  navigation, before WebKit confirms it, could pass for the user's. A user choice in a hands-on review; see Decision
+  Log.
 - **The control permissions depend on an amendment to accepted UTERM-004** — likelihood: medium, impact: medium. Until
   UTERM-004 names browser navigation and browser read, its permission set and this proposal disagree. Mitigation: M8
   starts only after UTERM-004 M6, and its first check requires the amendment.
@@ -959,12 +970,19 @@ None.
   and a yes cancels. Navigating the tab away does not cancel. The tab that closes releases its web view while the pane holds the
   download, and the close cancels it. WebKit's behaviour for a download held after its web view is gone was not
   measured, since a close always cancels.
-- What a page can do with downloads. Nothing limits how many a page starts. The pane keeps the in-flight ones and the newest
-  finished file, so its memory follows the number in flight, and a test finishes 30 downloads of one name in a row. Each file
-  costs disk space and a status message, and a hidden iframe whose response is an attachment starts a download with no
-  gesture. WebKit serialises navigations in one tab, so typed loads cancel each other, and it holds six connections to one
-  host. The close question and the running labels name at most ten downloads and a count. A limit on how many a page may start
-  needs a design choice, such as concurrent against rate and refuse against queue, so none was built.
+- What a page can do with downloads. The pane keeps the in-flight ones and the newest finished file, so its memory follows
+  the number in flight, and a test finishes 30 downloads of one name in a row, each started by a click of the user's. A
+  hidden iframe whose response is an attachment starts a download with no gesture. WebKit serialises navigations in one
+  tab, so typed loads cancel each other, and it holds six connections to one host. The close question and the running
+  labels name at most ten downloads and a count. A page's downloads that no click started now count per load: three start,
+  and the fourth holds its decision and asks. The tab judges a click from the mouse-up it saw, and follows the navigation the click
+  started. A link the user clicked, or a load the user typed, is the user's through its redirects. The mark is armed by
+  the click, confirmed by WebKit's provisional start, and ended by the main-frame response, a failure, a commit, or any
+  action decision that does not continue it. A click that starts no main-frame navigation, such as one on a `#fragment`,
+  on a `download` link, or on a link that opens a window or is cancelled, is never confirmed, so the next action ends
+  it. A frame's attachment is never the user's. A test clicks a `#fragment` link for real and then navigates by script,
+  and the downloads count and ask. It failed first with the earlier rule, which cleared the mark only at a response. A no cancels at the decision, so it never meets the cancel-before-first-byte hazard
+  below. Tests start real downloads from a script and prove no file exists before a yes.
 - A cancel before the first byte. Every download cancelled before WebKit had a byte of its body produced an `EXC_GUARD` report
   from `NetworkProcessProxy::didReceiveInvalidMessage` in the test crash folder, about one for each run that cancelled one.
   WebKit treats an IPC message from its network process as invalid, and the process restarts. Measured with a real web view
@@ -1453,6 +1471,22 @@ Starts after UTERM-004 M6.
   and asks once the pane is free, because dropping or stacking it would lose the user's chance to answer. The stale
   question of a tab or pane that closed stays on screen until the user answers, as the other questions here do, and its
   answer does nothing. If wrong, the 50 is one constant, and asking only for the selected tab's page would be one guard.
+
+- 2026-11-06: Downloads ask after three per load (the user's choice in a hands-on review, not a best guess). "Downloads"
+  said nothing limited how many a page starts, and the Risks called that an accepted gap with a revisit hook. M6's As
+  built said a limit needed a design choice and built none. Now a page's downloads that no click of the user's started
+  count per load. The first three start. The fourth holds its policy decision and the pane asks whether the page may
+  download more. Yes starts it and lifts the limit until the page's next load. No cancels at the decision, warns once,
+  and refuses the page's further such downloads with no further question until its next load. A click and a
+  typed address never count. The brief did not say how a click is told from a script for a download that comes as a
+  response, and WebKit gives the response no link to its click. The tab follows the navigation: the click arms a mark,
+  WebKit's provisional start confirms it, and a redirect continues it. The response, a failure, a commit, or any action
+  decision that does not continue it ends it. A click that starts no main-frame navigation is never confirmed, so it
+  cannot lend the mark to a later script. An earlier build cleared the mark only at a response, which let a click on a
+  `#fragment` pass a later script download as the user's. That is fixed in this entry. One window stays: a script that
+  navigates after a click's action is allowed and before WebKit confirms it could pass for the click's. A frame's
+  attachment is never the user's. If wrong, the three is one constant, and a stricter rule needs the response tied to
+  its action, which WebKit does not offer.
 
 ## References
 
