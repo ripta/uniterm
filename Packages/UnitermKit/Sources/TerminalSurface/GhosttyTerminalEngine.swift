@@ -38,16 +38,24 @@ public final class GhosttyTerminalEngine: TerminalEngine {
   private var palette: ThemePalette
   private let sessions = NSHashTable<GhosttySurfaceView>.weakObjects()
   private var notificationTokens: [any NSObjectProtocol] = []
+  private let helperDirectory: URL
+
+  /// The search path a shell gets when uniterm itself was started with none.
+  static let defaultPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
   /// - Parameters:
   ///   - resourcesDirectory: The `ghostty` directory that holds the shell-integration scripts, next
   ///     to the `terminfo` directory. The engine always exports it as `GHOSTTY_RESOURCES_DIR`, so a
   ///     value inherited from another Ghostty never decides which resources the shells use.
+  ///   - helperDirectory: The directory that holds uniterm's `ghostty` helper. Ghostty's shell
+  ///     integration finds it through `GHOSTTY_BIN_DIR`. See `launchEnvironment`.
   public init(
-    configStore: TerminalConfigStore, resourcesDirectory: URL, palette: ThemePalette
+    configStore: TerminalConfigStore, resourcesDirectory: URL, helperDirectory: URL,
+    palette: ThemePalette
   ) throws {
     self.store = configStore
     self.palette = palette
+    self.helperDirectory = helperDirectory
 
     setenv("GHOSTTY_RESOURCES_DIR", resourcesDirectory.path, 1)
 
@@ -106,9 +114,31 @@ public final class GhosttyTerminalEngine: TerminalEngine {
   public func makeSession(launch: TerminalLaunch) throws -> any TerminalSession {
     guard let app else { throw TerminalEngineError.appCreateFailed }
 
+    var launch = launch
+    launch.environment = Self.launchEnvironment(
+      launch.environment, helperDirectory: helperDirectory,
+      inheritedPath: ProcessInfo.processInfo.environment["PATH"])
+
     let view = try GhosttySurfaceView(app: app, launch: launch)
     sessions.add(view)
     return view
+  }
+
+  /// libghostty points `GHOSTTY_BIN_DIR` at the host executable's directory and appends that
+  /// directory to `PATH`, assuming the host is Ghostty itself. uniterm sets both instead, so every
+  /// shell sees values uniterm chose. A launch's own value still wins.
+  ///
+  /// `GHOSTTY_BIN_DIR` names uniterm's helper, which stands in for `ghostty +ssh`. `PATH` is the
+  /// one uniterm inherited, without uniterm's own executable directory.
+  static func launchEnvironment(
+    _ environment: [String: String], helperDirectory: URL, inheritedPath: String?
+  ) -> [String: String] {
+    let chosen = [
+      "GHOSTTY_BIN_DIR": helperDirectory.path,
+      "PATH": inheritedPath ?? defaultPath,
+    ]
+
+    return chosen.merging(environment) { $1 }
   }
 
   public func apply(palette: ThemePalette) throws {

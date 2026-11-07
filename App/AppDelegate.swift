@@ -137,6 +137,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return resources.appending(path: "ghostty", directoryHint: .isDirectory)
   }
 
+  private static func ghosttyHelperDirectory() -> URL {
+    let resources = Bundle.main.resourceURL ?? Bundle.main.bundleURL
+    return resources.appending(path: "ghostty-bin", directoryHint: .isDirectory)
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     logger.info("libghostty \(TerminalSurfaceInfo.libraryVersion, privacy: .public)")
 
@@ -147,7 +152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     do {
       engine = try GhosttyTerminalEngine(
         configStore: TerminalConfigStore(directory: try terminalConfigDirectory()),
-        resourcesDirectory: Self.ghosttyResourcesDirectory(), palette: appearance.palette)
+        resourcesDirectory: Self.ghosttyResourcesDirectory(),
+        helperDirectory: Self.ghosttyHelperDirectory(), palette: appearance.palette)
     } catch {
       logger.error("the terminal engine did not start: \(String(describing: error))")
 

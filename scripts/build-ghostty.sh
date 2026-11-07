@@ -39,12 +39,11 @@ die() {
 
 read_pin() {
   [ -f "$PIN_FILE" ] || die "pin file not found: $PIN_FILE"
-  GHOSTTY_TAG="" GHOSTTY_COMMIT="" ZIG_VERSION="" ZIG_SHA256="" ZIG_SDK_VERSION="" XCODE_VERSION=""
-  XCODE_BUILD="" SDK_VERSION=""
+  GHOSTTY_TAG="" GHOSTTY_COMMIT="" ZIG_VERSION="" ZIG_SHA256="" XCODE_VERSION="" XCODE_BUILD=""
+  SDK_VERSION=""
   # shellcheck disable=SC1090
   . "$PIN_FILE"
-  for name in GHOSTTY_TAG GHOSTTY_COMMIT ZIG_VERSION ZIG_SHA256 ZIG_SDK_VERSION XCODE_VERSION XCODE_BUILD \
-    SDK_VERSION; do
+  for name in GHOSTTY_TAG GHOSTTY_COMMIT ZIG_VERSION ZIG_SHA256 XCODE_VERSION XCODE_BUILD SDK_VERSION; do
     [ -n "${!name}" ] || die "$PIN_FILE does not set $name"
   done
 }
@@ -110,14 +109,6 @@ ensure_zig() {
     die "$ZIG reports version $version, but ghostty.pin requires $ZIG_VERSION."
 }
 
-check_zig_sdk() {
-  # Zig 0.15 cannot link against the macOS 26 SDK. Its libSystem stub lists only arm64e. Zig
-  # compiles against an older SDK from the Command Line Tools, while Xcode's tools use the current one.
-  ZIG_SDK_PATH="${GHOSTTY_ZIG_SDK_PATH:-/Library/Developer/CommandLineTools/SDKs/MacOSX${ZIG_SDK_VERSION}.sdk}"
-  [ -d "$ZIG_SDK_PATH" ] ||
-    die "Zig $ZIG_VERSION needs the macOS $ZIG_SDK_VERSION SDK, and $ZIG_SDK_PATH is missing. Install the Command Line Tools with that SDK, or set GHOSTTY_ZIG_SDK_PATH."
-}
-
 compute_key() {
   KEY="${GHOSTTY_COMMIT:0:12}-zig${ZIG_VERSION}-xcode${XCODE_BUILD}-sdk${SDK_VERSION}"
   ARTIFACT="$CACHE/artifacts/$KEY"
@@ -135,7 +126,6 @@ check_manifest() {
   local expected_pairs=(
     "GHOSTTY_COMMIT=$GHOSTTY_COMMIT"
     "ZIG_VERSION=$ZIG_VERSION"
-    "ZIG_SDK_VERSION=$ZIG_SDK_VERSION"
     "XCODE_VERSION=$XCODE_VERSION"
     "XCODE_BUILD=$XCODE_BUILD"
     "SDK_VERSION=$SDK_VERSION"
@@ -284,70 +274,10 @@ build() {
     )
   fi
 
-  # Zig asks xcrun for the macOS SDK path. The xcrun shim answers with the SDK Zig can link against and
-  # passes every other query, such as the Metal compiler, to the real xcrun.
-  mkdir -p "$WORK/shim"
-  cat >"$WORK/shim/xcrun" <<SHIM
-#!/bin/sh
-case " \$* " in
-*" --show-sdk-path "*)
-  case " \$* " in
-  *" macosx "*) echo "$ZIG_SDK_PATH"; exit 0 ;;
-  esac ;;
-esac
-exec /usr/bin/xcrun "\$@"
-SHIM
-  chmod +x "$WORK/shim/xcrun"
-
-  # Xcode 26's libtool silently drops archive members that are not 8-byte aligned. Zig writes such
-  # members, so the combined library would lose libghostty's own code. This shim unpacks every input
-  # archive and combines the loose objects instead.
-  cat >"$WORK/shim/libtool" <<'SHIM'
-#!/bin/bash
-set -euo pipefail
-if [ "${1:-}" != "-static" ] || [ "${2:-}" != "-o" ]; then
-  exec /usr/bin/libtool "$@"
-fi
-out="$3"
-shift 3
-scratch="$(mktemp -d)"
-trap 'rm -rf "$scratch"' EXIT
-index=0
-: >"$scratch/files"
-for input in "$@"; do
-  index=$((index + 1))
-  input="$(cd "$(dirname "$input")" && pwd)/$(basename "$input")"
-  mkdir "$scratch/$index"
-  case "$input" in
-  *.a)
-    # ar x writes members by name, so two members with one name would overwrite each other. The
-    # count of extracted files must equal the count of members.
-    members="$(ar t "$input" | grep -vc '^__.SYMDEF' || true)"
-    (cd "$scratch/$index" && ar x "$input" && rm -f __.SYMDEF*)
-    chmod u+rw "$scratch/$index"/*
-    extracted="$(find "$scratch/$index" -type f | wc -l | tr -d ' ')"
-    if [ "$members" != "$extracted" ]; then
-      echo "error: $input has $members members, but $extracted files were extracted. A member name repeats." >&2
-      exit 1
-    fi
-    ;;
-  *)
-    cp "$input" "$scratch/$index/"
-    ;;
-  esac
-  for object in "$scratch/$index"/*; do
-    echo "$object" >>"$scratch/files"
-  done
-done
-/usr/bin/libtool -static -o "$out" -filelist "$scratch/files"
-SHIM
-  chmod +x "$WORK/shim/libtool"
-
   echo "Building GhosttyKit for $KEY. This takes a few minutes."
   (
     cd "$WORK/src"
     env ${proxy_env[@]+"${proxy_env[@]}"} \
-      PATH="$WORK/shim:$PATH" \
       ZIG_GLOBAL_CACHE_DIR="$CACHE/zig-global" \
       "$ZIG" build \
       --cache-dir "$WORK/zig-cache" \
@@ -373,7 +303,6 @@ SHIM
 GHOSTTY_TAG=$GHOSTTY_TAG
 GHOSTTY_COMMIT=$GHOSTTY_COMMIT
 ZIG_VERSION=$ZIG_VERSION
-ZIG_SDK_VERSION=$ZIG_SDK_VERSION
 XCODE_VERSION=$XCODE_VERSION
 XCODE_BUILD=$XCODE_BUILD
 SDK_VERSION=$SDK_VERSION
@@ -419,7 +348,6 @@ main() {
     ;;
   build)
     if [ ! -d "$ARTIFACT" ]; then
-      check_zig_sdk
       trap cleanup EXIT
       trap 'exit 130' INT TERM
       acquire_lock

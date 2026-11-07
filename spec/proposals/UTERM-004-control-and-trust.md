@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-06
+**Updated:** 2026-11-07
 
 ## Dependencies
 
@@ -216,22 +216,24 @@ meanings. The applet schemas define semantics; JSON syntax alone does not.
 ### Clipboard access from controlled panes
 
 Original question and context from UTERM-001. A terminal program's OSC 52 clipboard read asks the user, in a dialog
-that names the pane. A write goes through without asking, since the generated config sets `clipboard-write` to `allow`.
-So a program in a
-remote-controlled or exec pane can replace the clipboard silently. Decide whether a control level changes either rule.
-Adding a write prompt back means restoring the write case of the terminal surface's clipboard request, which UTERM-001
-removed as unreachable. An ADR candidate on clipboard trust in UTERM-001's Decision Log may be shaped by this decision.
+that names the pane. A write goes through without asking. The generated config sets `clipboard-write` to `ask`, and the
+terminal surface allows every OSC 52 write that libghostty sends it. It denies every Kitty clipboard protocol read and
+write. So a program in a remote-controlled or exec pane can replace the clipboard silently. Decide whether a control
+level changes either rule. A write prompt would go in the surface's write callback, where an OSC 52 write arrives with
+libghostty's confirm flag set. An ADR candidate on clipboard trust in UTERM-001's Decision Log may be shaped by this
+decision.
 
 Decision: remote-controlled and exec-driven panes require explicit permission for programmatic clipboard reads and
 writes. A valid scoped approval can cover repeated requests. Attributable controller requests use the typed clipboard
 API; shared-terminal OSC 52 offers only once/session permission for programs in that terminal session. A control grant
-alone grants neither clipboard power. Amended 2026-11-02; see "Permission scopes and approval flow".
+alone grants neither clipboard power. Amended 2026-11-07; see the Decision Log.
 
 - Ordinary disconnected interactive terminals keep their existing read-ask, write-allow policy. Direct user Copy and
   Paste retain current rules. An attached exec driver triggers the controlled policy even when disconnected.
-- TerminalSurface receives clipboard policy explicitly per session. Config and both confirmation and actual write
-  callbacks enforce it. Restore the write request case. Updating an existing session's policy completes before
-  enabling ingress or an exec driver. A host-dispatch check alone cannot govern OSC 52.
+- TerminalSurface receives clipboard policy explicitly per session. The confirm callback enforces it for reads. The
+  write callback enforces it for OSC 52 writes, which arrive there with libghostty's confirm flag set. Kitty clipboard
+  requests stay denied in the confirm callback. Updating an existing session's policy completes before enabling
+  ingress or an exec driver. A host-dispatch check alone cannot govern OSC 52.
 - Answers revalidate the request's session, mode, and authority generation. Stale requests are denied. A denied read
   sends no data; a denied write leaves the clipboard untouched.
 
@@ -782,6 +784,13 @@ None.
   fills it when its permission panel exists. The driver wire format does not change. UTERM-017 M2 later settled that
   stderr goes to the history only, with no turn on the bar, so a flood cannot bury a real notice. The text and check
   above were amended to match.
+- 2026-11-07: Amended "Clipboard access from controlled panes" at the user's request, after the Ghostty 1.4.0 bump.
+  The context said writes go through because the config sets `clipboard-write` to `allow`, and that a write prompt
+  means restoring a removed write case. The surface bullet said both the confirm and write callbacks enforce policy and
+  to restore the write request case. The bump sets `clipboard-write` to `ask` so that Kitty writes reach the confirm
+  callback, which denies them. OSC 52 writes now arrive at the write callback with a confirm flag and are allowed
+  there, so M2's write gate belongs in that callback. The earlier "Amended 2026-11-02" marker pointed at "Permission
+  scopes and approval flow", which still holds the 2026-11-02 change. The decision itself does not change.
 
 ## References
 

@@ -52,6 +52,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 
 source, packages, out, tag, swift_pins, swift_checkouts = sys.argv[1:7]
 
@@ -121,6 +122,24 @@ def license_files(root, depth=2):
     return sorted(found)
 
 
+# The system Python predates tarfile's extraction filters. Only regular files and folders inside
+# the package's own top folder are unpacked, which is all a license search reads.
+def unpack_package(path, package, destination):
+    with tarfile.open(path) as archive:
+        for member in archive.getmembers():
+            name = os.path.normpath(member.name)
+            if os.path.isabs(name) or name.split(os.sep)[0] != package or ".." in name.split(os.sep):
+                sys.exit("error: %s holds an unexpected path %s." % (path, member.name))
+
+            if member.isdir():
+                os.makedirs(os.path.join(destination, name), exist_ok=True)
+            elif member.isfile():
+                target = os.path.join(destination, name)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with archive.extractfile(member) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+
+
 copy(os.path.join(source, "LICENSE"), os.path.join(out, "Ghostty", "LICENSE"))
 copy(
     os.path.join(source, "vendor", "nerd-fonts", "LICENSE"),
@@ -137,17 +156,34 @@ with open(os.path.join(source, "build.zig.zon.json")) as handle:
     for key, value in json.load(handle).items():
         names[key] = value["name"]
 
-without_license = []
+# Zig 0.16 and later keep each package as a .tar.gz of one top folder named for the package hash.
+# Older Zig kept that folder unpacked. The archives are unpacked here, so both read the same way.
+#
+# The package cache keeps every package any earlier pin fetched. Only the packages that the
+# pinned source's build.zig.zon.json names belong to this build.
+unpacked = os.path.join(source, ".zig-packages")
+roots = {}
 for entry in sorted(os.listdir(packages)):
-    root = os.path.join(packages, entry)
-    if not os.path.isdir(root):
+    path = os.path.join(packages, entry)
+    package = entry[: -len(".tar.gz")] if entry.endswith(".tar.gz") else entry
+    if package not in names:
         continue
 
-    name = names.get(entry)
-    if name is None:
-        match = re.match(r"^(.*?-\d+\.\d+\.\d+)-", entry)
-        name = match.group(1) if match else entry
+    if os.path.isdir(path):
+        roots[package] = path
+    elif entry.endswith(".tar.gz"):
+        unpack_package(path, package, unpacked)
+        roots[package] = os.path.join(unpacked, package)
 
+if not roots:
+    sys.exit("error: the Zig package cache at %s holds no packages. Run make build first." % packages)
+
+without_license = []
+for entry, root in sorted(roots.items()):
+    if not os.path.isdir(root):
+        sys.exit("error: the Zig package archive for %s has no %s folder." % (entry, entry))
+
+    name = names[entry]
     files = license_files(root)
     if not files:
         without_license.append(name)
