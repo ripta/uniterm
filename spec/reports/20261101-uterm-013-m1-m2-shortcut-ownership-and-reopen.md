@@ -4,7 +4,7 @@ Started 2026-11-02. This report covers the second row of a `/work-queue next 2` 
 `spec/proposals/UTERM-013-shortcut-ownership-and-reopen.md`. UTERM-013 moves applet shortcuts to the applets, reserves
 uniterm's window keys, and adds Cmd-Shift-T to reopen the newest closed tab or pane. The run state and the run-level
 best guesses are in [20261101-uterm-002-m1-m3-command-palette.md](20261101-uterm-002-m1-m3-command-palette.md). The
-specs live in the code repo, so every commit below is in `/Users/ripta/projects/uniterm`, on `main`.
+specs live in the code repo, so every commit below is in this repo, on `main`.
 
 ## TL;DR
 

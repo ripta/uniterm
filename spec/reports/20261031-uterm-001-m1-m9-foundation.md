@@ -2,7 +2,7 @@
 
 Started 2026-10-31. This report covers a `/work-queue` run of the queue row `UTERM-001 M1-M9`. UTERM-001 is
 uniterm's foundation proposal, at `spec/proposals/UTERM-001-foundation.md`. The specs live in the code repo, so every
-commit below is in `/Users/ripta/projects/uniterm`. The branch is `agent/petunia/uterm-001`.
+commit below is in this repo. The branch is `agent/petunia/uterm-001`.
 
 ## TL;DR
 
@@ -50,7 +50,7 @@ Held or blocked rows: none.
 
 ## Run-level best guesses
 
-These come from the approved plan at `/Users/ripta/.claude/plans/harmonic-herding-dewdrop.md`.
+These come from the approved plan at `~/.claude/plans/harmonic-herding-dewdrop.md`.
 
 - Pin Ghostty v1.3.1. Fall back to v1.3.0 (`703d11c6`) if it does not build with Xcode 26.6.
 - Swift 6 language mode with strict concurrency, in both the package and the app.

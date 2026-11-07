@@ -3,7 +3,7 @@
 Started 2026-11-03. This report covers a `/work-queue` run with no arguments, which means `next 1`. The run takes one
 row, `UTERM-015 M1-M3`, from `spec/proposals/UTERM-015-cross-applet-file-opening.md`. UTERM-015 gives files one route
 into an applet from outside its pane: a router that picks an applet by content type, Finder and Dock opens, and File >
-Open. The specs live in the code repo, so every commit below is in `/Users/ripta/projects/uniterm`, on the
+Open. The specs live in the code repo, so every commit below is in this repo, on the
 `agent/petunia` branch.
 
 ## TL;DR

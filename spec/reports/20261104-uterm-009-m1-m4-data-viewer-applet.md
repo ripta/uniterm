@@ -3,7 +3,7 @@
 Started 2026-11-04. This report covers a `/work-queue` run with no arguments, which means `next 1`. The run takes one
 row, `UTERM-009 M1-M4`, from `spec/proposals/UTERM-009-data-viewer-applet.md`. UTERM-009 adds a table viewer applet
 for CSV, JSON, and `.xlsx` files, with sorting, filtering, and search. The specs live in the code repo, so every commit
-below is in `/Users/ripta/projects/uniterm`, on the `agent/petunia` branch.
+below is in this repo, on the `agent/petunia` branch.
 
 ## Run state
 
