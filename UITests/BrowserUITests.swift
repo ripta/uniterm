@@ -234,6 +234,32 @@ final class BrowserUITests: UnitermUITestCase {
     XCTAssertTrue(waitForGone(name, timeout: 5), "Escape does not dismiss the profile popover")
   }
 
+  /// Catches a toolbar that crowds its address field. The real window shows the toolbar at its full
+  /// height with the field inside it and the page starting below. The test attaches a screenshot of
+  /// the window, named "browser-toolbar", so the rendering can be read from the result bundle.
+  func testTheToolbarKeepsItsPaddingAndTheFieldIsNotClipped() {
+    let app = launchApp()
+    let window = openBrowser(in: app)
+    let toolbar = window.descendants(matching: .any)["browser-toolbar"]
+    let field = addressField(in: window)
+
+    XCTAssertTrue(toolbar.waitForExistence(timeout: 10), "the pane has no toolbar")
+
+    let attachment = XCTAttachment(screenshot: window.screenshot())
+
+    attachment.name = "browser-toolbar"
+    attachment.lifetime = .keepAlways
+    add(attachment)
+
+    let bar = toolbar.frame
+    let entry = field.frame
+
+    // Accessibility reports the field a point larger than its layout frame. `BrowserToolbarLayoutTests`
+    // owns the exact padding, and the clipped toolbar this catches measured 0.
+    XCTAssertGreaterThanOrEqual(entry.minY - bar.minY, 4, "no padding above the field")
+    XCTAssertGreaterThanOrEqual(bar.maxY - entry.maxY, 4, "no padding below the field")
+  }
+
   /// Catches a layout that restores every tab as the first one, or a selection that is lost. Three
   /// tabs are planted with the second selected. The bar shows all three and selects the second. No
   /// page loads from the network.

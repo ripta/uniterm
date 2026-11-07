@@ -49,7 +49,13 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   /// The strip of tabs above the toolbar. The applet hides it while it has one tab.
   let tabBar = AppletTabBar()
 
-  private let toolbar = NSStackView()
+  /// The strip that holds the controls. It is a plain view around the stack, since a stack view's own
+  /// vertical edge insets sit at a priority just under its hugging priority, so the stack ignores
+  /// them and shrinks to the field's height. Here the padding is a required constraint.
+  let toolbar = NSView()
+  private static let verticalPadding: CGFloat = 6
+  private static let horizontalPadding: CGFloat = 8
+  private let controls = NSStackView()
   private var tabBarHeight: NSLayoutConstraint?
   private var page: NSView?
   private var palette = ThemePalette.latte
@@ -94,13 +100,21 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     reloadButton.target = self
     reloadButton.action = #selector(reload)
 
-    toolbar.orientation = .horizontal
-    toolbar.spacing = 6
-    toolbar.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
-    toolbar.setViews(
+    controls.orientation = .horizontal
+    controls.alignment = .centerY
+    controls.spacing = 6
+    controls.setViews(
       [backButton, forwardButton, reloadButton, securityIcon, addressField, profileButton],
       in: .leading)
+    controls.setHuggingPriority(.required, for: .vertical)
+    controls.setClippingResistancePriority(.required, for: .vertical)
+    controls.translatesAutoresizingMaskIntoConstraints = false
+
+    toolbar.addSubview(controls)
     toolbar.translatesAutoresizingMaskIntoConstraints = false
+    toolbar.setAccessibilityElement(true)
+    toolbar.setAccessibilityRole(.group)
+    toolbar.setAccessibilityIdentifier("browser-toolbar")
 
     tabBar.translatesAutoresizingMaskIntoConstraints = false
     tabBar.isHidden = true
@@ -125,6 +139,13 @@ final class BrowserView: NSView, NSTextFieldDelegate {
       toolbar.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
       toolbar.leadingAnchor.constraint(equalTo: leadingAnchor),
       toolbar.trailingAnchor.constraint(equalTo: trailingAnchor),
+      controls.topAnchor.constraint(equalTo: toolbar.topAnchor, constant: Self.verticalPadding),
+      controls.bottomAnchor.constraint(
+        equalTo: toolbar.bottomAnchor, constant: -Self.verticalPadding),
+      controls.leadingAnchor.constraint(
+        equalTo: toolbar.leadingAnchor, constant: Self.horizontalPadding),
+      controls.trailingAnchor.constraint(
+        equalTo: toolbar.trailingAnchor, constant: -Self.horizontalPadding),
     ])
 
     setAccessibilityIdentifier("browser")
@@ -136,6 +157,13 @@ final class BrowserView: NSView, NSTextFieldDelegate {
 
   required init?(coder: NSCoder) {
     fatalError("init(coder:) is not used")
+  }
+
+  /// A pane too short for the toolbar keeps the toolbar whole and lets the page run off the bottom.
+  /// The page's bottom edge yields for that reason, and the toolbar's padding never does.
+  private static func yielding(_ constraint: NSLayoutConstraint) -> NSLayoutConstraint {
+    constraint.priority = NSLayoutConstraint.Priority(999)
+    return constraint
   }
 
   /// Puts `webView` below the toolbar.
@@ -150,7 +178,8 @@ final class BrowserView: NSView, NSTextFieldDelegate {
       webView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
       webView.leadingAnchor.constraint(equalTo: leadingAnchor),
       webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      webView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      webView.heightAnchor.constraint(greaterThanOrEqualToConstant: 0),
+      Self.yielding(webView.bottomAnchor.constraint(equalTo: bottomAnchor)),
     ])
 
     errorPage.removeFromSuperview()
@@ -160,7 +189,8 @@ final class BrowserView: NSView, NSTextFieldDelegate {
       errorPage.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
       errorPage.leadingAnchor.constraint(equalTo: leadingAnchor),
       errorPage.trailingAnchor.constraint(equalTo: trailingAnchor),
-      errorPage.bottomAnchor.constraint(equalTo: bottomAnchor),
+      errorPage.heightAnchor.constraint(greaterThanOrEqualToConstant: 0),
+      Self.yielding(errorPage.bottomAnchor.constraint(equalTo: bottomAnchor)),
     ])
 
     dialogView.removeFromSuperview()
@@ -170,7 +200,8 @@ final class BrowserView: NSView, NSTextFieldDelegate {
       dialogView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
       dialogView.leadingAnchor.constraint(equalTo: leadingAnchor),
       dialogView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      dialogView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      dialogView.heightAnchor.constraint(greaterThanOrEqualToConstant: 0),
+      Self.yielding(dialogView.bottomAnchor.constraint(equalTo: bottomAnchor)),
     ])
   }
 
