@@ -552,7 +552,7 @@ The final ADR check found no conflict. It raised one more candidate for the user
   one-line exception, or an amendment covering work the platform keeps alive. Otherwise the next WebKit applet will assume ADR-05 is met.
 - ADR candidates in the Decision Log, all waiting or undecided: plain HTTP with no transport floor for hosted web content, a setting reaching an applet only through its factory, per-file quarantine that fails closed, and no private API in
   shipping code.
-- `.cg.yaml` holds one uncommitted rule this run did not add, `prefix: [cp]`, which allows a write command. It is left uncommitted for the user. Rules naming an absolute path were removed.
+- Rules in `.cg.yaml` naming an absolute path were removed. `prefix: [cp]` is the user's own rule, and it stays.
 - Personal paths remain on the remotes until this branch lands. `upstream/main` has them in eight older reports, and `origin/main` has them in `.cg.yaml` and three reports. Landing fixes each branch's latest files. Removing them from history needs a force-push.
 
 ## Unowned failures
