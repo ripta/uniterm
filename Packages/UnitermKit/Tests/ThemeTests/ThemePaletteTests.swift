@@ -82,6 +82,22 @@ final class PinColorTests: XCTestCase {
     XCTAssertEqual(ThemePalette.mocha.pinDisc, ThemePalette.mocha[.crust])
   }
 
+  /// Catches a highlight or secondary text that drops below 4.5:1 in a flavor, as Latte's `base`
+  /// on blue and `overlay1` on `mantle` did. It proves the colors, not that a view uses them.
+  func testListTextReachesFourPointFiveInEveryFlavor() {
+    for flavor in ThemeFlavor.allCases {
+      let palette = ThemePalette(flavor: flavor)
+
+      XCTAssertGreaterThanOrEqual(
+        palette.onAccent.contrastRatio(with: palette[.blue]), 4.5, "\(flavor) highlight")
+
+      for surface in [ThemeToken.mantle, .base] {
+        XCTAssertGreaterThanOrEqual(
+          palette.secondaryText.contrastRatio(with: palette[surface]), 4.5, "\(flavor) \(surface)")
+      }
+    }
+  }
+
   /// Catches a wrong WCAG formula. Black on white is 21, and equal colors are 1.
   func testContrastRatioMatchesTheWCAGEndpoints() {
     let black = ThemeColor(hex: 0x000000)

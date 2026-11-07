@@ -512,7 +512,7 @@ private final class PaletteRowView: NSView {
       NSImage(systemSymbolName: $0, accessibilityDescription: nil)
     }
 
-    let onAccent = palette.flavor == .latte ? palette[.base] : palette[.crust]
+    let onAccent = palette.onAccent
 
     let titleColor: NSColor
     let detailColor: NSColor
@@ -526,9 +526,9 @@ private final class PaletteRowView: NSView {
     } else {
       layer?.backgroundColor = NSColor.clear.cgColor
       titleColor = entry.isEnabled ? palette[.text].nsColor : palette[.overlay0].nsColor
-      detailColor = palette[.overlay1].nsColor
-      kind.textColor = palette[.overlay1].nsColor
-      icon.contentTintColor = palette[.overlay1].nsColor
+      detailColor = palette.secondaryText.nsColor
+      kind.textColor = palette.secondaryText.nsColor
+      icon.contentTintColor = palette.secondaryText.nsColor
     }
 
     let truncating = NSMutableParagraphStyle()
