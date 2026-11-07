@@ -330,6 +330,7 @@ final class BrowserTab: NSObject {
 
     configuration.userContentController = controller
     unsent.install(in: controller)
+    MediaCaptureScript.install(in: controller)
     unsent.onChange = { [weak self] in
       guard let self else { return }
 
@@ -1286,7 +1287,8 @@ extension BrowserTab: WKNavigationDelegate {
 
 extension BrowserTab: WKUIDelegate {
   /// Camera and microphone are denied. The app has no usage strings, so a request must not reach
-  /// the system's privacy prompt.
+  /// the system's privacy prompt. This is the backstop. In practice a request never gets here, and
+  /// `MediaCaptureScript` rejects it in the page first.
   func webView(
     _ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
