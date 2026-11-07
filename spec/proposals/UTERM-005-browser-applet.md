@@ -1123,6 +1123,9 @@ None.
 - The hung process outlives its view. A scratch test measured the process alive after release of its view for 61 seconds,
   and after a non-persistent store, a navigation to `about:blank`, `_close`, and `_killWebContentProcess` for 30 seconds.
   A rebuilt view and four new tabs each got a different process from the hung one. SIGKILL to the id from
+- A rebuilt view starts with no title. The tab kept the old view's title after a stop or a hang, so a rebuilt page that
+  never names itself, or whose title arrives a moment after its load ends, showed the old page's name in the tab bar.
+  `replaceWebView` now clears it, and the tab shows its stored title until the new page reports one.
   `_webProcessIdentifier` ends it, and the user chose to ship that in a hands-on review. `WebContentProcess` owns the
   private read, guarded by `responds(to:)`, and the kill. It refuses ids at or below 1 and any process whose path does
   not name a WebKit content process. The hang bound kills the process before it builds the new view. A close of a tab
