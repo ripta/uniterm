@@ -282,6 +282,7 @@ final class TabSearchTests: XCTestCase {
       switch entry.id {
       case .tab(let pane, _): return entry.title.isEmpty ? "" : "tab:\(pane == first ? 1 : 2)"
       case .command(let id): return id == .fakeActualSize ? "recent-command" : "command"
+      case .filterKeyword, .filter, .notice: return "filter"
       }
     }
 

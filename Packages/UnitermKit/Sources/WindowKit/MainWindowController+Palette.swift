@@ -103,7 +103,10 @@ extension MainWindowController {
           order: candidates.count))
     }
 
-    palette.setEntries(PaletteRanking.rank(candidates, query: palette.query))
+    palette.setEntries(
+      PaletteListing.entries(
+        candidates, query: palette.query, filter: palette.filter,
+        appletTypes: appletTypes.map(PaletteAppletType.init)))
   }
 
   /// Moves the focused pane's selected tab to the front of the recent tabs.
@@ -142,7 +145,8 @@ extension MainWindowController {
         let entry = PaletteEntry(
           id: .tab(pane: pane, tab: tab.id), kind: .tab,
           title: title.isEmpty ? "Untitled" : title, appletName: type?.displayName,
-          symbolName: type?.symbolName, detail: detail.isEmpty ? nil : detail,
+          symbolName: type?.symbolName, appletTypeID: applet.typeID,
+          detail: detail.isEmpty ? nil : detail,
           isEnabled: true, isCurrent: pane == target && tab.id == list.selected)
 
         entries.append((PaletteTabKey(pane: pane, tab: tab.id), entry))
@@ -186,6 +190,10 @@ extension MainWindowController {
 
     case .tab(let pane, let tab):
       chooseTab(pane: pane, tab: tab, title: entry.title)
+
+    // The palette view acts on its own filter rows, and a notice does nothing.
+    case .filterKeyword, .filter, .notice:
+      break
     }
   }
 

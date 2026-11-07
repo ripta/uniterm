@@ -7,6 +7,15 @@ import PaneModel
 enum PaletteEntryID: Hashable, Sendable {
   case command(CommandID)
   case tab(pane: NodeID, tab: AppletTabID)
+
+  /// A hint that completes a filter's keyword, such as `applet:`.
+  case filterKeyword(PaletteFilter.Category)
+
+  /// A filter that becomes the field's chip when chosen.
+  case filter(PaletteFilter)
+
+  /// A line that says why a filtered list is empty.
+  case notice
 }
 
 /// One row of the palette.
@@ -14,12 +23,17 @@ struct PaletteEntry: Equatable, Sendable {
   enum Kind: Sendable, Equatable {
     case command
     case tab
+    case filterKeyword
+    case filter
+    case notice
 
     /// The word the row shows, so a program-set title can never pass for a command.
     var label: String {
       switch self {
       case .command: "Command"
       case .tab: "Tab"
+      case .filterKeyword: "Tab to complete"
+      case .filter, .notice: ""
       }
     }
   }
@@ -36,6 +50,10 @@ struct PaletteEntry: Equatable, Sendable {
   /// The SF Symbol the row shows before its title. Nil leaves the icon's place empty.
   var symbolName: String? = nil
 
+  /// The type of the applet a tab belongs to, which an applet filter matches. Nil for anything
+  /// but a tab.
+  var appletTypeID: String? = nil
+
   /// Extra text the query also searches, such as a working directory. A match in the title
   /// outranks a match only here.
   var detail: String?
@@ -49,6 +67,15 @@ struct PaletteEntry: Equatable, Sendable {
 
   /// The word on the row's right: the applet's name for a tab, or the kind when there is none.
   var label: String { appletName ?? kind.label }
+
+  /// Whether the highlight can rest on the row. A keyword hint shows but never takes it, so
+  /// Return keeps running the best result while Tab completes the hint.
+  var isSelectable: Bool {
+    switch kind {
+    case .command, .tab, .filter: isEnabled
+    case .filterKeyword, .notice: false
+    }
+  }
 
   /// The symbol every command row shows.
   static let commandSymbol = "command"
@@ -136,6 +163,7 @@ enum PaletteRanking {
     case (.command, true): 1
     case (.tab, false): 2
     case (.command, false): 3
+    case (.filterKeyword, _), (.filter, _), (.notice, _): 4
     }
   }
 

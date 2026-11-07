@@ -159,6 +159,72 @@ final class CommandPaletteUITests: UnitermUITestCase {
     XCTAssertTrue(palette(in: app).waitForExistence(timeout: 5), "the terminal took the key")
   }
 
+  // MARK: Filter chips
+
+  private func chip(in app: XCUIApplication) -> XCUIElement {
+    app.descendants(matching: .any)["command-palette-chip"]
+  }
+
+  private func rows(in app: XCUIApplication) -> XCUIElementQuery {
+    app.descendants(matching: .any).matching(identifier: "command-palette-row")
+  }
+
+  /// Saves a picture of the window when the run names a folder for it, so a person can read the
+  /// palette in light mode. It proves nothing by itself.
+  private func keepScreenshot(_ name: String, of app: XCUIApplication) {
+    let shot = mainWindow(in: app).screenshot()
+    let attachment = XCTAttachment(screenshot: shot)
+    attachment.name = name
+    attachment.lifetime = .keepAlways
+    add(attachment)
+
+    guard let folder = ProcessInfo.processInfo.environment["UNITERM_UI_SHOTS"] else { return }
+
+    try? shot.pngRepresentation.write(
+      to: URL(fileURLWithPath: folder).appendingPathComponent(name + ".png"))
+  }
+
+  /// Catches a Tab that the field editor takes as a focus move, a Backspace that never reaches the
+  /// chip, and a chip that lets commands through. The unit tests call the field's delegate
+  /// directly, so only the real field editor shows these keys arrive.
+  func testTypingAFilterMakesAChipAndBackspaceRemovesIt() {
+    let app = launchApp(settings: ["appearance": "light"])
+    _ = waitForTerminal(in: app)
+
+    showPalette(in: app)
+    app.typeText("ap")
+    XCTAssertTrue(row("applet:", kind: "Tab to complete", in: app).waitForExistence(timeout: 5))
+    keepScreenshot("1-hint", of: app)
+
+    app.typeKey(.tab, modifierFlags: [])
+    XCTAssertTrue(
+      waitFor(field(in: app), timeout: 5) { $0 == "applet:" }, "Tab did not complete the hint")
+    keepScreenshot("2-applets", of: app)
+
+    app.typeText("ter")
+    app.typeKey(.tab, modifierFlags: [])
+
+    XCTAssertTrue(chip(in: app).waitForExistence(timeout: 5), "Tab did not make a chip")
+    XCTAssertEqual(chip(in: app).label, "Terminal")
+    XCTAssertTrue(rows(in: app).firstMatch.waitForExistence(timeout: 5))
+
+    for index in 0..<rows(in: app).count {
+      XCTAssertEqual(rows(in: app).element(boundBy: index).value as? String, "Terminal, enabled")
+    }
+
+    keepScreenshot("3-chip", of: app)
+
+    app.typeKey(.delete, modifierFlags: [])
+    XCTAssertTrue(waitUntilGone(chip(in: app)), "Backspace did not remove the chip")
+    XCTAssertTrue(palette(in: app).exists)
+
+    app.typeText("kind:co")
+    app.typeKey(.return, modifierFlags: [])
+    XCTAssertTrue(chip(in: app).waitForExistence(timeout: 5))
+    XCTAssertEqual(chip(in: app).label, "Commands")
+    keepScreenshot("4-commands", of: app)
+  }
+
   // MARK: Tab search
 
   private func row(_ title: String, kind: String = "Terminal", in app: XCUIApplication)

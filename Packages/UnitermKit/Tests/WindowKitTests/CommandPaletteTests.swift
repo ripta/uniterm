@@ -326,4 +326,94 @@ final class CommandPaletteTests: XCTestCase {
 
     XCTAssertEqual(catcher.keysSeen, 1)
   }
+
+  // MARK: Filter chips
+
+  @discardableResult
+  private func press(_ selector: Selector, text: String = "") -> Bool {
+    let editor = NSTextView()
+    editor.string = text
+
+    return palette.control(palette.field, textView: editor, doCommandBy: selector)
+  }
+
+  /// Catches a Tab that moves the keyboard out of the field, or one that ignores the hint.
+  func testTabCompletesAKeywordHintAndKeepsTheKeyboardInTheField() {
+    controller.showCommandPalette()
+    type("ap")
+
+    XCTAssertTrue(press(#selector(NSResponder.insertTab(_:))))
+    XCTAssertEqual(palette.query, "applet:")
+    XCTAssertEqual(palette.entries.map(\.title), ["Fake"])
+
+    type("zsh")
+    XCTAssertTrue(press(#selector(NSResponder.insertTab(_:))), "a Tab with nothing to do moved on")
+    XCTAssertTrue(press(#selector(NSResponder.insertBacktab(_:))))
+    XCTAssertEqual(palette.query, "zsh")
+  }
+
+  /// Catches a suggestion that runs as a command, or a chip that keeps the text that found it or
+  /// lets commands through.
+  func testTabOrReturnTurnsASuggestionIntoAChipThatKeepsOnlyItsTabs() throws {
+    try applet(controller.focusedPane).title = "shell"
+    controller.showCommandPalette()
+
+    type("applet:fa")
+    press(#selector(NSResponder.insertTab(_:)))
+
+    XCTAssertEqual(palette.filter, .applet(PaletteAppletType(WindowFixture.fakeType)))
+    XCTAssertFalse(palette.chip.isHidden)
+    XCTAssertEqual(palette.chip.text, "Fake")
+    XCTAssertEqual(palette.query, "")
+    XCTAssertEqual(palette.entries.map(\.kind), [.tab])
+    XCTAssertTrue(controller.isPaletteVisible)
+
+    type("kind:co")
+    press(#selector(NSResponder.insertNewline(_:)))
+
+    XCTAssertEqual(palette.filter, .commands, "the new chip did not replace the old one")
+    XCTAssertTrue(controller.isPaletteVisible)
+    XCTAssertTrue(palette.entries.allSatisfy { $0.kind == .command })
+  }
+
+  /// Catches a Backspace that removes the chip while there is text to delete, or one that never
+  /// removes it.
+  func testBackspaceInAnEmptyFieldRemovesTheChip() {
+    controller.showCommandPalette()
+    type("kind:t")
+    press(#selector(NSResponder.insertTab(_:)))
+    XCTAssertEqual(palette.filter, .tabs)
+
+    XCTAssertFalse(press(#selector(NSResponder.deleteBackward(_:)), text: "x"))
+    XCTAssertEqual(palette.filter, .tabs)
+
+    XCTAssertTrue(press(#selector(NSResponder.deleteBackward(_:))))
+    XCTAssertNil(palette.filter)
+    XCTAssertTrue(palette.chip.isHidden)
+  }
+
+  /// Catches a chip that survives the palette hiding, so the next search would start filtered.
+  func testHidingThePaletteClearsTheChip() {
+    controller.showCommandPalette()
+    type("kind:c")
+    press(#selector(NSResponder.insertTab(_:)))
+    XCTAssertEqual(palette.filter, .commands)
+
+    controller.hideCommandPalette(restoringFocus: true)
+    controller.showCommandPalette()
+
+    XCTAssertNil(palette.filter)
+    XCTAssertTrue(palette.chip.isHidden)
+  }
+
+  /// Catches a remove button that leaves the chip in place.
+  func testTheChipsButtonRemovesIt() {
+    controller.showCommandPalette()
+    type("kind:t")
+    press(#selector(NSResponder.insertTab(_:)))
+
+    palette.chip.removeButton.performClick(nil)
+
+    XCTAssertNil(palette.filter)
+  }
 }
