@@ -39,3 +39,11 @@ nothing today, so sites that take a file upload do not work.
 Ask for a username and password when a server requests HTTP authentication. The
 browser answers no such request today, so a page behind a basic-auth login shows
 the server's own 401.
+
+## Browser: custom URL scheme
+
+Let a scheme such as `corp://` serve pages through a `WKURLSchemeHandler`. This
+is the least settled idea here, and no use for it is decided yet. A Janet script
+is the most likely thing to serve it, which would make it wait on Janet
+scripting. Still open: who defines a scheme, and what a scheme page can reach,
+including whether ordinary web pages can link to it.
