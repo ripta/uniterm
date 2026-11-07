@@ -80,7 +80,7 @@ private final class OpenFixture {
 
     let declarations = [
       AppletTypeDeclaration(
-        typeID: "terminal", displayName: "Terminal",
+        typeID: "terminal", displayName: "Terminal", symbolName: "terminal",
         opens: [OpenedType("public.folder", rank: .owner)])
     ]
 

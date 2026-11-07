@@ -6,7 +6,7 @@ extension DataViewerApplet {
   /// file goes to a map, whose type is more specific. TSV and the other spreadsheet extensions open
   /// through the pane's own Open, and no type here routes to them.
   public nonisolated static let typeDeclaration = AppletTypeDeclaration(
-    typeID: DataViewerDescription.typeID, displayName: "Data Viewer",
+    typeID: DataViewerDescription.typeID, displayName: "Data Viewer", symbolName: "tablecells",
     opens: [
       OpenedType("public.comma-separated-values-text", rank: .owner),
       OpenedType("public.json", rank: .owner),

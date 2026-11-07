@@ -451,8 +451,11 @@ private final class PaletteTableView: NSTableView {
   override var acceptsFirstResponder: Bool { false }
 }
 
-/// One result row: the title on the left and the kind on the right.
+/// One result row: an icon, the title, and on the right the applet's name or the kind.
 private final class PaletteRowView: NSView {
+  static let iconSize: CGFloat = 14
+
+  private let icon = NSImageView()
   private let title = NSTextField(labelWithString: "")
   private let kind = NSTextField(labelWithString: "")
 
@@ -463,6 +466,12 @@ private final class PaletteRowView: NSView {
 
     wantsLayer = true
     layer?.cornerRadius = 6
+
+    // The icon keeps its place when a row has none, so every title starts at the same edge.
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+    icon.imageScaling = .scaleProportionallyDown
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(icon)
 
     title.font = .systemFont(ofSize: 13)
     title.lineBreakMode = .byTruncatingTail
@@ -476,7 +485,11 @@ private final class PaletteRowView: NSView {
     addSubview(kind)
 
     NSLayoutConstraint.activate([
-      title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+      icon.widthAnchor.constraint(equalToConstant: Self.iconSize),
+      icon.heightAnchor.constraint(equalToConstant: Self.iconSize),
+      title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
       title.centerYAnchor.constraint(equalTo: centerYAnchor),
       kind.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       kind.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -494,7 +507,10 @@ private final class PaletteRowView: NSView {
   }
 
   func configure(_ entry: PaletteEntry, selected: Bool, palette: ThemePalette) {
-    kind.stringValue = entry.kind.label
+    kind.stringValue = entry.label
+    icon.image = entry.symbolName.flatMap {
+      NSImage(systemSymbolName: $0, accessibilityDescription: nil)
+    }
 
     let onAccent = palette.flavor == .latte ? palette[.base] : palette[.crust]
 
@@ -506,11 +522,13 @@ private final class PaletteRowView: NSView {
       titleColor = onAccent.nsColor
       detailColor = onAccent.nsColor
       kind.textColor = onAccent.nsColor
+      icon.contentTintColor = onAccent.nsColor
     } else {
       layer?.backgroundColor = NSColor.clear.cgColor
       titleColor = entry.isEnabled ? palette[.text].nsColor : palette[.overlay0].nsColor
       detailColor = palette[.overlay1].nsColor
       kind.textColor = palette[.overlay1].nsColor
+      icon.contentTintColor = palette[.overlay1].nsColor
     }
 
     let truncating = NSMutableParagraphStyle()
@@ -536,7 +554,7 @@ private final class PaletteRowView: NSView {
     title.attributedStringValue = text
 
     setAccessibilityLabel(entry.title)
-    setAccessibilityValue("\(entry.kind.label), \(entry.isEnabled ? "enabled" : "disabled")")
+    setAccessibilityValue("\(entry.label), \(entry.isEnabled ? "enabled" : "disabled")")
     setAccessibilityHelp(entry.detail)
     setAccessibilitySelected(selected)
   }

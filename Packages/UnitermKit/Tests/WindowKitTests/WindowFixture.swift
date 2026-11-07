@@ -1,4 +1,5 @@
 import AppKit
+import AppletKit
 import PaneModel
 import Preferences
 import StatusKit
@@ -88,9 +89,14 @@ final class WindowFixture {
   let log: AppletLog
   let controller: MainWindowController
 
+  /// The fake applet's declaration, so the palette names its tabs the way it names a real applet's.
+  static let fakeType = AppletTypeDeclaration(
+    typeID: "fake", displayName: "Fake", symbolName: "terminal", opens: [])
+
   init(
     storedPosition: String? = nil, stored: [String: String] = [:],
-    commands: CommandRegistry = .testing()
+    commands: CommandRegistry = .testing(),
+    appletTypes: [AppletTypeDeclaration] = [WindowFixture.fakeType]
   ) throws {
     let defaults = UserDefaults(suiteName: suite)!
     if let storedPosition {
@@ -114,7 +120,7 @@ final class WindowFixture {
 
     controller = try MainWindowController(
       appearance: AppearanceController(store: store), settings: store, statusCenter: center,
-      commands: commands
+      commands: commands, appletTypes: appletTypes
     ) { _, _ in
       let applet = FakeApplet()
       log.made.append(applet)

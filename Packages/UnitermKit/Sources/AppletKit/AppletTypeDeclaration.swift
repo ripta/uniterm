@@ -34,11 +34,15 @@ public struct AppletTypeDeclaration: Sendable, Equatable {
   /// What a chooser calls the applet.
   public let displayName: String
 
+  /// The SF Symbol that stands for the applet beside its name, such as in a palette row.
+  public let symbolName: String
+
   public let opens: [OpenedType]
 
-  public init(typeID: String, displayName: String, opens: [OpenedType]) {
+  public init(typeID: String, displayName: String, symbolName: String, opens: [OpenedType]) {
     self.typeID = typeID
     self.displayName = displayName
+    self.symbolName = symbolName
     self.opens = opens
   }
 }

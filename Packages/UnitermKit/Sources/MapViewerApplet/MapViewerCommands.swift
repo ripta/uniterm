@@ -6,7 +6,7 @@ extension MapViewerApplet {
   /// `public.json`, so a `.geojson` file is more specific than the data viewer's JSON and routes
   /// here, while a plain `.json` file still goes to the data viewer.
   public nonisolated static let typeDeclaration = AppletTypeDeclaration(
-    typeID: MapViewerDescription.typeID, displayName: "Map Viewer",
+    typeID: MapViewerDescription.typeID, displayName: "Map Viewer", symbolName: "map",
     opens: [OpenedType("public.geojson", rank: .owner)])
 
   /// The map viewer's own commands. Save and Save As take the usual document keys. Open has no key,

@@ -161,7 +161,9 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
   // MARK: Tab search
 
-  private func row(_ title: String, kind: String = "Tab", in app: XCUIApplication) -> XCUIElement {
+  private func row(_ title: String, kind: String = "Terminal", in app: XCUIApplication)
+    -> XCUIElement
+  {
     app.descendants(matching: .any).matching(identifier: "command-palette-row")
       .element(
         matching: NSPredicate(format: "label == %@ AND value BEGINSWITH %@", title, kind))
@@ -194,7 +196,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     let entry = row("zzq-title", in: app)
     XCTAssertTrue(entry.waitForExistence(timeout: 10), "the background tab was not listed")
-    XCTAssertEqual(entry.value as? String, "Tab, enabled")
+    XCTAssertEqual(entry.value as? String, "Terminal, enabled")
 
     app.typeKey(.return, modifierFlags: [])
 
@@ -224,7 +226,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     let entry = row("New Window", in: app)
     XCTAssertTrue(entry.waitForExistence(timeout: 10), "the title was not neutralized")
-    XCTAssertEqual(entry.value as? String, "Tab, enabled")
+    XCTAssertEqual(entry.value as? String, "Terminal, enabled")
     XCTAssertTrue(
       row("New Window", kind: "Command", in: app).exists,
       "the command and the tab of the same name are not told apart")

@@ -93,7 +93,8 @@ extension MainWindowController {
 
     for command in commands.commands where command.listedInPalette {
       let entry = PaletteEntry(
-        id: .command(command.id), kind: .command, title: command.title, detail: nil,
+        id: .command(command.id), kind: .command, title: command.title,
+        symbolName: PaletteEntry.commandSymbol, detail: nil,
         isEnabled: commands.isAvailable(command.id, in: context))
 
       candidates.append(
@@ -132,6 +133,7 @@ extension MainWindowController {
       guard let applet = paneArea.applet(for: pane) else { continue }
 
       let list = applet.publishedTabs
+      let type = appletTypes.first { $0.typeID == applet.typeID }
 
       for tab in list.all {
         let title = PaletteText.neutralized(tab.title)
@@ -139,7 +141,8 @@ extension MainWindowController {
 
         let entry = PaletteEntry(
           id: .tab(pane: pane, tab: tab.id), kind: .tab,
-          title: title.isEmpty ? "Untitled" : title, detail: detail.isEmpty ? nil : detail,
+          title: title.isEmpty ? "Untitled" : title, appletName: type?.displayName,
+          symbolName: type?.symbolName, detail: detail.isEmpty ? nil : detail,
           isEnabled: true, isCurrent: pane == target && tab.id == list.selected)
 
         entries.append((PaletteTabKey(pane: pane, tab: tab.id), entry))

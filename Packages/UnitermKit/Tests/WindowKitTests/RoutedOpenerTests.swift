@@ -72,10 +72,10 @@ final class RoutingFixture {
 
     let declarations = [
       AppletTypeDeclaration(
-        typeID: "viewer", displayName: "Viewer",
+        typeID: "viewer", displayName: "Viewer", symbolName: "doc.text",
         opens: [OpenedType("public.plain-text", rank: .owner)]),
       AppletTypeDeclaration(
-        typeID: "terminal", displayName: "Terminal",
+        typeID: "terminal", displayName: "Terminal", symbolName: "terminal",
         opens: [OpenedType("public.folder", rank: .owner)]
           + (terminalAlsoOpensText ? [OpenedType("public.plain-text", rank: .alternate)] : [])),
     ]
@@ -397,9 +397,11 @@ final class RoutedOpenerTests: XCTestCase {
     let fixture = try makeFixture()
     let tied = [
       AppletTypeDeclaration(
-        typeID: "one", displayName: "One", opens: [OpenedType("public.plain-text", rank: .owner)]),
+        typeID: "one", displayName: "One", symbolName: "doc",
+        opens: [OpenedType("public.plain-text", rank: .owner)]),
       AppletTypeDeclaration(
-        typeID: "two", displayName: "Two", opens: [OpenedType("public.plain-text", rank: .owner)]),
+        typeID: "two", displayName: "Two", symbolName: "doc",
+        opens: [OpenedType("public.plain-text", rank: .owner)]),
     ]
 
     let opener = RoutedOpener(

@@ -28,6 +28,14 @@ struct PaletteEntry: Equatable, Sendable {
   var kind: Kind
   var title: String
 
+  /// The name of the applet type a tab belongs to, such as "Browser". It comes from the type's
+  /// declaration and never from the applet, so a program cannot set it. Nil for a command, and for
+  /// a tab whose type has no declaration.
+  var appletName: String? = nil
+
+  /// The SF Symbol the row shows before its title. Nil leaves the icon's place empty.
+  var symbolName: String? = nil
+
   /// Extra text the query also searches, such as a working directory. A match in the title
   /// outranks a match only here.
   var detail: String?
@@ -38,6 +46,12 @@ struct PaletteEntry: Equatable, Sendable {
   /// True for the tab that was showing in the pane that had focus before the palette. With no
   /// query, Return skips it, since the user came to leave it.
   var isCurrent = false
+
+  /// The word on the row's right: the applet's name for a tab, or the kind when there is none.
+  var label: String { appletName ?? kind.label }
+
+  /// The symbol every command row shows.
+  static let commandSymbol = "command"
 }
 
 /// An entry together with what ranking needs to know about it.
