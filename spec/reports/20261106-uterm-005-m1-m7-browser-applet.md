@@ -548,10 +548,9 @@ The final ADR check found no conflict. It raised one more candidate for the user
 
 ## Open for the user
 
-- ADR-05 says work kept after close is bounded and visible. A hung content process outlives its view with no public way to end it, and a closed pane can hold a pending download cancel for up to 30 s with no indicator. The check suggests a
-  one-line exception, or an amendment covering work the platform keeps alive. Otherwise the next WebKit applet will assume ADR-05 is met.
-- ADR candidates in the Decision Log, all waiting or undecided: plain HTTP with no transport floor for hosted web content, a setting reaching an applet only through its factory, per-file quarantine that fails closed, and no private API in
-  shipping code.
+- Settled in the user's hands-on review on 2026-11-06, after this run. The browser now ends a hung content process, the dialog limit became an offer to stop, script tabs ask after ten, and downloads ask after three. Script-closed tabs stay off the reopen list. The proposal's Decision Log records each one.
+- A closed pane can still hold a pending download cancel for up to 30 s with no indicator, which ADR-05 asks for. It stays a known risk, with no change to ADR-05.
+- ADR candidates: the user declined plain HTTP, no private API, and one question per pane as inconsequential. Two wait on a second applet: a setting reaching an applet only through its factory, and per-file quarantine that fails closed.
 - Rules in `.cg.yaml` naming an absolute path were removed. `prefix: [cp]` is the user's own rule, and it stays.
 - Personal paths remain on the remotes until this branch lands. `upstream/main` has them in eight older reports, and `origin/main` has them in `.cg.yaml` and three reports. Landing fixes each branch's latest files. Removing them from history needs a force-push.
 
