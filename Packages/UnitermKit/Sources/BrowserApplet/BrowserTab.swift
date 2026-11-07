@@ -153,9 +153,13 @@ final class BrowserTab: NSObject {
 
   let unsent = UnsentInputTracker()
 
-  /// How many dialogs the page has raised since its last load, and whether the user heard that
-  /// the rest are dismissed.
+  /// How many dialogs the page has raised since its last load. From the second on, a dialog offers
+  /// to stop the rest.
   private var dialogsThisLoad = 0
+
+  /// Whether the user chose to stop the page's dialogs, and whether the user heard that they are
+  /// dismissed. Both end at the page's next load.
+  private var dialogsStopped = false
   private var warnedAboutDialogs = false
 
   /// Whether the tab's media is suspended, as a detached pane's is.
@@ -647,6 +651,7 @@ final class BrowserTab: NSObject {
     assumed = nil
     gate.noteWebViewLost()
     dialogsThisLoad = 0
+    dialogsStopped = false
     warnedAboutDialogs = false
     gesture = LinkGesture()
     windowGesture = LinkGesture()
@@ -788,6 +793,7 @@ final class BrowserTab: NSObject {
     failedLoad = nil
     assumed = nil
     dialogsThisLoad = 0
+    dialogsStopped = false
     warnedAboutDialogs = false
     committedURL = webView.url
     unsent.clear()
@@ -1221,9 +1227,15 @@ extension BrowserTab: WKUIDelegate {
     }
   }
 
-  /// Hands a dialog to the applet, which owns its answer. A page that keeps raising dialogs gets
-  /// the rest dismissed, and the user hears so once. A tab with no applet dismisses at once, since
-  /// WebKit must hear back from every dialog exactly once.
+  /// The user chose to stop this page's dialogs. Every later dialog is dismissed until the page
+  /// loads again.
+  func stopDialogs() {
+    dialogsStopped = true
+  }
+
+  /// Hands a dialog to the applet, which owns its answer. Once the user has stopped the page's
+  /// dialogs, the rest are dismissed and the user hears so once. A tab with no applet dismisses
+  /// at once, since WebKit must hear back from every dialog exactly once.
   private func present(
     _ kind: PageDialog.Kind, _ message: String, _ frame: WKFrameInfo,
     completion: @escaping @MainActor (PageDialog.Answer) -> Void
@@ -1233,21 +1245,22 @@ extension BrowserTab: WKUIDelegate {
     let dialog = PageDialog(
       kind: kind, message: message,
       source: frame.request.url?.host(percentEncoded: false) ?? "", tab: self,
-      completion: completion)
+      offersToStop: dialogsThisLoad >= 1, completion: completion)
 
     guard let delegate else {
       dialog.answer(.dismissed)
       return
     }
 
-    guard dialogsThisLoad < PageDialogs.perLoadLimit else {
+    guard !dialogsStopped else {
       dialog.answer(.dismissed)
 
       if !warnedAboutDialogs {
         warnedAboutDialogs = true
         delegate.tab(
           self, notice: .warning,
-          text: "A page kept raising dialogs. The browser dismissed the rest.")
+          text:
+            "You stopped dialogs from this page. The browser dismisses them until it loads again.")
       }
 
       return

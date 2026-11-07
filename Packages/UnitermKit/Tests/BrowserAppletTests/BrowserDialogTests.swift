@@ -305,9 +305,13 @@ final class BrowserDialogTests: XCTestCase {
 
   // MARK: Bounds
 
-  /// Catches a page that holds the pane hostage with a loop of alerts. After the limit the rest
-  /// are dismissed, the script ends, and the user hears about it once.
-  func testAPageThatLoopsAlertsHasTheRestDismissed() async throws {
+  /// Catches a page that holds the pane hostage with a loop of alerts, and a browser that decides
+  /// for the user. The first dialog offers nothing. The second and every later one offers to stop.
+  /// A sixth dialog shows, since there is no count limit. Choosing the offer answers the dialog as
+  /// Cancel would, dismisses the rest, and warns once. The next load starts over.
+  func testALoopOfAlertsOffersToStopFromTheSecondDialogAndTheChoiceHoldsUntilTheNextLoad()
+    async throws
+  {
     let harness = try await make()
     defer { harness.stop() }
 
@@ -315,44 +319,120 @@ final class BrowserDialogTests: XCTestCase {
 
     let result = start(
       "var shown = 0; for (var i = 0; i < 20; i++) { alert('n' + i); shown += 1; } shown", harness)
+    let view = harness.applet.content.dialogView
 
-    for _ in 0..<PageDialogs.perLoadLimit {
+    XCTAssertEqual(view.stopButton.accessibilityIdentifier(), "browser-dialog-stop")
+    XCTAssertEqual(
+      view.stopButton.accessibilityLabel(), "Don\u{2019}t show more dialogs from this page")
+
+    for index in 1...6 {
       await waitForDialog(harness)
-      harness.applet.content.dialogView.accept()
+
+      XCTAssertEqual(view.stopButton.isHidden, index == 1, "the offer at dialog \(index)")
+
+      view.accept()
       await harness.host.until("the dialog goes") { self.shown(harness) == nil }
     }
+
+    await waitForDialog(harness)
+
+    XCTAssertEqual(view.messageLabel.stringValue, "n6", "a seventh dialog shows after six")
+    XCTAssertTrue(harness.posts.filter { $0.level == .warning }.isEmpty)
+
+    view.stop()
 
     let value = await result.value.value
 
     XCTAssertEqual(value as? Int, 20)
     XCTAssertEqual(harness.posts.filter { $0.level == .warning }.count, 1)
     XCTAssertTrue(harness.applet.dialogs.isEmpty)
+    XCTAssertTrue(view.isHidden)
+
+    await harness.load("/again", expecting: "Dialogs")
+
+    let fresh = start("confirm('first') && confirm('second')", harness)
+
+    await waitForDialog(harness)
+
+    XCTAssertTrue(view.stopButton.isHidden, "a new load starts with no offer")
+
+    view.accept()
+    await harness.host.until("the dialog goes") { self.shown(harness) == nil }
+    await waitForDialog(harness)
+
+    XCTAssertFalse(view.stopButton.isHidden)
+
+    view.accept()
+
+    let outcome = await fresh.value.value
+
+    XCTAssertEqual(outcome as? Bool, true)
+    XCTAssertEqual(harness.posts.filter { $0.level == .warning }.count, 1)
   }
 
-  /// Catches a new page inheriting the last page's count, so a legitimate page gets its dialogs
-  /// dismissed.
-  func testANewPageStartsWithItsFullAllowance() async throws {
+  /// Catches a stop that answers the current dialog as OK, or that leaves the page's later
+  /// dialogs unanswered. The dialog the user stops from reads as Cancel, and the later ones
+  /// read as dismissed.
+  func testStoppingAnswersTheCurrentDialogAsCancelAndDismissesTheRest() async throws {
     let harness = try await make()
     defer { harness.stop() }
 
-    let spent = start("for (var i = 0; i < 10; i++) { alert(i); } 1", harness)
+    let result = start(
+      "var a = confirm('a'); var b = confirm('b'); var c = confirm('c'); [a, b, c].join()",
+      harness)
+    let view = harness.applet.content.dialogView
 
-    for _ in 0..<PageDialogs.perLoadLimit {
-      await waitForDialog(harness)
-      harness.applet.content.dialogView.accept()
-      await harness.host.until("the dialog goes") { self.shown(harness) == nil }
-    }
-
-    _ = await spent.value.value
-    await harness.load("/again", expecting: "Dialogs")
-
-    let result = start("confirm('fresh')", harness)
     await waitForDialog(harness)
-    harness.applet.content.dialogView.accept()
+    view.accept()
+    await harness.host.until("the first dialog goes") { self.shown(harness) == nil }
+    await waitForDialog(harness)
+    view.stop()
 
     let value = await result.value.value
 
-    XCTAssertEqual(value as? Bool, true)
+    XCTAssertEqual(value as? String, "true,false,false")
+  }
+
+  /// Catches a stop that reaches a page the user did not stop. Stopping one tab's dialogs leaves
+  /// another tab's dialogs showing, with their offer.
+  func testStoppingOneTabsDialogsLeavesAnotherTabsAlone() async throws {
+    let harness = try await make()
+    defer { harness.stop() }
+
+    let first = harness.tab
+
+    harness.applet.openTab()
+    await harness.load("/other", expecting: "Dialogs")
+
+    let second = harness.tab
+    let view = harness.applet.content.dialogView
+    let loop = start("alert(1); alert(2); alert(3); 'done'", in: first, harness)
+
+    harness.applet.selectTab(at: 0)
+    await waitForDialog(harness)
+    view.accept()
+    await harness.host.until("the dialog goes") { self.shown(harness) == nil }
+    await waitForDialog(harness)
+    view.stop()
+
+    _ = await loop.value.value
+
+    harness.applet.selectTab(at: 1)
+
+    let other = start("alert('a'); alert('b'); 'ok'", in: second, harness)
+
+    await waitForDialog(harness)
+    view.accept()
+    await harness.host.until("the dialog goes") { self.shown(harness) == nil }
+    await waitForDialog(harness)
+
+    XCTAssertEqual(view.messageLabel.stringValue, "b")
+
+    view.accept()
+
+    let value = await other.value.value
+
+    XCTAssertEqual(value as? String, "ok")
   }
 
   // MARK: Ownership
