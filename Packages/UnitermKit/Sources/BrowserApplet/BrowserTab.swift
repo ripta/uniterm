@@ -664,6 +664,7 @@ final class BrowserTab: NSObject {
     keptInteraction = nil
     isLoading = false
     currentURL = nil
+    pageTitle = nil
     committedURL = nil
     canGoBack = false
     canGoForward = false

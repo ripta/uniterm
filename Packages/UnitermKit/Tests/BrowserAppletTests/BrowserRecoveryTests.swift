@@ -101,6 +101,10 @@ final class BrowserRecoveryTests: XCTestCase {
 
         return response
 
+      case ("GET", "/untitled"):
+        return FixtureServer.Response(
+          status: 200, headers: Pages.noStore, body: Data("<body>no title</body>".utf8))
+
       case ("GET", "/form"):
         return Pages.page("Form", "<form method=post action=/result><input name=a value=1></form>")
 
@@ -761,12 +765,39 @@ final class BrowserRecoveryTests: XCTestCase {
 
     timer.fire()
 
-    await harness.host.until("the typed page loads") {
+    await harness.host.until("the typed page loads and its title arrives") {
       harness.tab.currentURL?.path == "/c" && !harness.tab.isLoading
+        && harness.applet.title == "C"
     }
 
-    XCTAssertEqual(harness.applet.title, "C")
     XCTAssertTrue(harness.tab.canGoBack, "the history of the hung page was lost")
+  }
+
+  /// Catches a rebuilt view that keeps the old page's title. The title belongs to the view that
+  /// went, so the new view starts with none. A page with no title never reports one, and the old
+  /// page's name would otherwise stay in the tab bar for good. Until the new page names itself, the
+  /// tab shows the title it stored. Measured: the new page's title also arrives a moment after its
+  /// load ends, which is why the test above waits on the title itself.
+  func testARebuiltViewDoesNotKeepTheOldPagesTitle() async throws {
+    let timer = ManualHangTimer()
+    let harness = try await make(services: .testing(hang: timer.policy))
+    defer { harness.stop() }
+
+    await harness.load("/a", expecting: "A")
+
+    let pid = try XCTUnwrap(WebContent.processID(of: harness.tab.webView))
+
+    defer { if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) } }
+
+    hang(harness.tab.webView)
+    harness.applet.submit(address: harness.server.url("/untitled").absoluteString)
+    timer.fire()
+
+    await harness.host.until("the untitled page loads") {
+      harness.tab.currentURL?.path == "/untitled" && !harness.tab.isLoading
+    }
+
+    XCTAssertNil(harness.tab.pageTitle, "the old page's title outlived its view")
   }
 
   // MARK: What the bound leaves alone
@@ -1104,4 +1135,5 @@ final class BrowserRecoveryTests: XCTestCase {
     XCTAssertEqual(harness.count("POST", "/result"), 1)
     XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
   }
+
 }
