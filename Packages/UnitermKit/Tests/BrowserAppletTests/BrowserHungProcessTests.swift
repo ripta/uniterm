@@ -260,4 +260,130 @@ final class BrowserHungProcessTests: XCTestCase {
     XCTAssertEqual(result, .closed)
     XCTAssertEqual(timer.scheduled, scheduled)
   }
+  /// Catches a close that kills a live tab. A pop-up shares its opener's process here. The opener
+  /// runs a script that never ends, so the pop-up's probe gets no reply, and the bound runs out.
+  /// The opener is busy, not hung, and the user closed only the pop-up. No signal goes out and the
+  /// process lives on.
+  func testClosingATabThatSharesItsProcessWithALiveBusyTabSignalsNothing() async throws {
+    let timer = ManualHangTimer()
+    let log = SignalLog()
+    let harness = try await make(hang: policy(timer, log: log))
+    defer { harness.stop() }
+
+    await harness.load("/a", expecting: "A")
+
+    let opener = harness.tab
+    let pid = try XCTUnwrap(WebContent.processID(of: opener.webView))
+
+    defer { if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) } }
+
+    await harness.run("window.open('/popup')")
+    await harness.host.until("the pop-up opens") {
+      harness.applet.tabCount == 2 && harness.applet.title == "POPUP"
+    }
+
+    XCTAssertEqual(WebContent.processID(of: harness.tab.webView), pid, "the pop-up has no share")
+
+    spin(opener.webView)
+
+    let result = await harness.applet.closeTab(at: 1)
+
+    XCTAssertEqual(result, .closed)
+
+    timer.fire()
+
+    for _ in 0..<200 { await Task.yield() }
+
+    XCTAssertTrue(log.pids.isEmpty, "a live tab's process was signalled")
+    XCTAssertTrue(WebContent.isRunning(pid))
+  }
+
+  /// Catches a skipped kill that leaves the process for good. After the pop-up's probe skipped, the
+  /// opener closes. Its probe gets no reply and finds no other live tab, so it ends the process.
+  func testTheLastLiveTabClosingEndsAProcessAnEarlierCloseLeftAlone() async throws {
+    let timer = ManualHangTimer()
+    let log = SignalLog()
+    let harness = try await make(hang: policy(timer, log: log))
+    defer { harness.stop() }
+
+    await harness.load("/a", expecting: "A")
+
+    let opener = harness.tab
+    let pid = try XCTUnwrap(WebContent.processID(of: opener.webView))
+
+    defer { if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) } }
+
+    await harness.run("window.open('/popup')")
+    await harness.host.until("the pop-up opens") {
+      harness.applet.tabCount == 2 && harness.applet.title == "POPUP"
+    }
+
+    harness.applet.openTab()
+    spin(opener.webView)
+
+    _ = await harness.applet.closeTab(at: 1)
+
+    timer.fire()
+
+    for _ in 0..<200 { await Task.yield() }
+
+    XCTAssertTrue(log.pids.isEmpty)
+
+    let closed = await harness.applet.closeTab(at: 0)
+
+    XCTAssertEqual(closed, .closed)
+
+    timer.fire()
+
+    await waitUntilGone(pid, in: harness, "the process ends with the last tab on it")
+
+    XCTAssertEqual(log.pids, [pid])
+  }
+
+  /// Pins what a tab reopened inside the window does, as measured. The hung tab closes and its
+  /// probe waits. The user reopens it at once. The reopened view gets a process of its own, so the
+  /// probe still ends the spinning one, and the reopened tab is untouched and answers.
+  func testATabReopenedInsideTheWindowGetsItsOwnProcessAndSurvivesTheKill() async throws {
+    let timer = ManualHangTimer()
+    let log = SignalLog()
+    let harness = try await make(hang: policy(timer, log: log))
+    defer { harness.stop() }
+
+    await harness.load("/a", expecting: "A")
+    harness.applet.openTab()
+
+    let hung = harness.applet.tabs[0]
+    let pid = try XCTUnwrap(WebContent.processID(of: hung.webView))
+
+    defer { if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) } }
+
+    spin(hung.webView)
+
+    _ = await harness.applet.closeTab(at: 0)
+
+    let stamp = try XCTUnwrap(harness.applet.closedTabStamps.last)
+
+    _ = harness.applet.reopenTab(stamp: stamp)
+
+    let reopened = harness.tab
+
+    await harness.eventually("the reopened page loads") {
+      reopened.currentURL?.path == "/a" && !reopened.isLoading
+    }
+
+    let fresh = try XCTUnwrap(WebContent.processID(of: reopened.webView))
+
+    XCTAssertNotEqual(fresh, pid, "the reopened view joined the spinning process")
+
+    timer.fire()
+
+    await waitUntilGone(pid, in: harness, "the spinning process ends")
+
+    XCTAssertEqual(log.pids, [pid])
+    XCTAssertEqual(reopened.generation, 0)
+
+    let value = await harness.run("1 + 1") as? Int
+
+    XCTAssertEqual(value, 2, "the reopened tab died with the spinning process")
+  }
 }

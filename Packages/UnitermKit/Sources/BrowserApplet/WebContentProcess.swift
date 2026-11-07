@@ -67,12 +67,18 @@ struct WebContentProcess: Sendable {
     return true
   }
 
-  /// Ends the content process that `view` has, when the process id still names that process.
-  /// Returns whether it signalled.
+  /// Ends the content process that a closed `view` had, when the process id still names that
+  /// process and no live web view in the app uses it. A busy page is not a hung one, and a tab
+  /// that shares the process with the closed view may be busy. Returns whether it signalled.
   @MainActor
   @discardableResult
-  func kill(_ pid: pid_t, servingTheSameProcessAs view: WKWebView) -> Bool {
+  func kill(_ pid: pid_t, closedView view: WKWebView) -> Bool {
     guard identifier(of: view) == pid else { return false }
+
+    guard !LiveContentViews.contains(where: { identifier(of: $0) == pid }) else {
+      Self.log.notice("not ending process \(pid): a live tab shares it")
+      return false
+    }
 
     return kill(pid)
   }
@@ -131,8 +137,29 @@ final class ClosedViewProbe {
 
     cancelBound = nil
 
-    process.kill(pid, servingTheSameProcessAs: view)
+    process.kill(pid, closedView: view)
 
     self.view = nil
+  }
+}
+
+/// The web views that tabs hold now, across every browser pane. A closed tab's view is not in it,
+/// even while a probe keeps that view alive. Browser panes share one website data store, so a
+/// content process can serve a tab in another pane, and only a registry of the whole app can say
+/// whether a process is in use.
+@MainActor
+enum LiveContentViews {
+  private static let views = NSHashTable<WKWebView>.weakObjects()
+
+  static func add(_ view: WKWebView) {
+    views.add(view)
+  }
+
+  static func remove(_ view: WKWebView) {
+    views.remove(view)
+  }
+
+  static func contains(where match: (WKWebView) -> Bool) -> Bool {
+    views.allObjects.contains(where: match)
   }
 }
