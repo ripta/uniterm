@@ -64,14 +64,6 @@ final class BrowserDownloadTests: XCTestCase {
     try await BrowserHarness.make(services: services, handler: Self.handler(hold: hold))
   }
 
-  private func files(in harness: BrowserHarness) throws -> [String] {
-    guard let directory = harness.downloadsDirectory,
-      FileManager.default.fileExists(atPath: directory.path)
-    else { return [] }
-
-    return try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
-  }
-
   private func clickLink(_ harness: BrowserHarness) async {
     await harness.run("document.getElementById('l').click()")
   }
@@ -103,7 +95,7 @@ final class BrowserDownloadTests: XCTestCase {
 
     XCTAssertEqual(harness.posts.map(\.text), ["Downloaded held.bin."])
     XCTAssertEqual(harness.posts.map(\.level), [.info])
-    XCTAssertEqual(try files(in: harness), ["held.bin"])
+    XCTAssertEqual(harness.files(), ["held.bin"])
 
     let file = try XCTUnwrap(harness.downloadsDirectory).appending(path: "held.bin")
 
@@ -139,7 +131,7 @@ final class BrowserDownloadTests: XCTestCase {
         && harness.applet.downloads.active.first?.temporary != nil
     }
 
-    let running = try files(in: harness)
+    let running = harness.files()
 
     let temporary = try XCTUnwrap(harness.applet.downloads.active.first?.temporary)
 
@@ -156,7 +148,7 @@ final class BrowserDownloadTests: XCTestCase {
     hold.release()
     await harness.host.until("the download finishes") { !harness.posts.isEmpty }
 
-    XCTAssertEqual(try files(in: harness), ["held.bin"])
+    XCTAssertEqual(harness.files(), ["held.bin"])
     XCTAssertFalse(harness.applet.isRunningSomething)
     XCTAssertTrue(harness.applet.segments.isEmpty)
   }
@@ -210,7 +202,7 @@ final class BrowserDownloadTests: XCTestCase {
       await harness.host.until("download \(index) finishes") { harness.posts.count == index }
     }
 
-    let names = try files(in: harness)
+    let names = harness.files()
 
     XCTAssertEqual(
       Set(names), Set((1...count).map { DownloadName.numbered("report.txt", attempt: $0) }))
@@ -230,7 +222,7 @@ final class BrowserDownloadTests: XCTestCase {
     harness.applet.submit(address: harness.server.url("/evil-name").absoluteString)
     await harness.host.until("the download is announced") { !harness.posts.isEmpty }
 
-    let names = try files(in: harness)
+    let names = harness.files()
 
     XCTAssertEqual(names.count, 1)
     XCTAssertFalse(names[0].hasPrefix("."), "\(names)")
@@ -266,7 +258,7 @@ final class BrowserDownloadTests: XCTestCase {
 
     XCTAssertTrue(text.hasPrefix("Could not download held.bin. "), text)
     XCTAssertGreaterThan(text.count, "Could not download held.bin. ".count)
-    XCTAssertEqual(try files(in: harness), [])
+    XCTAssertEqual(harness.files(), [])
     XCTAssertFalse(harness.applet.isRunningSomething)
   }
 
@@ -306,14 +298,14 @@ final class BrowserDownloadTests: XCTestCase {
     XCTAssertEqual(harness.applet.tabCount, 1)
     XCTAssertFalse(harness.applet.isRunningSomething)
 
-    await harness.eventually("the partial file is gone") { (try? files(in: harness)) == [] }
+    await harness.eventually("the partial file is gone") { harness.files() == [] }
 
     hold.release()
 
     await harness.load("/other", expecting: "Other")
 
     XCTAssertEqual(harness.posts.map(\.text), [], "a cancelled download posts nothing")
-    XCTAssertEqual(try files(in: harness), [])
+    XCTAssertEqual(harness.files(), [])
   }
 
   /// Catches a pane that closes with a download running and leaves its file behind. The window
@@ -336,7 +328,7 @@ final class BrowserDownloadTests: XCTestCase {
 
     XCTAssertFalse(harness.applet.isRunningSomething)
 
-    await harness.eventually("the partial file is gone") { (try? files(in: harness)) == [] }
+    await harness.eventually("the partial file is gone") { harness.files() == [] }
 
     hold.release()
     harness.server.stop()
@@ -362,7 +354,7 @@ final class BrowserDownloadTests: XCTestCase {
     hold.release()
     await harness.host.until("the download finishes") { !harness.posts.isEmpty }
 
-    XCTAssertEqual(try files(in: harness), ["held.bin"])
+    XCTAssertEqual(harness.files(), ["held.bin"])
     XCTAssertEqual(harness.applet.title, "Other")
   }
 
@@ -375,7 +367,7 @@ final class BrowserDownloadTests: XCTestCase {
     harness.applet.submit(address: harness.server.url("/frame-attachment").absoluteString)
     await harness.host.until("the download is announced") { !harness.posts.isEmpty }
 
-    XCTAssertEqual(try files(in: harness), ["report.txt"])
+    XCTAssertEqual(harness.files(), ["report.txt"])
   }
 
   /// Catches a response the browser cannot show, with no attachment header, that fails as an
@@ -388,7 +380,7 @@ final class BrowserDownloadTests: XCTestCase {
     await harness.host.until("the download is announced") { !harness.posts.isEmpty }
 
     XCTAssertEqual(harness.posts.first?.level, .info)
-    XCTAssertEqual(try files(in: harness).count, 1)
+    XCTAssertEqual(harness.files().count, 1)
   }
 
   /// Catches an outcome that interrupts a pane the user cannot see, and one that is lost. A
@@ -517,7 +509,7 @@ final class BrowserDownloadTests: XCTestCase {
     }
 
     let directory = try XCTUnwrap(harness.downloadsDirectory)
-    let saved = try files(in: harness)
+    let saved = harness.files()
 
     XCTAssertEqual(saved.count, 3, "\(saved)")
     XCTAssertTrue(saved.contains("data.txt"), "\(saved)")
@@ -552,7 +544,7 @@ final class BrowserDownloadTests: XCTestCase {
 
     XCTAssertTrue(harness.tab.currentURL?.scheme == "blob")
     XCTAssertEqual(harness.posts.map(\.text), [])
-    XCTAssertEqual(try files(in: harness), [])
+    XCTAssertEqual(harness.files(), [])
   }
 
   /// Catches a top-level `data:` page that loads. A subframe's `data:` and `srcdoc` content must
@@ -607,7 +599,7 @@ final class BrowserDownloadTests: XCTestCase {
     await harness.run("document.getElementById('f').click()")
     await harness.load("/other", expecting: "Other")
 
-    XCTAssertEqual(try files(in: harness), [])
+    XCTAssertEqual(harness.files(), [])
     XCTAssertFalse(harness.applet.isRunningSomething)
     XCTAssertFalse(harness.applet.downloads.isRunning)
   }

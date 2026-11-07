@@ -146,6 +146,9 @@ final class BrowserHarness {
   let applet: BrowserApplet
   let downloadsDirectory: URL?
 
+  /// The window that hosts the pane's view, when the test asked for one. It keeps the window alive.
+  private(set) var window: NSWindow?
+
   var tab: BrowserTab { applet.tab }
   var posts: [(level: StatusLevel, text: String)] { host.recording.posts }
 
@@ -153,14 +156,41 @@ final class BrowserHarness {
   /// already shows.
   var records: [(level: StatusLevel, text: String)] { host.recording.records }
 
+  /// How a test hosts the pane's view.
+  enum Hosting {
+    /// No window. Most tests need none.
+    case none
+
+    /// A window holds the view, and the keyboard stays where it was.
+    case window
+
+    /// A window holds the view, and the keyboard is in the page, as when the user is typing.
+    case focusedWindow
+  }
+
   static func make(
     services: BrowserServices = .testing(), dataStore: WKWebsiteDataStore = .nonPersistent(),
+    hosting: Hosting = .none,
     handler: @escaping FixtureServer.Handler = { _ in .page(titled: "ok") }
   ) async throws -> BrowserHarness {
     let server = try await FixtureServer.start(handler: handler)
     let applet = BrowserApplet(dataStore: dataStore, services: services)
+    let harness = BrowserHarness(
+      server: server, applet: applet, downloads: services.downloadsDirectory())
 
-    return BrowserHarness(server: server, applet: applet, downloads: services.downloadsDirectory())
+    if hosting != .none {
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+        backing: .buffered, defer: false)
+
+      window.contentView = applet.content
+
+      if hosting == .focusedWindow { window.makeFirstResponder(harness.tab.webView) }
+
+      harness.window = window
+    }
+
+    return harness
   }
 
   /// `starting` is false for a test that decides when the pane starts, such as one that detaches
@@ -184,6 +214,24 @@ final class BrowserHarness {
     if let downloadsDirectory { try? FileManager.default.removeItem(at: downloadsDirectory) }
   }
 
+  /// The names in the downloads folder, sorted. An empty list when the folder does not exist yet.
+  func files() -> [String] {
+    guard let downloadsDirectory else { return [] }
+
+    return ((try? FileManager.default.contentsOfDirectory(atPath: downloadsDirectory.path)) ?? [])
+      .sorted()
+  }
+
+  /// Loads `path`, a page with a form, and submits it. Returns once the result page, titled
+  /// `Posted`, shows.
+  func postResult(from path: String = "/form") async {
+    await load(path, expecting: path == "/form" ? "Form" : "LongForm")
+    await run("document.forms[0].submit()")
+    await host.until("the post result shows") { [applet] in
+      applet.title == "Posted" && !applet.tab.isLoading
+    }
+  }
+
   /// The pages the server has served for `path`, by method.
   func count(_ method: String, _ path: String) -> Int {
     server.requests.filter { $0.method == method && $0.path == path }.count
@@ -193,6 +241,14 @@ final class BrowserHarness {
   /// removes after a cancel. It yields between checks and never sleeps. A condition that never
   /// holds fails the test after `seconds`.
   func eventually(
+    _ message: String, seconds: Double = 15, file: StaticString = #filePath, line: UInt = #line,
+    _ condition: @MainActor () -> Bool
+  ) async {
+    await Self.eventually(message, seconds: seconds, file: file, line: line, condition)
+  }
+
+  /// The same wait for a test that has no harness, such as one that reads a spy's decisions.
+  static func eventually(
     _ message: String, seconds: Double = 15, file: StaticString = #filePath, line: UInt = #line,
     _ condition: @MainActor () -> Bool
   ) async {

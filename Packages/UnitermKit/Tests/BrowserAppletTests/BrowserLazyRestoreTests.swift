@@ -320,4 +320,33 @@ final class BrowserLazyRestoreTests: XCTestCase {
     XCTAssertFalse(recorded.contains("\u{202E}"))
     XCTAssertLessThan(recorded.utf8.count, 1000)
   }
+
+  /// Catches a restore origin that outlives the restore load. The user's real click on a link in a
+  /// restored tab is a user action, so its refusal takes a turn on the bar. Before the fix it
+  /// arrived as the lesser unseen signal, as the restore's own notices do.
+  func testARefusalAfterARealClickInARestoredTabReachesTheBar() async throws {
+    let server = try await FixtureServer.start { request in
+      Pages.page("Link", "<a id=l href=\"ftp://example.invalid/x\">x</a>")
+    }
+    defer { server.stop() }
+
+    let applet = try restore([.init(url: server.url("/link").absoluteString, title: "Link")])
+    let harness = BrowserHarness(server: server, applet: applet, starting: false)
+    defer { harness.stop() }
+
+    applet.start(origin: .restore)
+
+    await harness.host.until("the restored page loads") {
+      applet.title == "Link" && !applet.tab.isLoading
+    }
+
+    harness.tab.noteMouseUp()
+    await harness.run("document.getElementById('l').click()")
+    await harness.host.until("the refusal is delivered") {
+      harness.posts.count + harness.host.recording.attentions.count == 1
+    }
+
+    XCTAssertEqual(harness.posts.count, 1, "the refusal never took a turn on the bar")
+    XCTAssertTrue(harness.host.recording.attentions.isEmpty)
+  }
 }

@@ -46,14 +46,6 @@ final class BrowserGateTests: XCTestCase {
     }
   }
 
-  private func postResult(in harness: BrowserHarness, from path: String = "/form") async {
-    await harness.load(path, expecting: path == "/form" ? "Form" : "LongForm")
-    await harness.run("document.forms[0].submit()")
-    await harness.host.until("the post result shows") {
-      harness.applet.title == "Posted" && !harness.tab.isLoading
-    }
-  }
-
   /// Catches a resubmit that gets past the applet's own buttons: the web view's own Reload and a
   /// swipe reach WebKit directly. The test calls the web view and not the tab, and the host would
   /// answer yes, so only the gate can stop the post. Each is refused with one warning and no
@@ -64,7 +56,7 @@ final class BrowserGateTests: XCTestCase {
 
     harness.host.recording.answer = true
 
-    await postResult(in: harness)
+    await harness.postResult()
     await harness.load("/other", expecting: "Other")
 
     harness.tab.webView.goBack()
@@ -96,7 +88,7 @@ final class BrowserGateTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.server())
     defer { harness.stop() }
 
-    await postResult(in: harness, from: "/long-form")
+    await harness.postResult(from: "/long-form")
 
     harness.host.recording.answer = false
     harness.applet.reload()
@@ -115,7 +107,7 @@ final class BrowserGateTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.server())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
     await harness.run("location.hash = 'x'")
     await harness.host.until("the fragment shows") {
       harness.tab.webView.url?.fragment == "x"

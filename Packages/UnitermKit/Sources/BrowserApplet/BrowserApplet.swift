@@ -61,8 +61,10 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   /// Whether the user heard that the limit stopped a page, so a loop of attempts says it once.
   private var warnedAboutPopups = false
 
-  /// Whether a close question is open. A second close waits for no answer and is declined.
-  private var closingTab = false
+  /// Whether a question is up for the user. The window shows a second question after the first, so
+  /// a queued one could outlive the tab it asked about. A question that finds another up is refused
+  /// instead, the way its own kind already is.
+  private var isQuestionUp = false
   private var started = false
   private var closed = false
   private var lastShown: Shown?
@@ -194,9 +196,8 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   /// by its file name.
   public var runningLabels: [String] {
     let labels =
-      tabs.filter(\.hasUnsentInput).map {
-        RunningLabel.clean(Self.title(of: $0), fallback: Self.untitled)
-      } + downloads.runningNames.map { RunningLabel.clean($0, fallback: DownloadName.fallback) }
+      tabs.filter(\.hasUnsentInput).map(Self.title(of:))
+      + downloads.runningNames.map { RunningLabel.clean($0, fallback: DownloadName.fallback) }
 
     guard labels.count > Self.labelLimit else { return labels }
 
@@ -257,7 +258,10 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   /// Begins a tab's first load from the address it stores, after the rule for a restored tab. A
   /// refused address leaves the tab blank with an explanation, and keeps the stored address.
   private func loadStored(_ tab: BrowserTab) {
-    guard let stored = tab.record.url else { return }
+    guard let stored = tab.record.url else {
+      tab.loadStored(nil)
+      return
+    }
 
     guard let url = URL(string: stored) else {
       tab.refuseStoredAddress(stored, .notAnAddress)
@@ -455,6 +459,12 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
       return
     }
 
+    guard !isQuestionUp || AppHandoff.opensWithoutAsking(url) else {
+      refuseHandOff(
+        "Did not open \(address). Another question is already waiting.", from: source, typed: false)
+      return
+    }
+
     if AppHandoff.opensWithoutAsking(url) {
       finishHandOff(url, from: source, typed: typed)
       return
@@ -466,6 +476,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     }
 
     source.isAskingToOpenApp = true
+    isQuestionUp = true
 
     let generation = source.generation
     let question = AppHandoff.question(appName: appName, url: url)
@@ -475,6 +486,8 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
     Task { @MainActor [weak source] in
       let allowed = await host.applet(self, confirm: request)
+
+      isQuestionUp = false
 
       // An answer about a page that stopped meanwhile belongs to a page that is gone. The stop
       // already took the tab's wait away.
@@ -625,15 +638,15 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   func closeTab(at index: Int) async -> TabCloseResult {
     guard tabs.count > 1 else { return .nothingToClose }
 
-    guard !closed, tabs.indices.contains(index), !closingTab else { return .declined }
+    guard !closed, tabs.indices.contains(index), !isQuestionUp else { return .declined }
 
     let target = tabs[index]
 
     if let detail = closeDetail(for: target) {
       guard let host else { return .declined }
 
-      closingTab = true
-      defer { closingTab = false }
+      isQuestionUp = true
+      defer { isQuestionUp = false }
 
       let request = AppletConfirmation(
         title: "Close this tab?", detail: detail, confirmTitle: "Close Tab",
@@ -656,7 +669,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     var sentences: [String] = []
 
     if tab.hasUnsentInput {
-      let label = RunningLabel.clean(Self.title(of: tab), fallback: Self.untitled)
+      let label = Self.title(of: tab)
 
       sentences.append(
         "\u{201C}\(label)\u{201D} has text that was not sent. Closing the tab loses it.")
@@ -796,6 +809,14 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   func tab(_ tab: BrowserTab, confirm request: AppletConfirmation) async -> Bool {
     guard !closed, tab === self.tab, let host else { return false }
 
+    guard !isQuestionUp else {
+      post(.warning, "Did not send the form again. Another question is already waiting.", from: tab)
+      return false
+    }
+
+    isQuestionUp = true
+    defer { isQuestionUp = false }
+
     return await host.applet(self, confirm: request)
   }
 
@@ -823,14 +844,17 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   /// looking at asks, and the question names it. Any other tab keeps its view and the user decides
   /// when they come back and reload.
   func tab(confirmReplacingUnresponsive tab: BrowserTab) async -> Bool {
-    guard tabIsViewed(tab), let host else { return false }
+    guard tabIsViewed(tab), !isQuestionUp, let host else { return false }
 
-    let label = RunningLabel.clean(Self.title(of: tab), fallback: Self.untitled)
+    let label = Self.title(of: tab)
     let request = AppletConfirmation(
       title: "Replace this page?",
       detail: "\u{201C}\(label)\u{201D} is not answering and holds text that was not sent. "
         + "Replacing it loses that text. The page may only be busy.",
       confirmTitle: "Replace Page", cancelTitle: "Keep Waiting")
+
+    isQuestionUp = true
+    defer { isQuestionUp = false }
 
     return await host.applet(self, confirm: request)
   }
@@ -1048,7 +1072,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     let named =
       source === tab
       ? text
-      : "In the tab \u{201C}\(RunningLabel.clean(Self.title(of: source), fallback: Self.untitled))\u{201D}: \(text)"
+      : "In the tab \u{201C}\(Self.title(of: source))\u{201D}: \(text)"
 
     alerts.deliver(
       AppletNotice(level, named, delivery: delivery), origin: source.loadOrigin, from: self,
@@ -1069,9 +1093,14 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     tab.record.url.flatMap { URL(string: $0) }
   }
 
+  /// The tab's name for the user. A page chose its title, so the name is cleaned here, once, and
+  /// the tab bar, the pane title, the notices, and the questions all read the clean one.
   private static func title(of tab: BrowserTab) -> String {
-    tab.pageTitle ?? tab.record.title ?? tab.currentURL?.host(percentEncoded: false)
+    let raw =
+      tab.pageTitle ?? tab.record.title ?? tab.currentURL?.host(percentEncoded: false)
       ?? storedURL(of: tab)?.host(percentEncoded: false) ?? untitled
+
+    return RunningLabel.clean(raw, fallback: untitled)
   }
 
   private static func published(

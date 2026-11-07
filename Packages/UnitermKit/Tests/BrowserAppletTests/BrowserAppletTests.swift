@@ -152,22 +152,13 @@ final class BrowserAppletTests: XCTestCase {
     }
   }
 
-  /// Posts the form and waits for the result page.
-  private func postResult(in harness: BrowserHarness) async {
-    await harness.load("/form", expecting: "Form")
-    await harness.run("document.forms[0].submit()")
-    await harness.host.until("the post result shows") {
-      harness.applet.title == "Posted" && !harness.tab.isLoading
-    }
-  }
-
   /// Catches a reload that sends a form post again without asking, and a no that sends it anyway.
   /// Reload on the result of a post asks once, the page stays on no, and the server sees one post.
   func testReloadOfAFormPostResultAsksAndNoNeverResendsTheForm() async throws {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     XCTAssertEqual(harness.count("POST", "/result"), 1)
 
@@ -191,7 +182,7 @@ final class BrowserAppletTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.host.recording.answer = true
     harness.applet.reload()
@@ -240,7 +231,7 @@ final class BrowserAppletTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
     await harness.load("/after", expecting: "Other")
 
     harness.host.recording.answer = false
@@ -262,7 +253,7 @@ final class BrowserAppletTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.applet.goBack()
     await harness.host.until("the form shows again") {
@@ -288,7 +279,7 @@ final class BrowserAppletTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.host.recording.holdsQuestions = true
     harness.applet.reload()
@@ -314,7 +305,7 @@ final class BrowserAppletTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.host.recording.holdsQuestions = true
     harness.applet.reload()
@@ -337,7 +328,7 @@ final class BrowserAppletTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.host.recording.holdsQuestions = true
     harness.applet.reload()
@@ -363,7 +354,7 @@ final class BrowserAppletTests: XCTestCase {
     let harness = try await BrowserHarness.make(handler: Self.formServer())
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.host.recording.answer = false
     harness.applet.reload()
@@ -396,7 +387,7 @@ final class BrowserAppletTests: XCTestCase {
 
     harness.host.recording.answer = true
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     await harness.run("location.reload()")
     await harness.host.until("the reload settles") {
@@ -416,7 +407,7 @@ final class BrowserAppletTests: XCTestCase {
 
     harness.host.recording.answer = true
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.applet.goBack()
     await harness.host.until("the form shows again") {
@@ -441,7 +432,7 @@ final class BrowserAppletTests: XCTestCase {
 
     harness.host.recording.answer = true
 
-    await postResult(in: harness)
+    await harness.postResult()
     await harness.load("/after", expecting: "Other")
 
     let background = harness.applet.tab

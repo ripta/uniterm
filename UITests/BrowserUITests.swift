@@ -93,7 +93,8 @@ final class BrowserUITests: UnitermUITestCase {
 
   /// Catches a restore that does not pick the browser by its description type, which would show a
   /// placeholder. A planted layout holds a browser at `about:blank`, and the pane comes back as a
-  /// browser with an empty address bar.
+  /// browser with an empty address bar. Only this layer proves that the host's restorer maps the
+  /// type to the browser applet. The package tests build the applet directly and never reach it.
   func testALayoutWithABrowserRestoresABrowserPane() throws {
     try plantBrowser(payload: #"{"tabs":[{"url":"about:blank","title":"Notes"}],"selected":0}"#)
 
@@ -183,31 +184,6 @@ final class BrowserUITests: UnitermUITestCase {
       "Cmd-L did not focus the address bar")
   }
 
-  /// Catches an address that the browser refuses with no mark on the bar, or a mark that does not
-  /// reach assistive technology or stays after an edit. `file:` never loads, so the page stays,
-  /// the field's label says it is invalid, and typing one more character clears the label.
-  func testARefusedAddressMarksTheAddressBarUntilTheUserEdits() {
-    let app = launchApp()
-    let window = openBrowser(in: app)
-    let address = addressField(in: window)
-
-    app.typeKey("l", modifierFlags: .command)
-    app.typeText("file:///etc/hosts")
-    app.typeKey(.return, modifierFlags: [])
-
-    XCTAssertTrue(
-      waitFor(address, timeout: 10, { _ in address.label == "Address, invalid" }),
-      "a refused address left the bar unmarked")
-    XCTAssertEqual(address.value as? String ?? "", "file:///etc/hosts", "the typed text was lost")
-    XCTAssertTrue(browser(in: window).exists)
-
-    app.typeText("x")
-
-    XCTAssertTrue(
-      waitFor(address, timeout: 10, { _ in address.label == "Address" }),
-      "an edit left the mark on")
-  }
-
   /// Catches a Settings window with no search engine row, or a stored engine that left the list
   /// showing as the default with no word about it. The seeded value is not an engine. The row
   /// selects DuckDuckGo and says the stored one was replaced, and choosing an engine clears that.
@@ -265,26 +241,11 @@ final class BrowserUITests: UnitermUITestCase {
     XCTAssertFalse(waitFor(tab(0, in: window), timeout: 1) { $0 == "selected" })
   }
 
-  /// Catches a refused restored address that leaves a blank pane with no word about it. A planted
-  /// `file:` tab shows an explanation that names the address, and no page covers it.
-  func testARestoredFileAddressExplainsItselfInThePane() throws {
-    try plantBrowser(
-      payload: #"{"tabs":[{"url":"file:///etc/hosts","title":"Hosts"}],"selected":0}"#)
-
-    let app = launchApp()
-    let window = mainWindow(in: app)
-
-    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 15), "no browser pane restored")
-
-    let detail = window.descendants(matching: .any)["browser-error-detail"]
-
-    XCTAssertTrue(detail.waitForExistence(timeout: 10), "the pane has no explanation")
-    XCTAssertTrue((detail.value as? String ?? "").contains("file:///etc/hosts"))
-  }
-
   /// Catches a Settings window with no Clear Website Data action, a click that does nothing or
   /// reports nothing, and a note that leaves out what open tabs keep. The in-memory store of the UI
-  /// tests makes the click safe. The status line says it cleared.
+  /// tests makes the click safe. The status line says it cleared. Only this layer proves that the
+  /// Settings window is wired to the browser's own store and to the window's status line. The
+  /// package tests prove what clearing removes.
   func testSettingsClearsWebsiteDataAndSaysOpenTabsKeepTheirSession() {
     let app = launchApp()
     XCTAssertTrue(app.windows["main-window"].waitForExistence(timeout: 10))

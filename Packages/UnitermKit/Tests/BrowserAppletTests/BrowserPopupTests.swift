@@ -58,7 +58,6 @@ final class BrowserPopupTests: XCTestCase {
     }
   }
 
-  private var window: NSWindow?
   private var opener: FakeOpener!
 
   private func make(dataStore: WKWebsiteDataStore = .nonPersistent()) async throws
@@ -68,16 +67,9 @@ final class BrowserPopupTests: XCTestCase {
 
     self.opener = opener
 
-    let harness = try await BrowserHarness.make(
-      services: .testing(opener: opener), dataStore: dataStore, handler: Self.handler)
-    let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-      backing: .buffered, defer: false)
-
-    window.contentView = harness.applet.content
-    self.window = window
-
-    return harness
+    return try await BrowserHarness.make(
+      services: .testing(opener: opener), dataStore: dataStore, hosting: .window,
+      handler: Self.handler)
   }
 
   private func openPopup(_ harness: BrowserHarness, path: String = "/popup") async {
@@ -346,7 +338,7 @@ final class BrowserPopupTests: XCTestCase {
 
     let popup = harness.tab
 
-    window?.makeFirstResponder(popup.webView)
+    harness.window?.makeFirstResponder(popup.webView)
     await harness.run("var e = document.getElementById('a'); e.focus(); e.select()")
     (popup.webView as? any NSTextInputClient)?.insertText(
       "typed", replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -533,7 +525,8 @@ final class BrowserPopupTests: XCTestCase {
     let event = try XCTUnwrap(
       NSEvent.mouseEvent(
         with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
-        windowNumber: window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1,
+        windowNumber: harness.window?.windowNumber ?? 0, context: nil, eventNumber: 0,
+        clickCount: 1,
         pressure: 1))
 
     harness.tab.webView.willOpenMenu(menu, with: event)

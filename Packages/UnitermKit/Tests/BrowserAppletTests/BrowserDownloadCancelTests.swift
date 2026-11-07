@@ -62,12 +62,6 @@ final class BrowserDownloadCancelTests: XCTestCase {
     return harness.server.requests.last { $0.path == "/echo" }?.headers["cookie"]
   }
 
-  private func files(in harness: BrowserHarness) -> [String] {
-    guard let directory = harness.downloadsDirectory else { return [] }
-
-    return ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).sorted()
-  }
-
   /// Pins the symptom of a cancel that restarts the network process. The user cancels a download
   /// right after its destination is set, while its first bytes are still on the way. A session
   /// cookie that another tab sends afterwards is still there once the rest of the body has arrived
@@ -95,7 +89,7 @@ final class BrowserDownloadCancelTests: XCTestCase {
     await harness.eventually("the cancel has gone to WebKit") {
       harness.applet.downloads.deferredCancelCount == 0
     }
-    await harness.eventually("the partial file is gone") { files(in: harness).isEmpty }
+    await harness.eventually("the partial file is gone") { harness.files().isEmpty }
 
     for _ in 0..<1500 { await Task.yield() }
 
@@ -127,7 +121,7 @@ final class BrowserDownloadCancelTests: XCTestCase {
     await harness.eventually("the cancel goes to WebKit with the first byte") {
       harness.applet.downloads.deferredCancelCount == 0
     }
-    await harness.eventually("the partial file is gone") { files(in: harness).isEmpty }
+    await harness.eventually("the partial file is gone") { harness.files().isEmpty }
 
     XCTAssertEqual(harness.posts.map(\.text), [])
   }
@@ -152,7 +146,7 @@ final class BrowserDownloadCancelTests: XCTestCase {
     await harness.eventually("the cancel goes through") {
       harness.applet.downloads.deferredCancelCount == 0
     }
-    await harness.eventually("no file is left") { files(in: harness).isEmpty }
+    await harness.eventually("no file is left") { harness.files().isEmpty }
 
     for _ in 0..<1500 { await Task.yield() }
 
@@ -189,7 +183,7 @@ final class BrowserDownloadCancelTests: XCTestCase {
     XCTAssertEqual(
       harness.applet.downloads.cancellingCount, 0, "the finish left the cancelled download held")
 
-    await harness.eventually("the file is gone") { files(in: harness).isEmpty }
+    await harness.eventually("the file is gone") { harness.files().isEmpty }
 
     XCTAssertEqual(harness.posts.map(\.text), [])
 
@@ -214,7 +208,7 @@ final class BrowserDownloadCancelTests: XCTestCase {
     XCTAssertEqual(harness.applet.downloads.cancellingCount, 1)
 
     await harness.eventually("WebKit lets go") { harness.applet.downloads.cancellingCount == 0 }
-    await harness.eventually("the partial file is gone") { files(in: harness).isEmpty }
+    await harness.eventually("the partial file is gone") { harness.files().isEmpty }
 
     hold.release()
   }
@@ -254,7 +248,7 @@ final class BrowserDownloadCancelTests: XCTestCase {
     await harness.eventually("the grace ends the wait") {
       harness.applet.downloads.deferredCancelCount == 0
     }
-    await harness.eventually("the partial file is gone") { files(in: harness).isEmpty }
+    await harness.eventually("the partial file is gone") { harness.files().isEmpty }
 
     XCTAssertEqual(harness.posts.map(\.text), [])
 
@@ -276,7 +270,7 @@ final class BrowserDownloadCancelTests: XCTestCase {
     await harness.eventually("the failed download is forgotten") {
       harness.applet.downloads.deferredCancelCount == 0
     }
-    await harness.eventually("the partial file is gone") { files(in: harness).isEmpty }
+    await harness.eventually("the partial file is gone") { harness.files().isEmpty }
 
     XCTAssertEqual(harness.posts.map(\.text), [])
     XCTAssertFalse(harness.applet.isRunningSomething)

@@ -51,7 +51,7 @@ A page may also open its own `blob:` URLs, and a download may come from any sche
 - A navigation WebKit marks as a download proceeds as a download, per "Downloads", whatever its scheme except
   `javascript:`. That keeps `blob:` and `data:` exports working.
 - `file:`, `javascript:`, and a top-level `data:` page are refused. A typed address leaves the page visible, posts one
-  warning that says why, and marks the address input invalid. Amended 2026-11-06; see Decision Log.
+  warning that says why, and marks the address input invalid.
 - A link or typed address with another scheme that macOS maps to an app asks first, naming the app and the URL, and
   opens that app only on the user's yes. `mailto:` opens the mail app without asking. A scheme no app handles loads
   nothing, posts one warning, and marks a typed address invalid.
@@ -59,8 +59,8 @@ A page may also open its own `blob:` URLs, and a download may come from any sche
   view saw a real mouse-up within one second before the navigation was decided, and each mouse-up is used once. WebKit
   reports a script's click as a followed link, so the navigation type alone proves nothing. A script's click, a
   script's navigation, a redirect, an iframe, and a key press that activates a focused link are refused with a warning
-  and never open an app or ask. The same guards cover `mailto:`. A tab shows at most one question, and only the
-  selected tab asks or opens. A second request while one waits is refused with a warning. The question goes through
+  and never open an app or ask. The same guards cover `mailto:`. The pane shows at most one question at a time, of any
+  kind, and only the selected tab asks or opens. A request that finds another question up is refused with a warning. The question goes through
   the host's confirmation, so it never blocks another pane.
 - A restored tab whose URL is refused shows `about:blank` with a durable explanation in the pane that names the refused
   URL, and the history records one warning. It keeps the stored URL in its description until the user navigates.
@@ -97,7 +97,7 @@ a Clear Website Data action.
   hosts, per "Local addresses and plain HTTP". It reloads no tab. Settings says that open tabs keep their current
   session until they are reloaded or closed. It asks nothing, disables its button while a clear runs, and reports the
   outcome in Settings. A clear that could not empty the list of HTTPS-only hosts says so and never reads as a
-  success. Amended 2026-11-06; see Decision Log.
+  success.
 - The store's UUID is a constant. Changing it would orphan every login and all site data, since WebKit cannot move data
   between stores. See Risks.
 - Sharing is hidden state flow between panes: logging in in one pane logs in the others. CLAUDE.md asks for that to be
@@ -122,8 +122,7 @@ a page can run scripts. Decide whether that counts as running a program under AD
 and loads it only on request.
 
 Decision: the open page is where a tab was, not running state, so restore reopens it. ADR-03 holds unchanged: what
-runs in a page is never restored. Restore loads lazily and never resubmits a form. Amended 2026-11-06; see Decision
-Log.
+runs in a page is never restored. Restore loads lazily and never resubmits a form.
 
 - In a terminal, the working directory is where the pane was, and a running program is state. Restore keeps the first
   and never restarts the second. In a browser, the tab's URL is where the tab was. The page's scripts, in-memory state,
@@ -135,7 +134,7 @@ Log.
   when "Schemes" lets a restored tab load it, so a committed `blob:` page is not stored. A URL over 32 KiB is not
   stored, and a title is cut to 512 characters. A tab keeps the value it last stored when a commit is not storable. It
   never stores back/forward history or form data. A restored URL that "Schemes" refuses stays in the description
-  unchanged until the user navigates, since only a commit writes a URL. Amended 2026-11-06; see Decision Log.
+  unchanged until the user navigates, since only a commit writes a URL.
 - Restore loads only the selected tab of each pane, and only while the pane is attached. Other tabs load when first
   selected. A tab that has not loaded shows its stored URL and title.
 - The undo-only part carries each closed tab's `interactionState` and a record for each open tab, so Cmd-Shift-T
@@ -251,7 +250,7 @@ status bar.
   reason, since no user work is lost. One the user cancels posts nothing. The progress segment shows only for the
   focused pane, and a download can end while its pane is unfocused or detached, so the message is how the user learns
   the outcome. A detached pane withholds the message, records the outcome in the history when it happens, and presents
-  it on reattach. Amended 2026-11-06; see Decision Log.
+  it on reattach.
 - Each finished file gets quarantine properties naming its origin and data URLs. uniterm does not set
   `LSFileQuarantineEnabled`, which would apply to the whole process and could quarantine files the terminal's shells
   create.
@@ -372,7 +371,7 @@ Decision: the browser needs no change to the applet contract. The host gains wha
 entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer. The
 factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
 hosts, and the opener for other apps. The host also passes each pane the browser's website data store, with no
-default. Amended 2026-11-06; see Decision Log. Restore is settled in "What restore loads".
+default. Restore is settled in "What restore loads".
 
 - The description payload holds each tab's last committed URL and title, and the selected tab, with its own version per
   ADR-06. The undo-only part holds a history record for each open tab, and the closed-tab list with each closed tab's
@@ -424,10 +423,9 @@ Decision: a failed tab shows a stopped-page message, and recovery always rebuild
 - When a tab's content process terminates while the tab is selected in an attached pane, the tab shows a message that
   the page stopped, with a Reload action. Otherwise the tab returns to the not-yet-loaded state of "What restore
   loads", and loads when next selected or attached. A tab that never held a page stays blank and shows no message.
-  Amended 2026-11-06; see Decision Log.
 - Reload builds a new web view from the tab's URL and its last `interactionState`, the same way reopen builds a tab, so
-  the tab keeps its history. It never asks the old process. A pop-up's rebuilt view has no opener, which cannot be kept.
-  Amended 2026-11-06; see Decision Log.
+  the tab keeps its history. A tab that holds a history record and no URL, such as a pop-up that opened on a `blob:`
+  preview, loads from the record alone. It never asks the old process. A pop-up's rebuilt view has no opener, which cannot be kept.
 - A user reload or navigation that gets no answer from the content process within a fixed bound replaces the web view
   the same way. There is no background timer. The bound is 10 seconds on a clock that stops while the machine sleeps. It
   arms only on that user action, and any callback from the content process cancels it, so a slow server never fires
@@ -435,7 +433,7 @@ Decision: a failed tab shows a stopped-page message, and recovery always rebuild
   input may only be busy, so the user is asked first and the page is replaced only on yes. A bound that runs out on a
   tab the user is not looking at, or in a detached pane, drops the view and loads nothing until the tab is selected or
   attached. In the tab the user is looking at, a typed address then loads in the new web view, and a reload, back, or
-  forward loads the page again. Amended 2026-11-06; see Decision Log.
+  forward loads the page again.
 - No recovery resends a POST.
 - A stop clears the tab's unsent mark and answers its held dialogs and questions. A download belongs to the network
   process, so it keeps running and still asks on close. A page that came from a form comes back blank, since showing it
@@ -484,7 +482,9 @@ None.
   many a page starts, and each file costs disk space and a status message. Accepted: each file is quarantined, so
   Gatekeeper checks it before it runs. The status bar shows one download by name and percent, or a count, and only for
   the focused pane. A crash can leave a hidden temporary file, which the first download of a later launch removes after
-  seven days. A limit on how many downloads a page may start is a design choice not yet made.
+  seven days. Accepted gap: nothing limits how many downloads a page may start. Likelihood: medium, impact: low. Revisit
+  hook: add a per-page limit when a user reports a page that floods Downloads, or when M8 lets a controller start
+  downloads, whichever comes first. A work-queue best guess; see Decision Log.
 - **The control permissions depend on an amendment to accepted UTERM-004** — likelihood: medium, impact: medium. Until
   UTERM-004 names browser navigation and browser read, its permission set and this proposal disagree. Mitigation: M8
   starts only after UTERM-004 M6, and its first check requires the amendment.
@@ -639,7 +639,8 @@ None.
   history step onto a post result from its own cache, so a yes there shows the page and sends no post. No test claims the
   server's post count after a yes on a history step. A yes on Reload is proved to send one post.
 - A tab keeps its own load origin. A notice from a tab that is not selected names the tab, and is delivered by that tab's
-  origin, so a background tab restored at launch stays as quiet as a restore is. A background tab never asks. The gate
+  origin, so a background tab restored at launch stays as quiet as a restore is. The restore origin ends at the user's first
+  click on a link in the tab, since what follows is the user's own. A background tab never asks. The gate
   refuses its repeats, and the applet answers no to a question from any tab but the selected one.
 - Mouse buttons 4 and 5 are handled by a `WKWebView` subclass, which sends them through the applet's Back and Forward.
   A test calls the handler with real events built from `CGEvent`. Trackpad swipes use `allowsBackForwardNavigationGestures`
@@ -654,7 +655,8 @@ None.
   key. It lists at most three commands for each applet and counts the rest, so a remap of Cmd-1 stays readable. The
   warning code is shared by every applet, so the change is not browser work, and no decision text changed.
 - Left for later milestones. A running download or unsent input does not yet make a tab ask before it closes, which is M6.
-  M8's controller commands need no new path. They never set the intent, so they never ask.
+  M8 needs an intent-free path for a controller's reload, back, and forward. The tab's `reload`, `goBack`, and
+  `goForward` set the intent unconditionally, so a controller that called them would ask. See M8.
 
 ### M4: Address bar input
 
@@ -673,7 +675,8 @@ None.
   naming the app. A
   typed `file:`, `javascript:`, or `data:` address loads nothing, leaves the page visible, posts one warning that says
   why, and marks the address input invalid. So does a scheme no app handles. Amended 2026-11-06; see Decision Log.
-- A tab shows at most one pending app-handoff question, and the question never blocks other panes
+- The pane shows at most one question at a time, an app-handoff question included, and the question never blocks other
+  panes
 - A stored engine that is no longer on the list shows in Settings as replaced by the default
 
 **As built:**
@@ -741,7 +744,7 @@ None.
 - Every browser pane shows its active profile, the default profile, and the user confirms its placement in a hands-on
   review
 - Clear Website Data removes the browser's stored data and the browser's list of HTTPS-only hosts, and reloads no tab,
-  and Settings says open tabs keep their session until reloaded or closed. Amended 2026-11-06; see Decision Log.
+  and Settings says open tabs keep their session until reloaded or closed.
 - Layout restore loads only the selected tab of each attached pane. An unselected tab shows its stored URL and title,
   and loads when first selected. A detached pane loads nothing until it is attached. The layout file holds no history
   and no form data
@@ -839,10 +842,9 @@ None.
   Download shows the focused pane's newest finished file in Finder. It is unavailable with no finished download, and a
   moved or deleted file gets a status message
 - A finished download posts an info message naming it, and a failed one posts a warning. A cancelled one posts nothing.
-  Amended 2026-11-06; see Decision Log.
 - A `blob:` download from a page saves like any other, with or without a `download` attribute, and a `data:` download
   saves with one. A page's own `blob:` preview opens in its tab. A page's `file:` link saves nothing, even marked as a
-  download. Amended 2026-11-06; see Decision Log.
+  download.
 - `srcdoc` and `data:` subframes load, while a top-level `data:` page is refused
 - A script or iframe navigation to an app's scheme asks or is refused, and never launches the app silently
 - Closing a tab or a pane during a download asks first, names the file, and cancels it. Navigating the tab away does
@@ -1012,8 +1014,10 @@ None.
   warning with no turn on the bar. Any other tab goes back to not yet loaded, holds no web view, and loads when it is
   selected or when its pane is attached. A selected tab that was stopped stays stopped when the user switches away and
   back, and never loads on its own. A blank tab that never held a page stays blank with no message. Reload on a stopped
-  tab loads the stored address with the kept history, the way a reopened tab loads, and falls back to the last typed
-  address for a tab that stopped before any page committed. Nothing reloads by itself, so a page that stops again shows
+  tab loads the stored address with the kept history, the way a reopened tab loads. A tab with a history record and no
+  stored address, such as a pop-up that opened on a `blob:` preview, loads from the record alone, and a tab that stopped
+  before any page committed falls back to the last typed address. The stop stays on screen until the tab knows it will
+  load, so a refused stored address keeps its message. Nothing reloads by itself, so a page that stops again shows
   the message again and a page that crashes on load cannot loop. A test stops a tab twice in a row, the second time
   before its page commits, and the history comes back.
 - Measured. WebKit's `_killWebContentProcess` is present on this macOS and the navigation delegate never hears of it. The
@@ -1053,7 +1057,8 @@ None.
   that lost the selection, or in a detached pane, drops the hung view and loads nothing. The tab loads when it is
   selected or the pane is attached. Each test failed with its rule removed.
 - After a hang in the tab the user is looking at, a reload, back, or forward loads the page again from the address and
-  history, and a typed address loads in the new view after the history is restored. The history of the hung page is kept
+  history, and a typed address loads in the new view after the history is restored. A typed address on a stopped or not-yet-loaded
+  tab applies the kept history first in the same way. The history of the hung page is kept
   for a typed address, which starts the hung page's own load before the typed one replaces it. A page that hangs on load
   could in principle hang the new view too. Recovery never repeats on its own, so the user's next action arms the bound
   again.
@@ -1078,6 +1083,11 @@ None.
   failed first. Run in a loop of 60, the flaky test failed once on the unfixed code and not at all on the fixed code.
   What stays uncertain is whether the one failure on the unfixed code is the whole of the earlier flake, since it
   failed once in the full run and not in its class alone.
+- Structure after the row review. `BrowserTab` held about 45 properties, and its flag ladder produced two of the review's
+  bugs. The hang bound moved to `HangRecovery`, the facts about form posts and the held question to `ResendGate`, and
+  `hasBegunLoading`, `isStopped`, `errorPage`, and the held history record became one `LoadState`, so a stopped tab that
+  also began loading cannot be written. `isMaterialized` is now the web view's existence. No behaviour changed, and the
+  package tests passed before and after the move.
 - Not covered. A real kill of a tab that never loaded was not tried, since a view with no page may have no process, so a
   direct call to the delegate method proves the handler. A memory kill by the system and a content process that a user
   kills from Activity Monitor take the same path as the signal, and no test reaches them. The message's look and
@@ -1102,6 +1112,12 @@ Starts after UTERM-004 M6.
   refused. Navigate, reload, back, and forward on the selected tab of a key-focused pane, or on a tab with unsent input,
   return a structured error
 - Controller reload, back, and forward never resubmit a form
+- Controller reload, back, and forward use a path that sets no resend intent, so they never ask and never resend. The
+  tab's own `reload`, `goBack`, and `goForward` set the intent unconditionally, and the row built no other path
+- A background tab a controller opens loads at once. `loadIfNeverLoaded` loads only the selected tab, so the row built
+  nothing that loads a controller's background tab
+- A download in a controller tab asks the user first. The pane's `downloads.adopt` has no hook that asks, so the row
+  built none. Amended 2026-11-06; see Decision Log.
 - A download, or a link to another app, `mailto:` included, in a controller tab asks the user first
 - A browser pane created by a layout request starts at `about:blank`
 - Exec is refused before anything starts
@@ -1332,6 +1348,21 @@ Starts after UTERM-004 M6.
   stopped while unselected or in a detached pane "loads when next selected". A selected tab in a detached pane has no
   selection event, and the attach loads it, as "What restore loads" does for a restored pane. The text now says selected or
   attached. If wrong, a detached pane's selected tab would wait for the user to select it, which no event offers.
+- 2026-11-06: Row review fixes (work-queue best guess). M3's As built said M8's controller commands never set the resend
+  intent, so they never ask. That is false, since the tab's reload, back, and forward set it unconditionally. M8 now
+  checks for an intent-free path, and names two things the row did not build: loading a controller's background tab at
+  once, and asking before a download in a controller tab. "Any page can write files" ended on a design choice not yet
+  made, while "Design Decisions (Open)" said none. The Risk now states an accepted gap with a revisit hook. The
+  Amended markers were collapsed to one per decision and milestone, since a later revision replaces the marker. The
+  texts on "Schemes", "Downloads", and the milestones that changed keep their one marker. "Schemes" said a tab shows at
+  most one question. The pane now shows one at a time, of any kind, since the window queued a second sheet that could
+  outlive its tab. The text said nothing about Reload on a tab with a history record and no address. It now loads from
+  the record. A page's title is cleaned once, at the applet, for the tab bar, the pane title, notices, and questions.
+  The restore origin of a notice ends at the user's first click in the tab. Terminal titles were raw before this row and
+  are left alone. A single-slot record of the load that a policy decision ended was traced: WebKit reports an
+  interrupted load only for a download here, and each download sets the slot itself, so no genuine failure was seen
+  swallowed. Nothing changed. If wrong, a stale slot could hide one failure notice for an address a policy refused
+  earlier, and the fix is to key the slot to the navigation.
 
 ## References
 
