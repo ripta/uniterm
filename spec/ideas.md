@@ -3,15 +3,20 @@
 Future improvements worth keeping that are not proposals yet. An idea leaves
 this file when a numbered proposal covers it.
 
-## Browser: OAuth2 and SSO sign-in
+## OAuth2 support: access and refresh tokens
 
-Make OAuth2 and SSO sign-in work reliably. This is the most important idea here.
-These flows run as ordinary pages and pop-ups, which the browser supports, but no
-real sign-in has been tried against a real provider. Known risks, none tested in
-uniterm yet: providers that reject embedded browsers, as Google does based partly
-on the user agent; WebKit's block on third-party cookies, which can break SSO
-flows that use a hidden iframe; and passkeys, which need Apple entitlements. A
-provider that refuses the web view may need `ASWebAuthenticationSession`.
+uniterm obtains, stores, and refreshes OAuth2 tokens. This is the most important
+idea here, and none of it exists today. It needs the authorization-code flow with
+PKCE, a way to receive the redirect, token storage in Keychain, refresh before and
+after expiry, revocation or sign-out, and a place to configure providers. Still
+open: what uses the tokens, such as the browser, Janet scripts, or terminal tools.
+
+SSO belongs with this. Sites' own sign-in pages are a separate, smaller concern:
+they run as ordinary pages and pop-ups in the browser, and none has been tried
+against a real provider. Risks there, none tested in uniterm yet: providers that
+reject embedded browsers, as Google does based partly on the user agent; WebKit's
+block on third-party cookies, which can break SSO flows that use a hidden iframe;
+and passkeys, which need Apple entitlements.
 
 ## Browser: microphone and camera support
 
