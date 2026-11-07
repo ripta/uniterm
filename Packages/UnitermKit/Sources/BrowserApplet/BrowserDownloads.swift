@@ -119,6 +119,9 @@ final class BrowserDownloads: NSObject, WKDownloadDelegate {
   /// How many cancelled downloads wait for a first byte.
   var deferredCancelCount: Int { deferred.count }
 
+  /// How many cancelled downloads WebKit has not yet let go of.
+  var cancellingCount: Int { cancelling.count }
+
   var active: [Entry] { order.compactMap { entries[$0] } }
 
   var isRunning: Bool { !entries.isEmpty }
@@ -187,15 +190,18 @@ final class BrowserDownloads: NSObject, WKDownloadDelegate {
       return
     }
 
-    performCancel(entry)
+    performCancel(entry, direct: true)
   }
 
   /// Tells WebKit to cancel. A late write may bring the partial file back, so it is removed again
   /// when WebKit lets go.
-  private func performCancel(_ entry: Entry) {
+  ///
+  /// `direct` is true for a cancel that comes with the entry already out of the list. A deferred
+  /// entry goes out once, whichever of the first byte and the grace gets there first.
+  private func performCancel(_ entry: Entry, direct: Bool = false) {
     let id = ObjectIdentifier(entry.download)
 
-    guard deferred.removeValue(forKey: id) != nil || entries[id] != nil else { return }
+    guard deferred.removeValue(forKey: id) != nil || direct else { return }
 
     entry.graceTimer?.cancel()
     entry.graceTimer = nil
@@ -335,6 +341,8 @@ final class BrowserDownloads: NSObject, WKDownloadDelegate {
 
   func downloadDidFinish(_ download: WKDownload) {
     let id = ObjectIdentifier(download)
+
+    letGo(id)
 
     if endDeferred(id) { return }
 

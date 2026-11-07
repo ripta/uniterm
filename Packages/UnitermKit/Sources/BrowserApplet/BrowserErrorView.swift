@@ -19,6 +19,14 @@ enum LoadErrorPage: Equatable {
   /// action.
   case refusedStoredAddress(address: String, refusal: SchemeRefusal)
 
+  /// The page's content process ended, so the pane has nothing to show. Reload builds a new web
+  /// view from the tab's address and history. Nothing reloads on its own.
+  case contentStopped(address: String, fromForm: Bool)
+
+  /// A stopped tab's page came from a form, and Reload restored its history without sending the
+  /// form again, so the page is blank. The pane says so, since the page offers nothing to look at.
+  case formNotSent(address: String)
+
   var title: String {
     switch self {
     case .offerHTTP(let host, _):
@@ -29,6 +37,12 @@ enum LoadErrorPage: Equatable {
 
     case .refusedStoredAddress:
       return "This tab was not loaded"
+
+    case .contentStopped:
+      return "This page stopped"
+
+    case .formNotSent:
+      return "This page came from a form"
     }
   }
 
@@ -37,6 +51,14 @@ enum LoadErrorPage: Equatable {
     switch self {
     case .refusedStoredAddress(let address, let refusal):
       return refusal.message(for: address)
+
+    case .formNotSent(let address):
+      return "The form that produced \(AddressDisplay.bounded(address)) was not sent again."
+
+    case .contentStopped(let address, _):
+      return address.isEmpty
+        ? "The page stopped."
+        : "The page \(AddressDisplay.bounded(address)) stopped."
 
     case .offerHTTP, .certificate:
       return title
@@ -58,11 +80,33 @@ enum LoadErrorPage: Equatable {
 
     case .refusedStoredAddress:
       return historyText + " The tab keeps the address until you load another one."
+
+    case .contentStopped(_, let fromForm):
+      let ended = "The process that ran this page ended, so the browser cannot show it. "
+
+      guard fromForm else {
+        return ended + "Reload loads it again with the tab's history. Anything typed into the page "
+          + "is lost."
+      }
+
+      return ended + "The page came from a form, and loading it again would send the form again. "
+        + "Reload restores the tab's history and shows this page blank. Anything typed into the "
+        + "page is lost."
+
+    case .formNotSent:
+      return "The page is blank, since showing it would send the form again. Go back, or load "
+        + "another address."
     }
   }
 
   var offersHTTP: Bool {
     if case .offerHTTP = self { return true }
+
+    return false
+  }
+
+  var offersReload: Bool {
+    if case .contentStopped = self { return true }
 
     return false
   }
@@ -73,12 +117,17 @@ enum LoadErrorPage: Equatable {
 @MainActor
 final class BrowserErrorView: NSView {
   static let actionTitle = "Load over HTTP"
+  static let reloadTitle = "Reload"
 
   let titleLabel = NSTextField(wrappingLabelWithString: "")
   let detailLabel = NSTextField(wrappingLabelWithString: "")
   let actionButton = NSButton(title: BrowserErrorView.actionTitle, target: nil, action: nil)
+  let reloadButton = NSButton(title: BrowserErrorView.reloadTitle, target: nil, action: nil)
 
   var onLoadOverHTTP: () -> Void = {}
+
+  /// The user chose Reload on the message that the page stopped.
+  var onReload: () -> Void = {}
 
   private var palette = ThemePalette.latte
 
@@ -102,7 +151,13 @@ final class BrowserErrorView: NSView {
     actionButton.setAccessibilityIdentifier("browser-load-over-http")
     actionButton.setAccessibilityHelp("Loads the page without encryption.")
 
-    let stack = NSStackView(views: [titleLabel, detailLabel, actionButton])
+    reloadButton.bezelStyle = .rounded
+    reloadButton.target = self
+    reloadButton.action = #selector(reload)
+    reloadButton.setAccessibilityIdentifier("browser-error-reload")
+    reloadButton.setAccessibilityHelp("Loads the page again in a new web view.")
+
+    let stack = NSStackView(views: [titleLabel, detailLabel, actionButton, reloadButton])
     stack.orientation = .vertical
     stack.alignment = .centerX
     stack.spacing = 12
@@ -139,6 +194,7 @@ final class BrowserErrorView: NSView {
     titleLabel.stringValue = page.title
     detailLabel.stringValue = page.detail
     actionButton.isHidden = !page.offersHTTP
+    reloadButton.isHidden = !page.offersReload
     setAccessibilityLabel(page.title)
     isHidden = false
   }
@@ -153,5 +209,9 @@ final class BrowserErrorView: NSView {
 
   @objc private func loadOverHTTP() {
     onLoadOverHTTP()
+  }
+
+  @objc private func reload() {
+    onReload()
   }
 }

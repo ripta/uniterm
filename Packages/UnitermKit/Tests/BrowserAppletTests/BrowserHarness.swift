@@ -128,12 +128,12 @@ extension BrowserServices {
       path: "uniterm-test-downloads-\(UUID().uuidString)", directoryHint: .isDirectory),
     reveal: FakeRevealer = FakeRevealer(), files: DownloadFileOperations = .live,
     sweeper: DownloadSweeper = DownloadSweeper(), cancelGrace: Duration = .seconds(30),
-    clock: @escaping @Sendable () -> Date = Date.init
+    clock: @escaping @Sendable () -> Date = Date.init, hang: HangPolicy = .live
   ) -> BrowserServices {
     BrowserServices(
       searchEngine: engine, hsts: hsts, downloadsDirectory: { downloads }, reveal: reveal,
       opener: opener, downloadFiles: files, downloadSweeper: sweeper,
-      downloadCancelGrace: cancelGrace, clock: clock)
+      downloadCancelGrace: cancelGrace, clock: clock, hang: hang)
   }
 }
 

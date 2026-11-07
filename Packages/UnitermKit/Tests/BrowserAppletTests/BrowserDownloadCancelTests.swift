@@ -163,6 +163,62 @@ final class BrowserDownloadCancelTests: XCTestCase {
     hold.release()
   }
 
+  /// Catches a cancelled download whose body completes before WebKit handles the cancel. The finish
+  /// reaches the delegate with the entry already out of the list, and it used to return without
+  /// letting go, so the complete file stayed at its temporary name and the cancel leaked. The test
+  /// calls the finish in the same turn as the cancel, so WebKit cannot have answered the cancel
+  /// first. A real race between the two is what failed the test above now and then.
+  func testAFinishThatBeatsTheCancelLetsGoAndRemovesTheFile() async throws {
+    let hold = FixtureServer.Hold()
+    let harness = try await make(hold, body: "he")
+    defer { harness.stop() }
+
+    await startHeld(harness)
+    await harness.eventually("a byte arrives") {
+      harness.applet.downloads.active.first?.hasData ?? true
+    }
+
+    let download = try XCTUnwrap(harness.applet.downloads.active.first?.download)
+
+    harness.applet.downloads.cancelAll()
+
+    XCTAssertEqual(harness.applet.downloads.cancellingCount, 1)
+
+    harness.applet.downloads.downloadDidFinish(download)
+
+    XCTAssertEqual(
+      harness.applet.downloads.cancellingCount, 0, "the finish left the cancelled download held")
+
+    await harness.eventually("the file is gone") { files(in: harness).isEmpty }
+
+    XCTAssertEqual(harness.posts.map(\.text), [])
+
+    hold.release()
+  }
+
+  /// Catches a cancel that never reaches WebKit when a byte is already there. The entry was out of
+  /// the list before the guard that lets the cancel go, so the guard refused it, and the download
+  /// ran to its end with its file at a temporary name. This was the cause of the flaky test above.
+  func testACancelAfterAByteIsSentToWebKitAndHeld() async throws {
+    let hold = FixtureServer.Hold()
+    let harness = try await make(hold, body: "he")
+    defer { harness.stop() }
+
+    await startHeld(harness)
+    await harness.eventually("a byte arrives") {
+      harness.applet.downloads.active.first?.hasData ?? true
+    }
+
+    harness.applet.downloads.cancelAll()
+
+    XCTAssertEqual(harness.applet.downloads.cancellingCount, 1)
+
+    await harness.eventually("WebKit lets go") { harness.applet.downloads.cancellingCount == 0 }
+    await harness.eventually("the partial file is gone") { files(in: harness).isEmpty }
+
+    hold.release()
+  }
+
   /// Catches a cancel that waits when a byte is already there. It goes to WebKit at once.
   func testACancelAfterABytePassesStraightToWebKit() async throws {
     let hold = FixtureServer.Hold()

@@ -105,7 +105,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
       tabs: [
         BrowserTab(
           id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore, hsts: services.hsts,
-          clock: services.clock)
+          clock: services.clock, hang: services.hang)
       ],
       selected: 0, closed: [])
   }
@@ -156,7 +156,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
       tabs: zip(decoded.tabs, states).map { record, state in
         BrowserTab(
           id: .make(), record: record, dataStore: dataStore, hsts: services.hsts,
-          clock: services.clock, restoredState: state)
+          clock: services.clock, restoredState: state, hang: services.hang)
       },
       selected: decoded.selected, closed: undo?.closedTabs ?? [])
   }
@@ -411,7 +411,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     content.markAddress(invalid: false)
     tab.loadOrigin = .user
     alerts.replaceLoad()
-    tab.load(url, assumed: assumed)
+    tab.load(url, assumed: assumed, byUser: true)
     content.window?.makeFirstResponder(tab.webView)
   }
 
@@ -467,6 +467,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
     source.isAskingToOpenApp = true
 
+    let generation = source.generation
     let question = AppHandoff.question(appName: appName, url: url)
     let request = AppletConfirmation(
       title: question.title, detail: question.detail, confirmTitle: "Open",
@@ -475,9 +476,13 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     Task { @MainActor [weak source] in
       let allowed = await host.applet(self, confirm: request)
 
-      source?.isAskingToOpenApp = false
+      // An answer about a page that stopped meanwhile belongs to a page that is gone. The stop
+      // already took the tab's wait away.
+      guard let source, source.generation == generation else { return }
 
-      guard let source, !closed, allowed else { return }
+      source.isAskingToOpenApp = false
+
+      guard !closed, allowed else { return }
 
       finishHandOff(url, from: source, typed: typed)
     }
@@ -551,7 +556,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
     let opened = BrowserTab(
       id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore, hsts: services.hsts,
-      clock: services.clock)
+      clock: services.clock, hang: services.hang)
     opened.delegate = self
 
     let position = min(selectedIndex + 1, tabs.count)
@@ -599,7 +604,9 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   /// A restored tab nobody has looked at loads when it is first selected, and only while the pane
   /// is attached. A detached pane is off screen, so it loads nothing until it comes back.
   private func loadIfNeverLoaded() {
-    guard started, !closed, !alerts.isDetached, !tab.hasBegunLoading else { return }
+    guard started, !closed, !alerts.isDetached, !tab.hasBegunLoading, !tab.isStopped else {
+      return
+    }
 
     loadStored(tab)
   }
@@ -741,7 +748,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
     let reopened = BrowserTab(
       id: .make(), record: entry.tab, dataStore: dataStore, hsts: services.hsts,
       clock: services.clock,
-      restoredState: entry.interactionState)
+      restoredState: entry.interactionState, hang: services.hang)
     reopened.delegate = self
 
     closedTabs.removeAll { $0.stamp == stamp }
@@ -801,6 +808,56 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
   }
 
   func tabUnsentInputDidChange(_ tab: BrowserTab) {
+    refresh()
+  }
+
+  func tabHoldsDialog(_ tab: BrowserTab) -> Bool {
+    dialogs.first(for: tab) != nil
+  }
+
+  func tabIsViewed(_ tab: BrowserTab) -> Bool {
+    !closed && started && !alerts.isDetached && tab === self.tab
+  }
+
+  /// A web view that stopped answering holds input that was not sent. Only the tab the user is
+  /// looking at asks, and the question names it. Any other tab keeps its view and the user decides
+  /// when they come back and reload.
+  func tab(confirmReplacingUnresponsive tab: BrowserTab) async -> Bool {
+    guard tabIsViewed(tab), let host else { return false }
+
+    let label = RunningLabel.clean(Self.title(of: tab), fallback: Self.untitled)
+    let request = AppletConfirmation(
+      title: "Replace this page?",
+      detail: "\u{201C}\(label)\u{201D} is not answering and holds text that was not sent. "
+        + "Replacing it loses that text. The page may only be busy.",
+      confirmTitle: "Replace Page", cancelTitle: "Keep Waiting")
+
+    return await host.applet(self, confirm: request)
+  }
+
+  /// A tab's content process ended or hung. The tab already dropped its web view, took back the
+  /// unsent mark, and resolved its own question about sending a form. What is left is the pane's:
+  /// the page's dialogs get their one answer, a wait on opening another app ends, and the user
+  /// sees the stopped message only for the selected tab of an attached pane. Any other tab goes
+  /// back to the not-yet-loaded state and loads when it is next selected or attached. Nothing loads
+  /// here.
+  func tab(_ lost: BrowserTab, didLoseContentWithFocus hadFocus: Bool, recovering: Bool) {
+    guard !closed else { return }
+
+    dialogs.dismissAll(for: lost)
+    lost.isAskingToOpenApp = false
+
+    let showsStopped = !recovering && lost === tab && started && !alerts.isDetached
+
+    if showsStopped { lost.showStopped() }
+
+    if lost === tab {
+      showSelectedTab(replacingEdit: false)
+
+      if hadFocus { content.window?.makeFirstResponder(tab.webView) }
+    }
+
+    syncDialog(restoringFocus: false)
     refresh()
   }
 
@@ -879,7 +936,7 @@ public final class BrowserApplet: Applet, BrowserTabDelegate, BrowserDownloadsDe
 
     let popup = BrowserTab(
       id: .make(), adopting: configuration, opener: opener, openedByUser: byUser,
-      dataStore: dataStore, hsts: services.hsts, clock: services.clock)
+      dataStore: dataStore, hsts: services.hsts, clock: services.clock, hang: services.hang)
 
     popup.delegate = self
     popup.loadOrigin = .user

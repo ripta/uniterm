@@ -19,7 +19,7 @@ need the user's credentials.
 | UTERM-005 M4: Address bar input | DONE | "Search from the address bar, and offer plain HTTP only by the user's action" |
 | UTERM-005 M5: Website data, restore, and reopen | DONE | "Give the browser its own website data, and restore tabs lazily" |
 | UTERM-005 M6: Pop-ups, downloads, and running work | DONE | "Open pop-ups as tabs, save downloads safely, and guard unsent input" |
-| UTERM-005 M7: Web content failure | IN PROGRESS | |
+| UTERM-005 M7: Web content failure | DONE | "Recover a stopped or hung page by rebuilding its web view" |
 
 ## Local checks
 
@@ -437,6 +437,59 @@ audio that really stops on detach, a real key press marking a tab, and the behav
 Test cost: the download suites take about 2.5 s, `BrowserUnsentInputTests` 4.0 s, `BrowserPopupTests` 1.9 s, and `BrowserDialogTests` about 1 s. The full
 package run grew to about 69 s.
 
+### M7: Web content failure
+
+Commit: "Recover a stopped or hung page by rebuilding its web view".
+
+Checks, on 2026-11-06:
+
+- `make test-package`, coordinator's run `QWXR1M`: 1,461 tests, 4 skipped, 0 failures, 75.1 s.
+- `make test-app`, coordinator's run `6YFVT6`: 110 tests, 1 failure, 883.2 s. See "Unowned failures".
+- A filtered UI run, `984AAJ`, of `BrowserUITests`: 13 tests, 0 failures.
+- `make fmt-check`, `make lint`, `make check`, `make build`, and the UI tests' build for testing passed in the implementer's runs. `proposals.py freeze`
+  reports only the UTERM-013 hunk. `proposals.py check` reports only that the finished row moves to `history.md`, which the row's end does.
+- The crash folder holds nothing newer than 16:20 local, so M7's runs added no fault and no trap.
+
+Best guesses from the implementer:
+
+1. Tests send SIGKILL to the pid from the private `_webProcessIdentifier`, read through KVC. `_killWebContentProcess` exists here, but the delegate never hears of it.
+   Nothing private ships.
+2. Every reload, back, forward, or typed address on an existing web view arms a 10 s one-shot, and any delegate callback cancels it. A hung process answers
+   none of them, and a slow server still gets the policy callback at once. Both sides are proved with a real web view.
+3. After a hang, a typed address restores history and then loads the address, so the hung page's own load starts first and is superseded.
+4. A stopped tab stays stopped when switched away and back. A tab that never held a page stays blank with no message.
+5. The history record at a stop reads live only from a view that committed a page. Otherwise it uses the last read. A test failed first, with 186 bytes against 719.
+
+The coordinator's best guesses, for the user's review:
+
+- A hung tab holding unsent input asks through the host before it is replaced, and only the viewed tab asks. With no unsent input it replaces as the proposal says. A
+  page whose script is merely busy can trip the bound, and replacing it would lose typed input. If wrong, the question goes and the proposal's first text returns.
+- A crash in a detached pane leaves the tab not yet loaded, and the attach loads it. "Web content failure" sends the tab to the not-yet-loaded state of "What restore
+  loads", and that state loads when attached, so the text now says "selected or attached". The same crash in an attached pane shows the message and never reloads. If
+  wrong, the attach shows the message instead. Nothing in the host sends these events yet, so no user reaches either path.
+
+Review findings and dispositions:
+
+- Fixed: the bound could rebuild a healthy page with a held dialog. Every UI delegate callback now counts as life, and a held dialog stops the bound. `beforeunload` itself
+  turned out not to reach the public UI delegate, since WebKit answers it alone, so a test records that a reload of such a page ends normally. A dialog raised after the
+  bound is armed has no test of its own, since a real navigation callback always arrives first.
+- Fixed: a machine sleeping during the bound fired it on wake. The clock now suspends with the machine.
+- Fixed: a bound firing on a tab nobody was viewing reloaded it. It now drops the view and loads nothing until the tab is selected or the pane attached.
+- Fixed: a form result's stopped message said Reload loads it again, which was false. Measured: Reload restores a blank page with history, and the form is not sent. The text
+  and the pane now say so.
+- Fixed: two comments, and two tests of weak value. The fallback is pinned, and `sawLife` and `generation` were mutation-checked.
+- Traced: the rebuilt view and four later tabs each took a new pid, in 5 samples, so recovery is not stuck on the hung process.
+- Recorded, not fixed: a handoff question left up after a stop is harmless, since a late "Open" does nothing.
+
+Left open, for the user: the hung process outlives its web view. It was alive 100 s after release, using a core, and no public WebKit call ends it. It was gone about 20 s after the
+test host exited, measured once. Whether quitting uniterm ends it is unverified. ADR-05 says work kept after close is bounded and visible. The applet does not choose this, and the
+Risk says so. Check it in Activity Monitor with a page running `while(true){}`.
+
+ADR check: one plausible conflict with ADR-05, on that process. The hang-bound gap it found is fixed above. The candidate about the hung process is declined as a known issue. A new
+candidate is in the Decision Log as `Undecided`: shipping code uses no private WebKit or AppKit API, and private calls are allowed in test code only.
+
+Test cost: `BrowserRecoveryTests` takes about 5.5 s for 25 tests, and its longest test, about 0.5 s, is the one real-timer test.
+
 ## Unowned failures
 
 `make test-app` run `WWM5Y9` on 2026-11-06, 11:38 to 11:58 local, failed 22 tests with scattered focus and input errors, such as
@@ -449,6 +502,17 @@ the other session says the screen is free.
 That full rerun came later, as `5W5MC3`, on 2026-11-06 from 12:34 to 12:48 local, with no other UI run on the screen. It covered
 M2's code and M3's. It ran 103 tests with 1 failure, and that failure was M3's own, recorded under M3. All 22 earlier failures
 passed, which supports the collision and settles that M2 did not cause them.
+
+`BrowserDownloadCancelTests.testACancelRightAfterTheDestinationKeepsTheNetworkProcessUp` timed out once in a full package run during M7. It was first taken for a WebKit timing flake. The trace
+found two real M6 defects: a cancel after the first byte never reached WebKit, so the complete file stayed at its temporary name, and a finish that beat a cancel left its bookkeeping behind.
+Both are fixed in M7's commit, each with a test that failed first. Looping the test body 60 times gave 1 failure on the unfixed code, with the original message, and 0 on the fixed code. That is
+evidence and not proof. It failed once in a full run and not alone, so it stays uncertain that this was the whole of the first flake.
+
+`TabsUITests.testNextAndPreviousTabKeysSwitchTabs` failed once in `make test-app` run `6YFVT6`, on 2026-11-06 at about 18:05 local, with "Cmd-Shift-[ did not go back". No other UI run overlapped it. It
+passed in its class alone, run `HN59PD`, and 10 of 10 iterations alone, run `5P128T`, and passed in every earlier full run of this row. M3 moved the terminal's tab bar and made keys shared, so this run may own it,
+and M7 touched neither. The cause is unknown. Not reproduced.
+
+`make test-app` run `NR5935` failed at once, at 17:48 local, with "Timed out while enabling automation mode", before any test ran. The display was on by `pmset -g log`. The next UI run started normally.
 
 ## Edits found and not made
 

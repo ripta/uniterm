@@ -105,15 +105,20 @@ public final class FixtureServer: Sendable {
     public var hold: Hold?
     public var tail: Data
 
+    /// When set, the server sends nothing until the hold releases, as a slow server does. An abort
+    /// drops the connection with nothing sent.
+    public var stall: Hold?
+
     public init(
       status: Int = 200, headers: [(name: String, value: String)] = [], body: Data = Data(),
-      hold: Hold? = nil, tail: Data = Data()
+      hold: Hold? = nil, tail: Data = Data(), stall: Hold? = nil
     ) {
       self.status = status
       self.headers = headers
       self.body = body
       self.hold = hold
       self.tail = tail
+      self.stall = stall
     }
 
     public static func html(_ text: String, status: Int = 200) -> Response {
@@ -327,6 +332,19 @@ private final class Core: Sendable {
   }
 
   private func send(_ response: FixtureServer.Response, on connection: NWConnection) {
+    if let stall = response.stall {
+      var unstalled = response
+
+      unstalled.stall = nil
+
+      let rest = unstalled
+
+      stall.park(
+        finish: { [self] in send(rest, on: connection) }, abort: { connection.cancel() })
+
+      return
+    }
+
     var head = "HTTP/1.1 \(response.status) \(Self.reason(response.status))\r\n"
 
     for header in response.headers {

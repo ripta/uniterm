@@ -110,6 +110,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
 
     errorPage.translatesAutoresizingMaskIntoConstraints = false
     errorPage.onLoadOverHTTP = { [weak self] in self?.onLoadOverHTTP() }
+    errorPage.onReload = { [weak self] in self?.onReload() }
 
     addSubview(tabBar)
     addSubview(toolbar)

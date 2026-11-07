@@ -46,6 +46,23 @@ protocol BrowserTabDelegate: AnyObject {
 
   /// The tab's unsent-input mark changed, so what a close would lose changed.
   func tabUnsentInputDidChange(_ tab: BrowserTab)
+
+  /// The tab's content process ended or hung, and the tab dropped its web view. The applet answers
+  /// by deciding whether the user sees the stopped message, by ending what the page left waiting,
+  /// and by showing the tab's new web view when the tab is the selected one. `hadFocus` is true
+  /// when the keyboard was in the old web view. `recovering` is true when the tab is about to load its
+  /// page again by itself, as after a hang that a user's reload or navigation ran into.
+  func tab(_ tab: BrowserTab, didLoseContentWithFocus hadFocus: Bool, recovering: Bool)
+
+  /// Whether a page dialog of the tab waits for the user. A page that waits on one is not hung.
+  func tabHoldsDialog(_ tab: BrowserTab) -> Bool
+
+  /// Whether the user is looking at the tab: it is selected in a pane that is attached.
+  func tabIsViewed(_ tab: BrowserTab) -> Bool
+
+  /// Asks whether to replace a web view that stopped answering while it holds input that was not
+  /// sent. The page may only be busy. False when the user declines or cannot be asked.
+  func tab(confirmReplacingUnresponsive tab: BrowserTab) async -> Bool
 }
 
 /// An address whose scheme the browser chose, kept with the text that produced it. A failure to
@@ -76,11 +93,41 @@ final class BrowserTab: NSObject {
   let id: AppletTabID
 
   /// The tab's web view. It is built on first use, so a restored tab nobody has looked at holds no
-  /// web view and no content process.
-  lazy var webView: WKWebView = makeWebView()
+  /// web view and no content process. A web view whose content process ended or hung is replaced,
+  /// so callers read this each time and never keep the value.
+  var webView: WKWebView {
+    if let current { return current }
 
-  /// Whether the web view exists. It never goes back to false while the tab is open.
+    let view = makeWebView()
+
+    current = view
+
+    return view
+  }
+
+  private var current: WKWebView?
+
+  /// Whether the web view exists. It goes back to false when the content process ends or hangs and
+  /// the tab drops the web view.
   private(set) var isMaterialized = false
+
+  /// Whether the user is looking at the message that the page stopped. Only the selected tab of an
+  /// attached pane shows it. A stopped tab never reloads on its own: the user's Reload builds a
+  /// new web view.
+  private(set) var isStopped = false
+
+  /// Counts the times the tab lost its content. An answer to a question the user was asked before
+  /// that, such as one about opening another app, belongs to a page that is gone.
+  private(set) var generation = 0
+
+  private var isClosed = false
+
+  /// Whether the page the tab shows came from a form post.
+  private var cameFromForm = false
+
+  /// Whether the history the tab holds for its next load ends on a form post. That load restores a
+  /// blank page, since the gate refuses the post, and the pane then says so.
+  private var restoresFormResult = false
 
   weak var delegate: (any BrowserTabDelegate)?
 
@@ -151,6 +198,9 @@ final class BrowserTab: NSObject {
   /// The one question the gate has put to the user, with the navigation it holds.
   private var pendingResend: PendingResend?
 
+  /// Whether a question about sending a form again is waiting for the user.
+  var isAskingToResend: Bool { pendingResend != nil }
+
   /// What the applet's own Reload, Back, or Forward is about to ask of the web view. The gate takes
   /// it at the next main-frame decision and clears it, so it never carries over to a later
   /// navigation. Nothing else sets it, so a page script, a swipe, and the web view's own Reload
@@ -191,16 +241,40 @@ final class BrowserTab: NSObject {
 
   private let dataStore: WKWebsiteDataStore
   private let hsts: HSTSStore
+  private let hang: HangPolicy
   private var observations: [NSKeyValueObservation] = []
+
+  /// The last history record read from a view that had committed a page.
+  private var lastReadInteraction: Data?
+
+  /// The address of the last load the tab began from a typed address, for a tab that stops before
+  /// any page committed.
+  private var lastRequested: URL?
+
+  /// What the tab does when the bound runs out, and the cancel of the bound that is waiting.
+  private var hangReplay: HangReplay?
+  private var hangCancel: HangPolicy.Cancel?
+
+  /// Counts the signs of life. A question about replacing a web view that waited for an answer
+  /// drops its yes when the process spoke meanwhile.
+  private var lifeSigns = 0
+  private(set) var isAskingToReplace = false
+
+  private enum HangReplay {
+    case restore
+    case typed(URL, AssumedLoad?)
+  }
 
   init(
     id: AppletTabID, record: BrowserDescription.Tab, dataStore: WKWebsiteDataStore,
-    hsts: HSTSStore, clock: @escaping @Sendable () -> Date = Date.init, restoredState: Data? = nil
+    hsts: HSTSStore, clock: @escaping @Sendable () -> Date = Date.init, restoredState: Data? = nil,
+    hang: HangPolicy = .live
   ) {
     self.id = id
     self.record = record
     self.dataStore = dataStore
     self.hsts = hsts
+    self.hang = hang
     self.clock = clock
     self.restoredState = restoredState
     self.isPopup = false
@@ -217,12 +291,13 @@ final class BrowserTab: NSObject {
   init(
     id: AppletTabID, adopting configuration: WKWebViewConfiguration, opener: BrowserTab,
     openedByUser: Bool, dataStore: WKWebsiteDataStore, hsts: HSTSStore,
-    clock: @escaping @Sendable () -> Date
+    clock: @escaping @Sendable () -> Date, hang: HangPolicy = .live
   ) {
     self.id = id
     self.record = BrowserDescription.Tab()
     self.dataStore = dataStore
     self.hsts = hsts
+    self.hang = hang
     self.clock = clock
     self.isPopup = true
     self.isScriptOpened = !openedByUser
@@ -236,11 +311,14 @@ final class BrowserTab: NSObject {
   }
 
   private func makeWebView() -> WKWebView {
+    let fromScratch = adopted == nil
     let configuration = adopted ?? WKWebViewConfiguration()
 
     adopted = nil
 
-    if !isPopup { configuration.websiteDataStore = dataStore }
+    // A pop-up's own configuration already carries the opener's store. A pop-up rebuilt after its
+    // process ended has no configuration from WebKit, so it takes the browser's store like any tab.
+    if fromScratch { configuration.websiteDataStore = dataStore }
 
     // WKWebView on macOS lets a script open a window with no user gesture unless this is false.
     // The browser blocks it, as every other browser does, so a page cannot open tabs on its own.
@@ -334,6 +412,12 @@ final class BrowserTab: NSObject {
 
   var hasLoadedNothing: Bool { !isMaterialized || (webView.url == nil && !isLoading) }
 
+  /// Whether a stop has something to bring back: a page that committed, a history record, or an
+  /// address a load began for.
+  private var hasPageToRestore: Bool {
+    restoredState != nil || record.url != nil || lastRequested != nil
+  }
+
   /// WebKit's record of the tab's history and scroll positions, for a tab that is closing or a pane
   /// that is describing itself. A record the tab was given and has not applied yet comes back as it
   /// was. A web view that holds no page reports an empty record, which would replace it, so a tab
@@ -369,6 +453,8 @@ final class BrowserTab: NSObject {
 
     if isMaterialized, webView.url != nil { record = webView.interactionState as? Data }
 
+    if let record, committedURL != nil { lastReadInteraction = record }
+
     keptInteraction = .some(record)
 
     return record
@@ -386,8 +472,17 @@ final class BrowserTab: NSObject {
   /// Loads an address that already passed the scheme rule for its source. The caller checks it,
   /// since a refusal is the caller's to present. `assumed` is set when the policy chose HTTPS for
   /// a scheme-less address, which is the one load that can offer plain HTTP when it fails.
-  func load(_ url: URL, assumed: AssumedLoad? = nil) {
+  ///
+  /// `byUser` is true for an address the user typed. Such a load on a web view that already exists
+  /// arms the bound for a content process that never answers.
+  func load(_ url: URL, assumed: AssumedLoad? = nil, byUser: Bool = false) {
+    let existed = isMaterialized
+
     hasBegunLoading = true
+    isStopped = false
+    cameFromForm = false
+    restoresFormResult = false
+    lastRequested = url
     restoredState = nil
     historyChanged()
     errorPage = nil
@@ -396,6 +491,8 @@ final class BrowserTab: NSObject {
     pendingResend?.resolve(.cancel)
     pendingResend = nil
     webView.load(URLRequest(url: url))
+
+    if byUser, existed { armHang(.typed(url, assumed)) }
   }
 
   /// Records that the stored address was refused, so selecting the tab again does not try it again.
@@ -426,16 +523,37 @@ final class BrowserTab: NSObject {
     hasBegunLoading = true
     historyChanged()
     webView.interactionState = state
+
+    if restoresFormResult {
+      restoresFormResult = false
+
+      let page = LoadErrorPage.formNotSent(address: url.absoluteString)
+
+      errorPage = page
+
+      delegate?.tabDidChange(self)
+    }
   }
 
   func reload() -> HistoryMove {
     if errorPage != nil, let failed = failedLoad {
-      load(failed.url, assumed: failed.assumed)
+      load(failed.url, assumed: failed.assumed, byUser: true)
       return .moved
     }
 
+    if isStopped {
+      isStopped = false
+      errorPage = nil
+      delegate?.tabDidChange(self)
+    }
+
     guard isMaterialized, webView.url != nil else {
-      guard let address = record.url else { return .unavailable }
+      guard let address = record.url else {
+        guard let requested = lastRequested else { return .unavailable }
+
+        load(requested)
+        return .moved
+      }
 
       guard let stored = URL(string: address) else {
         return .refused(.notAnAddress, address: address)
@@ -453,6 +571,7 @@ final class BrowserTab: NSObject {
 
     resendIntent = .reload
     webView.reload()
+    armHang(.restore)
     return .moved
   }
 
@@ -461,6 +580,7 @@ final class BrowserTab: NSObject {
 
     resendIntent = .history
     _ = webView.goBack()
+    armHang(.restore)
     return .moved
   }
 
@@ -469,6 +589,7 @@ final class BrowserTab: NSObject {
 
     resendIntent = .history
     _ = webView.goForward()
+    armHang(.restore)
     return .moved
   }
 
@@ -479,6 +600,9 @@ final class BrowserTab: NSObject {
   /// Stops loading and drops every reference between the web view and this tab. A question the tab
   /// was waiting on is answered no, so the navigation it held ends.
   func close() {
+    isClosed = true
+
+    cancelHang()
     pendingResend?.resolve(.cancel)
     pendingResend = nil
     restoredState = nil
@@ -493,12 +617,206 @@ final class BrowserTab: NSObject {
     guard isMaterialized else { return }
 
     webView.stopLoading()
-    webView.navigationDelegate = nil
-    webView.uiDelegate = nil
-    (webView as? BrowserWebView)?.onHistoryButton = nil
-    (webView as? BrowserWebView)?.onMouseUp = nil
-    (webView as? BrowserWebView)?.onMenuChoice = nil
-    webView.removeFromSuperview()
+    detach(webView)
+  }
+
+  /// Takes every reference between the web view and this tab away, and the web view off the screen.
+  private func detach(_ view: WKWebView) {
+    view.navigationDelegate = nil
+    view.uiDelegate = nil
+    (view as? BrowserWebView)?.onHistoryButton = nil
+    (view as? BrowserWebView)?.onMouseUp = nil
+    (view as? BrowserWebView)?.onMenuChoice = nil
+    view.removeFromSuperview()
+  }
+
+  // MARK: Recovery
+
+  /// The content process ended or hung. The tab drops its web view, so the next load builds a new
+  /// one from the address and the history record, the way a reopened tab is built. It never asks
+  /// the old process, which may never answer.
+  ///
+  /// What the page left waiting ends here. A question about sending a form again resolves as no.
+  /// The unsent mark clears, since the input went with the process. A load after this never sends a
+  /// form, since the new view restores history and the gate refuses a repeated post.
+  private func replaceWebView() {
+    cancelHang()
+
+    let state = restoredState ?? currentInteraction()
+
+    pendingResend?.resolve(.cancel)
+    pendingResend = nil
+    unsent.clear()
+    unsent.remove()
+
+    let old = current
+
+    observations = []
+
+    if let old { detach(old) }
+
+    current = nil
+    isMaterialized = false
+    holdsMediaSuspension = false
+    restoredState = state
+    keptInteraction = nil
+    hasBegunLoading = false
+    isLoading = false
+    currentURL = nil
+    committedURL = nil
+    canGoBack = false
+    canGoForward = false
+    showsSecurityWarning = false
+    errorPage = nil
+    failedLoad = nil
+    assumed = nil
+    resendIntent = nil
+    restoresFormResult = cameFromForm
+    dialogsThisLoad = 0
+    warnedAboutDialogs = false
+    gesture = LinkGesture()
+    windowGesture = LinkGesture()
+    generation &+= 1
+
+    historyChanged()
+  }
+
+  /// The history record of the page the tab has now. A view that has not committed a page reports a
+  /// small record of its own, measured at 186 bytes against 719 for two pages, and a stop must
+  /// never replace the history with it. Such a view stands in with the last record read from a view
+  /// that did commit one.
+  private func currentInteraction() -> Data? {
+    guard isMaterialized else { return nil }
+
+    guard committedURL != nil else { return lastReadInteraction }
+
+    return readInteraction() ?? lastReadInteraction
+  }
+
+  /// Shows the message that the page stopped, when there is a page to bring back. A tab with
+  /// nothing to restore stays blank, since the user lost no page.
+  func showStopped() {
+    guard hasPageToRestore else { return }
+
+    isStopped = true
+
+    let page = LoadErrorPage.contentStopped(
+      address: record.url ?? lastRequested?.absoluteString ?? "", fromForm: restoresFormResult)
+
+    errorPage = page
+
+    delegate?.tab(self, explained: page.historyText)
+    delegate?.tabDidChange(self)
+  }
+
+  /// A load the user asked for starts a bound. A sign of life from the content process ends it.
+  /// When it runs out, the web view is replaced, and a typed address then loads in the new one.
+  private func armHang(_ replay: HangReplay) {
+    guard isMaterialized, !isClosed else { return }
+
+    cancelHang()
+
+    hangReplay = replay
+    hangCancel = hang.schedule(hang.bound) { [weak self] in self?.hangExpired() }
+  }
+
+  private func cancelHang() {
+    hangCancel?()
+    hangCancel = nil
+    hangReplay = nil
+  }
+
+  /// Any callback from the web view's navigation delegate or UI delegate comes from a live process,
+  /// so it ends the wait. A slow server sends the process's callbacks long before its own response.
+  /// A page that raises a dialog, such as the question a `beforeunload` handler asks, is waiting
+  /// for the user and not hung.
+  private func sawLife() {
+    lifeSigns &+= 1
+
+    guard hangCancel != nil else { return }
+
+    cancelHang()
+  }
+
+  /// The bound ran out. A page that waits on a dialog is not hung. A page that holds input that was
+  /// not sent may only be busy, so the user decides whether to replace it. Anything else is
+  /// replaced.
+  private func hangExpired() {
+    guard hangCancel != nil, !isClosed else { return }
+
+    let replay = hangReplay
+
+    hangCancel = nil
+    hangReplay = nil
+
+    guard delegate?.tabHoldsDialog(self) != true else { return }
+
+    guard hasUnsentInput else {
+      replaceHung(replay)
+      return
+    }
+
+    guard !isAskingToReplace, delegate != nil, let view = current else { return }
+
+    isAskingToReplace = true
+
+    let signs = lifeSigns
+
+    Task { @MainActor [weak self, weak delegate, weak view] in
+      var allowed = false
+
+      if let self, let delegate {
+        allowed = await delegate.tab(confirmReplacingUnresponsive: self)
+      }
+
+      guard let self else { return }
+
+      isAskingToReplace = false
+
+      guard allowed, !isClosed, let view, view === current, signs == lifeSigns else { return }
+
+      replaceHung(replay)
+    }
+  }
+
+  /// A tab the user is looking at loads again at once, as the user asked. Any other tab drops its
+  /// hung view and waits to be selected or attached, since a reload there would wake a tab nobody
+  /// is looking at.
+  private func replaceHung(_ replay: HangReplay?) {
+    guard delegate?.tabIsViewed(self) == true else {
+      lose(recovering: false)
+      return
+    }
+
+    lose(recovering: true)
+
+    switch replay {
+    case .typed(let url, let assumed):
+      let state = restoredState
+
+      restoredState = nil
+
+      if let state { webView.interactionState = state }
+
+      load(url, assumed: assumed)
+
+    case .restore, nil:
+      _ = reload()
+    }
+  }
+
+  /// Replaces the web view, then tells the applet. `hadFocus` is read before the old view leaves.
+  private func lose(recovering: Bool) {
+    let hadFocus = current.map { Self.holdsFocus($0) } ?? false
+
+    replaceWebView()
+    delegate?.tab(self, didLoseContentWithFocus: hadFocus, recovering: recovering)
+  }
+
+  private static func holdsFocus(_ view: NSView) -> Bool {
+    guard let responder = view.window?.firstResponder as? NSView else { return false }
+
+    return responder.isDescendant(of: view)
   }
 
   // MARK: Observation
@@ -558,6 +876,7 @@ final class BrowserTab: NSObject {
   }
 
   private func committed() {
+    isStopped = false
     historyChanged()
     errorPage = nil
     failedLoad = nil
@@ -565,6 +884,8 @@ final class BrowserTab: NSObject {
     dialogsThisLoad = 0
     warnedAboutDialogs = false
     committedURL = webView.url
+    cameFromForm = lastMainFrameMethod == "POST"
+    restoresFormResult = false
     unsent.clear()
 
     if let item = webView.backForwardList.currentItem {
@@ -649,6 +970,8 @@ extension BrowserTab: WKNavigationDelegate {
     _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
+    sawLife()
+
     guard let url = navigationAction.request.url else {
       decisionHandler(.cancel)
       return
@@ -731,6 +1054,8 @@ extension BrowserTab: WKNavigationDelegate {
     _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
   ) {
+    sawLife()
+
     guard let url = navigationResponse.response.url else {
       decisionHandler(.allow)
       return
@@ -900,7 +1225,11 @@ extension BrowserTab: WKNavigationDelegate {
   /// load builds its own page when it earns one. Without this, a failed Back or a failed page
   /// navigation that builds none would leave the old offer over the pane.
   func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-    guard errorPage != nil else { return }
+    sawLife()
+
+    guard let page = errorPage else { return }
+
+    if case .formNotSent = page { return }
 
     errorPage = nil
     failedLoad = nil
@@ -908,19 +1237,33 @@ extension BrowserTab: WKNavigationDelegate {
   }
 
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    sawLife()
+
     resendIntent = nil
     committed()
     stateChanged()
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    sawLife()
     historyChanged()
+  }
+
+  /// A page's content process ended, by a crash or because the system reclaimed its memory. The tab
+  /// handles its own web view and nothing else's, since a pop-up that shares its opener's process
+  /// gets its own call.
+  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    guard webView === current, !isClosed else { return }
+
+    lose(recovering: false)
   }
 
   func webView(
     _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: any Error
   ) {
+    sawLife()
+
     resendIntent = nil
     report(error, for: nil, isProvisional: true)
   }
@@ -928,6 +1271,8 @@ extension BrowserTab: WKNavigationDelegate {
   func webView(
     _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error
   ) {
+    sawLife()
+
     resendIntent = nil
     report(error, for: webView.url)
   }
@@ -941,6 +1286,8 @@ extension BrowserTab: WKUIDelegate {
     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
     decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
+    sawLife()
+
     decisionHandler(.deny)
   }
 
@@ -953,6 +1300,8 @@ extension BrowserTab: WKUIDelegate {
     _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
     for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
   ) -> WKWebView? {
+    sawLife()
+
     let byUser = windowGesture.consume(at: clock())
 
     return delegate?.tab(
@@ -960,6 +1309,8 @@ extension BrowserTab: WKUIDelegate {
   }
 
   func webViewDidClose(_ webView: WKWebView) {
+    sawLife()
+
     delegate?.tabDidRequestClose(self)
   }
 
@@ -1000,6 +1351,8 @@ extension BrowserTab: WKUIDelegate {
     _ kind: PageDialog.Kind, _ message: String, _ frame: WKFrameInfo,
     completion: @escaping @MainActor (PageDialog.Answer) -> Void
   ) {
+    sawLife()
+
     let dialog = PageDialog(
       kind: kind, message: message,
       source: frame.request.url?.host(percentEncoded: false) ?? "", tab: self,
