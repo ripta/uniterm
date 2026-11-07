@@ -85,6 +85,9 @@ public struct BrowserServices {
   /// The time a click is judged against. A test supplies its own, so the bound never races.
   public var clock: @Sendable () -> Date
 
+  /// How a tab decides that a reload or navigation got no answer from a hung content process.
+  public var hang: HangPolicy
+
   public init(
     searchEngine: @escaping @MainActor () -> SearchEngine, hsts: HSTSStore,
     downloadsDirectory: @escaping @MainActor () -> URL?, reveal: any FileRevealing,
@@ -92,7 +95,7 @@ public struct BrowserServices {
     downloadFiles: DownloadFileOperations = .live,
     downloadSweeper: DownloadSweeper = DownloadSweeper(),
     downloadCancelGrace: Duration = .seconds(30),
-    clock: @escaping @Sendable () -> Date = Date.init
+    clock: @escaping @Sendable () -> Date = Date.init, hang: HangPolicy = .live
   ) {
     self.searchEngine = searchEngine
     self.hsts = hsts
@@ -103,6 +106,7 @@ public struct BrowserServices {
     self.downloadCancelGrace = downloadCancelGrace
     self.opener = opener
     self.clock = clock
+    self.hang = hang
   }
 }
 

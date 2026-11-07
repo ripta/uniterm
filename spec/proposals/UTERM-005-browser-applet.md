@@ -423,12 +423,23 @@ Decision: a failed tab shows a stopped-page message, and recovery always rebuild
 - WebKit runs page content in a separate process, so a crash, a memory kill, or a hang stays out of uniterm's process.
 - When a tab's content process terminates while the tab is selected in an attached pane, the tab shows a message that
   the page stopped, with a Reload action. Otherwise the tab returns to the not-yet-loaded state of "What restore
-  loads", and loads when next selected.
+  loads", and loads when next selected or attached. A tab that never held a page stays blank and shows no message.
+  Amended 2026-11-06; see Decision Log.
 - Reload builds a new web view from the tab's URL and its last `interactionState`, the same way reopen builds a tab, so
-  the tab keeps its history. It never asks the old process.
+  the tab keeps its history. It never asks the old process. A pop-up's rebuilt view has no opener, which cannot be kept.
+  Amended 2026-11-06; see Decision Log.
 - A user reload or navigation that gets no answer from the content process within a fixed bound replaces the web view
-  the same way. There is no background timer.
+  the same way. There is no background timer. The bound is 10 seconds on a clock that stops while the machine sleeps. It
+  arms only on that user action, and any callback from the content process cancels it, so a slow server never fires
+  it. A page that holds a dialog is waiting for the user, so the bound never replaces it. A page that holds unsent
+  input may only be busy, so the user is asked first and the page is replaced only on yes. A bound that runs out on a
+  tab the user is not looking at, or in a detached pane, drops the view and loads nothing until the tab is selected or
+  attached. In the tab the user is looking at, a typed address then loads in the new web view, and a reload, back, or
+  forward loads the page again. Amended 2026-11-06; see Decision Log.
 - No recovery resends a POST.
+- A stop clears the tab's unsent mark and answers its held dialogs and questions. A download belongs to the network
+  process, so it keeps running and still asks on close. A page that came from a form comes back blank, since showing it
+  would send the form again, and the pane says so before and after Reload. Amended 2026-11-06; see Decision Log.
 - Each tab handles its own termination. A pop-up tab may share its opener's process, so both can stop together.
 
 Rationale: a hung process may never handle a `reload()`, so rebuilding the web view is the recovery that always works,
@@ -477,6 +488,15 @@ None.
 - **The control permissions depend on an amendment to accepted UTERM-004** — likelihood: medium, impact: medium. Until
   UTERM-004 names browser navigation and browser read, its permission set and this proposal disagree. Mitigation: M8
   starts only after UTERM-004 M6, and its first check requires the amendment.
+- **A hung content process outlives its web view** — likelihood: low, impact: medium. Replacing the web view of a hung
+  page releases the view, and WebKit leaves the hung process running. Measured under `swift test`: the process was still
+  spinning 100 seconds after the release, and it was gone about 20 seconds after the test host exited. A rebuilt view and
+  four new tabs each got a different process, so a new view did not land in the hung one. Each hung page costs one core
+  and its battery for as long as the app runs. Accepted: no public WebKit call ends a process, the private ones cannot
+  ship, and a hang needs a page that spins and a user who reloads it. ADR-05 says work an applet keeps after close is
+  bounded and visible. The applet does not choose this. WebKit keeps the process, so the bound is not met, and nothing in
+  the pane shows it. The user can end the process in Activity Monitor. Not verified: whether the app's own exit ends it
+  as it ended the test host's, and whether a real hang in the running app behaves as it did under `swift test`.
 - **Two WebKit applets have not chosen their stores** — likelihood: low, impact: low. UTERM-007 and UTERM-010 are drafts.
   Accepted: the browser's store is its own, so whatever they choose cannot share or clear it.
 
@@ -970,13 +990,98 @@ None.
 
 ### M7: Web content failure
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Killing a selected tab's content process shows the stopped-page message, and Reload brings the page back with its
   history
 - Killing an unselected tab's content process leaves it not yet loaded, and selecting it loads the page
 - A page that hangs its content process comes back on Reload
 - No recovery resends a POST, and a stopped tab no longer counts as running something
+
+**As built:**
+
+- The tab owns its web view and replaces it. `BrowserTab.webView` is built on first use and rebuilt after a stop. The
+  replacement drops every reference to the old view: the delegates, the observers, the mouse and menu closures, the
+  unsent-input handler, and its script. The next view installs them all again, with the data store, the media
+  suspension state, and a fresh content controller. A pop-up's rebuilt view takes the browser's store, since WebKit's
+  configuration is spent, and it has no `window.opener`. The applet shows the new view when the tab is selected and
+  gives it the keyboard if the old one held it. Tests prove the old view is released, that it has no delegates, and that
+  a second stop it reports is ignored.
+- A stop. `webViewWebContentProcessDidTerminate` replaces the view, then the applet decides. The selected tab of an
+  attached pane shows the stopped message in the native error pane, with a Reload button, and the history records one
+  warning with no turn on the bar. Any other tab goes back to not yet loaded, holds no web view, and loads when it is
+  selected or when its pane is attached. A selected tab that was stopped stays stopped when the user switches away and
+  back, and never loads on its own. A blank tab that never held a page stays blank with no message. Reload on a stopped
+  tab loads the stored address with the kept history, the way a reopened tab loads, and falls back to the last typed
+  address for a tab that stopped before any page committed. Nothing reloads by itself, so a page that stops again shows
+  the message again and a page that crashes on load cannot loop. A test stops a tab twice in a row, the second time
+  before its page commits, and the history comes back.
+- Measured. WebKit's `_killWebContentProcess` is present on this macOS and the navigation delegate never hears of it. The
+  tests send SIGKILL to the process that `_webProcessIdentifier` names, which is a real crash from WebKit's side. Both
+  names are private and live in test code only. A process id of 0 means no process exists yet, and `kill(0, ...)` would
+  end the test run's own process group, so the helper waits for an id above 1. SIGKILL leaves no crash report.
+- The history record at a stop. `interactionData` returns the tab's pending record first, and a stop stores the record it
+  reads into that slot, so the description keeps the history until Reload applies it. Measured: a view that has not
+  committed a page reports a small record of its own, 186 bytes against 719 for two pages, so a stop on such a view, as a
+  second stop before the restore commits, would have replaced the history with it. The tab now reads the live record only
+  from a view that committed a page, and takes the last record read from one otherwise. The regression test failed before
+  that change with the 186-byte record.
+- What a stop leaves waiting. The unsent mark clears, so the tab stops counting as running something. A download keeps
+  running, keeps its entry, and still asks on close, and the file finishes after the tab's view is released. Every
+  held dialog of the tab gets its one answer, and a late tap on the dialog view or a second answer does nothing. A
+  question about sending a form again resolves as no at the stop, and a yes the user gives afterwards sends nothing. A
+  question about opening another app is dropped through a per-tab generation, and a late yes opens nothing. The
+  question itself stays on screen until the user answers it, which is stale and harmless. A close question that was up
+  when the tab stopped still closes the tab on yes, and the closed tab reopens with its history. The dialog, resend, and
+  handoff tests each failed with their step removed, and every stop test failed with the stop handler empty.
+- A hang. `HangPolicy` in `BrowserServices` holds the bound and an injected schedule, and a test fires the bound by hand.
+  A user's reload, back, forward, or typed address on an existing web view arms one bound of 10 seconds, and nothing
+  else arms it. The production schedule sleeps on a suspending clock, so a machine that sleeps during the bound does not
+  fire it on wake. Any callback of the navigation delegate or the UI delegate cancels the bound: a policy decision, a
+  provisional start, a commit, a finish, a failure, a dialog, or a window request. A hung process answers none of them,
+  so a reload sent to it reaches no server and fires the bound. A slow server still answers the first, so the bound is
+  cancelled long before it would run out. Tests with a real web view prove both sides. A page running `while(true){}` is
+  replaced when the bound runs out, and its reload never reached the server. A server that holds its answer cancels the
+  bound and the same web view finishes the page. A short real bound proves the production schedule fires once and
+  reaches the tab, which no injected test can show. The bound is a policy value with no setting.
+- What the bound leaves alone. A page that waits on a dialog is not hung. WebKit never raises a `beforeunload` question to
+  the public UI delegate, since it answers the question itself, and a test records that a reload of such a page ends
+  normally. A test holds a `confirm` dialog, reloads, fires the bound, and the page stays. A hung page that holds unsent
+  input is not replaced silently. The user is asked, in a question that names the tab, and the page is replaced only on
+  yes. A no keeps the view and the input, and a process that speaks while the question is up drops a later yes. Only the
+  tab the user is looking at in an attached pane asks, so another tab keeps its view. A bound that runs out on a tab
+  that lost the selection, or in a detached pane, drops the hung view and loads nothing. The tab loads when it is
+  selected or the pane is attached. Each test failed with its rule removed.
+- After a hang in the tab the user is looking at, a reload, back, or forward loads the page again from the address and
+  history, and a typed address loads in the new view after the history is restored. The history of the hung page is kept
+  for a typed address, which starts the hung page's own load before the typed one replaces it. A page that hangs on load
+  could in principle hang the new view too. Recovery never repeats on its own, so the user's next action arms the bound
+  again.
+- The hung process outlives its view. The old web view is released after a hang, and the process kept spinning. A scratch
+  test measured it still alive 100 seconds later, and gone about 20 seconds after the test host exited. A rebuilt view and
+  four new tabs each got a different process from the hung one. No public call ends it, so the tests send it SIGKILL
+  at the end and production code cannot. Not tried, since the rebuild already builds a fresh configuration: a new
+  `WKProcessPool`, which macOS 15 and later treat as a no-op. See Risks. The user should confirm in the running app.
+- No recovery resends a POST. Recovery restores history and never sets the resubmit intent, so the gate refuses the
+  repeated post. Measured: a rebuilt view restores a post result as a blank page with its history, the gate refuses the
+  repeat with one notice, and the server's count of posts stays one. The page is blank, so the message says so. A stopped
+  tab whose page came from a form says that Reload shows it blank and does not send the form, and after Reload the pane
+  says that the form was not sent again, until the next load or commit. This holds for the crash path and for the hang
+  path, in tests.
+- A pop-up shares its opener's process here. A test stops the selected pop-up, and the opener, in the background, lost its
+  content with it. The pop-up shows the message and the opener waits to be selected, then loads with its history. Each tab
+  handled its own stop.
+- Fixed in M6's downloads while checking the flaky `testACancelRightAfterTheDestinationKeepsTheNetworkProcessUp`. A cancel
+  of a download that already had a byte never reached WebKit, since `performCancel` refused an entry the cancel had just
+  taken out of the list. The download then ran to its end, and its complete file stayed at its temporary name. A finish
+  that beat a cancel that did reach WebKit also returned without letting go. Both are fixed, with a test for each that
+  failed first. Run in a loop of 60, the flaky test failed once on the unfixed code and not at all on the fixed code.
+  What stays uncertain is whether the one failure on the unfixed code is the whole of the earlier flake, since it
+  failed once in the full run and not in its class alone.
+- Not covered. A real kill of a tab that never loaded was not tried, since a view with no page may have no process, so a
+  direct call to the delegate method proves the handler. A memory kill by the system and a content process that a user
+  kills from Activity Monitor take the same path as the signal, and no test reaches them. The message's look and
+  placement are left to the user, and so is how Reload and the stopped tab read with VoiceOver and in a narrow pane.
 
 ### M8: Remote control
 
@@ -1195,6 +1300,38 @@ Starts after UTERM-004 M6.
   "Closing a tab or a pane during a download asks first and cancels it" now holds with one wait: the download leaves the list and
   the running count at once, and the cancel goes to WebKit with the first byte, or after 30 seconds. The text said nothing about
   the moment of the cancel. If wrong, the cost is a download that lingers up to 30 seconds after its pane closes.
+
+- 2026-11-06: M7 as built (work-queue best guess). "Web content failure" said a hung process's web view is replaced the same
+  way and left the bound and the signal open. The bound is 10 seconds and arms only on a user's reload, back, forward, or
+  typed address. Any callback from the content process cancels it, since a hung process sends none and a slow server's
+  process sends the first at once. A typed address loads in the new view after the history is restored. The text also said
+  Reload builds a view from the URL and `interactionState` and left three cases open. A tab that never held a page stays
+  blank with no message. A stopped tab that the user switches away from stays stopped. A pop-up's rebuilt view has no
+  opener, which cannot be kept. M5's history read takes a nil `url` for a view with no page, so a stop falls back to the
+  last record read from a live page and never replaces a record with nothing. The text said a stop
+  clears the unsent mark. It also answers held dialogs and questions, and leaves downloads alone. The Risks gain a hung
+  process that outlives its view, since no public call ends it. If wrong, a 10-second bound is one constant, a rebuilt
+  typed address that should drop history costs one line, and a hung process that WebKit does end costs the risk entry.
+
+- 2026-11-06: ADR candidate (cuts across the system): a web view whose content process hangs cannot be ended by public
+  WebKit API, so any applet that hosts a web view and recovers from a hang leaves the hung process running until the app
+  quits. Declined: a known issue, not a decision. The Risks carry it. Found in UTERM-005 M7.
+- 2026-11-06: ADR candidate (cuts across the system): shipping code uses no private WebKit or AppKit API, and private calls
+  are allowed in test code only. Undecided. Found in UTERM-005 M7.
+- 2026-11-06: M7 review fixes (work-queue best guess). The hang rule said any callback of the navigation delegate cancels the
+  bound. It now counts the UI delegate's callbacks too, and the bound never replaces a page that holds a dialog. The prior
+  rule would have rebuilt a page that waits for the user. The prior rule also replaced a busy page with unsent input without
+  asking, which loses the input. It now asks first, through the host's confirmation, and replaces on yes only. The prior rule
+  reloaded a tab after the bound even when the user had switched tabs or detached the pane, which "What restore loads" and
+  ADR-05 reject. Now such a tab drops the hung view and loads when selected or attached. The production clock stops while
+  the machine sleeps. A stopped tab whose page came from a form said that Reload loads the page again, and it loads a blank
+  one. The message and the pane now say so. M6's downloads: a cancel after the first byte never reached WebKit, and a finish
+  that beat a cancel left its file. If wrong, the question for unsent input is one rule to remove, and the form message is
+  two strings.
+- 2026-11-06: Web content failure restores "when selected or attached" (work-queue best guess). The text said a tab that
+  stopped while unselected or in a detached pane "loads when next selected". A selected tab in a detached pane has no
+  selection event, and the attach loads it, as "What restore loads" does for a restored pane. The text now says selected or
+  attached. If wrong, a detached pane's selected tab would wait for the user to select it, which no event offers.
 
 ## References
 
