@@ -143,6 +143,63 @@ final class BrowserScriptTabTests: XCTestCase {
     XCTAssertEqual(harness.host.recording.confirmations.count, 1)
   }
 
+  /// The pane's tabs by title, left to right.
+  private func order(_ harness: BrowserHarness) -> [String] {
+    harness.applet.tabs.map { $0.pageTitle ?? "" }
+  }
+
+  /// Catches a loop that reads backwards. Each script-opened tab goes after the page's previous
+  /// one, so a loop of 15 reads 0 to 14 left to right, the five that a yes opens included. The
+  /// opener stays first, and selection stays where it was.
+  func testALoopReadsInOrderLeftToRightIncludingTheTabsAYesOpens() async throws {
+    let harness = try await make()
+    defer { harness.stop() }
+
+    let page = harness.tab
+
+    try await open(15, in: page, harness)
+    await waitForQuestion(harness)
+
+    let selected = harness.tab
+
+    answer(true, harness)
+
+    await harness.host.until("the rest open") { harness.applet.tabCount == 16 }
+    await harness.eventually("every tab has a title") {
+      !harness.applet.tabs.contains { $0.pageTitle == nil }
+    }
+
+    XCTAssertEqual(order(harness), ["PAGE"] + (0..<15).map { "P/\($0)" })
+    XCTAssertTrue(harness.tab === selected, "the yes moved the selection")
+  }
+
+  /// Catches a group that scatters when a tab leaves it. With the middle tab closed, the next one
+  /// goes after the last that remains.
+  func testAClosedTabLeavesTheRestOfTheGroupTogether() async throws {
+    let harness = try await make()
+    defer { harness.stop() }
+
+    let page = harness.tab
+
+    try await open(3, in: page, harness)
+    await harness.eventually("every tab has a title") {
+      harness.applet.tabCount == 4 && !harness.applet.tabs.contains { $0.pageTitle == nil }
+    }
+
+    XCTAssertEqual(order(harness), ["PAGE", "P/0", "P/1", "P/2"])
+
+    let result = await harness.applet.closeTab(at: 2)
+
+    XCTAssertEqual(result, .closed)
+
+    try await open(1, prefix: "/q", in: page, harness)
+    await harness.eventually("every tab has a title") {
+      harness.applet.tabCount == 4 && !harness.applet.tabs.contains { $0.pageTitle == nil }
+    }
+
+    XCTAssertEqual(order(harness), ["PAGE", "P/0", "P/2", "Q/0"])
+  }
+
   /// Catches a no that drops nothing, warns twice, or asks again. A no drops the list, posts one
   /// warning, and refuses the page's further calls with no further question. The next load of the
   /// page starts over, so its next call past the limit asks again.
