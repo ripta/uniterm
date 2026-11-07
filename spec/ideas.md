@@ -3,6 +3,16 @@
 Future improvements worth keeping that are not proposals yet. An idea leaves
 this file when a numbered proposal covers it.
 
+## Browser: OAuth2 and SSO sign-in
+
+Make OAuth2 and SSO sign-in work reliably. This is the most important idea here.
+These flows run as ordinary pages and pop-ups, which the browser supports, but no
+real sign-in has been tried against a real provider. Known risks, none tested in
+uniterm yet: providers that reject embedded browsers, as Google does based partly
+on the user agent; WebKit's block on third-party cookies, which can break SSO
+flows that use a hidden iframe; and passkeys, which need Apple entitlements. A
+provider that refuses the web view may need `ASWebAuthenticationSession`.
+
 ## Browser: microphone and camera support
 
 The browser rejects every microphone and camera request, so video calls and
