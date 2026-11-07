@@ -582,23 +582,21 @@ None.
   tab stays quiet about that code only for the address it cancelled itself.
 - A server that asks for credentials gets none. The browser answers no authentication challenge, so the page shows the
   server's own 401, and a test pins that no request carries an `Authorization` header. WebKit asks the server twice.
-- Camera and microphone are denied twice. The UI delegate answers `.deny` for every capture type, and a test pins that
-  answer. That is only the backstop: a real `getUserMedia` call never reaches the delegate under `swift test`, and the
-  user saw the same in the running app. On `http://localhost`, `navigator.mediaDevices` is missing. On a real HTTPS
-  page, `https://webrtc.github.io/samples/src/content/getusermedia/audio/`, a request got no answer: no error, no
-  system prompt, no audio. The cause of the stall stays unknown, and a system privacy prompt before the delegate is one
-  candidate. So a script injected in each page, at document start and in every frame, replaces `getUserMedia` and
-  `getDisplayMedia` on `navigator.mediaDevices` with calls that return a promise rejected with a `NotAllowedError`
-  `DOMException`. It does the same for the legacy `navigator.getUserMedia` and `webkitGetUserMedia`, calling the error
-  callback. It replaces a function only where WebKit exposes one, so an insecure page keeps having no `mediaDevices`,
-  and listing devices is untouched. It lives in the page's own world, since it must replace what the page calls, and a
-  pop-up gets it with the rest of its configuration. It does not share a world with the unsent-input script. Measured
-  on the fixture's origin: 127.0.0.1 is a secure context with both functions present, and WebKit exposes neither legacy
-  form. Tests race each real call against a timer, in the page, a subframe, and a pop-up. They failed first with the
-  script off, where `getUserMedia` stayed pending and `getDisplayMedia` rejected with `InvalidStateError`. The legacy
-  forms are proved against a stub that defines them first, so the replacement logic is proved and not WebKit's own
-  objects. WKUIDelegate has no geolocation hook, and the app has no usage strings, so location cannot get the same
-  treatment. Amended 2026-11-06; see Decision Log.
+- Camera and microphone are denied. Measured in the running app against
+  `https://webrtc.github.io/samples/src/content/getusermedia/audio/` on 2026-11-07. With no usage strings, which is the
+  app as shipped, the page is a secure context and `navigator.mediaDevices` is undefined, so a site that does not check
+  first hits a script error and shows nothing. With both strings added, the API exists and a request raises the macOS
+  microphone prompt, so the prompt comes before the UI delegate has a say. Xcode's `xctest` carries both strings, which is
+  why the API exists under `swift test` and not in the app. A real call there never settled, probably waiting on that
+  prompt, which was not measured. The app therefore has no usage strings, and a test pins that. A script injected in each
+  secure page, at document start and in every frame, defines a stand-in `navigator.mediaDevices`. `getUserMedia` and
+  `getDisplayMedia` fail with a `NotAllowedError` `DOMException`, `enumerateDevices` finds nothing, and a site can still
+  listen for events. A page cannot reach a native call that raises the prompt. An insecure page has no `mediaDevices`,
+  and keeps none. It lives in the page's own world, since the page must see it, and a pop-up gets it with the rest of its
+  configuration. In the running app the sample page shows `NotAllowedError`, with no prompt. Package tests race each call
+  against a timer, in the page, a subframe, and a pop-up. The UI delegate's `.deny` stays as the backstop, and a test pins
+  its answer. What a page sees after someone answers the macOS prompt was not measured. WKUIDelegate has no geolocation
+  hook, and the app has no usage strings, so location cannot get the same treatment. Amended 2026-11-07; see Decision Log.
 - `NSAllowsArbitraryLoadsInWebContent` is in `Info.plist`. It also drops the transport rules' TLS version and cipher
   floor for web content, and certificate validation is unchanged. A test pins the key and that no app-wide exception
   exists. Loopback is exempt from the transport rules, so no package test can show the key's effect on a named host.
@@ -1545,6 +1543,15 @@ Starts after UTERM-004 M6.
   message. This is an addition: a script injected in each page's own world, with no handler, that replaces the capture
   calls. The delegate's `.deny` stays as the backstop. If wrong, a page that defines its own replacement after document
   start can undo the script, and the delegate still denies a request that reaches it. (addition)
+- 2026-11-07: Camera and microphone use a stand-in (the user's choice in a hands-on review, not a best guess). The entry
+  above is wrong about the cause. No request stalled in the app. WebKit hides `navigator.mediaDevices` from an app with no
+  usage strings, so the script had nothing to replace and did nothing there, and the user's test still showed no error.
+  Its tests passed because Xcode's `xctest` carries usage strings of its own. As built said a request got no answer with
+  an unknown cause, and that the script replaces functions only where WebKit exposes them, including the legacy forms. Now
+  the script defines a stand-in on every secure page, and the legacy forms are gone, since WebKit exposes neither. The app
+  stays free of usage strings, because with them macOS prompts before the delegate runs. The user chose this over adding
+  the strings and over removing the script. If wrong, removing the script leaves sites that do not check first failing
+  silently, and real capture support must remove it. (addition)
 
 ## References
 

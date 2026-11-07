@@ -33,6 +33,16 @@ final class InfoPlistDriftTests: XCTestCase {
     XCTAssertEqual(security["NSAllowsArbitraryLoadsInWebContent"] as? Bool, true)
   }
 
+  /// Catches camera or microphone usage strings arriving without real capture support. With them,
+  /// WebKit exposes the native API and asks macOS first, measured in the running app, so a page
+  /// could raise a system prompt for capture the browser denies. The plist is the app's real one.
+  func testTheAppDeclaresNoCameraOrMicrophoneUse() throws {
+    let plist = try loadPlist()
+
+    XCTAssertNil(plist["NSCameraUsageDescription"])
+    XCTAssertNil(plist["NSMicrophoneUsageDescription"])
+  }
+
   /// Catches `LSFileQuarantineEnabled` in the app's Info.plist. It applies to the whole process, so
   /// every file the terminal's shells create would be quarantined. The browser marks each finished
   /// download on its own. The plist is the app's real one.
