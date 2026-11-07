@@ -454,7 +454,9 @@ Decision: a failed tab shows a stopped-page message, and recovery always rebuild
 - When the bound replaces a hung view, the tab ends that view's content process with SIGKILL first, so the new view
   cannot land in a process that still spins. A tab that shares the process recovers as from any stopped process. A tab
   or pane the user closes arms no bound, so the close probes the page with a trivial script call. No reply within the same
-  bound ends the process, and a reply or an error that says the process ended cancels it. The web view is kept alive only
+  bound ends the process, unless a live tab in any pane of the app still uses it. A closed pop-up can share its
+  opener's process, and a busy opener is not a hung one. The last live tab on a skipped process runs the same probe
+  when it closes. A reply or an error that says the process ended cancels the bound. The web view is kept alive only
   until the probe settles. A closed tab with no web view starts no probe. The process id is read before the view is
   released. The read uses a private WebKit property, so a macOS that drops it leaves the old behaviour. See Risks.
   Amended 2026-11-06; see Decision Log.
@@ -528,7 +530,10 @@ None.
   degrades to the old behaviour with no crash. Not verified: whether the app's own exit ends a process this does not
   reach, and whether a real hang in the running app behaves as it did under `swift test`. A tab sharing the hung process
   hears it end and recovers as from any content process that stops. A closed hung tab keeps its web view for up to the
-  10-second bound so the probe can run. ADR-05 says work an applet keeps after close is bounded, and this is.
+  10-second bound so the probe can run. ADR-05 says work an applet keeps after close is bounded, and this is. A script-opened
+  pop-up was measured to share its opener's process, so a close that finds a live tab on the same process id signals
+  nothing, and the spinning process stays until its last live tab closes. A tab reopened inside the window was measured
+  to get a process of its own, so the kill leaves it alone.
 - **Two WebKit applets have not chosen their stores** — likelihood: low, impact: low. UTERM-007 and UTERM-010 are drafts.
   Accepted: the browser's store is its own, so whatever they choose cannot share or clear it.
 
@@ -1122,11 +1127,15 @@ None.
   private read, guarded by `responds(to:)`, and the kill. It refuses ids at or below 1 and any process whose path does
   not name a WebKit content process. The hang bound kills the process before it builds the new view. A close of a tab
   or pane reads the id before the view is released, and probes the page with `evaluateJavaScript`. No reply within the bound
-  kills the process, if the kept view still reports the same id. The probe holds the view strongly, since a released view
+  kills the process, if the kept view still reports the same id and no live tab's view reports it. A registry of the
+  app's live web views, which tabs add to at creation and remove from at detach, answers that across every pane, so a
+  view held only by a probe is not live. The probe holds the view strongly, since a released view
   answers a pending call at once, which would look like a reply. `HangPolicy` carries the type, so a test injects a
   recorder. Tests spin real pages from the fixture server and prove the process is gone on replace and on close. They
   prove a pop-up sharing the process recovers as a stopped tab, and that a live page closed normally cancels the probe
-  and sends no signal. A unit test proves ids 0, 1, -1, and the test's own are never signalled. See Risks.
+  and sends no signal. A closed pop-up that shares its opener's process with the opener spinning signals nothing, and
+  closing the opener afterwards ends the process. A tab reopened inside the window runs in a different process and
+  survives. A unit test proves ids 0, 1, -1, and the test's own are never signalled. See Risks.
 - No recovery resends a POST. Recovery restores history and never sets the resubmit intent, so the gate refuses the
   repeated post. Measured: a rebuilt view restores a post result as a blank page with its history, the gate refuses the
   repeat with one notice, and the server's count of posts stays one. The page is blank, so the message says so. A stopped
@@ -1445,6 +1454,12 @@ Starts after UTERM-004 M6.
   rewritten. The private read lives in one type behind `responds(to:)`, refuses ids at or below 1 and non-WebKit paths,
   and falls back to the old behaviour when a macOS drops the property. If wrong, a signal that reaches a recycled id is
   stopped by the path check, and a probe that kills a live page needs a page that is alive and silent for 10 seconds.
+  A review found that a closed pop-up's probe could kill a busy opener sharing its process, because the check saw only
+  the closed view. Measured with `_webProcessIdentifier`: a script-opened pop-up does share its opener's process. The
+  probe now skips the kill when any live tab in the app reports the same process id, and the last live tab closing
+  runs its own probe. A tab reopened within the window was measured to get its own process. A skipped kill leaves a
+  spinning process until its last live tab goes. The hang replacement path is unchanged, since the user reloaded a page
+  that gave no sign of life, and a tab sharing it recovers as a stopped tab.
 - 2026-11-06: Three ADR candidates declined (the user's choice, since the user called them inconsequential). No private
   API in shipping code is declined, and the SIGKILL decision above ships one. Plain HTTP in hosted web content with no
   App Transport Security floor is declined. One question per pane is declined as an ADR, and it stays a rule of this

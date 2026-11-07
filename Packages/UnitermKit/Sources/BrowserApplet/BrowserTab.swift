@@ -105,6 +105,7 @@ final class BrowserTab: NSObject {
     let view = makeWebView()
 
     current = view
+    LiveContentViews.add(view)
 
     return view
   }
@@ -623,6 +624,8 @@ final class BrowserTab: NSObject {
 
   /// Takes every reference between the web view and this tab away, and the web view off the screen.
   private func detach(_ view: WKWebView) {
+    LiveContentViews.remove(view)
+
     view.navigationDelegate = nil
     view.uiDelegate = nil
     (view as? BrowserWebView)?.onHistoryButton = nil

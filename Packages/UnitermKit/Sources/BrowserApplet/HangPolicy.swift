@@ -5,8 +5,8 @@ import Foundation
 /// A user's reload or navigation arms one bound. Any sign of life from the process cancels it, so a
 /// slow server never fires it. Nothing arms it in the background. When it runs out, the tab ends
 /// the hung content process. A tab the user closes while its page spins gets the same bound, armed
-/// at the close. The schedule is injected so a
-/// test fires the bound by hand and the production code sleeps for it.
+/// at the close. The schedule is injected so a test fires the bound by hand and the production
+/// code sleeps for it.
 public struct HangPolicy: Sendable {
   public typealias Cancel = @MainActor @Sendable () -> Void
   public typealias Schedule =
