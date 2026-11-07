@@ -262,8 +262,10 @@ final class BrowserDownloadTests: XCTestCase {
 
     XCTAssertTrue(text.hasPrefix("Could not download held.bin. "), text)
     XCTAssertGreaterThan(text.count, "Could not download held.bin. ".count)
-    XCTAssertEqual(harness.files(), [])
     XCTAssertFalse(harness.applet.isRunningSomething)
+
+    // The partial file is removed off the main thread, so the warning can arrive first.
+    await harness.eventually("the partial file is gone") { harness.files() == [] }
   }
 
   /// Catches a download that ends with the page that started it, and one that survives a tab the
