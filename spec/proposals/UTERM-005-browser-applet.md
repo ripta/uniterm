@@ -529,8 +529,9 @@ None.
   its battery until the app quits. The type refuses ids at or below 1, since `kill(0, ...)` signals the app's own process
   group. It also refuses any process whose path is not a WebKit content process, so a recycled id is left alone.
   Mitigation: one type owns the private name, tests spin real pages and prove the process is gone, and a missing property
-  degrades to the old behaviour with no crash. Not verified: whether the app's own exit ends a process this does not
-  reach, and whether a real hang in the running app behaves as it did under `swift test`. A tab sharing the hung process
+  degrades to the old behaviour with no crash. The user confirmed it in the running app on 2026-11-06: after a reload, a
+  closed tab, and a typed address on a hung page, the process was gone in about 10 seconds. Not verified: whether the
+  app's own exit ends a process this does not reach. A tab sharing the hung process
   hears it end and recovers as from any content process that stops. A closed hung tab keeps its web view for up to the
   10-second bound so the probe can run. ADR-05 says work an applet keeps after close is bounded, and this is. A script-opened
   pop-up was measured to share its opener's process, so a close that finds a live tab on the same process id signals
