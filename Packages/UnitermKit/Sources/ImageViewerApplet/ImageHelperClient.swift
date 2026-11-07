@@ -114,6 +114,10 @@ final class ImageHelperClient {
   /// already counts, because the helper orders requests as they arrive.
   private var infos: [UInt32: SourceInfo] = [:]
   private var recentSources: [UInt32] = []
+
+  /// The output space each source last decoded in, which sizes the level a zoom would hold.
+  var outputSpaces: [UInt32: OutputSpace] = [:]
+
   private var openingSources: [(id: UInt32, role: OpenRole)] = []
   private var busySince: ContinuousClock.Instant?
   private var watchdog: Task<Void, Never>?
@@ -315,6 +319,7 @@ final class ImageHelperClient {
     while recentSources.count > ImageProtocol.retainedSources, let oldest = recentSources.first {
       recentSources.removeFirst()
       infos[oldest] = nil
+      outputSpaces[oldest] = nil
     }
   }
 
@@ -361,8 +366,6 @@ final class ImageHelperClient {
     [scheduler.inFlight, scheduler.pending].compactMap { $0?.kind == .tile ? $0?.region : nil }
   }
 
-  var tileInFlight: Bool { scheduler.inFlight?.kind == .tile }
-
   var tileInFlightRegion: TileRegion? {
     scheduler.inFlight?.kind == .tile ? scheduler.inFlight?.region : nil
   }
@@ -402,6 +405,7 @@ final class ImageHelperClient {
     generation += 1
     scheduler.reset()
     infos = [:]
+    outputSpaces = [:]
     recentSources = []
     readLimit.withLock { $0 = 0 }
     budget.release(owner: owner)
@@ -422,15 +426,25 @@ final class ImageHelperClient {
     return ImageLimits.byteCount(width: width, height: height, format: .rgbaF16) ?? Int.max
   }
 
-  /// The bytes of the whole decode a tile is cut from, in eight-bit pixels. The helper holds it
-  /// while it cuts, so it sets what the request may cost.
-  private func levelBytes(for region: TileRegion, of info: SourceInfo) -> Int {
-    let native = PixelSize(width: Int(info.width), height: Int(info.height))
-    let ratio = Double(region.level) / Double(max(native.longer, 1))
+  /// The bytes of the whole decode a tile is cut from. The helper holds it while it cuts, so it
+  /// sets what the request may cost.
+  ///
+  /// The level is in the output space the source decoded in, which the pane learned from the fit
+  /// decode. A space that is not known yet counts as sixteen-bit floats, the larger of the two.
+  static func levelBytes(longerSide: Int, native: PixelSize, space: OutputSpace?) -> Int {
+    let ratio = Double(longerSide) / Double(max(native.longer, 1))
     let width = max(1, Int((Double(native.width) * ratio).rounded(.up)))
     let height = max(1, Int((Double(native.height) * ratio).rounded(.up)))
 
-    return ImageLimits.byteCount(width: width, height: height, format: .rgba8) ?? Int.max
+    return ImageLimits.byteCount(width: width, height: height, format: space?.format ?? .rgbaF16)
+      ?? Int.max
+  }
+
+  private func levelBytes(for region: TileRegion, of info: SourceInfo) -> Int {
+    let native = PixelSize(width: Int(info.width), height: Int(info.height))
+
+    return Self.levelBytes(
+      longerSide: region.level, native: native, space: outputSpaces[info.source])
   }
 
   private func send(_ request: DecodeRequest) {
@@ -438,8 +452,6 @@ final class ImageHelperClient {
       refuse(request, "The image is no longer open in the decoder.")
       return
     }
-
-    touch(request.source)
 
     let region = request.region
     let held = region.map { levelBytes(for: $0, of: info) } ?? predictedBytes(for: request)
@@ -455,6 +467,8 @@ final class ImageHelperClient {
       refuse(request, "Image decoding is using all the memory it may. Close an image pane.")
       return
     }
+
+    touch(request.source)
 
     expectation = ImageExpectation(
       request: request.id, source: request.source, frame: UInt32(request.frame),
@@ -577,6 +591,9 @@ final class ImageHelperClient {
       }
 
       self.expectation = nil
+
+      if infos[header.source] != nil { outputSpaces[header.source] = header.space }
+
       completeDecode()
       onEvent?(.image(request, header, pixels))
 
@@ -724,6 +741,7 @@ final class ImageHelperClient {
     scheduler.reset()
     openingSources = []
     infos = [:]
+    outputSpaces = [:]
     recentSources = []
     process = nil
     generation += 1

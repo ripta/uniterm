@@ -409,3 +409,63 @@ Each new or changed class was timed alone with `swift test --filter`.
 | Every other new class | Under 0.03 s |
 
 `ImageZoomTests` is the costliest new file. It drives real helper processes through zoom, refusal, and detach.
+
+## Row review
+
+### Commits
+
+- "Keep animations at fit, and stop the slideshow when zooming" holds the review fixes, the proposal edits, and this
+  report.
+- "Finish the image viewer row" moves the row to `history.md`.
+
+### Findings
+
+A holistic reviewer read the range from "8< --- snip ---" to M3's commit, with `adr-impact` beside it.
+
+- R1, CONFIRMED: pinch, double-tap, drag, and scroll bypassed the animation zoom gate. Only the menu commands checked
+  `canZoom`. An animated image could zoom, and tiles cut from frame 0 then covered the playing animation.
+  - Fixed. The view gates every gesture and the arrow pan.
+  - The applet also refuses tiles for an animated image.
+  - The regression test failed before the fix.
+- R2, a design call: a playing slideshow kept ticking while the image was zoomed, so it snapped back to fit within
+  5 seconds.
+  - The run's best guess is that zooming past fit is a manual action, so it stops the slideshow like a manual step.
+  - Fixed, with an amendment and a Decision Log entry. The test failed before the fix.
+- R3, PLAUSIBLE then confirmed: the client sized a kept tile level as 8-bit pixels. HDR levels are half-float, so
+  the cap and budget checks estimated half the real size.
+  - Fixed. The client records each source's output space, and an unknown space counts as F16.
+  - The test forces the HDR space on a real helper, because no real HDR fixture exists. It failed before the fix.
+- R4, PLAUSIBLE then confirmed: the app's mirror of the helper's source order moved before a request could be refused.
+  - Fixed. The mirror moves only when a request is sent. The test failed before the fix.
+- R5: removed dead code, `tileInFlight`.
+- R6: M2's As built block said zoom was not built yet. It now points at M3.
+- R7: M3's As built block now says drag-to-pan falls under the panning check. Double-tap is the only gesture no check
+  names.
+- R8: removed a stray blank line in the Decision Log.
+- R9: a crashed, stopped, or misbehaving helper during a zoom said "The zoom limit was reached". Each now says what
+  happened. The limit text stays for the cap, the budget, and an overrun.
+
+### Checks
+
+- The implementer's checks:
+  - `make fmt-check`, `make lint`, `make check`, and `make build` passed.
+  - `make test-package` passed: 1,739 tests, 5 skipped, 0 failures.
+  - `build-for-testing` passed.
+  - `proposals.py check` and `freeze` passed.
+- The coordinator's checks:
+  - `make test-helper-sandbox` passed.
+  - `make test-app` passed: 120 tests, 0 failures.
+  - No new crash reports from uniterm, xctest, or the shipped helper.
+
+### ADR review
+
+`adr-impact` on the whole row found no conflicts and no supersessions. ADR-07 and ADR-08 are advisory.
+
+- The App Sandbox candidate stays as recorded. The row adds one fact: the helper receives files as descriptors over
+  its socket, so it needs no file entitlement.
+- The per-helper cap and app-wide budget policy was weighed and fails the bar. The values are numeric defaults. The
+  invariant behind them already follows UTERM-003 and ADR-07: a pane's helper is never killed to make room.
+
+### For M4
+
+M4's `zoom` command should state what it does for an animated image. Animated images do not zoom in M3.

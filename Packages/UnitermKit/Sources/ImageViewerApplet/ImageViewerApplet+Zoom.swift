@@ -78,12 +78,13 @@ extension ImageViewerApplet {
   func viewportChanged() {
     guard let viewport = content.viewport else { return }
 
-    let free = !viewport.isFit
+    let free = !viewport.isFit && !plan.isAnimated
 
     if free != isZoomedPastFit {
       isZoomedPastFit = free
 
       if free {
+        stopSlideshow()
         dropPrefetched()
       } else {
         releaseTiles()
@@ -130,8 +131,9 @@ extension ImageViewerApplet {
 
   /// Keeps the tiles around the viewport and asks for the nearest one that is missing.
   func refreshTiles() {
-    guard let viewport = content.viewport, !viewport.isFit, let held = shot, phase == .showing,
-      !isDetached, !closed, !content.isPinching, held.info.source == info?.source
+    guard let viewport = content.viewport, !viewport.isFit, !plan.isAnimated, let held = shot,
+      phase == .showing, !isDetached, !closed, !content.isPinching,
+      held.info.source == info?.source
     else { return }
 
     let backing = Double(content.backingScale)
@@ -250,20 +252,27 @@ extension ImageViewerApplet {
   /// again, since the helper's copy of it went with the process.
   func zoomEnded(_ reason: HelperEnd) {
     let name = "\u{201C}\(record.current ?? title)\u{201D}"
-    let detail: String
+    let text: String
 
     switch reason {
     case .overranTimeBound:
-      detail = "\(name) took longer to decode than uniterm allows."
+      text = "The zoom limit was reached. \(name) took longer to decode than uniterm allows."
 
     case .overFootprint:
-      detail = "\(name) needs more memory than uniterm lets an image decoder use."
+      text =
+        "The zoom limit was reached. \(name) needs more memory than uniterm lets an image decoder use."
+
+    case .unresponsive:
+      text = "The image decoder stopped responding while zooming \(name)."
+
+    case .misbehaved:
+      text = "The image decoder sent something uniterm refused while zooming \(name)."
 
     default:
-      detail = "The image decoder stopped while zooming \(name)."
+      text = "The image decoder stopped while zooming \(name). A damaged file can cause this."
     }
 
-    notify(.warning, "The zoom limit was reached. \(detail)", delivery: .message)
+    notify(.warning, text, delivery: .message)
 
     lastGood = nil
     releaseTiles()

@@ -377,6 +377,34 @@ final class ImageViewerNavigationTests: XCTestCase {
     XCTAssertTrue(stopped)
   }
 
+  /// Catches a slideshow that steps away from an image the user zoomed into. Zooming past fit is a
+  /// manual action, so it stops the show, and a tick that was already due leaves the image alone.
+  func testZoomingStopsASlideshowLikeAManualStep() async throws {
+    try write("a.png", "b.png")
+
+    let sleeper = ManualSleeper()
+    let (applet, _) = panes.make(sleeper: sleeper)
+    try await openFolder(applet, showing: "a.png")
+
+    applet.togglePlayback()
+
+    let armed = await Harness.eventually { sleeper.waitingCount == 1 }
+    XCTAssertTrue(armed)
+
+    applet.zoomIn()
+
+    XCTAssertTrue(applet.isZoomedPastFit)
+    XCTAssertFalse(applet.isPlaying)
+    XCTAssertFalse(applet.isSlideshowTimerRunning)
+    XCTAssertFalse(applet.segments.contains { $0.text == "Slideshow" })
+
+    sleeper.tick()
+    applet.slideshowTick()
+
+    XCTAssertEqual(applet.committedName, "a.png")
+    XCTAssertTrue(applet.isZoomedPastFit)
+  }
+
   /// Catches a slideshow that keeps running off screen, or that restarts when it was not playing.
   /// Detaching stops the timer and keeps the intent. Reattaching resumes a show that was playing and
   /// starts none that was not.

@@ -636,7 +636,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     phase = .showing
     content.show(
       image: image, native: native, actualScale: info.actualScale, hdr: header.space.isHDR,
-      keepingZoom: sameImage)
+      zoomable: !plan.isAnimated, keepingZoom: sameImage)
     frames[currentFrame] = Frame(image: image, bytes: 0)
     refresh()
 

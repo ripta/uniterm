@@ -111,6 +111,10 @@ final class ImageViewerView: NSView {
   /// True from the first to the last event of a pinch.
   private(set) var isPinching = false
 
+  /// False for an image that plays, such as an animation. Its viewport never leaves fit, whatever
+  /// the gesture or command.
+  private(set) var isZoomable = true
+
   private var resignObserver: (any NSObjectProtocol)?
 
   override var isFlipped: Bool { true }
@@ -207,11 +211,14 @@ final class ImageViewerView: NSView {
 
   /// Shows `image`, whose pixels are of `native` size at full resolution. The image shows at fit,
   /// unless `keepingZoom` is set and the image on screen is the same size, as when a sharper decode
-  /// of the same image replaces its backdrop.
+  /// of the same image replaces its backdrop. An image that is not `zoomable` stays at fit.
   func show(
-    image: CGImage, native: PixelSize, actualScale: Double, hdr: Bool, keepingZoom: Bool = false
+    image: CGImage, native: PixelSize, actualScale: Double, hdr: Bool, zoomable: Bool = true,
+    keepingZoom: Bool = false
   ) {
-    let keep = keepingZoom && viewport?.native == native
+    isZoomable = zoomable
+
+    let keep = keepingZoom && zoomable && viewport?.native == native
 
     if !keep { isPinching = false }
 
@@ -374,7 +381,7 @@ final class ImageViewerView: NSView {
   /// Changes the zoom. Returns false when nothing changed, as at fit when zooming out.
   @discardableResult
   func zoom(_ target: ZoomTarget, anchor: CGPoint? = nil) -> Bool {
-    guard var next = viewport else { return false }
+    guard isZoomable, var next = viewport else { return false }
 
     let before = next
 
@@ -397,7 +404,7 @@ final class ImageViewerView: NSView {
 
   /// Puts back a viewport the pane held before, as when a zoom is refused.
   func restore(_ saved: ZoomViewport) {
-    guard saved.native == viewport?.native else { return }
+    guard isZoomable, saved.native == viewport?.native else { return }
 
     var next = saved
 
@@ -410,7 +417,7 @@ final class ImageViewerView: NSView {
   /// Moves the image under the pane by `delta` points. Does nothing at fit.
   @discardableResult
   func pan(byPoints delta: CGSize) -> Bool {
-    guard var next = viewport, !next.isFit else { return false }
+    guard isZoomable, var next = viewport, !next.isFit else { return false }
 
     let before = next
 
@@ -488,6 +495,8 @@ final class ImageViewerView: NSView {
   /// One step of a pinch. The view scales what it holds while the fingers move. It reports a
   /// settled viewport once, when they lift, so the tiles for the new zoom are asked for then.
   func pinch(_ phase: PinchPhase, magnification: CGFloat, at location: CGPoint) {
+    guard isZoomable else { return }
+
     switch phase {
     case .began:
       isPinching = true

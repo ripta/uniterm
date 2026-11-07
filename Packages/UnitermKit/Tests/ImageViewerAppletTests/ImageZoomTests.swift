@@ -165,6 +165,35 @@ final class ImageZoomTests: XCTestCase {
     XCTAssertTrue(animated.content.viewport?.isFit == true)
   }
 
+  /// Catches a gesture zooming an animation that the menu commands refuse. A pinch and a double
+  /// tap on a GIF leave it at fit, and no tile is asked for, so none overlays the playing frames.
+  func testPinchAndDoubleTapLeaveAnAnimationAtFit() async throws {
+    let gif = try ImageFixtures.write(
+      ImageFixtures.animatedGIF(
+        colors: [ImageFixtures.red, ImageFixtures.blue], delays: [5, 5], size: 600),
+      named: "loop.gif", in: folder)
+    let (animated, _) = try await open(gif)
+    let center = CGPoint(x: 150, y: 150)
+
+    animated.content.pinch(.began, magnification: 0, at: center)
+    animated.content.pinch(.changed, magnification: 1.5, at: center)
+    animated.content.pinch(.ended, magnification: 0, at: center)
+
+    XCTAssertFalse(animated.content.zoom(.actual, anchor: center), "the double tap does nothing")
+    XCTAssertFalse(animated.content.pan(byPoints: CGSize(width: 10, height: 10)))
+
+    XCTAssertTrue(animated.content.viewport?.isFit == true)
+    XCTAssertFalse(animated.isZoomedPastFit)
+    XCTAssertFalse(animated.content.isPinching)
+
+    animated.refreshTiles()
+
+    XCTAssertTrue(animated.client.tileRegionsOutstanding.isEmpty)
+    XCTAssertNil(animated.tileLevel)
+    XCTAssertEqual(animated.content.tileCount, 0)
+    XCTAssertNil(zoomSegment(animated))
+  }
+
   /// Catches Actual Size ignoring the declared resolution. A 3000 by 2000 PNG at 144 dots per
   /// inch is 1500 by 1000 points, so it fits a 2000 point pane at its own size, and zooming to
   /// actual size in a smaller pane shows 100 percent of that size.

@@ -81,6 +81,100 @@ final class HelperClientTests: XCTestCase {
     XCTAssertTrue(client.select(source: ids[1]))
   }
 
+  /// Catches a refused request moving a source up the client's recency list. The helper never hears
+  /// of it, so the client would later forget a different source than the helper does. With four
+  /// sources kept, a refused decode of the oldest must leave it the first one dropped by a fifth.
+  func testARefusedRequestDoesNotKeepASourceAlive() async throws {
+    let (client, log) = makeClient(Harness.settings(maxImageBytes: 8 << 20))
+    let big = ImageFixtures.encode(
+      ImageFixtures.solidQuadrants(width: 3000, height: 2000), as: .png)
+    var ids: [UInt32] = []
+
+    ids.append(
+      try XCTUnwrap(client.open(try openedFile(big, named: "f1.png", in: folder), role: .prefetch)))
+
+    for index in 2...ImageProtocol.retainedSources {
+      let file = try openedFile(ImageFixtures.png(), named: "f\(index).png", in: folder)
+
+      ids.append(try XCTUnwrap(client.open(file, role: .prefetch)))
+    }
+
+    func opened() -> Int {
+      log.events.filter { if case .prefetchOpened = $0 { return true } else { return false } }.count
+    }
+
+    await expectEventually { opened() == ImageProtocol.retainedSources }
+
+    XCTAssertTrue(client.select(source: ids[0]))
+
+    let request = try XCTUnwrap(client.decode(maxPixel: 0, frame: 0, kind: .still))
+
+    XCTAssertTrue(
+      log.events.contains {
+        if case .refused(let refused, _) = $0 {
+          return refused.id == request.id
+        } else {
+          return false
+        }
+      },
+      "the decode is past the size cap")
+
+    client.open(try openedFile(ImageFixtures.png(), named: "f5.png", in: folder), role: .prefetch)
+    await expectEventually { opened() == ImageProtocol.retainedSources + 1 }
+
+    XCTAssertFalse(client.select(source: ids[0]), "the refusal did not touch it, so it went first")
+    XCTAssertTrue(client.select(source: ids[1]))
+  }
+
+  /// Catches a zoom estimate that sizes an HDR level as eight-bit pixels. The helper keeps the
+  /// level in sixteen-bit floats for an extended-linear source, which is twice the bytes. A zoom
+  /// that fits the cap only as eight-bit pixels must be refused, and an unknown space counts as the
+  /// larger size.
+  func testAnHdrLevelIsSizedAsFloatsAndRefusedPastTheCap() async throws {
+    let native = PixelSize(width: 6000, height: 4000)
+    let pixels = 6000 * 4000
+    let cap = 150 << 20
+
+    XCTAssertEqual(
+      ImageHelperClient.levelBytes(
+        longerSide: 6000, native: native, space: .extendedLinearDisplayP3),
+      pixels * 8)
+    XCTAssertEqual(
+      ImageHelperClient.levelBytes(longerSide: 6000, native: native, space: .sRGB), pixels * 4)
+    XCTAssertEqual(
+      ImageHelperClient.levelBytes(longerSide: 6000, native: native, space: nil), pixels * 8)
+    XCTAssertLessThanOrEqual(pixels * 4, cap, "the eight-bit estimate would pass")
+    XCTAssertGreaterThan(pixels * 8, cap)
+
+    let (client, log) = makeClient(Harness.settings(maxImageBytes: cap))
+    let big = ImageFixtures.encode(
+      ImageFixtures.solidQuadrants(width: 6000, height: 4000), as: .png)
+
+    client.open(try openedFile(big, in: folder))
+    await expectEventually { log.opened != nil }
+
+    let source = try XCTUnwrap(client.source?.source)
+
+    client.decode(maxPixel: 64, frame: 0, kind: .still)
+    await expectEventually { !log.images.isEmpty }
+    XCTAssertEqual(client.outputSpaces[source], .sRGB, "the fit decode tells the client the space")
+
+    client.outputSpaces[source] = .extendedLinearDisplayP3
+
+    let region = TileRegion(level: 6000, x: 0, y: 0, width: 256, height: 256)
+    let request = try XCTUnwrap(client.decodeRegion(region))
+
+    XCTAssertTrue(
+      log.events.contains {
+        if case .refused(let refused, _) = $0 {
+          return refused.id == request.id
+        } else {
+          return false
+        }
+      },
+      "an HDR level of this size is past the cap")
+  }
+
   /// Catches a prefetch the scheduler replaced going unreported. A frame request that replaces a
   /// waiting prefetch tells the pane, which would otherwise wait for a decode that never comes.
   func testAReplacedPrefetchIsReported() async throws {

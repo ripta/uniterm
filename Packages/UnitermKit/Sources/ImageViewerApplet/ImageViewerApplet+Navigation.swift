@@ -316,7 +316,7 @@ extension ImageViewerApplet {
     content.show(
       image: next.image,
       native: PixelSize(width: Int(next.info.width), height: Int(next.info.height)),
-      actualScale: next.info.actualScale, hdr: next.space.isHDR)
+      actualScale: next.info.actualScale, hdr: next.space.isHDR, zoomable: !plan.isAnimated)
     frames[0] = Frame(image: next.image, bytes: 0)
     refresh()
 

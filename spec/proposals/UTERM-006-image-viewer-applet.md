@@ -204,7 +204,7 @@ and a folder listing taken once, with Reload.
   close and run it. Amended 2026-11-07; see Decision Log.
 - Manual stepping stops at the first and last image.
 - Play or Pause Slideshow is one command, since a registry command has one title. Playback advances every 5 seconds and
-  wraps at the end. A manual step stops it. It pauses on detach and resumes on reattach only if it was playing. A status
+  wraps at the end. A manual step stops it, and so does zooming past fit. It pauses on detach and resumes on reattach only if it was playing. A status
   segment shows it is playing. The interval is fixed, with no setting, and playing state is never saved. Amended
   2026-11-07; see Decision Log.
 - Name order is Finder's: localized and numeric-aware, so `img2` comes before `img10`. Date order is the file's
@@ -449,8 +449,9 @@ None.
   loading. A prefetch pending behind a decode is replaced by any other request. A prefetch that fails, hangs, or
   overruns leaves the image on screen with no message and is not tried again until a reload. Stepping to the file shows
   the failure.
-- The scheduler holds the zoom gate as `isZoomedPastFit`, which is false until free zoom lands. It refuses prefetches
-  and drops a waiting one while it holds. The view keeps an arrow-key hook for panning that does nothing yet.
+- The scheduler holds the zoom gate as `isZoomedPastFit`, which the pane sets once the image is zoomed past fit. See
+  the M3 As built. It refuses prefetches and drops a waiting one while it holds. The arrow keys pan a zoomed image,
+  which M3 added.
 - A step moves the selection at once, and the pane loads one image at a time. When one finishes, it loads whatever is
   selected then. A held key through large images shows each image as it arrives, and one helper decodes them all.
 - A scan reports in batches of 256 images from its own thread. A test hook holds it between batches.
@@ -536,11 +537,15 @@ None.
   test applies one remap of "Actual Size" the way AppKit does, by title, and shows that it moves the terminal's item and
   the viewer's. A UI test does the same with a real launch argument. The status bar shows the zoom as a percent of
   actual size while the image is zoomed.
-- Arrows pan a zoomed image by a fifth of the pane, and Space still steps. Dragging pans, and a double tap on a
-  trackpad toggles actual size. Neither gesture is in the checks above.
+- Arrows pan a zoomed image by a fifth of the pane, and Space still steps. Dragging pans, which the panning check
+  covers. A double tap on a trackpad toggles actual size, which no check names. See the Decision Log.
 - New UI tests: `testZoomKeysShowActualSizeZoomInAndFit`, `testARemapOfActualSizeMovesTheViewersItemToo`, and
   `testTheViewMenuZoomsTheImageViewer`. They were built for testing and not run in the agent's sandbox.
 - A step or resize that arrives while a level's first tile is in flight waits for that tile. See the Decision Log.
+- The view keeps an animation at fit, so a pinch, a double tap, a drag, and a scroll do nothing to it, as the menu
+  commands do nothing. Zooming a still past fit stops a playing slideshow. The client sizes the helper's kept level from
+  the output space of the source's last decode, and as sixteen-bit floats while that is unknown. A refused request no
+  longer moves its source up the client's recency list.
 - Left to the user: how smooth pinching and panning feel, and whether the detail at 1:1 matches Preview. Left to the run
   coordinator: the region path against the signed, sandboxed helper, and the UI tests. No test moves a window between
   two real displays. The HDR tile path has no real gain-map file.
@@ -659,7 +664,6 @@ None.
   needed this reading for the stored path.
 - 2026-11-07: (work-queue best guess) The image helper keeps up to four opened sources, with no protocol change, so a
   prefetch can open the next image beside the one on screen. The alternative was a close message and a version bump.
-
 - 2026-11-07: (work-queue best guess) An animated image does not zoom, and the zoom commands are off for it. The
   helper decodes animation frames at fit size and cuts tiles from frame 0 only, so a zoom would show blur or the wrong
   frame. This narrowed the Zoom bullet and the M3 bullet that listed free zoom for any image. Zooming an animation needs
@@ -691,6 +695,10 @@ None.
   and answers region and release messages, since the app may not read image properties and the helper holds the decode
   that tiles come from. The helper ships in the same bundle, so no skew applies, and the handshake still refuses a
   mismatch with the message to relaunch uniterm.
+- 2026-11-07: (work-queue best guess) Zooming past fit stops a playing slideshow, as a manual step does. The Navigation
+  bullet said only that a manual step stops it. A tick that stepped away from a zoomed image would have discarded the
+  detail the user zoomed in to see within 5 seconds. Zoom is a manual action, and the proposal had no rule for it. This
+  amended the Navigation slideshow bullet, which keeps its single 2026-11-07 marker.
 
 ## References
 
