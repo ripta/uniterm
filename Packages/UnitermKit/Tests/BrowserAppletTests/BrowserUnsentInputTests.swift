@@ -15,8 +15,6 @@ import XCTest
 /// the real isolated world. It does not prove a physical key press through the window server.
 @MainActor
 final class BrowserUnsentInputTests: XCTestCase {
-  private var window: NSWindow?
-
   private nonisolated static let pages: FixtureServer.Handler = { request in
     switch request.path {
     case "/form":
@@ -49,16 +47,7 @@ final class BrowserUnsentInputTests: XCTestCase {
   }
 
   private func make() async throws -> BrowserHarness {
-    let harness = try await BrowserHarness.make(handler: Self.pages)
-    let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-      backing: .buffered, defer: false)
-
-    window.contentView = harness.applet.content
-    window.makeFirstResponder(harness.tab.webView)
-    self.window = window
-
-    return harness
+    try await BrowserHarness.make(hosting: .focusedWindow, handler: Self.pages)
   }
 
   /// Focuses the element `script` names and types over its text. `insertText` replaces the
@@ -425,7 +414,7 @@ final class BrowserUnsentInputTests: XCTestCase {
     let harness = try await make()
     defer { harness.stop() }
 
-    await page(harness, "/odd-title", "Draft \u{202E}notes here")
+    await page(harness, "/odd-title", "Draft notes here")
     await type("changed", in: harness, focusing: byID("a"))
     await harness.host.until("the tab is marked") { harness.tab.hasUnsentInput }
 

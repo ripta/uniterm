@@ -12,12 +12,10 @@ import XCTest
 @testable import BrowserApplet
 
 /// Stands in for a tab's navigation delegate and cancels every navigation, so a test reads the
-/// address the browser asked WebKit to load without any request leaving the machine. It wakes a
-/// waiting test at each decision, so a test never polls or sleeps.
+/// address the browser asked WebKit to load without any request leaving the machine.
 @MainActor
 final class NavigationSpy: NSObject, WKNavigationDelegate {
   private(set) var urls: [URL] = []
-  private let events = AsyncStream.makeStream(of: Void.self)
 
   func webView(
     _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -26,36 +24,13 @@ final class NavigationSpy: NSObject, WKNavigationDelegate {
     if let url = navigationAction.request.url { urls.append(url) }
 
     decisionHandler(.cancel)
-    events.continuation.yield()
   }
 
-  /// Returns once `count` navigations were decided, or fails after `seconds`.
-  func until(
-    count: Int, seconds: Int = 30, file: StaticString = #filePath, line: UInt = #line
-  ) async {
-    if urls.count >= count { return }
-
-    var timedOut = false
-
-    let timer = Task { @MainActor [events] in
-      try? await Task.sleep(for: .seconds(seconds))
-
-      guard !Task.isCancelled else { return }
-
-      timedOut = true
-      events.continuation.yield()
-    }
-
-    defer { timer.cancel() }
-
-    for await _ in events.stream {
-      if urls.count >= count { return }
-
-      if timedOut {
-        XCTFail("timed out waiting for \(count) navigations", file: file, line: line)
-        return
-      }
-    }
+  /// Returns once `count` navigations were decided, or fails after the harness's bound.
+  func until(count: Int, file: StaticString = #filePath, line: UInt = #line) async {
+    await BrowserHarness.eventually(
+      "\(count) navigations were decided", file: file, line: line
+    ) { urls.count >= count }
   }
 }
 

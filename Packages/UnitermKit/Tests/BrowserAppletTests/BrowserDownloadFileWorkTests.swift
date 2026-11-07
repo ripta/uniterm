@@ -81,12 +81,6 @@ final class BrowserDownloadFileWorkTests: XCTestCase {
       handler: Self.handler)
   }
 
-  private func files(in harness: BrowserHarness) -> [String] {
-    guard let directory = harness.downloadsDirectory else { return [] }
-
-    return ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []).sorted()
-  }
-
   private func download(_ harness: BrowserHarness) {
     harness.applet.submit(address: harness.server.url("/file").absoluteString)
   }
@@ -127,7 +121,7 @@ final class BrowserDownloadFileWorkTests: XCTestCase {
     XCTAssertTrue(harness.applet.isRunningSomething)
     XCTAssertEqual(harness.applet.runningLabels, ["report.txt"])
     XCTAssertEqual(harness.posts.count, 0)
-    XCTAssertFalse(files(in: harness).contains("report.txt"))
+    XCTAssertFalse(harness.files().contains("report.txt"))
 
     operations.release.signal()
     await harness.host.until("the download is announced") { !harness.posts.isEmpty }
@@ -135,7 +129,7 @@ final class BrowserDownloadFileWorkTests: XCTestCase {
     XCTAssertEqual(harness.posts.map(\.text), ["Downloaded report.txt."])
     XCTAssertFalse(harness.applet.isRunningSomething)
     XCTAssertEqual(harness.applet.downloads.latest?.name, "report.txt")
-    XCTAssertEqual(files(in: harness), ["report.txt"])
+    XCTAssertEqual(harness.files(), ["report.txt"])
   }
 
   /// Catches a cancel during the finish that announces the file, keeps the file, or leaves the pane
@@ -167,7 +161,7 @@ final class BrowserDownloadFileWorkTests: XCTestCase {
     operations.release.signal()
 
     await harness.eventually("the finish made its file") { !operations.finished.isEmpty }
-    await harness.eventually("the cancelled file is removed") { files(in: harness).isEmpty }
+    await harness.eventually("the cancelled file is removed") { harness.files().isEmpty }
 
     XCTAssertEqual(operations.finished.map(\.lastPathComponent), ["report.txt"])
     XCTAssertEqual(harness.posts.map(\.text), [])
@@ -195,7 +189,7 @@ final class BrowserDownloadFileWorkTests: XCTestCase {
     XCTAssertEqual(harness.posts.first?.level, .warning)
     XCTAssertTrue(text.hasPrefix("Could not download report.txt. "), text)
     XCTAssertTrue(text.contains("marked as downloaded"), text)
-    XCTAssertEqual(files(in: harness), [])
+    XCTAssertEqual(harness.files(), [])
     XCTAssertFalse(harness.applet.isRunningSomething)
     XCTAssertNil(harness.applet.downloads.latest)
   }

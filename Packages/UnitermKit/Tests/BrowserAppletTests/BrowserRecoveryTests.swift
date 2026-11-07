@@ -83,8 +83,6 @@ enum WebContent {
 /// builds a new web view from the tab's address and history, and nothing reloads by itself.
 @MainActor
 final class BrowserRecoveryTests: XCTestCase {
-  private var window: NSWindow?
-
   private nonisolated static func pages(slow: FixtureServer.Hold? = nil) -> FixtureServer.Handler {
     let slowCount = Mutex(0)
 
@@ -139,24 +137,8 @@ final class BrowserRecoveryTests: XCTestCase {
   private func make(
     services: BrowserServices = .testing(), slow: FixtureServer.Hold? = nil
   ) async throws -> BrowserHarness {
-    let harness = try await BrowserHarness.make(services: services, handler: Self.pages(slow: slow))
-    let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
-      backing: .buffered, defer: false)
-
-    window.contentView = harness.applet.content
-    window.makeFirstResponder(harness.tab.webView)
-    self.window = window
-
-    return harness
-  }
-
-  private func postResult(in harness: BrowserHarness) async {
-    await harness.load("/form", expecting: "Form")
-    await harness.run("document.forms[0].submit()")
-    await harness.host.until("the post result shows") {
-      harness.applet.title == "Posted" && !harness.tab.isLoading
-    }
+    try await BrowserHarness.make(
+      services: services, hosting: .focusedWindow, handler: Self.pages(slow: slow))
   }
 
   private func hang(_ view: WKWebView) {
@@ -215,6 +197,60 @@ final class BrowserRecoveryTests: XCTestCase {
 
     harness.applet.goBack()
     await harness.host.until("the step back works") { harness.applet.title == "A" }
+  }
+
+  /// Catches a typed address on a stopped tab that throws away the history the stop kept. The
+  /// typed page loads after the history, so Back reaches the page the tab stopped on.
+  func testATypedAddressOnAStoppedTabKeepsTheHistoryTheStopKept() async throws {
+    let harness = try await make()
+    defer { harness.stop() }
+
+    await harness.load("/a", expecting: "A")
+    await harness.load("/b", expecting: "B")
+    await WebContent.kill(harness.tab.webView, in: harness)
+    await harness.eventually("the stopped message shows") { harness.tab.isStopped }
+
+    harness.applet.submit(address: harness.server.url("/c").absoluteString)
+    await harness.host.until("the typed page loads") {
+      harness.applet.title == "C" && !harness.tab.isLoading
+    }
+
+    XCTAssertFalse(harness.tab.isStopped)
+    XCTAssertTrue(harness.tab.canGoBack, "the typed load dropped the history")
+    XCTAssertEqual(harness.tab.webView.backForwardList.backList.last?.url.path, "/b")
+  }
+
+  /// Catches a Reload that does nothing on a stopped tab that holds history and no address. A
+  /// pop-up whose first page is a `blob:` preview stores no address, and no typed load set one. The
+  /// stop must stay until the tab knows it will load, and the load takes the history record.
+  func testReloadOnAStoppedTabWithHistoryAndNoAddressRestoresTheHistory() async throws {
+    let harness = try await make()
+    defer { harness.stop() }
+
+    await harness.load("/a", expecting: "A")
+    await harness.run(
+      """
+      window.open(URL.createObjectURL(
+        new Blob(['<title>Preview</title>hello'], {type: 'text/html'})))
+      """)
+    await harness.host.until("the preview pop-up loads") {
+      harness.applet.tabCount == 2 && harness.applet.title == "Preview" && !harness.tab.isLoading
+    }
+
+    let popup = harness.tab
+
+    XCTAssertNil(popup.record.url, "the preview stored an address")
+
+    await WebContent.kill(popup.webView, in: harness)
+    await harness.eventually("the stopped message shows") { popup.isStopped }
+
+    harness.applet.content.errorPage.reloadButton.performClick(nil)
+
+    await harness.eventually("the history came back") {
+      popup.currentURL != nil && !popup.isStopped
+    }
+
+    XCTAssertTrue(harness.applet.content.errorPage.isHidden)
   }
 
   /// Catches a tab nobody is looking at that shows a message, or loads while nobody looks. It goes
@@ -436,7 +472,7 @@ final class BrowserRecoveryTests: XCTestCase {
     let harness = try await make()
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     harness.host.recording.holdsQuestions = true
     harness.applet.reload()
@@ -832,6 +868,57 @@ final class BrowserRecoveryTests: XCTestCase {
     }
   }
 
+  /// Catches two questions stacked on one pane. The host queues a second sheet behind the first, so
+  /// the later question would appear for a tab that has closed meanwhile, and answering it does
+  /// nothing. A question that finds another up is refused, and the first stays the only one.
+  func testAQuestionThatFindsAnotherUpIsRefusedAndNeverQueued() async throws {
+    let timer = ManualHangTimer()
+    let harness = try await make(services: .testing(hang: timer.policy))
+    defer { harness.stop() }
+
+    await harness.load("/input", expecting: "Input")
+    await harness.run("var e = document.getElementById('a'); e.focus(); e.select();")
+
+    (harness.tab.webView as? any NSTextInputClient)?.insertText(
+      "typed", replacementRange: NSRange(location: NSNotFound, length: 0))
+    await harness.host.until("the tab holds unsent input") { harness.tab.hasUnsentInput }
+
+    let pid = try XCTUnwrap(WebContent.processID(of: harness.tab.webView))
+
+    defer { if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) } }
+
+    harness.applet.openTab()
+    harness.applet.selectTab(at: 0)
+    harness.host.recording.holdsQuestions = true
+
+    let closing = Task { @MainActor in await harness.applet.closeTab(at: 0) }
+
+    await harness.eventually("the close question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
+
+    hang(harness.tab.webView)
+    harness.applet.reload()
+    timer.fire()
+
+    await harness.eventually("the second question is settled") {
+      harness.host.recording.confirmations.count == 2 || !harness.tab.isAskingToReplace
+    }
+
+    guard harness.host.recording.confirmations.count == 1 else {
+      XCTFail("a second question was queued")
+      harness.host.recording.pendingAnswer?.resume(returning: false)
+      return
+    }
+
+    harness.host.recording.pendingAnswer?.resume(returning: false)
+    harness.host.recording.pendingAnswer = nil
+
+    let result = await closing.value
+
+    XCTAssertEqual(result, .declined)
+  }
+
   /// Catches a bound that wakes a tab nobody looks at. A reload, then a switch to another tab,
   /// then the bound: the hung view goes, the tab is not yet loaded, and nothing is requested until
   /// it is selected.
@@ -948,7 +1035,7 @@ final class BrowserRecoveryTests: XCTestCase {
     let harness = try await make()
     defer { harness.stop() }
 
-    await postResult(in: harness)
+    await harness.postResult()
     await WebContent.kill(harness.tab.webView, in: harness)
     await harness.eventually("the tab stopped") { harness.tab.isStopped }
 
@@ -978,7 +1065,7 @@ final class BrowserRecoveryTests: XCTestCase {
 
     harness.host.recording.answer = true
 
-    await postResult(in: harness)
+    await harness.postResult()
     await WebContent.kill(harness.tab.webView, in: harness)
     await harness.eventually("the tab stopped") { harness.tab.isStopped }
 
@@ -999,7 +1086,7 @@ final class BrowserRecoveryTests: XCTestCase {
 
     harness.host.recording.answer = true
 
-    await postResult(in: harness)
+    await harness.postResult()
 
     let pid = try XCTUnwrap(WebContent.processID(of: harness.tab.webView))
 

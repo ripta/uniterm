@@ -490,6 +490,42 @@ candidate is in the Decision Log as `Undecided`: shipping code uses no private W
 
 Test cost: `BrowserRecoveryTests` takes about 5.5 s for 25 tests, and its longest test, about 0.5 s, is the one real-timer test.
 
+## Row review
+
+Commit: "Close the seams between the browser milestones".
+
+Checks, on 2026-11-06:
+
+- `make test-package`, coordinator's run `Z1Y2PR`: 1,467 tests, 4 skipped, 0 failures, 72.7 s.
+- `make test-app`, coordinator's run `3HGMPE`: 108 tests, 0 failures, 886.6 s. This includes `testNextAndPreviousTabKeysSwitchTabs`, which failed once in run `6YFVT6`.
+- `make fmt-check`, `make lint`, `make check`, `make build`, and the UI tests' build for testing passed in the implementer's runs. No new crash report.
+
+Findings and dispositions:
+
+- Fixed: a page's raw `<title>` reached the host's question sheets, the tab bar, its accessibility label, and the closed pane's title. One cleaner now runs at the source. This also trims tab bar titles to 80 characters. Terminal
+  titles reach the same questions raw, which predates this row and is left open.
+- Fixed: a restored tab kept `.restore` after a real click, so a refused link went to history with no turn on the bar. A real click or a menu choice now sets it to the user's. A script's navigation on a restored page before any click
+  still delivers as a restore. `AppletAlerts` says the origin must not outlive its load, so a per-load origin stays the complete form.
+- Fixed: Reload on a stopped tab with history and no stored address, such as a pop-up on a `blob:` preview, did nothing and lost the message.
+- Fixed: a typed address on a stopped or not-yet-loaded tab threw away the history it kept.
+- Fixed: M3's As built said M8 needs no new path, which was false. M8 now needs an intent-free path for controller reload, back, and forward, loading a controller's background tab at once, and asking before a download in a controller tab.
+- Fixed: markers are now one per section, and an open design choice left in Risks is an accepted gap with a revisit hook. The hook is a user report of a page flooding Downloads, or M8 letting a controller start downloads.
+- Fixed: duplicated test helpers, and two UI tests retired in favour of the package tests that own those contracts.
+- Traced and confirmed, then fixed: different questions could stack in the host. The first answer was lost. One question per pane now holds, and a question that finds another up is refused with a notice.
+- Traced and not confirmed: `cancelledAddress` goes stale after a refusal, but nothing consumes it, and code 102 arrived only for downloads. It stays uncertain whether another WebKit version reports 102 for something else.
+- Refactored: `BrowserTab.swift` went from 1,402 to 1,253 lines. Hang recovery and the resend gate are their own types, and one `LoadState` enum replaces four overlapping flags. The suite stayed green. Two behaviour differences in
+  unreachable corners were reported: closing a stopped tab now reports `isStopped` false, and a load failure on a tab that never began now marks it as begun.
+
+ADR check over the range: no confirmed conflicts and no supersessions. One plausible conflict with ADR-05 remains for the user. See "Open for the user".
+
+## Open for the user
+
+- ADR-05 says work kept after close is bounded and visible. A hung content process outlives its view with no public way to end it, and a closed pane can hold a pending download cancel for up to 30 s with no indicator. The check suggests a
+  one-line exception, or an amendment covering work the platform keeps alive. Otherwise the next WebKit applet will assume ADR-05 is met.
+- ADR candidates in the Decision Log, all waiting or undecided: plain HTTP with no transport floor for hosted web content, a setting reaching an applet only through its factory, per-file quarantine that fails closed, and no private API in
+  shipping code.
+- `.cg.yaml` holds uncommitted rules this run did not add, from other sessions' approvals, including `prefix: [cp]`, which allows a write command. It is left uncommitted for the user.
+
 ## Unowned failures
 
 `make test-app` run `WWM5Y9` on 2026-11-06, 11:38 to 11:58 local, failed 22 tests with scattered focus and input errors, such as
