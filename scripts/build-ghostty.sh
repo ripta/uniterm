@@ -7,6 +7,7 @@
 #   scripts/build-ghostty.sh verify   check that the linked artifact matches the pin and the toolchain
 #   scripts/build-ghostty.sh path     print the directory of the artifact for the current pin
 #   scripts/build-ghostty.sh tree-hash  print the source tree hash for GHOSTTY_COMMIT
+#   scripts/build-ghostty.sh zig      print the path of the pinned Zig, downloading it when missing
 #
 # Bumping the pin: set GHOSTTY_TAG and GHOSTTY_COMMIT in ghostty.pin, run `tree-hash` and record its
 # output as GHOSTTY_TREE_SHA256, then update the toolchain fields. A build fails when the extracted
@@ -14,6 +15,7 @@
 #
 # Layout under $GHOSTTY_CACHE_DIR (default .cache/ghostty in the repo):
 #   dl/<commit>.tar.gz     the Ghostty source for the pinned commit
+#   zig/<version>/         the pinned Zig, downloaded from ziglang.org and checked against ZIG_SHA256
 #   zig-global/            Zig's global package cache, kept so a cold rebuild needs no network
 #   artifacts/<key>/       finished artifacts. A directory appears here only by an atomic rename.
 #   tmp/                   scratch space for builds in progress
@@ -37,19 +39,17 @@ die() {
 
 read_pin() {
   [ -f "$PIN_FILE" ] || die "pin file not found: $PIN_FILE"
-  GHOSTTY_TAG="" GHOSTTY_COMMIT="" ZIG_VERSION="" ZIG_SDK_VERSION="" XCODE_VERSION="" XCODE_BUILD="" SDK_VERSION=""
+  GHOSTTY_TAG="" GHOSTTY_COMMIT="" ZIG_VERSION="" ZIG_SHA256="" ZIG_SDK_VERSION="" XCODE_VERSION=""
+  XCODE_BUILD="" SDK_VERSION=""
   # shellcheck disable=SC1090
   . "$PIN_FILE"
-  for name in GHOSTTY_TAG GHOSTTY_COMMIT ZIG_VERSION ZIG_SDK_VERSION XCODE_VERSION XCODE_BUILD SDK_VERSION; do
+  for name in GHOSTTY_TAG GHOSTTY_COMMIT ZIG_VERSION ZIG_SHA256 ZIG_SDK_VERSION XCODE_VERSION XCODE_BUILD \
+    SDK_VERSION; do
     [ -n "${!name}" ] || die "$PIN_FILE does not set $name"
   done
 }
 
 read_toolchain() {
-  INSTALLED_ZIG=""
-  if command -v zig >/dev/null; then
-    INSTALLED_ZIG="$(zig version)"
-  fi
   local xcode_out
   xcode_out="$(xcodebuild -version 2>/dev/null)" || die "xcodebuild -version failed. Select Xcode $XCODE_VERSION."
   INSTALLED_XCODE_VERSION="$(printf '%s\n' "$xcode_out" | awk '/^Xcode/ { print $2 }')"
@@ -65,14 +65,52 @@ check_toolchain() {
   fi
 }
 
-# Zig is needed only to build, and it must match the pin exactly. A verify run happens in Xcode,
-# where Zig is not on PATH.
-check_zig() {
-  [ -n "$INSTALLED_ZIG" ] || die "zig not found. Install Zig $ZIG_VERSION."
-  if [ "$INSTALLED_ZIG" != "$ZIG_VERSION" ]; then
-    die "Zig $INSTALLED_ZIG is installed, but ghostty.pin requires exactly Zig $ZIG_VERSION."
+# Zig is needed only to build. The build uses the Zig that ghostty.pin names, from the cache, and
+# never one on PATH. Callers hold the build lock, so two builds never unpack Zig into one place.
+ensure_zig() {
+  ZIG_HOME="$CACHE/zig/$ZIG_VERSION"
+  ZIG="$ZIG_HOME/zig"
+
+  if [ ! -x "$ZIG" ]; then
+    [ "$(uname -m)" = "arm64" ] ||
+      die "ghostty.pin names the aarch64 macOS build of Zig, and this machine is $(uname -m)."
+    [ "$OFFLINE" = "1" ] && die "GHOSTTY_OFFLINE=1, and Zig $ZIG_VERSION is not cached in $CACHE/zig."
+
+    local archive="zig-aarch64-macos-$ZIG_VERSION.tar.xz"
+    mkdir -p "$CACHE/zig" "$CACHE/tmp"
+    local scratch
+    scratch="$(mktemp -d "$CACHE/tmp/zig.XXXXXX")"
+
+    echo "Fetching Zig $ZIG_VERSION."
+    if ! curl --fail --silent --show-error --location --output "$scratch/$archive" \
+      "https://ziglang.org/download/$ZIG_VERSION/$archive"; then
+      rm -rf "$scratch"
+      die "could not download Zig $ZIG_VERSION."
+    fi
+
+    if ! echo "$ZIG_SHA256  $scratch/$archive" | shasum -a 256 --check --status; then
+      rm -rf "$scratch"
+      die "the Zig $ZIG_VERSION download does not match ZIG_SHA256 in ghostty.pin."
+    fi
+
+    tar -xJf "$scratch/$archive" -C "$scratch" || {
+      rm -rf "$scratch"
+      die "could not unpack Zig $ZIG_VERSION."
+    }
+
+    # The rename is the commit point, so a directory under zig/ is always a complete Zig.
+    rm -rf "$ZIG_HOME"
+    mv "$scratch/zig-aarch64-macos-$ZIG_VERSION" "$ZIG_HOME"
+    rm -rf "$scratch"
   fi
 
+  local version
+  version="$("$ZIG" version)" || die "$ZIG does not run."
+  [ "$version" = "$ZIG_VERSION" ] ||
+    die "$ZIG reports version $version, but ghostty.pin requires $ZIG_VERSION."
+}
+
+check_zig_sdk() {
   # Zig 0.15 cannot link against the macOS 26 SDK. Its libSystem stub lists only arm64e. Zig
   # compiles against an older SDK from the Command Line Tools, while Xcode's tools use the current one.
   ZIG_SDK_PATH="${GHOSTTY_ZIG_SDK_PATH:-/Library/Developer/CommandLineTools/SDKs/MacOSX${ZIG_SDK_VERSION}.sdk}"
@@ -160,7 +198,7 @@ cleanup() {
 # build owns them.
 remove_stale_work() {
   local stale
-  for stale in "$CACHE"/tmp/build.*; do
+  for stale in "$CACHE"/tmp/build.* "$CACHE"/tmp/zig.*; do
     [ -d "$stale" ] || continue
     echo "Removing leftover build directory $(basename "$stale")."
     rm -rf "$stale"
@@ -311,7 +349,7 @@ SHIM
     env ${proxy_env[@]+"${proxy_env[@]}"} \
       PATH="$WORK/shim:$PATH" \
       ZIG_GLOBAL_CACHE_DIR="$CACHE/zig-global" \
-      zig build \
+      "$ZIG" build \
       --cache-dir "$WORK/zig-cache" \
       --prefix "$WORK/prefix" \
       -Doptimize=ReleaseFast \
@@ -371,14 +409,25 @@ main() {
     [ "$target" = "$(cd "$ARTIFACT/GhosttyKit.xcframework" && pwd -P)" ] ||
       die "GhosttyKit.xcframework links a stale artifact. Run make build."
     ;;
+  zig)
+    # Only the path goes to stdout, so a caller can capture it.
+    {
+      acquire_lock
+      ensure_zig
+    } >&2
+    echo "$ZIG"
+    ;;
   build)
     if [ ! -d "$ARTIFACT" ]; then
-      check_zig
+      check_zig_sdk
       trap cleanup EXIT
       trap 'exit 130' INT TERM
       acquire_lock
       # Another process may have finished the same build while this one waited.
-      [ -d "$ARTIFACT" ] || build
+      if [ ! -d "$ARTIFACT" ]; then
+        ensure_zig
+        build
+      fi
     fi
     check_manifest
     link_artifact

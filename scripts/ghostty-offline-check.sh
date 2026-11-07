@@ -19,6 +19,7 @@ die() {
 # The kept caches must exist before they can be proven sufficient.
 "$BUILD"
 artifact="$("$BUILD" path)"
+zig="$("$BUILD" zig)"
 
 # shellcheck disable=SC1091
 . "$ROOT/ghostty.pin"
@@ -50,7 +51,7 @@ dependency_url="$(tar -xzOf "$tarball" "ghostty-$GHOSTTY_COMMIT/build.zig.zon" |
 if ZIG_GLOBAL_CACHE_DIR="$scratch/empty-zig-cache" \
   http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 \
   HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
-  zig fetch "$dependency_url" >/dev/null 2>&1; then
+  "$zig" fetch "$dependency_url" >/dev/null 2>&1; then
   die "Zig fetched a package through the dead proxy, so this check cannot prove the network is off."
 fi
 echo "Control passed: Zig cannot fetch packages through the dead proxy."
