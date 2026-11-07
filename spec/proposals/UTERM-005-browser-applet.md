@@ -656,7 +656,9 @@ None.
   warning code is shared by every applet, so the change is not browser work, and no decision text changed.
 - Left for later milestones. A running download or unsent input does not yet make a tab ask before it closes, which is M6.
   M8 needs an intent-free path for a controller's reload, back, and forward. The tab's `reload`, `goBack`, and
-  `goForward` set the intent unconditionally, so a controller that called them would ask. See M8.
+  `goForward` set the intent unconditionally, so a controller that called them would ask. See M8. The row built no
+  intent-free path. It also built nothing that loads a controller's background tab, since `loadIfNeverLoaded` loads
+  only the selected tab, and no hook that asks before a download, since the pane's `downloads.adopt` has none.
 
 ### M4: Address bar input
 
@@ -734,7 +736,9 @@ None.
   opens without a question, as the Schemes text says, after the same selected-tab and one-question guards as any app.
   The invalid mark already existed from M1. It now also changes the field's accessibility label to
   "Address, invalid", and tests pin that, its red text, and its clearing on edit.
-- Two UI tests are built and not run: the Settings row with a replaced engine, and a refused address's mark.
+- One UI test is built and not run: the Settings row with a replaced engine. The UI test for a refused address's mark was
+  retired after the row. `BrowserAddressTests` owns that contract, in the field's label, its red text, and its clearing
+  on edit.
 
 ### M5: Website data, restore, and reopen
 
@@ -821,8 +825,9 @@ None.
 - A pane split from a browser asks the factory for no directory. A test builds a real window around a real browser pane
   and splits it, and checks that the factory ran. This needed the catalog tests to link the browser and the fixture server, so `Package.swift`
   changed.
-- Four UI tests are built and not run: the profile label, restoring three tabs with the second selected, a refused
-  restored address, and the Settings action with its note. The coordinator runs them.
+- Three UI tests are built and not run: the profile label, restoring three tabs with the second selected, and the
+  Settings action with its note. The coordinator runs them. The UI test for a refused restored address was retired after
+  the row. `BrowserLazyRestoreTests` owns that contract, in the error view's visible text, which names the address.
 - Left to the user. Whether the profile label's placement is right, and whether logins survive a real relaunch.
   Reaching `forIdentifier:` store data across two launches needs a persistent store that the UI tests avoid.
 
@@ -1109,16 +1114,12 @@ Starts after UTERM-004 M6.
   controller tab stays the controller's after the user types in it. A tab a page opened from it, a reopened tab, and a
   restored tab belong to no controller
 - Open never moves keyboard focus: in a key-focused pane its tab opens unselected and loads at once, and select is
-  refused. Navigate, reload, back, and forward on the selected tab of a key-focused pane, or on a tab with unsent input,
-  return a structured error
-- Controller reload, back, and forward never resubmit a form
-- Controller reload, back, and forward use a path that sets no resend intent, so they never ask and never resend. The
-  tab's own `reload`, `goBack`, and `goForward` set the intent unconditionally, and the row built no other path
-- A background tab a controller opens loads at once. `loadIfNeverLoaded` loads only the selected tab, so the row built
-  nothing that loads a controller's background tab
-- A download in a controller tab asks the user first. The pane's `downloads.adopt` has no hook that asks, so the row
-  built none. Amended 2026-11-06; see Decision Log.
-- A download, or a link to another app, `mailto:` included, in a controller tab asks the user first
+  refused. Any background tab a controller opens loads at once. Navigate, reload, back, and forward on the selected tab
+  of a key-focused pane, or on a tab with unsent input, return a structured error
+- Controller reload, back, and forward never resubmit a form. They use an intent-free path that sets no resend intent,
+  so they never ask and never resend. The tab's own `reload`, `goBack`, and `goForward` keep setting the intent
+- A download, or a link to another app, `mailto:` included, in a controller tab asks the user first. Amended 2026-11-06;
+  see Decision Log.
 - A browser pane created by a layout request starts at `about:blank`
 - Exec is refused before anything starts
 
@@ -1351,7 +1352,8 @@ Starts after UTERM-004 M6.
 - 2026-11-06: Row review fixes (work-queue best guess). M3's As built said M8's controller commands never set the resend
   intent, so they never ask. That is false, since the tab's reload, back, and forward set it unconditionally. M8 now
   checks for an intent-free path, and names two things the row did not build: loading a controller's background tab at
-  once, and asking before a download in a controller tab. "Any page can write files" ended on a design choice not yet
+  once, and asking before a download in a controller tab. The facts that the row built none of the three moved from M8's
+  checks to M3's As built. "Any page can write files" ended on a design choice not yet
   made, while "Design Decisions (Open)" said none. The Risk now states an accepted gap with a revisit hook. The
   Amended markers were collapsed to one per decision and milestone, since a later revision replaces the marker. The
   texts on "Schemes", "Downloads", and the milestones that changed keep their one marker. "Schemes" said a tab shows at

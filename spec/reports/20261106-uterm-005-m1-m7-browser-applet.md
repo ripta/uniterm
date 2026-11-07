@@ -7,9 +7,25 @@ system's WebKit. The specs live in the code repo, so every commit below is in th
 
 ## Run state
 
-The run is in progress. The run's base is "8< --- snip ---", which is also the row's base. The row has no dependencies,
-and no milestone carries a `Live after` line. Nothing is held, blocked, or skipped, and no work is stashed. No commands
-need the user's credentials.
+The run finished on 2026-11-06. UTERM-005 M1 to M7 are `DONE`, and the row moved to `history.md`. The proposal stays `accepted`, since M8
+waits on UTERM-004 M6 in its own row. The run's base is "8< --- snip ---", which is also the row's base. The row has no dependencies, and no
+milestone carries a `Live after` line. Nothing is held, blocked, or skipped, and no work is stashed. No commands needed the user's credentials.
+
+Commits, in order:
+1. "Add a single-page browser applet"
+2. "Allow single browser test runs in the cg allowlist"
+3. "Warn in the address bar when a page is not fully secure"
+4. "Add browser tabs, keys, and a question before resending a form"
+5. "Search from the address bar, and offer plain HTTP only by the user's action"
+6. "Give the browser its own website data, and restore tabs lazily"
+7. "Open pop-ups as tabs, save downloads safely, and guard unsent input"
+8. "Recover a stopped or hung page by rebuilding its web view"
+9. "Close the seams between the browser milestones", the row review
+10. "Finish the browser applet row"
+11. "Say what owns the retired browser UI tests, and tidy M8's checks", the final review
+
+`make test-package` on the last code: run `ZFBXZK`, 1,467 tests, 4 skipped, 0 failures. `make test-app` on the code before the final review: run `3HGMPE`, 108 tests, 0 failures. The final review
+changed one doc comment and proposal text, so the UI suite was not rerun.
 
 | Milestone | Run status | Commit |
 |---|---|---|
@@ -517,6 +533,19 @@ Findings and dispositions:
   unreachable corners were reported: closing a stopped tab now reports `isStopped` false, and a load failure on a tab that never began now marks it as begun.
 
 ADR check over the range: no confirmed conflicts and no supersessions. One plausible conflict with ADR-05 remains for the user. See "Open for the user".
+
+## Final review
+
+Commit: "Say what owns the retired browser UI tests, and tidy M8's checks". The range adds and edits no ADR, confirmed by an empty `git diff --stat` over `spec/adr`, so the ADR review had nothing to check.
+
+No correctness or security defect was found. The refactor had no lost guard, and `isQuestionUp` is released on every path. The two behaviour differences the refactor reported are harmless or unreachable.
+
+- Fixed: the row review commit's body opened on the prior state, against `commit-style.md`. It was unpushed, so it was reworded with its tree, author, and date unchanged, and the next commit was rebuilt on it.
+- Fixed: two retired UI tests were unrecorded. `BrowserAddressTests` and `BrowserLazyRestoreTests` own those contracts, and the second was mutation-checked. As built says so.
+- Fixed: one doc comment, and M8's checks, which repeated themselves and held as-built facts. M8 still names all three things to build.
+- For the user: the commit "Allow single browser test runs in the cg allowlist" carries absolute paths under this repo in `.cg.yaml`, unpushed.
+
+The final ADR check found no conflict. It raised one more candidate for the user: one question per pane, if every applet should be bound by it. It stays in the proposal otherwise.
 
 ## Open for the user
 

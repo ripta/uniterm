@@ -8,7 +8,7 @@ import WebKit
 /// decision. This type keeps the facts and the held decision. It never talks to the user.
 @MainActor
 final class ResendGate {
-  /// What the applet's own Reload, Back, or Forward is about to ask of the web view.
+  /// The kind of navigation the applet's own Reload, Back, or Forward starts.
   enum Intent {
     case reload
     case history
