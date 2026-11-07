@@ -5,6 +5,7 @@ allow:
   - prefix: [/usr/bin/lldb, --batch]
   - prefix: [/usr/bin/sed]
   - prefix: [codesign, -d]
+  - prefix: [cp]
   - prefix: [defaults, read]
   - prefix: [file]
   - prefix: [infocmp]
