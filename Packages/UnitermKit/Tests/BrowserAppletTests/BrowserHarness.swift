@@ -105,16 +105,35 @@ final class FakeOpener: URLOpening {
   }
 }
 
+/// A reveal that shows nothing in Finder. It records what the browser asked it to show.
+@MainActor
+final class FakeRevealer: FileRevealing {
+  private(set) var revealed: [URL] = []
+
+  func reveal(_ url: URL) {
+    revealed.append(url)
+  }
+}
+
 extension BrowserServices {
-  /// Services for a test: an engine the test can change, a list in memory, and an opener that
-  /// launches nothing.
+  /// Services for a test: an engine the test can change, a list in memory, an opener that
+  /// launches nothing, a reveal that opens no Finder window, and a Downloads folder under the
+  /// temporary directory. No test writes to the user's Downloads. The folder is made when a
+  /// download needs it, and the harness removes it.
   @MainActor
   static func testing(
     engine: @escaping @MainActor () -> SearchEngine = { .duckDuckGo },
     hsts: HSTSStore = HSTSStore(), opener: FakeOpener = FakeOpener(),
+    downloads: URL = FileManager.default.temporaryDirectory.appending(
+      path: "uniterm-test-downloads-\(UUID().uuidString)", directoryHint: .isDirectory),
+    reveal: FakeRevealer = FakeRevealer(), files: DownloadFileOperations = .live,
+    sweeper: DownloadSweeper = DownloadSweeper(), cancelGrace: Duration = .seconds(30),
     clock: @escaping @Sendable () -> Date = Date.init
   ) -> BrowserServices {
-    BrowserServices(searchEngine: engine, hsts: hsts, opener: opener, clock: clock)
+    BrowserServices(
+      searchEngine: engine, hsts: hsts, downloadsDirectory: { downloads }, reveal: reveal,
+      opener: opener, downloadFiles: files, downloadSweeper: sweeper,
+      downloadCancelGrace: cancelGrace, clock: clock)
   }
 }
 
@@ -125,6 +144,7 @@ final class BrowserHarness {
   let server: FixtureServer
   let host = EventHost()
   let applet: BrowserApplet
+  let downloadsDirectory: URL?
 
   var tab: BrowserTab { applet.tab }
   var posts: [(level: StatusLevel, text: String)] { host.recording.posts }
@@ -140,14 +160,17 @@ final class BrowserHarness {
     let server = try await FixtureServer.start(handler: handler)
     let applet = BrowserApplet(dataStore: dataStore, services: services)
 
-    return BrowserHarness(server: server, applet: applet)
+    return BrowserHarness(server: server, applet: applet, downloads: services.downloadsDirectory())
   }
 
   /// `starting` is false for a test that decides when the pane starts, such as one that detaches
   /// it first.
-  init(server: FixtureServer, applet: BrowserApplet, starting: Bool = true) {
+  init(
+    server: FixtureServer, applet: BrowserApplet, starting: Bool = true, downloads: URL? = nil
+  ) {
     self.server = server
     self.applet = applet
+    self.downloadsDirectory = downloads
 
     applet.host = host
 
@@ -157,11 +180,50 @@ final class BrowserHarness {
   func stop() {
     applet.close()
     server.stop()
+
+    if let downloadsDirectory { try? FileManager.default.removeItem(at: downloadsDirectory) }
   }
 
   /// The pages the server has served for `path`, by method.
   func count(_ method: String, _ path: String) -> Int {
     server.requests.filter { $0.method == method && $0.path == path }.count
+  }
+
+  /// Returns once `condition` holds, for what no applet report announces, such as a file WebKit
+  /// removes after a cancel. It yields between checks and never sleeps. A condition that never
+  /// holds fails the test after `seconds`.
+  func eventually(
+    _ message: String, seconds: Double = 15, file: StaticString = #filePath, line: UInt = #line,
+    _ condition: @MainActor () -> Bool
+  ) async {
+    let deadline = ContinuousClock.now + .seconds(seconds)
+
+    while !condition() {
+      guard ContinuousClock.now < deadline else {
+        XCTFail("timed out waiting until \(message)", file: file, line: line)
+        return
+      }
+
+      await Task.yield()
+    }
+  }
+
+  /// Like `eventually`, for a condition that has to ask the page. Each check is a round trip, so
+  /// the loop yields between them and never sleeps.
+  func eventuallyAsync(
+    _ message: String, seconds: Double = 15, file: StaticString = #filePath, line: UInt = #line,
+    _ condition: @MainActor () async -> Bool
+  ) async {
+    let deadline = ContinuousClock.now + .seconds(seconds)
+
+    while await !condition() {
+      guard ContinuousClock.now < deadline else {
+        XCTFail("timed out waiting until \(message)", file: file, line: line)
+        return
+      }
+
+      await Task.yield()
+    }
   }
 
   func load(_ path: String, expecting title: String) async {

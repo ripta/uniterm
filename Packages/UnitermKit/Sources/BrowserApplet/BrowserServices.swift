@@ -32,8 +32,25 @@ public final class WorkspaceURLOpener: URLOpening {
   }
 }
 
+/// Shows a file in Finder. The browser never calls `NSWorkspace` for it, so a test supplies one that
+/// opens nothing.
+@MainActor
+public protocol FileRevealing: AnyObject {
+  func reveal(_ url: URL)
+}
+
+/// The system's own Finder reveal.
+@MainActor
+public final class WorkspaceFileRevealer: FileRevealing {
+  public init() {}
+
+  public func reveal(_ url: URL) {
+    NSWorkspace.shared.activateFileViewerSelecting([url])
+  }
+}
+
 /// What the host gives each browser pane when it builds one. Every construction site passes the
-/// same three, so a restored pane and a new one cannot differ.
+/// same ones, so a restored pane and a new one cannot differ.
 ///
 /// The search engine is a closure, not a value, so the pane reads the current setting each time it
 /// builds a search address and a change applies to the next search in every open pane. The pane
@@ -47,15 +64,43 @@ public struct BrowserServices {
 
   public var opener: any URLOpening
 
+  /// The folder downloads land in. A closure, so a change of folder applies to the next download.
+  /// It has no default at construction, so a test cannot reach the user's Downloads folder by
+  /// omission.
+  public var downloadsDirectory: @MainActor () -> URL?
+
+  /// Shows a finished download in Finder.
+  public var reveal: any FileRevealing
+
+  /// The file work of a download, run off the main thread.
+  public var downloadFiles: DownloadFileOperations
+
+  /// Which folders were swept for leftovers this launch.
+  public var downloadSweeper: DownloadSweeper
+
+  /// How long a cancel of a download that has received no byte waits for one before it goes to
+  /// WebKit anyway. WebKit's network process restarts on a cancel that beats the first byte.
+  public var downloadCancelGrace: Duration
+
   /// The time a click is judged against. A test supplies its own, so the bound never races.
   public var clock: @Sendable () -> Date
 
   public init(
     searchEngine: @escaping @MainActor () -> SearchEngine, hsts: HSTSStore,
-    opener: any URLOpening = WorkspaceURLOpener(), clock: @escaping @Sendable () -> Date = Date.init
+    downloadsDirectory: @escaping @MainActor () -> URL?, reveal: any FileRevealing,
+    opener: any URLOpening = WorkspaceURLOpener(),
+    downloadFiles: DownloadFileOperations = .live,
+    downloadSweeper: DownloadSweeper = DownloadSweeper(),
+    downloadCancelGrace: Duration = .seconds(30),
+    clock: @escaping @Sendable () -> Date = Date.init
   ) {
     self.searchEngine = searchEngine
     self.hsts = hsts
+    self.downloadsDirectory = downloadsDirectory
+    self.reveal = reveal
+    self.downloadFiles = downloadFiles
+    self.downloadSweeper = downloadSweeper
+    self.downloadCancelGrace = downloadCancelGrace
     self.opener = opener
     self.clock = clock
   }
@@ -80,6 +125,11 @@ extension BrowserServices {
       store = HSTSStore()
     }
 
-    return BrowserServices(searchEngine: searchEngine, hsts: store)
+    return BrowserServices(
+      searchEngine: searchEngine, hsts: store,
+      downloadsDirectory: {
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+      },
+      reveal: WorkspaceFileRevealer())
   }
 }

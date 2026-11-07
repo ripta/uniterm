@@ -26,6 +26,26 @@ protocol BrowserTabDelegate: AnyObject {
 
   /// The user followed a link to an address that names another app.
   func tab(_ tab: BrowserTab, handOff url: URL)
+
+  /// A page asked for a new window. The applet answers with the tab it built from `configuration`,
+  /// or nil to refuse. WebKit needs the web view back before this returns. `byUser` is true when
+  /// the user's own click on a link, or choice from the context menu, asked for it.
+  func tab(
+    _ tab: BrowserTab, openWindowWith configuration: WKWebViewConfiguration,
+    for action: WKNavigationAction, byUser: Bool
+  ) -> BrowserTab?
+
+  /// The page's script called `window.close()` on a window it opened.
+  func tabDidRequestClose(_ tab: BrowserTab)
+
+  /// WebKit turned a navigation into a download. The applet holds it from here.
+  func tab(_ tab: BrowserTab, download: WKDownload)
+
+  /// A page raised an alert, a confirmation, or a prompt. The applet owns the answer.
+  func tab(_ tab: BrowserTab, present dialog: PageDialog)
+
+  /// The tab's unsent-input mark changed, so what a close would lose changed.
+  func tabUnsentInputDidChange(_ tab: BrowserTab)
 }
 
 /// An address whose scheme the browser chose, kept with the text that produced it. A failure to
@@ -64,6 +84,35 @@ final class BrowserTab: NSObject {
 
   weak var delegate: (any BrowserTabDelegate)?
 
+  /// The tab whose page opened this one. A pop-up tab that closes itself returns the selection to
+  /// it while it exists.
+  weak var opener: BrowserTab?
+
+  /// Whether WebKit built this tab's web view for a new window. Only such a tab is closed by
+  /// `window.close()`.
+  let isPopup: Bool
+
+  /// Whether a script asked for this tab, and not the user's own click or menu choice. Only these
+  /// tabs count toward the pane's limit.
+  let isScriptOpened: Bool
+
+  /// Whether the tab holds edited form input. It clears on every load and when the fields return
+  /// to their defaults.
+  var hasUnsentInput: Bool { unsent.isMarked }
+
+  let unsent = UnsentInputTracker()
+
+  /// How many dialogs the page has raised since its last load, and whether the user heard that
+  /// the rest are dismissed.
+  private var dialogsThisLoad = 0
+  private var warnedAboutDialogs = false
+
+  /// Whether the tab's media is suspended, as a detached pane's is.
+  private(set) var isMediaSuspended = false
+
+  /// The configuration WebKit gave a pop-up, used once to build its web view.
+  private var adopted: WKWebViewConfiguration?
+
   /// What began the tab's current load. A notice from the tab takes its delivery from it, so a
   /// background tab restored at launch stays as quiet as a restore is.
   var loadOrigin = LoadOrigin.user
@@ -73,6 +122,10 @@ final class BrowserTab: NSObject {
 
   /// The address the user is looking at, from the web view. Nil before the first commit.
   private(set) var currentURL: URL?
+
+  /// The address of the page that last committed. WebKit moves `url` to a new page before it
+  /// commits, so a download that starts from a link needs this one to name where it came from.
+  private(set) var committedURL: URL?
 
   private(set) var pageTitle: String?
   private(set) var isLoading = false
@@ -124,6 +177,10 @@ final class BrowserTab: NSObject {
 
   /// The note of a real mouse-up in this tab's web view, taken by the next link decision.
   private var gesture = LinkGesture()
+
+  /// The note that the user asked for a window: a real click on a link, or a choice from the
+  /// context menu. The next request for a window takes it, once, within the same bound.
+  private var windowGesture = LinkGesture()
   private let clock: @Sendable () -> Date
 
   /// The history WebKit handed back when a closed tab reopened. It applies at the first load.
@@ -146,23 +203,74 @@ final class BrowserTab: NSObject {
     self.hsts = hsts
     self.clock = clock
     self.restoredState = restoredState
+    self.isPopup = false
+    self.isScriptOpened = false
 
     super.init()
   }
 
+  /// A tab built from the configuration WebKit passed for a new window. WebKit ties the new page
+  /// to its opener through that configuration, so `window.opener` works and the website data
+  /// store is the opener's, which is the browser's shared one. The web view is built at once,
+  /// since WebKit needs it back from the same call. The page loads on its own, so the tab counts
+  /// as having begun loading.
+  init(
+    id: AppletTabID, adopting configuration: WKWebViewConfiguration, opener: BrowserTab,
+    openedByUser: Bool, dataStore: WKWebsiteDataStore, hsts: HSTSStore,
+    clock: @escaping @Sendable () -> Date
+  ) {
+    self.id = id
+    self.record = BrowserDescription.Tab()
+    self.dataStore = dataStore
+    self.hsts = hsts
+    self.clock = clock
+    self.isPopup = true
+    self.isScriptOpened = !openedByUser
+    self.adopted = configuration
+    self.hasBegunLoading = true
+    self.opener = opener
+
+    super.init()
+
+    _ = webView
+  }
+
   private func makeWebView() -> WKWebView {
-    let configuration = WKWebViewConfiguration()
-    configuration.websiteDataStore = dataStore
+    let configuration = adopted ?? WKWebViewConfiguration()
+
+    adopted = nil
+
+    if !isPopup { configuration.websiteDataStore = dataStore }
+
+    // WKWebView on macOS lets a script open a window with no user gesture unless this is false.
+    // The browser blocks it, as every other browser does, so a page cannot open tabs on its own.
+    configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+
+    // Each web view gets its own controller. A controller takes one handler of a name in a world,
+    // so a pop-up that shared its opener's would raise an exception, and would report into the
+    // opener's tab.
+    let controller = WKUserContentController()
+
+    configuration.userContentController = controller
+    unsent.install(in: controller)
+    unsent.onChange = { [weak self] in
+      guard let self else { return }
+
+      delegate?.tabUnsentInputDidChange(self)
+    }
 
     let view = BrowserWebView(frame: .zero, configuration: configuration)
 
     isMaterialized = true
+
+    if isMediaSuspended { suspendMedia(view) }
 
     view.navigationDelegate = self
     view.uiDelegate = self
     view.allowsBackForwardNavigationGestures = true
     view.setAccessibilityIdentifier("browser-web")
     view.onMouseUp = { [weak self] in self?.noteMouseUp() }
+    view.onMenuChoice = { [weak self] in self?.noteUserWindowRequest() }
     view.onHistoryButton = { [weak self] button in
       guard let self else { return }
 
@@ -172,6 +280,50 @@ final class BrowserTab: NSObject {
     observe(view)
 
     return view
+  }
+
+  /// Suspends or resumes the tab's media, as a pane's detach and reattach ask. A suspended web
+  /// view refuses every attempt to play until it is told to resume. Suspending alone is not enough,
+  /// since WebKit lets media that was playing, or was about to, carry on when the suspension lifts.
+  /// So the media is paused first, and lifting the suspension then restarts nothing. A tab with no
+  /// web view yet takes the state when it gets one.
+  func setMediaSuspended(_ suspended: Bool) {
+    guard suspended != isMediaSuspended else { return }
+
+    isMediaSuspended = suspended
+
+    guard isMaterialized else { return }
+
+    if suspended {
+      suspendMedia(webView)
+    } else {
+      resumeMedia(webView)
+    }
+  }
+
+  /// Whether the web view holds a suspension that only a resume lifts. WebKit wants the two in
+  /// pairs, so a second suspend or a resume with none outstanding is never sent.
+  private var holdsMediaSuspension = false
+
+  private func suspendMedia(_ view: WKWebView) {
+    view.pauseAllMediaPlayback { [weak self] in
+      guard let self, isMediaSuspended, isMaterialized, !holdsMediaSuspension else { return }
+
+      holdsMediaSuspension = true
+      webView.setAllMediaPlaybackSuspended(true, completionHandler: nil)
+    }
+  }
+
+  private func resumeMedia(_ view: WKWebView) {
+    guard holdsMediaSuspension else { return }
+
+    holdsMediaSuspension = false
+    view.setAllMediaPlaybackSuspended(false, completionHandler: nil)
+  }
+
+  /// The user chose a new-tab item from the context menu.
+  func noteUserWindowRequest() {
+    windowGesture.noteMouseUp(at: clock())
   }
 
   /// A real left mouse-up reached the web view. A tab's next link decision may count as followed by
@@ -335,6 +487,9 @@ final class BrowserTab: NSObject {
     assumed = nil
     observations = []
 
+    unsent.onChange = nil
+    unsent.remove()
+
     guard isMaterialized else { return }
 
     webView.stopLoading()
@@ -342,6 +497,7 @@ final class BrowserTab: NSObject {
     webView.uiDelegate = nil
     (webView as? BrowserWebView)?.onHistoryButton = nil
     (webView as? BrowserWebView)?.onMouseUp = nil
+    (webView as? BrowserWebView)?.onMenuChoice = nil
     webView.removeFromSuperview()
   }
 
@@ -406,6 +562,10 @@ final class BrowserTab: NSObject {
     errorPage = nil
     failedLoad = nil
     assumed = nil
+    dialogsThisLoad = 0
+    warnedAboutDialogs = false
+    committedURL = webView.url
+    unsent.clear()
 
     if let item = webView.backForwardList.currentItem {
       postResults.setObject(NSNumber(value: lastMainFrameMethod == "POST"), forKey: item)
@@ -498,9 +658,28 @@ extension BrowserTab: WKNavigationDelegate {
 
     // WebKit reports a script's click as a followed link, so only a real mouse-up seen in the view
     // makes a link the user's. Every link decision takes the note, whatever it loads, so a click
-    // on one link cannot be spent on another.
+    // on one link cannot be spent on another. A link in a subframe is never the user's, since the
+    // page chose that frame.
     let followedByUser =
       navigationAction.navigationType == .linkActivated && gesture.consume(at: clock())
+      && navigationAction.sourceFrame.isMainFrame
+
+    if followedByUser { windowGesture.noteMouseUp(at: clock()) }
+
+    if navigationAction.shouldPerformDownload {
+      switch SchemePolicy.decideDownload(url) {
+      case .allow:
+        // WebKit reports the navigation a download replaced as an interrupted load. The download
+        // has its own outcome, so the load stays quiet.
+        cancelledAddress = url.absoluteString
+        decisionHandler(.download)
+
+      case .refuse(let refusal):
+        cancel(url, notice: refusal.message(for: url.absoluteString), decisionHandler)
+      }
+
+      return
+    }
 
     switch SchemePolicy.decide(url, source: .page, isMainFrame: isMainFrame) {
     case .allow:
@@ -539,11 +718,6 @@ extension BrowserTab: WKNavigationDelegate {
       return
     }
 
-    if navigationAction.shouldPerformDownload {
-      cancel(url, notice: Self.noDownloads(url), decisionHandler)
-      return
-    }
-
     if isMainFrame {
       lastMainFrameMethod = navigationAction.request.httpMethod ?? "GET"
     }
@@ -551,22 +725,23 @@ extension BrowserTab: WKNavigationDelegate {
     decisionHandler(.allow)
   }
 
-  /// A response the browser cannot show, or one the server marks as an attachment, would download.
-  /// Downloads are not built yet, so the load ends with a warning. WebKit reports it as an
-  /// interrupted load otherwise, with no word to the user.
+  /// A response the browser cannot show, or one the server marks as an attachment, becomes a
+  /// download. That holds for a frame too, since a subframe's attachment has nowhere to show.
   func webView(
     _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
   ) {
-    guard navigationResponse.isForMainFrame, let url = navigationResponse.response.url else {
+    guard let url = navigationResponse.response.url else {
       decisionHandler(.allow)
       return
     }
 
-    hsts.noteResponse(
-      from: url,
-      header: (navigationResponse.response as? HTTPURLResponse)?
-        .value(forHTTPHeaderField: "Strict-Transport-Security"))
+    if navigationResponse.isForMainFrame {
+      hsts.noteResponse(
+        from: url,
+        header: (navigationResponse.response as? HTTPURLResponse)?
+          .value(forHTTPHeaderField: "Strict-Transport-Security"))
+    }
 
     let disposition = (navigationResponse.response as? HTTPURLResponse)?
       .value(forHTTPHeaderField: "Content-Disposition")?
@@ -574,13 +749,43 @@ extension BrowserTab: WKNavigationDelegate {
     let isAttachment = disposition?.hasPrefix("attachment") ?? false
 
     guard navigationResponse.canShowMIMEType, !isAttachment else {
-      cancelledAddress = url.absoluteString
-      delegate?.tab(self, notice: .warning, text: Self.noDownloads(url))
-      decisionHandler(.cancel)
+      switch SchemePolicy.decideDownload(url) {
+      case .allow:
+        cancelledAddress = url.absoluteString
+        decisionHandler(.download)
+
+      case .refuse(let refusal):
+        cancelledAddress = url.absoluteString
+        delegate?.tab(self, notice: .warning, text: refusal.message(for: url.absoluteString))
+        decisionHandler(.cancel)
+      }
+
       return
     }
 
     decisionHandler(.allow)
+  }
+
+  func webView(
+    _ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload
+  ) {
+    adopt(download)
+  }
+
+  func webView(
+    _ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload
+  ) {
+    adopt(download)
+  }
+
+  /// A download no pane holds would run with nobody to name it, so a tab with no delegate ends it.
+  private func adopt(_ download: WKDownload) {
+    guard let delegate else {
+      download.cancel { _ in }
+      return
+    }
+
+    delegate.tab(self, download: download)
   }
 
   /// Whether the navigation would send a form again.
@@ -691,10 +896,6 @@ extension BrowserTab: WKNavigationDelegate {
       + "from a click on its link, and this was not one."
   }
 
-  private static func noDownloads(_ url: URL) -> String {
-    "Did not download \(AddressDisplay.bounded(url.absoluteString)). Downloads are not available yet."
-  }
-
   /// A new load began, so an earlier error page no longer describes the pane. A failure of this
   /// load builds its own page when it earns one. Without this, a failed Back or a failed page
   /// navigation that builds none would leave the old offer over the pane.
@@ -741,6 +942,89 @@ extension BrowserTab: WKUIDelegate {
     decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
     decisionHandler(.deny)
+  }
+
+  /// A page's own window, or a link that opens one, becomes a tab built from WebKit's
+  /// configuration. The browser turns off `javaScriptCanOpenWindowsAutomatically`, so a script with
+  /// no user gesture never reaches this method. The applet may still refuse, as for a scheme the
+  /// browser does not load, or when scripts have opened too many tabs. A window the user asked
+  /// for, with a real click or a menu choice, passes `byUser` and is never refused for the limit.
+  func webView(
+    _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+    for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
+  ) -> WKWebView? {
+    let byUser = windowGesture.consume(at: clock())
+
+    return delegate?.tab(
+      self, openWindowWith: configuration, for: navigationAction, byUser: byUser)?.webView
+  }
+
+  func webViewDidClose(_ webView: WKWebView) {
+    delegate?.tabDidRequestClose(self)
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+    initiatedByFrame frame: WKFrameInfo,
+    completionHandler: @escaping @MainActor @Sendable () -> Void
+  ) {
+    present(.alert, message, frame) { _ in completionHandler() }
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+    initiatedByFrame frame: WKFrameInfo,
+    completionHandler: @escaping @MainActor @Sendable (Bool) -> Void
+  ) {
+    present(.confirm, message, frame) { completionHandler($0 == .accepted) }
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+    defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+    completionHandler: @escaping @MainActor @Sendable (String?) -> Void
+  ) {
+    present(.prompt(defaultText: defaultText ?? ""), prompt, frame) { answer in
+      if case .text(let text) = answer {
+        completionHandler(text)
+      } else {
+        completionHandler(nil)
+      }
+    }
+  }
+
+  /// Hands a dialog to the applet, which owns its answer. A page that keeps raising dialogs gets
+  /// the rest dismissed, and the user hears so once. A tab with no applet dismisses at once, since
+  /// WebKit must hear back from every dialog exactly once.
+  private func present(
+    _ kind: PageDialog.Kind, _ message: String, _ frame: WKFrameInfo,
+    completion: @escaping @MainActor (PageDialog.Answer) -> Void
+  ) {
+    let dialog = PageDialog(
+      kind: kind, message: message,
+      source: frame.request.url?.host(percentEncoded: false) ?? "", tab: self,
+      completion: completion)
+
+    guard let delegate else {
+      dialog.answer(.dismissed)
+      return
+    }
+
+    guard dialogsThisLoad < PageDialogs.perLoadLimit else {
+      dialog.answer(.dismissed)
+
+      if !warnedAboutDialogs {
+        warnedAboutDialogs = true
+        delegate.tab(
+          self, notice: .warning,
+          text: "A page kept raising dialogs. The browser dismissed the rest.")
+      }
+
+      return
+    }
+
+    dialogsThisLoad += 1
+    delegate.tab(self, present: dialog)
   }
 }
 

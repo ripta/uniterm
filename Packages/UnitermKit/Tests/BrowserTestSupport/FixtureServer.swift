@@ -40,17 +40,80 @@ public final class FixtureServer: Sendable {
     }
   }
 
+  /// Holds a response half sent until a test lets it finish or drops it. A download test uses it
+  /// to keep a download in progress for as long as it needs, with no timer.
+  public final class Hold: Sendable {
+    private struct Parked {
+      var finish: @Sendable () -> Void
+      var abort: @Sendable () -> Void
+    }
+
+    private enum Outcome {
+      case released
+      case aborted
+    }
+
+    private let state = Mutex<(parked: [Parked], outcome: Outcome?)>(([], nil))
+
+    public init() {}
+
+    /// Sends the rest of every held response, and every later one at once.
+    public func release() {
+      let parked = state.withLock { state -> [Parked] in
+        state.outcome = .released
+        defer { state.parked = [] }
+        return state.parked
+      }
+
+      for item in parked { item.finish() }
+    }
+
+    /// Drops every held connection, and every later one at once, so the client sees the
+    /// connection lost with the body unfinished.
+    public func abort() {
+      let parked = state.withLock { state -> [Parked] in
+        state.outcome = .aborted
+        defer { state.parked = [] }
+        return state.parked
+      }
+
+      for item in parked { item.abort() }
+    }
+
+    fileprivate func park(
+      finish: @escaping @Sendable () -> Void, abort: @escaping @Sendable () -> Void
+    ) {
+      let outcome = state.withLock { state -> Outcome? in
+        if state.outcome == nil { state.parked.append(Parked(finish: finish, abort: abort)) }
+        return state.outcome
+      }
+
+      switch outcome {
+      case .released: finish()
+      case .aborted: abort()
+      case nil: break
+      }
+    }
+  }
+
   public struct Response: Sendable {
     public var status: Int
     public var headers: [(name: String, value: String)]
     public var body: Data
 
+    /// When set, the server sends `body`, then waits on the hold, then sends `tail`.
+    public var hold: Hold?
+    public var tail: Data
+
     public init(
-      status: Int = 200, headers: [(name: String, value: String)] = [], body: Data = Data()
+      status: Int = 200, headers: [(name: String, value: String)] = [], body: Data = Data(),
+      hold: Hold? = nil, tail: Data = Data()
     ) {
       self.status = status
       self.headers = headers
       self.body = body
+      self.hold = hold
+      self.tail = tail
     }
 
     public static func html(_ text: String, status: Int = 200) -> Response {
@@ -270,7 +333,27 @@ private final class Core: Sendable {
       head += "\(header.name): \(header.value)\r\n"
     }
 
-    head += "Content-Length: \(response.body.count)\r\nConnection: close\r\n\r\n"
+    head += "Content-Length: \(response.body.count + response.tail.count)\r\n"
+    head += "Connection: close\r\n\r\n"
+
+    if let hold = response.hold {
+      let tail = response.tail
+
+      connection.send(
+        content: Data(head.utf8) + response.body, contentContext: .defaultMessage,
+        isComplete: true,
+        completion: .contentProcessed { _ in
+          hold.park(
+            finish: {
+              connection.send(
+                content: tail, contentContext: .finalMessage, isComplete: true,
+                completion: .contentProcessed { _ in connection.cancel() })
+            },
+            abort: { connection.cancel() })
+        })
+
+      return
+    }
 
     connection.send(
       content: Data(head.utf8) + response.body, contentContext: .finalMessage, isComplete: true,

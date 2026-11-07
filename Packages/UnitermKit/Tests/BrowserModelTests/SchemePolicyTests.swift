@@ -97,4 +97,28 @@ final class SchemePolicyTests: XCTestCase {
     XCTAssertLessThan(message.count, 300)
     XCTAssertTrue(message.hasSuffix("does not open local files."), message)
   }
+
+  /// Catches a download rule that follows the page rule and refuses the `blob:` and `data:` exports
+  /// a dashboard makes, or one that lets `file:` or `javascript:` save.
+  func testADownloadMayComeFromAnySchemeButFileAndJavascript() throws {
+    let allowed = [
+      "https://a/x", "http://a/x", "blob:https://a/1", "data:text/csv,a%2Cb", "ftp://a/x",
+      "mailto:a@b.c", "BLOB:https://a/1",
+    ]
+
+    for address in allowed {
+      XCTAssertEqual(
+        SchemePolicy.decideDownload(try XCTUnwrap(URL(string: address))), .allow, address)
+    }
+
+    XCTAssertEqual(
+      SchemePolicy.decideDownload(try XCTUnwrap(URL(string: "file:///etc/passwd"))),
+      .refuse(.file))
+    XCTAssertEqual(
+      SchemePolicy.decideDownload(try XCTUnwrap(URL(string: "FILE:///etc/passwd"))),
+      .refuse(.file))
+    XCTAssertEqual(
+      SchemePolicy.decideDownload(try XCTUnwrap(URL(string: "javascript:alert(1)"))),
+      .refuse(.javascript))
+  }
 }

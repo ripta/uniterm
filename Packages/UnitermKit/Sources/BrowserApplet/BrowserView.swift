@@ -36,6 +36,9 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   /// Covers the page when the tab could not load one. It sits above whichever web view shows.
   let errorPage = BrowserErrorView()
 
+  /// Shows one JavaScript dialog over the page, inside the pane.
+  let dialogView = BrowserDialogView()
+
   /// The user chose Load over HTTP on the error page.
   var onLoadOverHTTP: () -> Void = {}
 
@@ -103,6 +106,8 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     tabBar.translatesAutoresizingMaskIntoConstraints = false
     tabBar.isHidden = true
 
+    dialogView.translatesAutoresizingMaskIntoConstraints = false
+
     errorPage.translatesAutoresizingMaskIntoConstraints = false
     errorPage.onLoadOverHTTP = { [weak self] in self?.onLoadOverHTTP() }
 
@@ -156,6 +161,16 @@ final class BrowserView: NSView, NSTextFieldDelegate {
       errorPage.leadingAnchor.constraint(equalTo: leadingAnchor),
       errorPage.trailingAnchor.constraint(equalTo: trailingAnchor),
       errorPage.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+
+    dialogView.removeFromSuperview()
+    addSubview(dialogView, positioned: .above, relativeTo: errorPage)
+
+    NSLayoutConstraint.activate([
+      dialogView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+      dialogView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      dialogView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      dialogView.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
   }
 
@@ -218,6 +233,7 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     layer?.backgroundColor = palette[.base].cgColor
     tabBar.apply(palette)
     errorPage.apply(palette)
+    dialogView.apply(palette)
     addressField.textColor = addressIsInvalid ? palette[.red].nsColor : palette[.text].nsColor
     securityIcon.contentTintColor = palette[.yellow].nsColor
     profileLabel.textColor = palette[.subtext0].nsColor

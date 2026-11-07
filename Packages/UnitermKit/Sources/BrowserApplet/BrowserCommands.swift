@@ -23,6 +23,10 @@ extension BrowserApplet {
         isAvailable: { $0 is BrowserApplet },
         run: { ($0 as? BrowserApplet)?.reload() }),
       AppletCommand(
+        name: "reveal-latest-download", title: "Reveal Latest Download", home: .applet,
+        isAvailable: { ($0 as? BrowserApplet)?.hasFinishedDownload ?? false },
+        run: { ($0 as? BrowserApplet)?.revealLatestDownload() }),
+      AppletCommand(
         name: "back", title: "Back", home: .applet,
         isAvailable: { ($0 as? BrowserApplet)?.canGoBack ?? false },
         run: { ($0 as? BrowserApplet)?.goBack() }),
