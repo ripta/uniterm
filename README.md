@@ -52,7 +52,7 @@ Commands:
   `make ci` runs it. CI does not keep `.cache/swiftpm`, so a CI run fetches the packages once before the offline step.
 - `make help` lists every target.
 
-GitHub CI skips the macOS SDK and build/test jobs when all changed files are root-level Markdown or Markdown under
+GitHub CI skips the macOS build/test job when all changed files are root-level Markdown or Markdown under
 `spec/`. The lightweight `ci` check still reports a result. Markdown shipped in the app, such as files under
 `Licenses/`, still triggers the full build. Manual workflow runs always build fully. Missing comparison history also
 falls back to the full build.
