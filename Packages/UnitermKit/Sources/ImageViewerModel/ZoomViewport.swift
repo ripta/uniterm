@@ -147,8 +147,8 @@ public struct ZoomViewport: Equatable, Sendable {
     return crosses ? actualScale : target
   }
 
-  public mutating func showActualSize(backing: Double) {
-    setScale(actualScale, backing: backing)
+  public mutating func showActualSize(anchor: CGPoint? = nil, backing: Double) {
+    setScale(actualScale, anchor: anchor, backing: backing)
   }
 
   /// Moves the image under the pane by `delta` points, as a drag or a scroll does.

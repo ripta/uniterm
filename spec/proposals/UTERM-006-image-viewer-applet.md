@@ -744,6 +744,9 @@ None.
   shows whether the rule needs more nuance. The user's choice.
 - 2026-11-07: The double tap that toggles fit and actual size, and the zoom-percent status segment, are kept. The
   user's choice after a hands-on review. Both were logged above as additions.
+- 2026-11-07: (best guess) The double tap did nothing in the user's hands-on check. It now zooms to actual size around
+  the pointer. When an image already shows at actual size at fit, it steps in once, as Zoom In does. A second double
+  tap returns to fit.
 
 ## References
 

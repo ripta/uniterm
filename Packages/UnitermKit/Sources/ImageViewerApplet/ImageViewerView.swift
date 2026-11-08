@@ -394,7 +394,7 @@ final class ImageViewerView: NSView {
 
     switch target {
     case .fit: next.showFit()
-    case .actual: next.showActualSize(backing: Double(backingScale))
+    case .actual: next.showActualSize(anchor: anchor, backing: Double(backingScale))
     case .step(let zoomingIn):
       next.setScale(
         next.steppedScale(zoomingIn: zoomingIn), anchor: anchor, backing: Double(backingScale))
@@ -534,11 +534,24 @@ final class ImageViewerView: NSView {
     placeLayers()
   }
 
+  /// A two-finger double-tap. At fit it zooms in around the pointer, and anywhere else it goes
+  /// back to fit. An image that fits at actual size has no actual-size zoom to go to, so the tap
+  /// steps in once instead, as the zoom-in command does.
   override func smartMagnify(with event: NSEvent) {
-    if viewport?.isFit == true {
-      zoom(.actual, anchor: convert(event.locationInWindow, from: nil))
-    } else {
+    let point = convert(event.locationInWindow, from: nil)
+
+    #if DEBUG
+      ImageViewerScrollLog.logSmartMagnify(at: point, viewport: viewport)
+    #endif
+
+    guard let viewport else { return }
+
+    if !viewport.isFit {
       zoom(.fit)
+    } else if viewport.fitScale < viewport.actualScale {
+      zoom(.actual, anchor: point)
+    } else {
+      zoom(.step(zoomingIn: true), anchor: point)
     }
   }
 
@@ -599,6 +612,22 @@ final class ImageViewerView: NSView {
     @MainActor public static var enabled = false
 
     private static let logger = Logger(subsystem: "dev.uniterm.app", category: "scroll")
+
+    @MainActor
+    static func logSmartMagnify(at point: CGPoint, viewport: ZoomViewport?) {
+      guard enabled else { return }
+
+      let isFit = viewport?.isFit ?? true
+      let fit = viewport?.fitScale ?? 0
+      let actual = viewport?.actualScale ?? 0
+
+      logger.notice(
+        """
+        smartMagnify at=(\(point.x, privacy: .public), \(point.y, privacy: .public)) \
+        isFit=\(isFit, privacy: .public) fitScale=\(fit, privacy: .public) \
+        actualScale=\(actual, privacy: .public)
+        """)
+    }
 
     @MainActor
     static func log(_ event: NSEvent, unit: CGFloat, viewport: ZoomViewport?) {
