@@ -47,15 +47,20 @@ Commands:
 - `make fmt`, `make fmt-check`, `make lint`, and `make check` format and check the sources.
 - `make ghostty-offline-check` proves that the pinned libghostty rebuilds with the network off. It takes about four
   minutes, and `make ci` runs it.
+- `make ci` runs every CI job. `make ci-package` and `make ci-app` run one job each, so a failed job can be rerun on its
+  own.
 - `make swiftpm-offline-check` proves that the Swift packages resolve and build with the network off. The versions come
   from the committed `Package.resolved` files and the sources from `.cache/swiftpm`. It takes under a minute, and
   `make ci` runs it. CI does not keep `.cache/swiftpm`, so a CI run fetches the packages once before the offline step.
 - `make help` lists every target.
 
-GitHub CI skips the macOS build/test job when all changed files are root-level Markdown or Markdown under
-`spec/`. The lightweight `ci` check still reports a result. Markdown shipped in the app, such as files under
-`Licenses/`, still triggers the full build. Manual workflow runs always build fully. Missing comparison history also
-falls back to the full build.
+GitHub CI runs three macOS jobs side by side: `package` for the checks and package tests, `app` for the app build
+and UI tests, and `ghostty-offline` for the offline Ghostty rebuild. The required `ci` check passes only when all
+three pass.
+
+CI skips the macOS jobs when all changed files are root-level Markdown or Markdown under `spec/`. The lightweight
+`ci` check still reports a result. Markdown shipped in the app, such as files under `Licenses/`, still triggers the
+full build. Manual workflow runs always build fully. Missing comparison history also falls back to the full build.
 
 `ghostty.pin` records the Ghostty commit and the toolchain that built it. The build fails when the downloaded Zig does
 not match `ZIG_SHA256`, or when Xcode or the SDK differ from the pin. It also fails when the extracted Ghostty source does not

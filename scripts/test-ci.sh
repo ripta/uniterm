@@ -43,8 +43,9 @@ expect_changes() {
 }
 
 expect_result() {
-  local name="$1" changes="$2" required="$3" build="$4" expected="$5" actual
-  if CHANGES_RESULT="$changes" BUILD_REQUIRED="$required" BUILD_RESULT="$build" \
+  local name="$1" changes="$2" required="$3" package="$4" app="$5" ghostty="$6" expected="$7" actual
+  if CHANGES_RESULT="$changes" BUILD_REQUIRED="$required" PACKAGE_RESULT="$package" \
+    APP_RESULT="$app" GHOSTTY_OFFLINE_RESULT="$ghostty" \
     bash "$root/scripts/ci-result.sh" >"$scratch/log" 2>&1; then
     actual=0
   else
@@ -125,12 +126,16 @@ expect_changes "missing revisions build" push "" "$root_docs" true
 expect_changes "unavailable history builds" push aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$root_docs" true
 expect_changes "empty diff builds conservatively" push "$root_docs" "$root_docs" true
 
-expect_result "intentional docs skip passes" success false skipped 0
-expect_result "successful full build passes" success true success 0
-expect_result "detector failure fails" failure false skipped 1
-expect_result "build failure fails" success true failure 1
-expect_result "cancelled build fails" success true cancelled 1
-expect_result "unexpected skipped build fails" success true skipped 1
-expect_result "missing decision fails" success "" skipped 1
-expect_result "malformed decision fails" success maybe skipped 1
-expect_result "unexpected work on docs path fails" success false failure 1
+expect_result "intentional docs skip passes" success false skipped skipped skipped 0
+expect_result "successful full build passes" success true success success success 0
+expect_result "detector failure fails" failure false skipped skipped skipped 1
+expect_result "package failure fails" success true failure success success 1
+expect_result "app failure fails" success true success failure success 1
+expect_result "Ghostty offline failure fails" success true success success failure 1
+expect_result "cancelled job fails" success true success cancelled success 1
+expect_result "unexpected skipped job fails" success true success success skipped 1
+expect_result "missing job result fails" success true success "" success 1
+expect_result "missing decision fails" success "" skipped skipped skipped 1
+expect_result "malformed decision fails" success maybe skipped skipped skipped 1
+expect_result "unexpected work on docs path fails" success false skipped failure skipped 1
+expect_result "unexpected success on docs path fails" success false success skipped skipped 1

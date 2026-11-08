@@ -36,41 +36,33 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: make ci-changes
 
-  build:
+  # The three macOS jobs run side by side. The UI tests take the longest, so the app job sets the
+  # run's length.
+  package:
     needs: changes
     if: needs.changes.outputs.build_required == 'true'
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # ghostty.pin names the exact Xcode build. Selecting it by path keeps an image update that
-      # changes the default Xcode from silently moving the toolchain.
-      - name: Select Xcode
-        run: |
-          sudo xcode-select --switch /Applications/Xcode_26.6.app
-          xcodebuild -version
+      - uses: ./.github/actions/macos-setup
 
-      # The terminal tests drive a real zsh. Outside a terminal, libghostty starts the account's
-      # login shell, and the runner account's is the system bash 3.2, which Ghostty's shell
-      # integration does not support.
-      - name: Make zsh the login shell
-        run: |
-          sudo dscl . -create "/Users/$USER" UserShell /bin/zsh
-          dscl . -read "/Users/$USER" UserShell
+      - name: make ci-package
+        run: make ci-package
 
-      - name: Install the Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
+  app:
+    needs: changes
+    if: needs.changes.outputs.build_required == 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The source tarball, the pinned Zig, Zig's package cache, and the built artifact. The offline
-      # check rebuilds from the first three, so all four are kept together.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .cache/ghostty
-          key: ghostty-${{ runner.arch }}-${{ hashFiles('ghostty.pin') }}
+      - uses: ./.github/actions/macos-setup
 
-      - name: make ci
-        run: make ci
+      - name: make ci-app
+        run: make ci-app
 
       - name: Keep the UI test results
         if: failure()
@@ -81,9 +73,23 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # The offline rebuild proves the pinned Ghostty rebuilds with the network off.
+  ghostty-offline:
+    needs: changes
+    if: needs.changes.outputs.build_required == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/macos-setup
+
+      - name: make ghostty-offline-check
+        run: make ghostty-offline-check
+
   # Keep the required check present even when macOS jobs are intentionally skipped or fail.
   ci:
-    needs: [changes, build]
+    needs: [changes, package, app, ghostty-offline]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -96,5 +102,7 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           BUILD_REQUIRED: ${{ needs.changes.outputs.build_required }}
-          BUILD_RESULT: ${{ needs.build.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          APP_RESULT: ${{ needs.app.result }}
+          GHOSTTY_OFFLINE_RESULT: ${{ needs.ghostty-offline.result }}
         run: make ci-result

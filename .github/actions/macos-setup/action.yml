@@ -1,0 +1,33 @@
+name: macOS setup
+description: Select the pinned Xcode, install the Metal toolchain, and restore the Ghostty cache.
+
+runs:
+  using: composite
+  steps:
+    # ghostty.pin names the exact Xcode build. Selecting it by path keeps an image update that
+    # changes the default Xcode from silently moving the toolchain.
+    - name: Select Xcode
+      shell: bash
+      run: |
+        sudo xcode-select --switch /Applications/Xcode_26.6.app
+        xcodebuild -version
+
+    # The terminal tests drive a real zsh. Outside a terminal, libghostty starts the account's
+    # login shell, and the runner account's is the system bash 3.2, which Ghostty's shell
+    # integration does not support.
+    - name: Make zsh the login shell
+      shell: bash
+      run: |
+        sudo dscl . -create "/Users/$USER" UserShell /bin/zsh
+        dscl . -read "/Users/$USER" UserShell
+
+    - name: Install the Metal toolchain
+      shell: bash
+      run: xcodebuild -downloadComponent MetalToolchain
+
+    # The source tarball, the pinned Zig, Zig's package cache, and the built artifact. The offline
+    # check rebuilds from the first three, so all four are kept together.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .cache/ghostty
+        key: ghostty-${{ runner.arch }}-${{ hashFiles('ghostty.pin') }}
