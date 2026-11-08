@@ -79,3 +79,16 @@ Fixed by: "Wait for the app to be frontmost before UI tests type, and paste open
 - Fix: the foreground assertion now waits for the state to settle, without activating the app. The same wait replaces
   the one-shot read in `testClosingTheLastWindowKeepsTheAppRunningAndCommandNOpensAgain`. `waitForTerminal` activates
   the app before the first key.
+
+### `ImageViewerScrollTests.testScrollMovesTheImageTheWayAScrollViewMovesItsDocument`
+
+Fixed by: "Wait for the reference scroll view to move in the image viewer scroll test"
+
+- Seen: 2026-11-08, once in CI on a PR that changed no image viewer code.
+- Evidence: the first case, a precise scroll of 0,40, failed "no oracle". The reference scroll view had not moved, so
+  the test also read the image's correct pan as wrong. Run alone, it failed 1 of 20 before the fix.
+- Cause: a fresh scroll view applies its first scroll on a later run loop pass, not inside `scrollWheel(with:)`. The
+  test ran the run loop for a fixed 0.05 s and then read the scroll view once. Under load, that pass had not run yet.
+  With no wait at all, the test failed every time, on that first case only. The image viewer itself was right.
+- Fix: the test now runs the run loop until the scroll view leaves its starting point, with a two-second bound. A scroll
+  view that never moves still fails the "no oracle" check. After the fix, it passed 20 of 20 alone.
