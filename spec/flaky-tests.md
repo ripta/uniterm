@@ -39,6 +39,20 @@ fixed ones.
 
 ## Fixed
 
+### `BrowserRecoveryTests.testKillingTheSelectedTabShowsTheMessageAndReloadBringsBackItsHistory`
+
+Fixed by: "Wait for the reloaded title in the browser recovery test"
+
+- Seen: 2026-11-07.
+- Evidence: it failed once in a full `make test-package` run. Run alone, it failed 1 of 3 times. The failure read
+  "127.0.0.1" where "B" was expected. A later series of 12 isolated runs did not reproduce it, so the rate there is 0 of
+  12 before the fix and 0 of 7 after.
+- Cause: the test waited for the reloaded page to finish loading, then read the tab title once. Reload builds a new web
+  view with no title. WebKit reports the page title a moment after the load ends. Until then the tab shows the host,
+  which is `127.0.0.1` on the fixture server. The product is right to show the host while the title is unknown. The
+  race is in the test, which had no signal that the title had arrived.
+- Fix: the wait that follows Reload now includes the title, so the assertion runs after the title has arrived.
+
 ### `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile`
 
 Fixed by: "Wait for the app to be frontmost before UI tests type, and paste open-panel paths"
