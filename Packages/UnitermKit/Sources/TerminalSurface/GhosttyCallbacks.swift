@@ -28,6 +28,19 @@ struct OpaqueToken: @unchecked Sendable {
   let pointer: UnsafeMutableRawPointer?
 }
 
+/// What a clipboard read asks for. libghostty asks for plain text alone for a paste, an OSC 52
+/// read, and some Kitty reads. It asks for the type listing alone for a paste event. Anything else
+/// is a Kitty read.
+struct ClipboardRead: Equatable {
+  static let plainText = "text/plain"
+
+  let types: [String]
+  let wantsListing: Bool
+
+  var isPlainText: Bool { types == [Self.plainText] && !wantsListing }
+  var isListingOnly: Bool { types.isEmpty && wantsListing }
+}
+
 /// The C callbacks that libghostty calls. They run on any thread, so each one copies what it needs
 /// and hops to the main actor before it touches a Swift object. Nothing here unwinds through C.
 enum GhosttyCallbacks {
@@ -39,7 +52,7 @@ enum GhosttyCallbacks {
       supports_selection_clipboard: false,
       wakeup_cb: { GhosttyCallbacks.wakeup($0) },
       action_cb: { GhosttyCallbacks.action($0, $1, $2) },
-      read_clipboard_cb: { GhosttyCallbacks.readClipboard($0, $1, $2) },
+      read_clipboard_cb: { GhosttyCallbacks.readClipboard($0, $1, $2, $3, $4, $5) },
       confirm_read_clipboard_cb: { GhosttyCallbacks.confirmReadClipboard($0, $1, $2, $3) },
       write_clipboard_cb: { GhosttyCallbacks.writeClipboard($0, $1, $2, $3, $4) },
       close_surface_cb: { GhosttyCallbacks.closeSurface($0, $1) })
@@ -116,64 +129,68 @@ enum GhosttyCallbacks {
     return true
   }
 
-  /// Runs on the main thread, from a call that the surface view itself made. It answers a paste, or
-  /// the first half of an OSC 52 read. libghostty refuses to send OSC 52 data until the user
-  /// confirms, so answering here with `confirmed` false is safe.
+  /// Runs on the main thread, either inside the surface view's own paste call or while libghostty
+  /// ticks. libghostty does not say which kind of request this is, so the view tells them apart by
+  /// the MIME types asked for and by whether its own paste is in progress.
   static func readClipboard(
     _ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e,
-    _ state: UnsafeMutableRawPointer?
-  ) -> Bool {
+    _ state: UnsafeMutableRawPointer?, _ mimes: UnsafePointer<UnsafePointer<CChar>?>?,
+    _ mimeCount: Int, _ wantsListing: Bool
+  ) -> ghostty_clipboard_read_result_e {
     guard Thread.isMainThread, let userdata, location == GHOSTTY_CLIPBOARD_STANDARD else {
-      return false
+      return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED
     }
+
+    let types = (0..<mimeCount).compactMap { index in mimes?[index].map { String(cString: $0) } }
+    let request = ClipboardRead(types: types, wantsListing: wantsListing)
 
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     let token = OpaqueToken(pointer: state)
-    return MainActor.assumeIsolated { view.answerClipboardRead(state: token) }
+    return MainActor.assumeIsolated { view.answerClipboardRead(request, state: token) }
   }
 
+  /// libghostty asks here before it sends clipboard data to a program, before an unsafe paste, and
+  /// before a Kitty clipboard write. The request type is known only here, so this is where uniterm
+  /// denies Kitty reads and writes.
   static func confirmReadClipboard(
-    _ userdata: UnsafeMutableRawPointer?, _ string: UnsafePointer<CChar>?,
+    _ userdata: UnsafeMutableRawPointer?, _ confirm: UnsafePointer<ghostty_clipboard_confirm_s>?,
     _ state: UnsafeMutableRawPointer?, _ request: ghostty_clipboard_request_e
   ) {
-    guard let userdata, let string else { return }
+    guard let userdata else { return }
 
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-    let text = String(cString: string)
     let token = OpaqueToken(pointer: state)
-
-    if request == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE {
-      DispatchQueue.main.async {
-        MainActor.assumeIsolated { view.allowClipboardWrite(text: text, state: token) }
-      }
-
-      return
+    let text = confirm.flatMap {
+      plainText(in: $0.pointee.contents, count: $0.pointee.contents_len)
     }
 
-    let kind: TerminalClipboardRequest.Kind =
-      request == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ ? .read : .unsafePaste
+    let kind: TerminalClipboardRequest.Kind?
+    switch request {
+    case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ: kind = .read
+    case GHOSTTY_CLIPBOARD_REQUEST_PASTE: kind = .unsafePaste
+    default: kind = nil
+    }
 
     DispatchQueue.main.async {
-      MainActor.assumeIsolated { view.askAboutClipboard(kind: kind, text: text, state: token) }
+      MainActor.assumeIsolated {
+        guard let kind else {
+          view.denyClipboard(state: token)
+          return
+        }
+
+        view.askAboutClipboard(kind: kind, text: text ?? "", state: token)
+      }
     }
   }
 
+  /// Takes copies from the surface and OSC 52 writes. With `clipboard-write` set to `ask`, an OSC
+  /// 52 write arrives with `confirm` set, and it is allowed without asking. A Kitty write never
+  /// arrives here, since the confirm callback denies it first.
   static func writeClipboard(
     _ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e,
     _ content: UnsafePointer<ghostty_clipboard_content_s>?, _ count: Int, _ confirm: Bool
   ) {
-    guard let userdata, let content, count > 0 else { return }
-
-    var plain: String?
-    for index in 0..<count {
-      let item = content[index]
-      guard let mime = item.mime, let data = item.data, String(cString: mime) == "text/plain"
-      else { continue }
-
-      plain = String(cString: data)
-    }
-
-    guard let plain else { return }
+    guard let userdata, let plain = plainText(in: content, count: count) else { return }
 
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     DispatchQueue.main.async {
@@ -190,6 +207,25 @@ enum GhosttyCallbacks {
     DispatchQueue.main.async {
       MainActor.assumeIsolated { view.receive(.exited) }
     }
+  }
+
+  /// The first plain-text representation. The data carries an explicit length and need not end in
+  /// a NUL.
+  private static func plainText(
+    in content: UnsafePointer<ghostty_clipboard_content_s>?, count: Int
+  ) -> String? {
+    guard let content else { return nil }
+
+    for index in 0..<count {
+      let item = content[index]
+      guard let mime = item.mime, String(cString: mime) == ClipboardRead.plainText else { continue }
+      guard let data = item.data else { return "" }
+
+      let bytes = UnsafeRawBufferPointer(start: UnsafeRawPointer(data), count: item.len)
+      return String(decoding: bytes, as: UTF8.self)
+    }
+
+    return nil
   }
 
   private static func shape(_ raw: ghostty_action_mouse_shape_e) -> MouseShape {

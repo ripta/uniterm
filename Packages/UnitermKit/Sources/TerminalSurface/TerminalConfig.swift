@@ -72,8 +72,10 @@ public struct TerminalConfig: Sendable, Equatable {
   }
 
   /// The config for one palette. It clears libghostty's built-in key bindings, so every key reaches
-  /// uniterm first. It switches off libghostty's working-directory inheritance. It turns on shell integration with the `ssh-env` feature, which sets a fallback
-  /// TERM for ssh sessions started from a shell.
+  /// uniterm first. It switches off libghostty's working-directory inheritance. It turns on shell
+  /// integration with the `ssh-env` feature, which sets a fallback TERM for ssh sessions started
+  /// from a shell. That feature's `ssh` wrapper runs uniterm's `ghostty` helper. See
+  /// `GhosttyTerminalEngine.launchEnvironment`.
   public static func make(palette: ThemePalette) throws -> TerminalConfig {
     var config = TerminalConfig()
     let colors = palette.terminal
@@ -90,8 +92,10 @@ public struct TerminalConfig: Sendable, Equatable {
     try config.set("tab-inherit-working-directory", "false")
     try config.set("split-inherit-working-directory", "false")
 
+    // Writes ask so that libghostty sends a Kitty write to the confirm callback, which denies it.
+    // OSC 52 writes still go through without a prompt.
     try config.set("clipboard-read", "ask")
-    try config.set("clipboard-write", "allow")
+    try config.set("clipboard-write", "ask")
 
     try config.set("background", colors.background.hexString)
     try config.set("foreground", colors.foreground.hexString)

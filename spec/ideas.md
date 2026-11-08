@@ -69,6 +69,28 @@ including whether ordinary web pages can link to it.
 When a terminal rings its bell, call out its pane and its tab. A highlight is one
 option, and the form is still open.
 
+## Terminal: Kitty clipboard protocol
+
+Support the Kitty clipboard protocol, OSC 5522, which libghostty handles from
+Ghostty 1.4. uniterm denies its reads and writes today, and the program gets an
+`EPERM` reply. A paste-event listing is the one part served now. When a program
+turns on Kitty paste events, libghostty turns the user's own paste into a request
+for the clipboard's type names, and uniterm answers it so the paste keeps working.
+
+The protocol goes further than OSC 52 in several ways:
+
+- A read or write can carry several MIME types, such as an image beside its text.
+  uniterm reads and writes only plain text today.
+- A request can name the primary selection. macOS has none, so uniterm reports it
+  as unsupported.
+- A program can name itself and ask to be remembered for the session. The
+  permission prompt would show that name, and a remembered grant would skip later
+  prompts.
+- A write can be large. libghostty caps one write at 64 MiB by default.
+
+UTERM-004's per-session clipboard policy and ADR-09's clipboard powers cover OSC
+52 today. Support would need them to cover Kitty requests too.
+
 ## Screenshot of a pane or tab
 
 Take a screenshot of the current browser tab, and of the current pane or tab of
