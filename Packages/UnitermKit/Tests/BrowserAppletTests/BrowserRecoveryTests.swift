@@ -43,6 +43,21 @@ final class ManualHangTimer {
   }
 }
 
+/// Hands each bound to `HangPolicy.sleeping` once the test opens it. Until then an armed bound is
+/// held and never fires, so the real clock runs only for the reload the test means to time.
+@MainActor
+final class SleepingAfterGate {
+  var isOpen = false
+
+  var schedule: HangPolicy.Schedule {
+    { [self] duration, action in
+      guard isOpen else { return {} }
+
+      return HangPolicy.sleeping(duration, action)
+    }
+  }
+}
+
 /// How the tests end a content process and name it. WebKit's `_killWebContentProcess` exists on
 /// this macOS and does nothing the navigation delegate hears about, so the tests send SIGKILL to
 /// the process that `_webProcessIdentifier` names. That is a real crash from WebKit's side. The
@@ -688,9 +703,13 @@ final class BrowserRecoveryTests: XCTestCase {
   /// Catches a schedule that never fires or fires early in production. Every other test injects
   /// the schedule, so none of them runs `HangPolicy.sleeping` or wires it to a tab. A cheaper layer
   /// cannot show that a real clock reaches the tab, and a short bound keeps this to half a second.
+  ///
+  /// The first load arms the bound too. A slow runner can take longer than the short bound to start
+  /// a content process, so the gate holds every arm until that load is done.
   func testTheRealTimerReplacesAHungWebViewAfterItsBound() async throws {
+    let gate = SleepingAfterGate()
     let harness = try await make(
-      services: .testing(hang: HangPolicy(bound: .milliseconds(300))))
+      services: .testing(hang: HangPolicy(bound: .milliseconds(300), schedule: gate.schedule)))
     defer { harness.stop() }
 
     await harness.load("/a", expecting: "A")
@@ -699,6 +718,7 @@ final class BrowserRecoveryTests: XCTestCase {
 
     defer { if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) } }
 
+    gate.isOpen = true
     hang(harness.tab.webView)
     harness.applet.reload()
 
