@@ -739,7 +739,13 @@ None.
   worked. The level an animation decodes at is used only when it is larger than the fit-size frame, so a small
   animation that already shows at native size asks for nothing new. The view magnifies zoomed frames with
   nearest-neighbor sampling, as it does tiles.
+- 2026-11-07: ADR candidate (cuts across the system): the app runs outside the App Sandbox, and a helper that needs no
+  file or network access runs inside it. Written as ADR-10, proposed. It stays proposed until UTERM-003's Janet helper
+  shows whether the rule needs more nuance. The user's choice.
+- 2026-11-07: The double tap that toggles fit and actual size, and the zoom-percent status segment, are kept. The
+  user's choice after a hands-on review. Both were logged above as additions.
 
 ## References
 
 - Original write-up: `~/projects/private_specs/uniterm/spec/research/original-writeup.md`, APPLET-5
+- ADR-10
