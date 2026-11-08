@@ -21,6 +21,22 @@ fixed ones.
 - Suspected cause: state in the menu bar left by earlier tests in the suite.
 - Status: unresolved.
 
+### `PaneTreeUITests.testFocusMovesWithTheKeyboardAndInputReachesOnlyTheFocusedPane`
+
+- Seen: 2026-11-07, once in a full suite.
+- Evidence: `PaneTreeUITests.swift:59` failed. The typed `echo "L:$((6*7)):"` never showed in the focused pane within
+  20 s. The test passed 3 of 3 alone.
+- Suspected cause: keys sent right after Cmd-Option-Left moved focus went nowhere. This is the same pattern as the fixed
+  Cmd-W flake.
+- Status: unresolved.
+
+### `PaneTreeUITests.testReopenBringsBackTheClosedPaneFromItsDescription`
+
+- Seen: 2026-11-07, once in a full suite, in the same run as the entry above.
+- Evidence: `UnitermUITestCase.swift:142` found no `pane-2`. The test passed 3 of 3 alone.
+- Suspected cause: the pane-opening key went nowhere, as in the entry above.
+- Status: unresolved.
+
 ## Fixed
 
 ### `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile`
