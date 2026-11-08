@@ -282,6 +282,7 @@ final class TabSearchTests: XCTestCase {
       switch entry.id {
       case .tab(let pane, _): return entry.title.isEmpty ? "" : "tab:\(pane == first ? 1 : 2)"
       case .command(let id): return id == .fakeActualSize ? "recent-command" : "command"
+      case .filterKeyword, .filter, .notice: return "filter"
       }
     }
 
@@ -334,9 +335,31 @@ final class TabSearchTests: XCTestCase {
     let shown = try XCTUnwrap(entry(pane: first, tab: firstApplet.tabID(0)))
     XCTAssertEqual(shown.title, "Close Windowx [2J")
     XCTAssertEqual(shown.detail, "/tmp/evil /dir")
-    XCTAssertEqual(shown.kind.label, "Tab")
+    XCTAssertEqual(shown.kind, .tab)
     XCTAssertEqual(
-      palette.entries.first { $0.id == .command(.splitRight) }?.kind.label, "Command")
+      palette.entries.first { $0.id == .command(.splitRight) }?.label, "Command")
+  }
+
+  /// Catches a tab row that does not name its applet, or that takes the name from anywhere but the
+  /// type's declaration. A program title can say anything, so only the declaration may name the
+  /// applet. A type with no declaration, such as the launcher, reads as a plain tab.
+  func testATabRowNamesItsAppletFromTheDeclaration() throws {
+    let (first, _) = try twoPanes()
+    try applet(first).tabTitles = ["Browser", "b", "c"]
+    let launcher = try XCTUnwrap(controller.openLauncher(axis: .row))
+
+    controller.showCommandPalette()
+
+    let shown = try XCTUnwrap(entry(pane: first, tab: applet(first).tabID(0)))
+    XCTAssertEqual(shown.label, "Fake")
+    XCTAssertEqual(shown.symbolName, WindowFixture.fakeType.symbolName)
+
+    let plain = try XCTUnwrap(tabEntries().first { $0.id.pane == launcher })
+    XCTAssertEqual(plain.label, "Tab")
+    XCTAssertNil(plain.symbolName)
+
+    let command = try XCTUnwrap(palette.entries.first { $0.id == .command(.splitRight) })
+    XCTAssertEqual(command.symbolName, PaletteEntry.commandSymbol)
   }
 
   /// Catches an applet with one implicit tab that reads as nothing. A launcher shows by its title.

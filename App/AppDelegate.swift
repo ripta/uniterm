@@ -270,19 +270,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       makeRestoredController: { identifier, restored in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          commands: commands, restoring: restored, restoreApplet: restoreApplet,
+          commands: commands, appletTypes: BuiltInApplets.declarations, restoring: restored,
+          restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       },
       makeRoutedController: { identifier, applet in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          commands: commands, startingWith: applet, restoreApplet: restoreApplet,
+          commands: commands, appletTypes: BuiltInApplets.declarations, startingWith: applet,
+          restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       },
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          startingIn: directory, commands: commands, restoreApplet: restoreApplet,
+          startingIn: directory, commands: commands, appletTypes: BuiltInApplets.declarations,
+          restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       })
     windowSet = windows

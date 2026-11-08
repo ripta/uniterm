@@ -79,7 +79,8 @@ final class FixtureTypes: ContentTypeSystem, @unchecked Sendable {
 
 func applet(_ id: String, _ opens: [(String, OpenRank)]) -> AppletTypeDeclaration {
   AppletTypeDeclaration(
-    typeID: id, displayName: id.capitalized, opens: opens.map { OpenedType($0.0, rank: $0.1) })
+    typeID: id, displayName: id.capitalized, symbolName: "app",
+    opens: opens.map { OpenedType($0.0, rank: $0.1) })
 }
 
 /// A temporary directory that goes away with the test.

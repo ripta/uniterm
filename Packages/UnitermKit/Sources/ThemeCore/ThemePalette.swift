@@ -40,6 +40,18 @@ public struct ThemePalette: Sendable, Equatable {
     self[.text]
   }
 
+  /// The text on a row highlighted in `blue`, such as the palette's and the launcher's selection.
+  /// Latte's `base` reaches only 4.3:1 on its blue, so Latte uses white, which reaches 4.9:1.
+  public var onAccent: ThemeColor {
+    flavor.isDark ? self[.crust] : ThemeColor(hex: 0xFFFFFF)
+  }
+
+  /// Small secondary text on `mantle` or `base`, such as a row's applet name or directory. It is
+  /// `subtext1`, the lightest shade that still reaches 4.5:1 on Latte's `mantle`.
+  public var secondaryText: ThemeColor {
+    self[.subtext1]
+  }
+
   public var terminal: TerminalPalette {
     let ansiTokens: [ThemeToken]
     switch flavor {

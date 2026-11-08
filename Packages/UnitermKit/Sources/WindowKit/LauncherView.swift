@@ -700,11 +700,3 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     focusCurrent()
   }
 }
-
-extension ThemePalette {
-  /// The text color on a row drawn in the accent color. It matches the terminal's cursor text,
-  /// which also sits on a solid accent.
-  fileprivate var onAccent: ThemeColor {
-    flavor == .latte ? self[.base] : self[.crust]
-  }
-}

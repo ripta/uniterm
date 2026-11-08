@@ -55,6 +55,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// The commands the window runs. One registry serves every window of the app.
   let commands: CommandRegistry
 
+  /// The applet types the app ships. The palette names each tab's applet from them. A pane whose
+  /// type has no declaration, such as the launcher, shows its tabs as plain tabs.
+  let appletTypes: [AppletTypeDeclaration]
+
   /// The pane that had focus when the palette showed, nil while it is hidden. It is the pane that
   /// every command run from the palette targets. It is fixed when the palette shows, so a command
   /// never reads the focus that the palette itself holds.
@@ -143,6 +147,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     undoPolicy: CloseUndoPolicy = .standard,
     startingIn directory: String? = nil,
     commands: CommandRegistry = CommandRegistry(),
+    appletTypes: [AppletTypeDeclaration] = [],
     restoring restored: RestoredWindow? = nil,
     startingWith routed: (any Applet)? = nil,
     restoreApplet: @escaping AppletRestorer = { _ in
@@ -157,6 +162,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     self.makeApplet = makeApplet
     self.restoreApplet = restoreApplet
     self.commands = commands
+    self.appletTypes = appletTypes
     ledger = CloseUndoLedger(policy: undoPolicy)
     placement = StatusBarPlacement(store: settings, statusCenter: statusCenter)
     palettePlacement = PalettePlacement(store: settings, statusCenter: statusCenter)

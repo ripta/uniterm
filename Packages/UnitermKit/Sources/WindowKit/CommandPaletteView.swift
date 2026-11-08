@@ -30,15 +30,26 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     var cornerRadius: CGFloat
     var textInset: CGFloat
 
+    /// The filter chip's height and text size. The chip leaves 2 points above and below it in the
+    /// shortest field.
+    var chipHeight: CGFloat
+    var chipFontSize: CGFloat
+
     /// A floating palette is a card over the panes, so it has room for a larger field.
-    static let floating = Style(height: 40, fontSize: 15, cornerRadius: 10, textInset: 14)
+    static let floating = Style(
+      height: 40, fontSize: 15, cornerRadius: 10, textInset: 14, chipHeight: 26, chipFontSize: 13)
 
     /// A palette docked at the bottom sits in a strip that costs the panes its height.
-    static let docked = Style(height: 24, fontSize: 13, cornerRadius: 6, textInset: 10)
+    static let docked = Style(
+      height: 24, fontSize: 13, cornerRadius: 6, textInset: 10, chipHeight: 18, chipFontSize: 11)
 
     /// A palette docked at the top sits in the title bar row, beside the traffic lights.
-    static let titleBar = Style(height: 22, fontSize: 13, cornerRadius: 6, textInset: 10)
+    static let titleBar = Style(
+      height: 22, fontSize: 13, cornerRadius: 6, textInset: 10, chipHeight: 18, chipFontSize: 11)
   }
+
+  /// The gap between the chip and the text after it.
+  static let chipGap: CGFloat = 6
 
   /// How the window presents the palette. A floating palette is hidden until it is active. A docked
   /// one is always on show.
@@ -52,11 +63,17 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
   /// The results, in a view of their own so a docked palette can open them over the panes.
   let results = PaletteResultsPanel()
 
+  /// The filter in the field, drawn before the text.
+  let chip = PaletteChipView()
+
   private let table = PaletteTableView()
   private var palette: ThemePalette = .latte
   private var resultsHeight: NSLayoutConstraint?
   private var textLeading: NSLayoutConstraint?
+  private var textAfterChip: NSLayoutConstraint?
   private var textTrailing: NSLayoutConstraint?
+  private var chipLeading: NSLayoutConstraint?
+  private var chipHeight: NSLayoutConstraint?
 
   private(set) var style: Style = .floating
 
@@ -73,6 +90,9 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
   /// The entry Return would run. It is an ID, so a list that re-sorts keeps the same entry
   /// highlighted.
   private(set) var selection: PaletteEntryID?
+
+  /// What the chip narrows the list to. Like the text, it lasts until the palette hides.
+  private(set) var filter: PaletteFilter?
 
   /// Runs when the search text changes, with the new text.
   var onQueryChange: ((String) -> Void)?
@@ -109,6 +129,11 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     field.onInactiveClick = { [weak self] in self?.onActivate?() }
     addSubview(field)
 
+    chip.translatesAutoresizingMaskIntoConstraints = false
+    chip.isHidden = true
+    chip.onRemove = { [weak self] in self?.setFilter(nil) }
+    addSubview(chip)
+
     let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("entry"))
     column.resizingMask = .autoresizingMask
     table.addTableColumn(column)
@@ -140,10 +165,22 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     textLeading = leading
     textTrailing = trailing
 
+    // With a chip, the text starts after it. The two leading constraints swap in `updateChip`.
+    textAfterChip = field.leadingAnchor.constraint(
+      equalTo: chip.trailingAnchor, constant: Self.chipGap)
+
+    let chipStart = chip.leadingAnchor.constraint(equalTo: leadingAnchor)
+    let chipTall = chip.heightAnchor.constraint(equalToConstant: Style.floating.chipHeight)
+    chipLeading = chipStart
+    chipHeight = chipTall
+
     NSLayoutConstraint.activate([
       field.centerYAnchor.constraint(equalTo: centerYAnchor),
       leading,
       trailing,
+      chipStart,
+      chipTall,
+      chip.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
 
     setAccessibilityElement(true)
@@ -160,6 +197,9 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     layer?.cornerRadius = style.cornerRadius
     textLeading?.constant = style.textInset
     textTrailing?.constant = -style.textInset
+    chipLeading?.constant = style.textInset
+    chipHeight?.constant = style.chipHeight
+    chip.apply(fontSize: style.chipFontSize)
   }
 
   // MARK: Presentation
@@ -190,8 +230,9 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     field.acceptsKeyboard = presentation == .floating || isActive
     results.isHidden = !isActive || entries.isEmpty
 
-    field.placeholderString = Self.placeholder(
-      presentation: presentation, isActive: isActive, hint: hotkeyHint)
+    field.placeholderString =
+      filter?.placeholder
+      ?? Self.placeholder(presentation: presentation, isActive: isActive, hint: hotkeyHint)
   }
 
   /// What the field says when it is empty. An inactive docked palette is the only place the user
@@ -236,7 +277,57 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     field.textColor = palette[.text].nsColor
     needsDisplay = true
     results.apply(palette)
+    chip.apply(palette)
     table.reloadData()
+  }
+
+  // MARK: Filter
+
+  /// Puts a filter in the field as a chip, or takes the chip away. The text clears, so what the
+  /// user typed to find the filter does not search inside it.
+  func setFilter(_ filter: PaletteFilter?) {
+    self.filter = filter
+    updateChip()
+    setText("")
+  }
+
+  private func updateChip() {
+    if let filter {
+      chip.show(filter)
+    }
+
+    chip.isHidden = filter == nil
+
+    // The leading constraint in use goes first, so the two are never active together.
+    let (off, on) = filter == nil ? (textAfterChip, textLeading) : (textLeading, textAfterChip)
+    off?.isActive = false
+    on?.isActive = true
+    updatePresentation()
+  }
+
+  /// Replaces the text with the caret at its end, and lists again for it.
+  private func setText(_ text: String) {
+    if let editor = field.currentEditor() {
+      editor.string = text
+      editor.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+    } else {
+      field.stringValue = text
+    }
+
+    selection = nil
+    onQueryChange?(field.stringValue)
+  }
+
+  /// Tab completes a keyword hint, or turns the highlighted suggestion into the chip. It never
+  /// moves the keyboard out of the field.
+  private func completeWithTab() {
+    if let hint = entries.first(where: { $0.kind == .filterKeyword }),
+      case .filterKeyword(let category) = hint.id
+    {
+      setText(category.keyword)
+    } else if let entry = selectedEntry, case .filter(let filter) = entry.id {
+      setFilter(filter)
+    }
   }
 
   // MARK: Entries
@@ -250,7 +341,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     self.entries = entries
 
     // The same entry stays highlighted, wherever it sorted to.
-    if selection.map({ id in !entries.contains { $0.id == id && $0.isEnabled } }) ?? true {
+    if selection.map({ id in !entries.contains { $0.id == id && $0.isSelectable } }) ?? true {
       selection = Self.firstChoice(in: entries, emptyQuery: PaletteRanking.isEmpty(query))
     }
 
@@ -263,7 +354,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
   }
 
   private static func firstChoice(in entries: [PaletteEntry], emptyQuery: Bool) -> PaletteEntryID? {
-    let enabled = entries.filter(\.isEnabled)
+    let enabled = entries.filter(\.isSelectable)
 
     guard emptyQuery else { return enabled.first?.id }
 
@@ -276,6 +367,8 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
   func reset() {
     field.stringValue = ""
     selection = nil
+    filter = nil
+    updateChip()
     entries = []
     results.isHidden = true
     table.reloadData()
@@ -286,7 +379,7 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
   }
 
   private func moveSelection(by step: Int) {
-    let enabled = entries.filter(\.isEnabled)
+    let enabled = entries.filter(\.isSelectable)
 
     guard !enabled.isEmpty else { return }
 
@@ -304,16 +397,28 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     }
   }
 
+  /// A suggestion becomes the chip. Anything else goes to the window to run.
   private func chooseSelection() {
-    guard let entry = selectedEntry, entry.isEnabled else { return }
+    guard let entry = selectedEntry, entry.isSelectable else { return }
 
-    onChoose?(entry)
+    if case .filter(let filter) = entry.id {
+      setFilter(filter)
+    } else {
+      onChoose?(entry)
+    }
   }
 
   @objc private func rowClicked(_ sender: Any?) {
     let row = table.clickedRow
 
-    guard entries.indices.contains(row), entries[row].isEnabled else { return }
+    guard entries.indices.contains(row) else { return }
+
+    if case .filterKeyword(let category) = entries[row].id {
+      setText(category.keyword)
+      return
+    }
+
+    guard entries[row].isSelectable else { return }
 
     selection = entries[row].id
     chooseSelection()
@@ -340,6 +445,18 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
 
     case #selector(NSResponder.cancelOperation(_:)):
       onDismiss?()
+
+    case #selector(NSResponder.insertTab(_:)):
+      completeWithTab()
+
+    case #selector(NSResponder.insertBacktab(_:)):
+      break
+
+    case #selector(NSResponder.deleteBackward(_:)):
+      // Backspace in an empty field takes the chip away. Otherwise it edits the text.
+      guard textView.string.isEmpty, filter != nil else { return false }
+
+      setFilter(nil)
 
     default:
       return false
@@ -446,13 +563,117 @@ final class PaletteResultsPanel: NSView {
   }
 }
 
+/// The filter in the palette's field: the filter's icon, its name, and a button that removes it.
+/// Nothing in it takes the keyboard, so the field keeps it while the user clicks the button.
+@MainActor
+final class PaletteChipView: NSView {
+  private let icon = NSImageView()
+  private let label = NSTextField(labelWithString: "")
+  let removeButton = NSButton()
+  private var palette: ThemePalette = .latte
+
+  var onRemove: (() -> Void)?
+
+  override var isFlipped: Bool { true }
+
+  override var wantsUpdateLayer: Bool { true }
+
+  override var mouseDownCanMoveWindow: Bool { false }
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+
+    wantsLayer = true
+
+    icon.imageScaling = .scaleProportionallyDown
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(icon)
+
+    label.lineBreakMode = .byTruncatingTail
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+    addSubview(label)
+
+    removeButton.isBordered = false
+    removeButton.refusesFirstResponder = true
+    removeButton.imagePosition = .imageOnly
+    removeButton.image = NSImage(
+      systemSymbolName: "xmark", accessibilityDescription: "Remove filter")
+    removeButton.target = self
+    removeButton.action = #selector(remove(_:))
+    removeButton.translatesAutoresizingMaskIntoConstraints = false
+    removeButton.setAccessibilityIdentifier("command-palette-chip-remove")
+    removeButton.setAccessibilityLabel("Remove filter")
+    addSubview(removeButton)
+
+    NSLayoutConstraint.activate([
+      icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
+      icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+      label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
+      label.centerYAnchor.constraint(equalTo: centerYAnchor),
+      removeButton.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 3),
+      removeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+      removeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      removeButton.widthAnchor.constraint(equalToConstant: 14),
+      removeButton.heightAnchor.constraint(equalToConstant: 14),
+    ])
+
+    setAccessibilityElement(true)
+    setAccessibilityRole(.group)
+    setAccessibilityIdentifier("command-palette-chip")
+    apply(fontSize: CommandPaletteView.Style.floating.chipFontSize)
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) is not supported")
+  }
+
+  /// The filter's name, for a test or for accessibility to read.
+  var text: String { label.stringValue }
+
+  func show(_ filter: PaletteFilter) {
+    label.stringValue = filter.name
+    icon.image = NSImage(systemSymbolName: filter.symbolName, accessibilityDescription: nil)
+    setAccessibilityLabel(filter.name)
+  }
+
+  /// Sizes the text, the icon, and the corners to the field's style.
+  func apply(fontSize: CGFloat) {
+    label.font = .systemFont(ofSize: fontSize)
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: fontSize - 1, weight: .medium)
+    removeButton.symbolConfiguration = NSImage.SymbolConfiguration(
+      pointSize: fontSize - 4, weight: .semibold)
+    layer?.cornerRadius = fontSize >= 13 ? 6 : 4
+  }
+
+  func apply(_ palette: ThemePalette) {
+    self.palette = palette
+    label.textColor = palette[.text].nsColor
+    icon.contentTintColor = palette[.blue].nsColor
+    removeButton.contentTintColor = palette.secondaryText.nsColor
+    needsDisplay = true
+  }
+
+  override func updateLayer() {
+    layer?.backgroundColor = palette[.surface0].cgColor
+  }
+
+  @objc private func remove(_ sender: Any?) {
+    onRemove?()
+  }
+}
+
 /// A table that never takes the keyboard, so the field keeps it while the user clicks a row.
 private final class PaletteTableView: NSTableView {
   override var acceptsFirstResponder: Bool { false }
 }
 
-/// One result row: the title on the left and the kind on the right.
+/// One result row: an icon, the title, and on the right the applet's name or the kind.
 private final class PaletteRowView: NSView {
+  static let iconSize: CGFloat = 14
+
+  private let icon = NSImageView()
   private let title = NSTextField(labelWithString: "")
   private let kind = NSTextField(labelWithString: "")
 
@@ -463,6 +684,12 @@ private final class PaletteRowView: NSView {
 
     wantsLayer = true
     layer?.cornerRadius = 6
+
+    // The icon keeps its place when a row has none, so every title starts at the same edge.
+    icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+    icon.imageScaling = .scaleProportionallyDown
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(icon)
 
     title.font = .systemFont(ofSize: 13)
     title.lineBreakMode = .byTruncatingTail
@@ -476,7 +703,11 @@ private final class PaletteRowView: NSView {
     addSubview(kind)
 
     NSLayoutConstraint.activate([
-      title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+      icon.widthAnchor.constraint(equalToConstant: Self.iconSize),
+      icon.heightAnchor.constraint(equalToConstant: Self.iconSize),
+      title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
       title.centerYAnchor.constraint(equalTo: centerYAnchor),
       kind.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       kind.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -494,9 +725,12 @@ private final class PaletteRowView: NSView {
   }
 
   func configure(_ entry: PaletteEntry, selected: Bool, palette: ThemePalette) {
-    kind.stringValue = entry.kind.label
+    kind.stringValue = selected && entry.kind == .filter ? "Tab to filter" : entry.label
+    icon.image = entry.symbolName.flatMap {
+      NSImage(systemSymbolName: $0, accessibilityDescription: nil)
+    }
 
-    let onAccent = palette.flavor == .latte ? palette[.base] : palette[.crust]
+    let onAccent = palette.onAccent
 
     let titleColor: NSColor
     let detailColor: NSColor
@@ -506,11 +740,18 @@ private final class PaletteRowView: NSView {
       titleColor = onAccent.nsColor
       detailColor = onAccent.nsColor
       kind.textColor = onAccent.nsColor
+      icon.contentTintColor = onAccent.nsColor
     } else {
       layer?.backgroundColor = NSColor.clear.cgColor
-      titleColor = entry.isEnabled ? palette[.text].nsColor : palette[.overlay0].nsColor
-      detailColor = palette[.overlay1].nsColor
-      kind.textColor = palette[.overlay1].nsColor
+      switch (entry.kind, entry.isEnabled) {
+      case (.notice, _): titleColor = palette.secondaryText.nsColor
+      case (_, true): titleColor = palette[.text].nsColor
+      case (_, false): titleColor = palette[.overlay0].nsColor
+      }
+
+      detailColor = palette.secondaryText.nsColor
+      kind.textColor = palette.secondaryText.nsColor
+      icon.contentTintColor = palette.secondaryText.nsColor
     }
 
     let truncating = NSMutableParagraphStyle()
@@ -536,7 +777,7 @@ private final class PaletteRowView: NSView {
     title.attributedStringValue = text
 
     setAccessibilityLabel(entry.title)
-    setAccessibilityValue("\(entry.kind.label), \(entry.isEnabled ? "enabled" : "disabled")")
+    setAccessibilityValue("\(entry.label), \(entry.isEnabled ? "enabled" : "disabled")")
     setAccessibilityHelp(entry.detail)
     setAccessibilitySelected(selected)
   }

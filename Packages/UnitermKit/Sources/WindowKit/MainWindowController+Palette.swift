@@ -93,7 +93,8 @@ extension MainWindowController {
 
     for command in commands.commands where command.listedInPalette {
       let entry = PaletteEntry(
-        id: .command(command.id), kind: .command, title: command.title, detail: nil,
+        id: .command(command.id), kind: .command, title: command.title,
+        symbolName: PaletteEntry.commandSymbol, detail: nil,
         isEnabled: commands.isAvailable(command.id, in: context))
 
       candidates.append(
@@ -102,7 +103,10 @@ extension MainWindowController {
           order: candidates.count))
     }
 
-    palette.setEntries(PaletteRanking.rank(candidates, query: palette.query))
+    palette.setEntries(
+      PaletteListing.entries(
+        candidates, query: palette.query, filter: palette.filter,
+        appletTypes: appletTypes.map(PaletteAppletType.init)))
   }
 
   /// Moves the focused pane's selected tab to the front of the recent tabs.
@@ -132,6 +136,7 @@ extension MainWindowController {
       guard let applet = paneArea.applet(for: pane) else { continue }
 
       let list = applet.publishedTabs
+      let type = appletTypes.first { $0.typeID == applet.typeID }
 
       for tab in list.all {
         let title = PaletteText.neutralized(tab.title)
@@ -139,7 +144,9 @@ extension MainWindowController {
 
         let entry = PaletteEntry(
           id: .tab(pane: pane, tab: tab.id), kind: .tab,
-          title: title.isEmpty ? "Untitled" : title, detail: detail.isEmpty ? nil : detail,
+          title: title.isEmpty ? "Untitled" : title, appletName: type?.displayName,
+          symbolName: type?.symbolName, appletTypeID: applet.typeID,
+          detail: detail.isEmpty ? nil : detail,
           isEnabled: true, isCurrent: pane == target && tab.id == list.selected)
 
         entries.append((PaletteTabKey(pane: pane, tab: tab.id), entry))
@@ -183,6 +190,10 @@ extension MainWindowController {
 
     case .tab(let pane, let tab):
       chooseTab(pane: pane, tab: tab, title: entry.title)
+
+    // The palette view acts on its own filter rows, and a notice does nothing.
+    case .filterKeyword, .filter, .notice:
+      break
     }
   }
 

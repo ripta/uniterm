@@ -1,3 +1,4 @@
+import AppKit
 import AppletCatalog
 import AppletKit
 import FileRouting
@@ -14,20 +15,31 @@ final class BuiltInAppletsTests: XCTestCase {
       BuiltInApplets.declarations,
       [
         AppletTypeDeclaration(
-          typeID: "terminal", displayName: "Terminal",
+          typeID: "terminal", displayName: "Terminal", symbolName: "terminal",
           opens: [OpenedType("public.folder", rank: .owner)]),
         AppletTypeDeclaration(
-          typeID: "data-viewer", displayName: "Data Viewer",
+          typeID: "data-viewer", displayName: "Data Viewer", symbolName: "tablecells",
           opens: [
             OpenedType("public.comma-separated-values-text", rank: .owner),
             OpenedType("public.json", rank: .owner),
             OpenedType("org.openxmlformats.spreadsheetml.sheet", rank: .owner),
           ]),
         AppletTypeDeclaration(
-          typeID: "map-viewer", displayName: "Map Viewer",
+          typeID: "map-viewer", displayName: "Map Viewer", symbolName: "map",
           opens: [OpenedType("public.geojson", rank: .owner)]),
-        AppletTypeDeclaration(typeID: "browser", displayName: "Browser", opens: []),
+        AppletTypeDeclaration(
+          typeID: "browser", displayName: "Browser", symbolName: "safari", opens: []),
       ])
+  }
+
+  /// Catches a misspelled symbol name. The system returns no image for a name it lacks, and the
+  /// palette row would then show no icon without any error.
+  func testEverySymbolNameResolvesToASystemImage() {
+    for declaration in BuiltInApplets.declarations {
+      XCTAssertNotNil(
+        NSImage(systemSymbolName: declaration.symbolName, accessibilityDescription: nil),
+        declaration.typeID)
+    }
   }
 
   /// Catches a table file that routes anywhere but the data viewer, or a router that cannot type a
