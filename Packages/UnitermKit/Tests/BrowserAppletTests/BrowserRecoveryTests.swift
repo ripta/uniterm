@@ -798,9 +798,10 @@ final class BrowserRecoveryTests: XCTestCase {
 
   /// Catches a rebuilt view that keeps the old page's title. The title belongs to the view that
   /// went, so the new view starts with none. A page with no title never reports one, and the old
-  /// page's name would otherwise stay in the tab bar for good. Until the new page names itself, the
-  /// tab shows the title it stored. Measured: the new page's title also arrives a moment after its
-  /// load ends, which is why the test above waits on the title itself.
+  /// page's name would otherwise stay in the tab bar for good. The tab shows the title it stored
+  /// until the new page commits. The commit clears it, so the tab shows the host until the new page
+  /// names itself. Measured: that title arrives a moment after the load ends, which is why the test
+  /// above waits on the title itself.
   func testARebuiltViewDoesNotKeepTheOldPagesTitle() async throws {
     let timer = ManualHangTimer()
     let harness = try await make(services: .testing(hang: timer.policy))
