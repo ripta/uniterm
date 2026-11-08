@@ -191,8 +191,11 @@ final class BrowserRecoveryTests: XCTestCase {
 
     page.reloadButton.performClick(nil)
 
-    await harness.eventually("the page is back") {
+    // The rebuilt view starts with no title, and WebKit reports the new one after the load ends.
+    // Until then the tab shows the host, so the wait names the title as well.
+    await harness.eventually("the page is back and has its title") {
       harness.tab.currentURL?.path == "/b" && !harness.tab.isLoading && !harness.tab.isStopped
+        && harness.applet.title == "B"
     }
 
     XCTAssertTrue(page.isHidden)
