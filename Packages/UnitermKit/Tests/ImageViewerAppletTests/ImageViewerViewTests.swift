@@ -7,8 +7,9 @@ import XCTest
 
 /// The view's placement of the backdrop and the tiles, checked by rendering its layers. A tile that
 /// lands in the wrong corner is invisible to a test that reads frames only, so these read pixels.
-/// AppKit flips the root layer of a flipped view, and `render(in:)` leaves that flip to the caller,
-/// so the helper applies it as the window server does.
+/// A flipped view's backing layer is top-down on screen, and `render(in:)` draws y-up, so the helper
+/// flips the context. Package tests cannot see the window server. The UI test
+/// `ImageViewerUITests.testDragAndScrollMoveAZoomedImageTheRightWay` pins what shows on screen.
 @MainActor
 final class ImageViewerViewTests: XCTestCase {
   private func render(_ view: ImageViewerView) throws -> (_ x: Int, _ y: Int) -> [UInt8] {
@@ -21,10 +22,8 @@ final class ImageViewerViewTests: XCTestCase {
         space: CGColorSpace(name: CGColorSpace.sRGB)!,
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
 
-    if view.layer?.isGeometryFlipped == true {
-      context.translateBy(x: 0, y: CGFloat(height))
-      context.scaleBy(x: 1, y: -1)
-    }
+    context.translateBy(x: 0, y: CGFloat(height))
+    context.scaleBy(x: 1, y: -1)
 
     view.layer?.render(in: context)
 

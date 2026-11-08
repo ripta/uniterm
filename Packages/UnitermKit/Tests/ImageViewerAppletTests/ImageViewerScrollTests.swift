@@ -155,32 +155,19 @@ final class ImageViewerScrollTests: XCTestCase {
     return try XCTUnwrap(NSEvent(cgEvent: cg))
   }
 
-  /// Where `layer` sits from the top left of the root, in screen terms. Core Animation compounds
-  /// `isGeometryFlipped` down the tree. A layer's children sit top-down when an even number of
-  /// its ancestors and itself are not flipped, and bottom-up otherwise. The window server may or
-  /// may not flip the root, so the test sets it either way.
-  private func screenRect(of layer: CALayer, root: CALayer) -> CGRect {
-    var chain: [CALayer] = []
+  /// Where `layer` sits in the view's own coordinates. No layer between the root and `layer`
+  /// flips, so frames add up.
+  private func viewRect(of layer: CALayer, root: CALayer) -> CGRect {
+    var origin = CGPoint.zero
     var current: CALayer? = layer
 
-    while let node = current {
-      chain.insert(node, at: 0)
+    while let node = current, node !== root {
+      origin.x += node.frame.minX
+      origin.y += node.frame.minY
       current = node.superlayer
     }
 
-    XCTAssertTrue(chain.first === root)
-
-    var origin = CGPoint.zero
-    var flipped = false
-
-    for (parent, child) in zip(chain, chain.dropFirst()) {
-      flipped = flipped != parent.isGeometryFlipped
-
-      let top = flipped ? child.frame.minY : parent.bounds.height - child.frame.maxY
-
-      origin.x += child.frame.minX
-      origin.y += top
-    }
+    XCTAssertTrue(current === root)
 
     return CGRect(origin: origin, size: layer.bounds.size)
   }
@@ -197,50 +184,129 @@ final class ImageViewerScrollTests: XCTestCase {
     return found
   }
 
-  /// Catches a backdrop that does not share the tiles' top-down space. The window server may flip
-  /// the root layer or not. In both cases a tile and the backdrop that cover the same part of the
-  /// image must land on the same screen rect, and a pan by a positive `deltaY` must move the
-  /// backdrop down, as a scroll view's document moves. A frame check or `cacheDisplay` cannot see
-  /// this, because they run with the root flip that AppKit applies in a test, not the window
-  /// server's.
-  func testBackdropAndTilesShareOneSpaceUnderEitherRootFlip() throws {
-    for rootFlipped in [false, true] {
-      let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
-      let root = try XCTUnwrap(view.layer)
+  /// Catches a backdrop and tiles that land in different places, and a pan that moves them by
+  /// different amounts. A tile and the backdrop that cover the same part of the image share one
+  /// view rect, and a pan by +50 in y moves both by +50 in view coordinates. Package tests cannot
+  /// see the window server. The UI test `ImageViewerUITests.testDragAndScrollMoveAZoomedImageTheRightWay`
+  /// pins what shows on screen.
+  func testBackdropAndTilesShareOneViewRectAndPanTogether() throws {
+    let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+    let root = try XCTUnwrap(view.layer)
 
-      view.backingScaleSource = { 1 }
-      view.show(
-        image: ImageFixtures.bitmap(width: 1000, height: 1000) { _, _ in ImageFixtures.blue },
-        native: PixelSize(width: 1000, height: 1000), actualScale: 1, hdr: false)
-      view.layoutSubtreeIfNeeded()
+    view.backingScaleSource = { 1 }
+    view.show(
+      image: ImageFixtures.bitmap(width: 1000, height: 1000) { _, _ in ImageFixtures.blue },
+      native: PixelSize(width: 1000, height: 1000), actualScale: 1, hdr: false)
+    view.layoutSubtreeIfNeeded()
 
-      XCTAssertTrue(view.zoom(.actual))
-      view.pan(byPoints: CGSize(width: -300, height: -300))
+    XCTAssertTrue(view.zoom(.actual))
+    view.pan(byPoints: CGSize(width: -300, height: -300))
 
-      root.isGeometryFlipped = rootFlipped
+    let tileImage = ImageFixtures.bitmap(width: 100, height: 100) { _, _ in ImageFixtures.red }
 
-      let tileImage = ImageFixtures.bitmap(width: 100, height: 100) { _, _ in ImageFixtures.red }
+    view.setTiles([
+      TileSprite(
+        key: TileKey(level: 1000, column: 0, row: 0), image: tileImage,
+        rect: (x: 0, y: 0, width: 1000, height: 1000), ratio: 1, hdr: false)
+    ])
 
-      view.setTiles([
-        TileSprite(
-          key: TileKey(level: 1000, column: 0, row: 0), image: tileImage,
-          rect: (x: 0, y: 0, width: 1000, height: 1000), ratio: 1, hdr: false)
-      ])
+    let backdrop = try XCTUnwrap(layers(in: root, showing: 1000).first)
+    let tile = try XCTUnwrap(layers(in: root, showing: 100).first)
+    let before = viewRect(of: backdrop, root: root)
 
-      let label = "root flipped \(rootFlipped)"
-      let backdrop = try XCTUnwrap(layers(in: root, showing: 1000).first, label)
-      let tile = try XCTUnwrap(layers(in: root, showing: 100).first, label)
+    XCTAssertEqual(before.origin, CGPoint(x: -700, y: -700))
+    XCTAssertEqual(viewRect(of: tile, root: root), before)
 
-      XCTAssertEqual(
-        screenRect(of: tile, root: root), screenRect(of: backdrop, root: root), label)
+    view.pan(byPoints: CGSize(width: 20, height: 50))
 
-      let before = screenRect(of: backdrop, root: root).minY
+    for layer in [backdrop, tile] {
+      let moved = viewRect(of: layer, root: root)
 
-      view.pan(byPoints: CGSize(width: 0, height: 50))
-
-      XCTAssertEqual(screenRect(of: backdrop, root: root).minY, before + 50, label)
-      XCTAssertEqual(screenRect(of: tile, root: root).minY, before + 50, label)
+      XCTAssertEqual(moved.minX, before.minX + 20)
+      XCTAssertEqual(moved.minY, before.minY + 50)
     }
+  }
+
+  private func mouseEvent(
+    _ type: NSEvent.EventType, at location: NSPoint, in window: NSWindow
+  ) throws -> NSEvent {
+    try XCTUnwrap(
+      NSEvent.mouseEvent(
+        with: type, location: location, modifierFlags: [], timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+        pressure: 1))
+  }
+
+  /// Catches a drag that moves the image against the pointer. The pointer moves 30 right and 40
+  /// down on screen, which is falling y in window coordinates. The backdrop must move by (+30, +40)
+  /// in view coordinates. The events carry no usable `deltaX` or `deltaY`, so only the locations
+  /// can drive the pan. Package tests cannot see the window server. The UI test
+  /// `ImageViewerUITests.testDragAndScrollMoveAZoomedImageTheRightWay` pins what shows on screen.
+  func testDragMovesTheBackdropWithThePointerInViewCoordinates() throws {
+    let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+    let window = NSWindow(
+      contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+
+    window.isReleasedWhenClosed = false
+    window.contentView = view
+
+    defer { window.close() }
+
+    let root = try XCTUnwrap(view.layer)
+
+    view.backingScaleSource = { 1 }
+    view.show(
+      image: ImageFixtures.bitmap(width: 1000, height: 1000) { _, _ in ImageFixtures.blue },
+      native: PixelSize(width: 1000, height: 1000), actualScale: 1, hdr: false)
+    view.layoutSubtreeIfNeeded()
+
+    XCTAssertTrue(view.zoom(.actual))
+    view.pan(byPoints: CGSize(width: -300, height: -300))
+    view.setTiles([])
+
+    let backdrop = try XCTUnwrap(layers(in: root, showing: 1000).first)
+    let before = viewRect(of: backdrop, root: root)
+
+    let start = NSPoint(x: 100, y: 100)
+    let end = NSPoint(x: 130, y: 60)
+
+    view.mouseDown(with: try mouseEvent(.leftMouseDown, at: start, in: window))
+    view.mouseDragged(with: try mouseEvent(.leftMouseDragged, at: end, in: window))
+
+    let after = viewRect(of: backdrop, root: root)
+
+    XCTAssertEqual(after.minX - before.minX, 30)
+    XCTAssertEqual(after.minY - before.minY, 40)
+
+    view.mouseUp(with: try mouseEvent(.leftMouseUp, at: end, in: window))
+    view.mouseDragged(with: try mouseEvent(.leftMouseDragged, at: start, in: window))
+
+    XCTAssertEqual(viewRect(of: backdrop, root: root), after, "no drag after mouseUp")
+  }
+
+  func testDragAtFitDoesNothing() throws {
+    let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+    let window = NSWindow(
+      contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+
+    window.isReleasedWhenClosed = false
+    window.contentView = view
+
+    defer { window.close() }
+
+    view.backingScaleSource = { 1 }
+    view.show(
+      image: ImageFixtures.bitmap(width: 1000, height: 1000) { _, _ in ImageFixtures.blue },
+      native: PixelSize(width: 1000, height: 1000), actualScale: 1, hdr: false)
+    view.layoutSubtreeIfNeeded()
+
+    let before = try XCTUnwrap(view.imageFrame)
+
+    view.mouseDown(with: try mouseEvent(.leftMouseDown, at: NSPoint(x: 100, y: 100), in: window))
+    view.mouseDragged(
+      with: try mouseEvent(.leftMouseDragged, at: NSPoint(x: 130, y: 60), in: window))
+
+    XCTAssertEqual(try XCTUnwrap(view.imageFrame), before)
   }
 
   /// Catches a phase-dependent branch in the pan. A two-finger gesture arrives as began, changed,

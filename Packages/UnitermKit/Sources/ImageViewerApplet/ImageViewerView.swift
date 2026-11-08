@@ -97,7 +97,7 @@ final class ImageViewerView: NSView {
   /// The zoom or the pan changed. Not called while a pinch is in progress.
   var onViewportChange: ((ViewportChange) -> Void)?
 
-  /// Holds the backdrop and the tiles in the top-down space of `ZoomViewport`.
+  /// Holds the backdrop and the tiles in the view's top-down space, which is `ZoomViewport`'s.
   private let contentLayer = CALayer()
   private let imageLayer = CALayer()
   private let tileContainer = CALayer()
@@ -113,6 +113,8 @@ final class ImageViewerView: NSView {
 
   /// True from the first to the last event of a pinch.
   private(set) var isPinching = false
+
+  private var lastDragLocation: CGPoint?
 
   /// A pinch began. The viewport is reported only when the fingers lift, so this is the owner's
   /// first word of the gesture.
@@ -300,11 +302,9 @@ final class ImageViewerView: NSView {
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
 
-    // The window server decides whether the root layer is flipped. Flips compound down the tree,
-    // so this layer cancels the root's. Its sublayers then always lay out top-down, as the
-    // viewport's origin does.
+    // A flipped view's backing layer is already top-down on screen, whatever its
+    // `isGeometryFlipped` reads. Sublayers use the view's own coordinates, so no layer here flips.
     contentLayer.frame = bounds
-    contentLayer.isGeometryFlipped = !(layer?.isGeometryFlipped ?? false)
     tileContainer.frame = contentLayer.bounds
 
     guard let viewport else { return }
@@ -544,10 +544,25 @@ final class ImageViewerView: NSView {
 
   override func mouseDown(with event: NSEvent) {
     window?.makeFirstResponder(self)
+    lastDragLocation = convert(event.locationInWindow, from: nil)
   }
 
+  /// Pans by the pointer's own movement in this view's top-down space. The event's `deltaX` and
+  /// `deltaY` carry no sign contract that matches the scroll path, so they stay unused.
   override func mouseDragged(with event: NSEvent) {
-    pan(byPoints: CGSize(width: event.deltaX, height: event.deltaY))
+    let current = convert(event.locationInWindow, from: nil)
+
+    guard let last = lastDragLocation else {
+      lastDragLocation = current
+      return
+    }
+
+    lastDragLocation = current
+    pan(byPoints: CGSize(width: current.x - last.x, height: current.y - last.y))
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    lastDragLocation = nil
   }
 
   @objc private func openPressed() {

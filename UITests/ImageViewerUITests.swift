@@ -391,6 +391,185 @@ final class ImageViewerUITests: UnitermUITestCase {
       waitUntilGone(segment(1, in: window), timeout: 10), "Zoom to Fit left the zoom segment")
   }
 
+  /// The color at `point` of the pane in a window-server screenshot, as red and green levels. The
+  /// point is a fraction of the pane's width and height from its top left.
+  private func color(
+    of pane: XCUIElement, at point: CGVector = CGVector(dx: 0.5, dy: 0.5),
+    settle: TimeInterval = 0.6
+  ) throws -> (red: Int, green: Int) {
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: settle))
+
+    let screenshot = pane.screenshot()
+    let image = try XCTUnwrap(
+      screenshot.image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+    let x = min(image.width - 1, Int(CGFloat(image.width) * point.dx))
+    let y = min(image.height - 1, Int(CGFloat(image.height) * point.dy))
+    let cropped = try XCTUnwrap(image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
+    var pixel = [UInt8](repeating: 0, count: 4)
+    let context = try XCTUnwrap(
+      CGContext(
+        data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+
+    context.draw(cropped, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+
+    return (Int(pixel[0]), Int(pixel[1]))
+  }
+
+  /// Catches a zoomed image that renders scrambled, and a drag that moves it against the user. The
+  /// image is a gradient whose red grows to the right and whose green grows downward, so the
+  /// color at a pane point names the image point under it. After Cmd-0, green must be higher
+  /// at 75 percent of the pane's height than at 25 percent. A drag down and right must show
+  /// content from further up and left, so both levels at the center fall.
+  func testDragAndScrollMoveAZoomedImageTheRightWay() throws {
+    let file = try writePNG("gradient.png", in: try makeFolder(), width: 2000, height: 2000)
+
+    try plantViewer(path: file.path, kind: "file", current: "gradient.png")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    // The size segment groups digits by locale, such as "2,000 × 2,000", so match its shape.
+    XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0.contains("\u{00D7}") })
+
+    let pane = viewer(in: window)
+
+    pane.click()
+    app.typeKey("0", modifierFlags: .command)
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "100%" })
+
+    let upper = try color(of: pane, at: CGVector(dx: 0.5, dy: 0.25), settle: 2)
+    let lower = try color(of: pane, at: CGVector(dx: 0.5, dy: 0.75))
+    let tolerance = 3
+
+    XCTAssertGreaterThan(
+      lower.green, upper.green + tolerance,
+      "green is \(upper.green) at 25 percent and \(lower.green) at 75 percent of the height")
+
+    let start = try color(of: pane)
+    let origin = pane.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+
+    origin.press(
+      forDuration: 0.1,
+      thenDragTo: origin.withOffset(CGVector(dx: 150, dy: 150)))
+
+    let dragged = try color(of: pane)
+    let dragX = dragged.red - start.red
+    let dragY = dragged.green - start.green
+
+    func direction(_ delta: Int) -> String {
+      delta > 0 ? "up" : delta < 0 ? "down" : "nowhere"
+    }
+
+    XCTAssertLessThan(
+      dragX, -tolerance,
+      "a drag right moved the center red \(direction(dragX)) by \(dragX)")
+    XCTAssertLessThan(
+      dragY, -tolerance,
+      "a drag down moved the center green \(direction(dragY)) by \(dragY)")
+  }
+
+  /// Catches a scroll that moves a zoomed image against the way a table moves. Both panes get
+  /// the same `scroll(byDeltaX:deltaY:)`. The data viewer's table is an NSScrollView, so which way
+  /// its rows go names the direction on this machine under its scroll setting. The image must
+  /// move the same way. If the table's rows move up, the image shows content from further down, so
+  /// green rises at a fixed point. If they move down, green falls.
+  func testScrollMovesAZoomedImageTheWayATableMoves() throws {
+    let csv = try makeFolder().appendingPathComponent("rows.csv")
+    let rows = (0..<2000).map { String(format: "r%04d,x", $0) }
+
+    try Data((["id,value"] + rows).joined(separator: "\n").utf8).write(to: csv)
+
+    try plantLayout(
+      """
+      {"version":1,"windows":[{"frame":{"x":100,"y":100,"width":900,"height":600},"highWaterMark":1,
+      "tree":{"kind":"pane","id":1,"applet":{"type":"data-viewer","version":1,
+      "payload":{"startDirectory":"\(csv.deletingLastPathComponent().path)","path":"\(csv.path)"}}}}]}
+      """)
+
+    var app = launchApp()
+    var window = mainWindow(in: app)
+    let table = window.tables["data-viewer-table"]
+
+    XCTAssertTrue(table.waitForExistence(timeout: 20), "no table")
+    XCTAssertTrue(
+      table.staticTexts["r0000"].waitForExistence(timeout: 10), "the table shows no rows")
+
+    // The first row visible in the table, by the index in its first column. One snapshot reads the
+    // whole tree in a single round trip. Querying cells one by one costs about a second each.
+    func firstVisibleRow() throws -> Int? {
+      RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.6))
+
+      // The table's own frame spans the whole document, so the visible part is the scroll view's.
+      let visible = window.scrollViews.containing(.table, identifier: "data-viewer-table")
+        .firstMatch.frame
+      let root = try table.snapshot()
+      var rows: [Int] = []
+
+      func visit(_ node: any XCUIElementSnapshot) {
+        if node.elementType == .staticText, visible.intersects(node.frame),
+          let text = node.value as? String, text.hasPrefix("r"), let row = Int(text.dropFirst())
+        {
+          rows.append(row)
+        }
+
+        node.children.forEach(visit)
+      }
+
+      visit(root)
+
+      return rows.min()
+    }
+
+    // Park in the middle, whichever way the first scroll goes, so the next one cannot hit an end.
+    table.scroll(byDeltaX: 0, deltaY: -600)
+    table.scroll(byDeltaX: 0, deltaY: 300)
+
+    let before = try XCTUnwrap(try firstVisibleRow(), "no visible row")
+
+    table.scroll(byDeltaX: 0, deltaY: 100)
+
+    let after = try XCTUnwrap(try firstVisibleRow(), "no visible row after the scroll")
+
+    XCTAssertNotEqual(before, after, "the table did not move for a scroll of +100")
+
+    let tableContentMovedUp = after > before
+
+    app.terminate()
+
+    let file = try writePNG("gradient.png", in: try makeFolder(), width: 2000, height: 2000)
+
+    try plantViewer(path: file.path, kind: "file", current: "gradient.png")
+
+    app = launchApp()
+    window = mainWindow(in: app)
+    XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0.contains("\u{00D7}") })
+
+    let pane = viewer(in: window)
+
+    pane.click()
+    app.typeKey("0", modifierFlags: .command)
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "100%" })
+
+    let start = try color(of: pane, settle: 2)
+
+    pane.scroll(byDeltaX: 0, deltaY: 100)
+
+    let scrolled = try color(of: pane)
+    let change = scrolled.green - start.green
+    let tolerance = 3
+
+    XCTAssertGreaterThan(
+      abs(change), tolerance, "a scroll of +100 left the center green at \(scrolled.green)")
+
+    let tableWent = tableContentMovedUp ? "up" : "down"
+
+    XCTAssertEqual(
+      change > 0, tableContentMovedUp,
+      "the table moved \(tableWent) and the center green changed by \(change)")
+  }
+
   /// Catches the shared Actual Size title moving only the terminal's item. With one remap of
   /// "Actual Size" to Cmd-J, Cmd-0 no longer zooms the viewer and Cmd-J does.
   func testARemapOfActualSizeMovesTheViewersItemToo() throws {
