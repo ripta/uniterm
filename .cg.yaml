@@ -10,6 +10,7 @@ allow:
   - prefix: [defaults, read]
   - prefix: [file]
   - prefix: [infocmp]
+  - prefix: [log, show]
   - prefix: [ls]
   - prefix: [lsof]
   - prefix: [nm]
