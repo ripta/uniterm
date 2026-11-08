@@ -155,63 +155,92 @@ final class ImageViewerScrollTests: XCTestCase {
     return try XCTUnwrap(NSEvent(cgEvent: cg))
   }
 
-  /// A fixture whose red channel grows to the right and green channel grows downward, so the
-  /// rendered pixel under a point says which part of the image is there.
-  private func gradientView() throws -> (NSWindow, ImageViewerView) {
-    let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
-    let window = NSWindow(
-      contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
+  /// Where `layer` sits from the top left of the root, in screen terms. Core Animation compounds
+  /// `isGeometryFlipped` down the tree. A layer's children sit top-down when an even number of
+  /// its ancestors and itself are not flipped, and bottom-up otherwise. The window server may or
+  /// may not flip the root, so the test sets it either way.
+  private func screenRect(of layer: CALayer, root: CALayer) -> CGRect {
+    var chain: [CALayer] = []
+    var current: CALayer? = layer
 
-    window.isReleasedWhenClosed = false
-    window.contentView = view
-    view.backingScaleSource = { 1 }
-    view.show(
-      image: ImageFixtures.bitmap(width: 1000, height: 1000) { x, y in
-        (UInt8(x * 255 / 999), UInt8(y * 255 / 999), 0, 255)
-      }, native: PixelSize(width: 1000, height: 1000), actualScale: 1, hdr: false)
-    view.layoutSubtreeIfNeeded()
+    while let node = current {
+      chain.insert(node, at: 0)
+      current = node.superlayer
+    }
 
-    XCTAssertTrue(view.zoom(.actual))
-    view.pan(byPoints: CGSize(width: -300, height: -300))
+    XCTAssertTrue(chain.first === root)
 
-    return (window, view)
+    var origin = CGPoint.zero
+    var flipped = false
+
+    for (parent, child) in zip(chain, chain.dropFirst()) {
+      flipped = flipped != parent.isGeometryFlipped
+
+      let top = flipped ? child.frame.minY : parent.bounds.height - child.frame.maxY
+
+      origin.x += child.frame.minX
+      origin.y += top
+    }
+
+    return CGRect(origin: origin, size: layer.bounds.size)
   }
 
-  /// The red and green channels under the middle of the view, as drawn.
-  private func renderedCenter(_ view: ImageViewerView) throws -> (r: Int, g: Int) {
-    let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+  private func layers(in layer: CALayer, showing size: Int) -> [CALayer] {
+    var found: [CALayer] = []
 
-    view.cacheDisplay(in: view.bounds, to: rep)
+    if let image = layer.contents, (image as! CGImage).width == size { found.append(layer) }
 
-    let color = try XCTUnwrap(
-      rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.usingColorSpace(.sRGB))
+    for child in layer.sublayers ?? [] {
+      found += layers(in: child, showing: size)
+    }
 
-    return (Int((color.redComponent * 255).rounded()), Int((color.greenComponent * 255).rounded()))
+    return found
   }
 
-  /// Catches an inverted pan axis between the viewport and the layers. A downward scroll delta
-  /// drags the image down, as a scroll view's flipped document moves, so the middle of the pane
-  /// then shows a part of the image nearer its top.
-  func testRenderedImageFollowsTheScrollDelta() throws {
-    let (window, view) = try gradientView()
+  /// Catches a backdrop that does not share the tiles' top-down space. The window server may flip
+  /// the root layer or not. In both cases a tile and the backdrop that cover the same part of the
+  /// image must land on the same screen rect, and a pan by a positive `deltaY` must move the
+  /// backdrop down, as a scroll view's document moves. A frame check or `cacheDisplay` cannot see
+  /// this, because they run with the root flip that AppKit applies in a test, not the window
+  /// server's.
+  func testBackdropAndTilesShareOneSpaceUnderEitherRootFlip() throws {
+    for rootFlipped in [false, true] {
+      let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+      let root = try XCTUnwrap(view.layer)
 
-    defer { window.close() }
+      view.backingScaleSource = { 1 }
+      view.show(
+        image: ImageFixtures.bitmap(width: 1000, height: 1000) { _, _ in ImageFixtures.blue },
+        native: PixelSize(width: 1000, height: 1000), actualScale: 1, hdr: false)
+      view.layoutSubtreeIfNeeded()
 
-    let start = try renderedCenter(view)
+      XCTAssertTrue(view.zoom(.actual))
+      view.pan(byPoints: CGSize(width: -300, height: -300))
 
-    view.scrollWheel(with: try scrollEvent(dx: 0, dy: 100, units: .pixel, inverted: false))
+      root.isGeometryFlipped = rootFlipped
 
-    let down = try renderedCenter(view)
+      let tileImage = ImageFixtures.bitmap(width: 100, height: 100) { _, _ in ImageFixtures.red }
 
-    XCTAssertLessThan(down.g, start.g - 10, "downward delta did not drag the image down")
-    XCTAssertEqual(down.r, start.r, accuracy: 6, "color conversion leaks across channels")
+      view.setTiles([
+        TileSprite(
+          key: TileKey(level: 1000, column: 0, row: 0), image: tileImage,
+          rect: (x: 0, y: 0, width: 1000, height: 1000), ratio: 1, hdr: false)
+      ])
 
-    view.scrollWheel(with: try scrollEvent(dx: 100, dy: 0, units: .pixel, inverted: false))
+      let label = "root flipped \(rootFlipped)"
+      let backdrop = try XCTUnwrap(layers(in: root, showing: 1000).first, label)
+      let tile = try XCTUnwrap(layers(in: root, showing: 100).first, label)
 
-    let right = try renderedCenter(view)
+      XCTAssertEqual(
+        screenRect(of: tile, root: root), screenRect(of: backdrop, root: root), label)
 
-    XCTAssertLessThan(right.r, down.r - 10, "rightward delta did not drag the image right")
-    XCTAssertEqual(right.g, down.g, accuracy: 6)
+      let before = screenRect(of: backdrop, root: root).minY
+
+      view.pan(byPoints: CGSize(width: 0, height: 50))
+
+      XCTAssertEqual(screenRect(of: backdrop, root: root).minY, before + 50, label)
+      XCTAssertEqual(screenRect(of: tile, root: root).minY, before + 50, label)
+    }
   }
 
   /// Catches a phase-dependent branch in the pan. A two-finger gesture arrives as began, changed,

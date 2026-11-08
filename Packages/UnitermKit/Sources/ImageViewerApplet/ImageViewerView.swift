@@ -97,6 +97,8 @@ final class ImageViewerView: NSView {
   /// The zoom or the pan changed. Not called while a pinch is in progress.
   var onViewportChange: ((ViewportChange) -> Void)?
 
+  /// Holds the backdrop and the tiles in the top-down space of `ZoomViewport`.
+  private let contentLayer = CALayer()
   private let imageLayer = CALayer()
   private let tileContainer = CALayer()
   private var tileLayers: [TileKey: CALayer] = [:]
@@ -133,10 +135,10 @@ final class ImageViewerView: NSView {
     imageLayer.minificationFilter = .trilinear
     imageLayer.contentsGravity = .resize
     imageLayer.isHidden = true
-    layer?.addSublayer(imageLayer)
-
-    tileContainer.masksToBounds = true
-    layer?.addSublayer(tileContainer)
+    contentLayer.masksToBounds = true
+    contentLayer.addSublayer(imageLayer)
+    contentLayer.addSublayer(tileContainer)
+    layer?.addSublayer(contentLayer)
 
     messageLabel.alignment = .center
     messageLabel.font = .systemFont(ofSize: 13)
@@ -298,8 +300,12 @@ final class ImageViewerView: NSView {
     CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
 
-    tileContainer.frame = bounds
-    tileContainer.isGeometryFlipped = !(layer?.isGeometryFlipped ?? false)
+    // The window server decides whether the root layer is flipped. Flips compound down the tree,
+    // so this layer cancels the root's. Its sublayers then always lay out top-down, as the
+    // viewport's origin does.
+    contentLayer.frame = bounds
+    contentLayer.isGeometryFlipped = !(layer?.isGeometryFlipped ?? false)
+    tileContainer.frame = contentLayer.bounds
 
     guard let viewport else { return }
 
