@@ -4,6 +4,7 @@ import AppletKit
 import BrowserApplet
 import DataViewerApplet
 import FileRouting
+import ImageViewerApplet
 import MapViewerApplet
 import OSLog
 import PlaceSearch
@@ -49,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     self.defaults = defaults
     self.settings = SettingsStore(defaults: defaults)
     super.init()
+
+    #if DEBUG
+      ImageViewerScrollLog.enabled = debugEnvironment["UNITERM_DEBUG_SCROLL"] == "1"
+    #endif
   }
 
   /// UI tests set `UNITERM_DEFAULTS_PATH` to a plist path inside the test runner's container, so
@@ -237,6 +242,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try MapViewerApplet(
           restoring: description, places: places)
 
+      case ImageViewerDescription.typeID:
+        return try ImageViewerApplet(restoring: description)
+
       case BrowserApplet.descriptionTypeID:
         return try BrowserApplet(
           restoring: description, dataStore: websiteData.store, services: browserServices)
@@ -263,6 +271,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case .browser:
         return BrowserApplet(dataStore: websiteData.store, services: browserServices)
+
+      case .imageViewer:
+        return ImageViewerApplet(startDirectory: directory)
       }
     }
 
@@ -300,6 +311,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       MapViewerDescription.typeID: { file, startDirectory in
         MapViewerApplet.opening(
           file, startDirectory: startDirectory, places: places)
+      },
+      ImageViewerDescription.typeID: { file, startDirectory in
+        try ImageViewerApplet.opening(file, startDirectory: startDirectory)
       },
     ]
 

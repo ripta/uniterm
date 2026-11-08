@@ -92,7 +92,7 @@ final class WindowsUITests: UnitermUITestCase {
 
     app.typeKey("w", modifierFlags: .command)
     XCTAssertTrue(waitUntilGone(mainWindow(1, in: app), timeout: 15))
-    XCTAssertEqual(app.state, .runningForeground)
+    XCTAssertTrue(waitForForeground(app), "the app left the foreground")
 
     app.typeKey("n", modifierFlags: .command)
     let terminal = waitForTerminal(in: app, window: 2)
@@ -113,7 +113,7 @@ final class WindowsUITests: UnitermUITestCase {
 
     XCTAssertTrue(waitUntilGone(mainWindow(2, in: app), timeout: 15))
     XCTAssertTrue(mainWindow(1, in: app).exists)
-    XCTAssertEqual(app.state, .runningForeground)
+    XCTAssertTrue(waitForForeground(app), "the app left the foreground")
 
     mainWindow(1, in: app).click()
     app.typeText("echo \"K:$((6*7)):\"\n")

@@ -42,8 +42,8 @@ final class DataViewerUITests: UnitermUITestCase {
     window.descendants(matching: .any).matching(identifier: "status-applet-0").firstMatch
   }
 
-  /// Chooses a file in the open panel that is already showing, by typing its path into the
-  /// go-to-folder sheet.
+  /// Chooses a file in the open panel that is already showing, by entering its path in the
+  /// go-to-folder sheet. The path is pasted, not typed.
   private func choose(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
     let panel = window.sheets.firstMatch
     XCTAssertTrue(panel.waitForExistence(timeout: 10), "no open panel")
@@ -53,9 +53,10 @@ final class DataViewerUITests: UnitermUITestCase {
     let goTo = panel.sheets.firstMatch
     XCTAssertTrue(goTo.waitForExistence(timeout: 5), "no go-to-folder sheet")
 
-    app.typeText(file.path)
+    paste(file.path, in: app)
 
-    // A path that the field mangled while typing sends the panel nowhere. Say so before Return.
+    // Typing the path lets the field autocomplete each component against sibling folders. Pasting
+    // inserts it whole. Check it anyway, because a path the field changed sends the panel nowhere.
     let typed = goTo.textFields.firstMatch
     XCTAssertTrue(
       waitFor(typed, timeout: 5) { $0 == file.path },
@@ -66,6 +67,24 @@ final class DataViewerUITests: UnitermUITestCase {
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")
+  }
+
+  /// Puts `text` in the focused field through the pasteboard, then restores what the pasteboard held.
+  private func paste(_ text: String, in app: XCUIApplication) {
+    let pasteboard = NSPasteboard.general
+    let saved = pasteboard.string(forType: .string)
+
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
+    app.typeKey("v", modifierFlags: .command)
+
+    // The paste is read when the key event is handled, so restore only after the field shows it.
+    _ = waitFor(app.sheets.firstMatch.sheets.firstMatch.textFields.firstMatch, timeout: 5) {
+      $0 == text
+    }
+
+    pasteboard.clearContents()
+    if let saved { pasteboard.setString(saved, forType: .string) }
   }
 
   /// Catches a launcher without the data viewer, a pane that does not offer to open a file, and an

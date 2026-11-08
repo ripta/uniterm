@@ -21,6 +21,9 @@
 		7A0000000000000000000046 /* MapViewerApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000047 /* MapViewerApplet */; };
 		7A0000000000000000000048 /* PlaceSearch in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000049 /* PlaceSearch */; };
 		7A000000000000000000004A /* BrowserApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A000000000000000000004B /* BrowserApplet */; };
+		7A000000000000000000004C /* ImageDecoding in Frameworks */ = {isa = PBXBuildFile; productRef = 7A000000000000000000004D /* ImageDecoding */; };
+		7A000000000000000000004E /* ImageViewerApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A000000000000000000004F /* ImageViewerApplet */; };
+		7A000000000000000000005C /* ImageDecoder in Embed image decoder */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000050 /* ImageDecoder */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,11 +34,33 @@
 			remoteGlobalIDString = 7A0000000000000000000008;
 			remoteInfo = uniterm;
 		};
+		7A0000000000000000000059 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7A0000000000000000000055;
+			remoteInfo = ImageDecoder;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7A000000000000000000005B /* Embed image decoder */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				7A000000000000000000005C /* ImageDecoder in Embed image decoder */,
+			);
+			name = "Embed image decoder";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		7A0000000000000000000006 /* uniterm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = uniterm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A0000000000000000000007 /* uniterm UITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "uniterm UITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A0000000000000000000050 /* ImageDecoder */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ImageDecoder; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -45,6 +70,13 @@
 				Info.plist,
 			);
 			target = 7A0000000000000000000008 /* uniterm */;
+		};
+		7A0000000000000000000052 /* Exceptions for "Helpers" folder in "ImageDecoder" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				ImageDecoder/ImageDecoder.entitlements,
+			);
+			target = 7A0000000000000000000055 /* ImageDecoder */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -60,6 +92,14 @@
 		7A0000000000000000000005 /* UITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = UITests;
+			sourceTree = "<group>";
+		};
+		7A0000000000000000000051 /* Helpers */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7A0000000000000000000052 /* Exceptions for "Helpers" folder in "ImageDecoder" target */,
+			);
+			path = Helpers;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -83,6 +123,7 @@
 				7A0000000000000000000046 /* MapViewerApplet in Frameworks */,
 				7A0000000000000000000048 /* PlaceSearch in Frameworks */,
 				7A000000000000000000004A /* BrowserApplet in Frameworks */,
+				7A000000000000000000004E /* ImageViewerApplet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +131,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A0000000000000000000053 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A000000000000000000004C /* ImageDecoding in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -101,6 +150,7 @@
 			children = (
 				7A0000000000000000000004 /* App */,
 				7A0000000000000000000005 /* UITests */,
+				7A0000000000000000000051 /* Helpers */,
 				7A0000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -110,6 +160,7 @@
 			children = (
 				7A0000000000000000000006 /* uniterm.app */,
 				7A0000000000000000000007 /* uniterm UITests.xctest */,
+				7A0000000000000000000050 /* ImageDecoder */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -126,10 +177,12 @@
 				7A000000000000000000000B /* Frameworks */,
 				7A000000000000000000000C /* Resources */,
 				7A0000000000000000000038 /* Copy Ghostty resources and licenses */,
+				7A000000000000000000005B /* Embed image decoder */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				7A000000000000000000005A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				7A0000000000000000000004 /* App */,
@@ -150,6 +203,7 @@
 				7A0000000000000000000047 /* MapViewerApplet */,
 				7A0000000000000000000049 /* PlaceSearch */,
 				7A000000000000000000004B /* BrowserApplet */,
+				7A000000000000000000004F /* ImageViewerApplet */,
 			);
 			productName = uniterm;
 			productReference = 7A0000000000000000000006 /* uniterm.app */;
@@ -178,6 +232,28 @@
 			productReference = 7A0000000000000000000007 /* uniterm UITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		7A0000000000000000000055 /* ImageDecoder */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7A0000000000000000000056 /* Build configuration list for PBXNativeTarget "ImageDecoder" */;
+			buildPhases = (
+				7A0000000000000000000054 /* Sources */,
+				7A0000000000000000000053 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7A0000000000000000000051 /* Helpers */,
+			);
+			name = ImageDecoder;
+			packageProductDependencies = (
+				7A000000000000000000004D /* ImageDecoding */,
+			);
+			productName = ImageDecoder;
+			productReference = 7A0000000000000000000050 /* ImageDecoder */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -194,6 +270,9 @@
 					7A0000000000000000000009 = {
 						CreatedOnToolsVersion = 26.0;
 						TestTargetID = 7A0000000000000000000008;
+					};
+					7A0000000000000000000055 = {
+						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
@@ -216,6 +295,7 @@
 			targets = (
 				7A0000000000000000000008 /* uniterm */,
 				7A0000000000000000000009 /* uniterm UITests */,
+				7A0000000000000000000055 /* ImageDecoder */,
 			);
 		};
 /* End PBXProject section */
@@ -299,6 +379,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7A0000000000000000000054 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -306,6 +393,11 @@
 			isa = PBXTargetDependency;
 			target = 7A0000000000000000000008 /* uniterm */;
 			targetProxy = 7A0000000000000000000024 /* PBXContainerItemProxy */;
+		};
+		7A000000000000000000005A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7A0000000000000000000055 /* ImageDecoder */;
+			targetProxy = 7A0000000000000000000059 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -426,6 +518,38 @@
 			};
 			name = Release;
 		};
+		7A0000000000000000000057 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Helpers/ImageDecoder/ImageDecoder.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.uniterm.app.ImageDecoder;
+				PRODUCT_NAME = ImageDecoder;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		7A0000000000000000000058 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Helpers/ImageDecoder/ImageDecoder.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.uniterm.app.ImageDecoder;
+				PRODUCT_NAME = ImageDecoder;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -452,6 +576,15 @@
 			buildConfigurations = (
 				7A0000000000000000000018 /* Debug */,
 				7A0000000000000000000019 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7A0000000000000000000056 /* Build configuration list for PBXNativeTarget "ImageDecoder" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7A0000000000000000000057 /* Debug */,
+				7A0000000000000000000058 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -521,6 +654,14 @@
 		7A000000000000000000004B /* BrowserApplet */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BrowserApplet;
+		};
+		7A000000000000000000004D /* ImageDecoding */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ImageDecoding;
+		};
+		7A000000000000000000004F /* ImageViewerApplet */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ImageViewerApplet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

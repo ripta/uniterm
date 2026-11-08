@@ -1,6 +1,7 @@
 import AppletKit
 import BrowserApplet
 import DataViewerApplet
+import ImageViewerApplet
 import MapViewerApplet
 import TerminalApplet
 
@@ -13,6 +14,7 @@ public enum BuiltInApplets {
     DataViewerApplet.typeDeclaration,
     MapViewerApplet.typeDeclaration,
     BrowserApplet.typeDeclaration,
+    ImageViewerApplet.typeDeclaration,
   ]
 
   /// The commands each built-in applet type registers. The app registers exactly this list, so a
@@ -21,7 +23,7 @@ public enum BuiltInApplets {
   public static var commandSets: [AppletCommandSet] {
     [
       TerminalApplet.commandSet, DataViewerApplet.commandSet, MapViewerApplet.commandSet,
-      BrowserApplet.commandSet,
+      BrowserApplet.commandSet, ImageViewerApplet.commandSet,
     ]
   }
 }

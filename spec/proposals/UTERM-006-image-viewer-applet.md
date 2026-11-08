@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-03
+**Updated:** 2026-11-07
 
 ## Dependencies
 
@@ -68,7 +68,9 @@ Decision: a custom view, fed by ImageIO decoding in a sandboxed helper process, 
   completion, and the waiting request goes next, so the added wait is at most one fit decode. A pane zoomed past fit
   does not prefetch. The previous image's fit decode is kept after a step.
 - The view steps animated frames itself, and pauses them on detach, per ADR-05.
-- The supported set is whatever `CGImageSourceCopyTypeIdentifiers` reports on the running macOS.
+- The supported set is whatever `CGImageSourceCopyTypeIdentifiers` reports on the running macOS, kept to the types that
+  conform to `public.image`. Before the helper answers, the open panel and the folder listing accept any type that
+  conforms to `public.image`. Amended 2026-11-07; see Decision Log.
 
 Rationale: ADR-07 asks each new applet that hosts code uniterm does not control to show how its failures are contained,
 and here isolation is possible. Images arrive from Downloads and mail. ImageIO has had memory-corruption bugs exploited
@@ -129,16 +131,24 @@ Decision: all three, with a fit-size backdrop and a bounded tile cache in the ap
   is not doubled.
 - Free zoom comes from pinch and from View menu commands the viewer declares in UTERM-002's registry: Zoom In (Cmd-+),
   Zoom Out (Cmd--), Actual Size (Cmd-0), and Zoom to Fit (Cmd-9). Scrolling pans. None of these is a reserved window
-  key, and the terminal's items with the same keys show only while a terminal pane has focus, per UTERM-013.
-- The decode scale is the smaller of the zoom and native 1:1. Zoom above 1:1 magnifies the native decode, with
-  nearest-neighbor sampling, and needs no larger decode.
+  key, and the terminal's items with the same keys show only while a terminal pane has focus, per UTERM-013. An
+  animated image zooms by the same commands and gestures. Amended 2026-11-07; see Decision Log.
+- The decode scale is the smallest power-of-two fraction of native that is not below the zoom, and never more than
+  native 1:1. Zoom above 1:1 magnifies the native decode, with nearest-neighbor sampling, and needs no larger decode.
+  Amended 2026-11-07; see Decision Log.
 - The app keeps the fit-size decode as a backdrop. The helper keeps its decode and sends tiles, and the app caches a
   bounded set around the viewport, so app memory tracks the pane, not the image. During a pinch the app scales what it
   holds, and asks for crisp tiles when the gesture ends.
+- An animation has no tiles. While it is zoomed past fit, the helper decodes each frame whole at the zoom's decode
+  scale, capped at 1:1, and the animation keeps playing from those frames. The fit-size still stays as its backdrop. A
+  frame costs its size times the zoom, and the window of frames is charged to the bitmap budget. Zoom to Fit brings the
+  fit-size frames back. Amended 2026-11-07; see Decision Log.
 - One app-side budget covers every bitmap image panes hold: backdrops, tiles, the prefetched and previous images, and
   animation frames.
-- Zoom past what the helper cap or the app-wide helper budget allows is refused, and the status bar says the limit was
-  reached. Another pane's helper is never killed to make room. Amended 2026-11-05; see Decision Log.
+- Zoom past what the helper cap, the app-wide helper budget, or the bitmap budget allows is refused, and the status bar
+  says the limit was reached. Another pane's helper is never killed to make room. A refused zoom goes back to the last
+  zoom that showed tiles, or to fit. An animation goes back to the last zoom whose whole window of frames was held, or
+  to fit. Amended 2026-11-07; see Decision Log.
 
 Rationale: the draft names all three modes, and a viewer for screenshots and photos needs detail at 1:1. A backdrop
 keeps panning responsive while tiles arrive, as ADR-08 requires, where a viewport-only transfer would show blank edges
@@ -193,21 +203,30 @@ and a folder listing taken once, with Reload.
 
 - While the image view has focus, Right and Left arrows and Space and Shift-Space step next and previous, and Home and
   End go to the first and last image. When zoomed past fit, arrows pan instead, and Space still steps.
-- Next Image, Previous Image, First Image, Last Image, Play Slideshow, Sort by Name, Sort by Date Modified, and Reload
-  Folder are registry commands in an applet menu named for the viewer. None carries a default chord. A text-editing
-  chord such as Cmd-Left would reach the menu before the palette's search field, and the palette would close and run it.
+- Next Image, Previous Image, First Image, Last Image, Play or Pause Slideshow, Sort by Name, Sort by Date Modified, and
+  Reload Folder are registry commands in an applet menu named for the viewer. None carries a default chord. A
+  text-editing chord such as Cmd-Left would reach the menu before the palette's search field, and the palette would
+  close and run it. Amended 2026-11-07; see Decision Log.
 - Manual stepping stops at the first and last image.
-- Play Slideshow toggles to Pause Slideshow. Playback advances every 5 seconds and wraps at the end. A manual step stops
-  it. It pauses on detach and resumes on reattach only if it was playing. A status segment shows it is playing. The
-  interval is fixed, with no setting, and playing state is never saved.
+- Play or Pause Slideshow is one command, since a registry command has one title. Playback advances every 5 seconds and
+  wraps at the end. A manual step stops it, and so does zooming past fit, from the start of a pinch. It pauses on detach
+  and resumes on reattach only if it was playing. A status segment shows it is playing. The interval is fixed, with no
+  setting, and playing state is never saved. Amended 2026-11-07; see Decision Log.
 - Name order is Finder's: localized and numeric-aware, so `img2` comes before `img10`. Date order is the file's
   modification time, newest first, with ties in name order. Capture dates would mean reading EXIF in the app, which
   "Rendering" rules out.
 - The folder is listed once, off the main thread, when it opens. The user can step while the listing runs, through what
-  is listed so far, and the index and count stay provisional until it ends. Reload Folder lists it again and keeps the
-  current image, or lands on the image nearest its old position when it is gone.
-- A file deleted since the listing posts a status bar warning when reached and is skipped. Given one file, its siblings
-  are listed the same way, starting at that file. Subfolders and hidden files are not included. Amended 2026-11-05; see Decision Log.
+  is listed so far, and the index and count stay provisional until it ends. While it runs, images keep the order they
+  arrive in and each batch is ordered within itself, so nothing already listed moves. The listing takes the chosen order
+  when it ends, and the selection follows its image. A folder opened fresh shows the first image of the first batch
+  until then. The position segment marks a provisional count with a plus sign. Reload Folder lists it again and keeps
+  the current image, or lands on the image nearest its old position when it is gone. Amended 2026-11-07; see
+  Decision Log.
+- A file deleted since the listing posts a status bar warning when reached and is skipped. An image the pane already
+  holds a decode of, the one it just left or the prefetched one, shows from that decode, and a deletion is found at the
+  next step that needs the file. Given one file, its siblings are listed the same way, starting at that file. When that
+  folder cannot be listed, the pane shows the file, the status bar says so once, and a "Folder not listed" warning
+  segment shows while that holds. Subfolders and hidden files are not included. Amended 2026-11-07; see Decision Log.
 
 Rationale: plain keys cover the focused case, as Preview does, and registry commands give the menu and palette a way in
 without claiming a chord the palette's text field needs. A timer is what makes a folder a slideshow, and one fixed
@@ -248,7 +267,9 @@ bookmark fallback, the current image, the sort, and the start directory, and nev
   pane started in, which the factory passes. It has its own version, per ADR-06.
 - Restore opens the stored path when it is there and of the stored kind. It uses the bookmark only when the path is
   missing, and then says where it found the source. When the current image is gone, it lands on the nearest image in
-  sort order, using the stored name and modification time.
+  sort order, using the stored name and modification time. For a single file, restore shows the stored current image of
+  the file's folder. When the file and its bookmark are both gone, it opens the current image in the file's old folder,
+  and the pane says where it found it. Amended 2026-11-07; see Decision Log.
 - Zoom, scroll position, and playing state are not saved. A restored pane shows its image at fit, paused.
 - An empty pane reports its start directory as `currentDirectory`. With a source open, the pane reports the viewed
   folder. The open panel starts in `currentDirectory`, never in AppKit's remembered folder.
@@ -307,7 +328,7 @@ None.
 
 ### M1: Show one image
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A pane can run the image viewer and show a chosen image
 - The image fits the pane and rescales when the pane resizes
@@ -349,9 +370,46 @@ None.
 - A layout save never touches the disk to describe a pane, and an unchanged pane describes itself the same way twice
 - Closing an image pane never asks, even while the slideshow plays
 
+**As built:**
+
+- The helper is a native Xcode tool target with its entitlements file outside `App/`. The build setting
+  `ENABLE_APP_SANDBOX` is left unset for it, so `check-sandbox-off.sh` still sees `NO` on every line. Xcode signs the
+  debug copy under `Contents/Helpers/ImageDecoder` with `com.apple.security.app-sandbox` and `get-task-allow`.
+  `codesign -d --entitlements -` on the built app confirmed it. A release build was not signed in this run.
+  The script now also asserts that the helper holds the sandbox and no file, network, or exception entitlement, in the
+  source file and in a built app.
+- Crash, stopped process, overrun, and over-cap behavior is proved against an unsandboxed SwiftPM build of the helper,
+  with faults that a debug build reads from a marker at the start of a file. The shipped helper's sandbox probe, the type
+  sample, and the signed entitlements are checked by `make test-helper-sandbox` and `check-sandbox-off.sh <app>`, which
+  need a shell outside the agent's own sandbox.
+- A hung helper and a slow one are told apart by a ping the helper answers from its reader thread. A helper that stops
+  answering is a hang and offers a retry. One that answers past the time bound reports a limit and offers none.
+- Spawn to first reply took about 27 ms, and a helper's resting footprint was 3 MiB, for the unsandboxed debug SwiftPM
+  build. The shipped sandboxed helper was not measured.
+- Run-wide guesses: the per-helper cap is 1 GiB, the app-wide helper budget is the smaller of 4 GiB and a quarter of RAM
+  with a 256 MiB floor per pane, the bitmap budget is the smaller of 1 GiB and a quarter of RAM with a 256 MiB floor per
+  pane, and the decode time bound is 10 seconds. See Decision Log.
+- The HDR path decodes a source that carries a gain map or an HDR color space into extended-linear Display P3 half-float
+  pixels, and the layer asks for high dynamic range. Tests cover the space mapping and that values above white survive in
+  half float. No test decodes a real gain-map file, so an HDR image's match with Preview is left to the screenshots.
+- The sandboxed run sampled 18 of the 58 image types the helper reports. The other 40 cannot be sampled, because they
+  have no encoder or the encoder writes an empty file: the RAW formats, `com.microsoft.dds`, `com.apple.pict`,
+  `com.sgi.sgi-image`, `org.nema.dicom`, `org.webmproject.webp`, `public.avci`, `public.heif`, `public.jpeg-xl`,
+  `public.mpo-image`, and `public.radiance`. A file of one of those types that fails to decode shows the helper's
+  message, which names the format.
+- Orientation on the whole-image decode path, which a gain-map image takes, is applied by drawing, since ImageIO applies
+  it only when it makes a thumbnail. A test compares all eight orientations on that path with the thumbnail path.
+- The helper writes an image reply as a prefix and the pixels, so no joined copy of the image is made. On a 3000 by
+  2000 native decode the helper's peak footprint was 72 MiB for 22 MiB of pixels in the unsandboxed debug build. The
+  decode sets that peak, so it did not change.
+- The open panel gained content types through `SourceReplacing.openPanelContentTypes`. Folders stay choosable.
+- Left to the person reading a run: the Display P3 and animation screenshots from the UI tests, compared with Preview.
+  No UI test resizes the window, since package tests prove the rescale and the sharper decode on resize.
+- The launcher entry is last, after the browser, so the browser keeps Cmd-5 and the image viewer takes Cmd-6.
+
 ### M2: Folder slideshow
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Given a folder, the viewer steps forward and back through its images by keyboard
 - Non-image files in the folder are skipped, judged by extension and UTType only
@@ -382,24 +440,133 @@ None.
   that folder
 - When the current image is gone, restore lands on the nearest image in the stored sort, by name or by date
 
+**As built:**
+
+- The helper keeps up to four opened sources, keyed by the IDs the protocol already carries, and drops the one decoded
+  longest ago past the limit. This lets the pane open the next image for a prefetch without losing the one on screen.
+  The wire format and the protocol version are unchanged. A decode of a dropped source fails as stale, and the pane
+  reopens the image.
+- The pane keeps at most three fit-size bitmaps: the one on screen, the one it just left, and the prefetched one. All
+  three are charged to the bitmap budget. A decode for the image on screen gives way to the other two when the budget is
+  short, so the pane never goes blank for memory a prefetch holds.
+- A step to a held decode shows it at once with no request to the helper. A step to the image being prefetched waits for
+  that decode and shows it, with no second decode. The prefetch runs only when the pane shows an image and nothing is
+  loading. A prefetch pending behind a decode is replaced by any other request. A prefetch that fails, hangs, or
+  overruns leaves the image on screen with no message and is not tried again until a reload. Stepping to the file shows
+  the failure.
+- The scheduler holds the zoom gate as `isZoomedPastFit`, which the pane sets once the image is zoomed past fit. See
+  the M3 As built. It refuses prefetches and drops a waiting one while it holds. The arrow keys pan a zoomed image,
+  which M3 added.
+- A step moves the selection at once, and the pane loads one image at a time. When one finishes, it loads whatever is
+  selected then. A held key through large images shows each image as it arrives, and one helper decodes them all.
+- A scan reports in batches of 256 images from its own thread. A test hook holds it between batches.
+- Play or Pause Slideshow is one command, and its sort and reload siblings carry no chord. A test pins the commands'
+  names, titles, menus, and absent keys.
+- The slideshow takes its sleep as an injected function. Tests release it by hand.
+- Reload lists again through the folder handle the pane already holds. A single file whose folder was not listed tries
+  to open its folder again.
+- A file whose folder cannot be listed shows the file, posts one warning, and shows a "Folder not listed" warning
+  segment. A test uses a folder with no read bit. Under macOS privacy protection the real cause was not exercised.
+- The screenshot attachments of the UI tests capture the uniterm window only. The attachment names are unchanged.
+- New UI tests: `testViewKeysStepThroughAFolder`, `testTheImageViewerMenuStepsAndTogglesTheSlideshow`, and
+  `testCommandLeftInThePaletteSearchFieldMovesTheCaretWhileAnImagePaneHasFocus`. They were built for testing and not
+  run in the agent's sandbox.
+- The scheduler reports a waiting prefetch that another request replaced, and the pane then loads a step that was
+  waiting on it the usual way. A detach abandons a prefetch whose file is still opening the same way. Tests cover both:
+  an animation whose frame requests replace the prefetch, and a held open that a detach cancels.
+- The scan sorts the listing on its own thread, and a sort command sorts off the main thread. A synthetic 100,000-name
+  listing took 0.66 s to sort in a debug build, so the main thread sorts nothing large. The pane reorders at the end of
+  the scan or when the sort finishes.
+- The client mirrors the helper's source order exactly, and selecting a cached source does not touch it. A stale frame
+  request reopens the image like a stale still.
+- No test times the 5-second interval in real time. The in-flight prefetch handoff is covered by the tests that replace
+  or abandon the prefetch, and by one that proves no image decodes twice.
+
 ### M3: Zoom
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Fit, actual size, and free zoom by pinch and by Zoom In, Zoom Out, Actual Size, and Zoom to Fit, which are registry
-  commands the viewer declares, with none of their keys a reserved window key
+  commands the viewer declares, with none of their keys a reserved window key. An animated image zooms too, with frames
+  decoded at the zoom scale. Amended 2026-11-07; see Decision Log.
 - Fit never enlarges a small image. Actual size matches Preview's size for a small image and a Retina screenshot
 - Panning a large image at actual size never shows blank edges past the backdrop, and the main thread never waits on
   a tile
 - Peak app memory on a very large image stays bounded while zoomed and panned
 - A slow but legitimate decode of a very large image reports in the status bar that the zoom limit was reached, never a
   crash
-- Zoom past the helper cap or the app-wide helper budget is refused with a status bar warning, and no other pane's
-  helper is killed. Amended 2026-11-05; see Decision Log.
+- Zoom past the helper cap, the app-wide helper budget, or the bitmap budget is refused with a status bar warning,
+  and no other pane's helper is killed. The pane goes back to the last zoom that showed tiles, or to fit. An animation
+  goes back to the last zoom whose whole window of frames was held. Amended 2026-11-07; see Decision Log.
 - Moving the window to a display with a different scale requests new pixels
 - A user remap of the shared "Actual Size" title moves the terminal's item and the viewer's item together
-- On detach a zoomed pane releases its 1:1 decode and tiles and keeps only its backdrop
+- On detach a zoomed pane releases its 1:1 decode, its tiles, and an animation's zoomed frames, and keeps only its
+  backdrop. Amended 2026-11-07; see Decision Log.
 - The helper releases a prefetched bitmap once sent, and zoom is never refused for memory a prefetch holds
+
+**As built:**
+
+- The protocol is at version 2. The helper reports each source's declared resolution as whole dots per inch, after the
+  orientation applies, and zero when the file declares none. The app shows an undeclared file at 72 dots per inch and a
+  Retina screenshot at half its pixel size. Two messages are new. A region request asks for a rectangle of the decode at
+  one level, and a release drops that decode. The helper keeps one decode, for the last level asked for, so a pan costs a
+  copy and not a decode. Its reply is an ordinary image reply, checked against a rectangle bound the app set.
+- The viewport is pure model code: a scale in points per image pixel, a center in image pixels, and a pan clamp that
+  never lets the pane show space past the image. The tile grid, the level, and the bounded tile cache are model code
+  too. A pane holds the tiles under the viewport and one ring around them, and the cache capacity follows the pane's
+  size in device pixels. A 6000 by 4000 image at 1:1 is 96 MiB. Panning across it at 300 points held at most the
+  backdrop and 25 tiles, which is the test's bound, and stayed under 40 MiB.
+- The view owns the zoom and the pan. A zoom, a pan, or a pinch moves the backdrop and every tile layer in the same
+  turn, and never waits on a tile. A pinch scales what the view holds and reports once when the fingers lift. A test
+  renders the layers and reads pixels, since a tile in the wrong corner passes any test that reads frames only.
+- Tile requests go through the scheduler. A newer tile replaces a waiting tile, a still replaces a waiting tile, and a
+  tile never replaces a waiting still. The pane asks for the nearest missing tile after each one arrives, so a step or a
+  resize is never behind more than the tile in flight.
+- A tile is charged to the one bitmap budget. When the budget is short, the images the pane keeps beside the one on
+  screen give way first. Entering free zoom also drops the prefetched image. A test with a budget that holds only the
+  backdrop and two more fit decodes shows the tiles taking the previous image's place with no warning.
+- A zoom the helper's cap or the app-wide budget cannot hold is refused on the app's side before the helper starts the
+  decode, and the status bar says the zoom limit was reached. The pane goes back to the last zoom that showed tiles. A
+  test with a shared helper budget shows another pane's helper keeps its process and keeps decoding. A decode that runs
+  past the time bound, or a helper that dies or passes its footprint cap while it makes tiles, also warns that the zoom
+  limit was reached. The pane keeps its backdrop at fit and opens the image again in a fresh helper. A debug-only fault
+  in a PNG's description makes the 1:1 decode slow, which is how the test reaches this.
+- Moving to another image returns to fit, and releases the tiles and the helper's decode while the old source is still
+  the shown one. Detach releases both sides' tiles and decode and keeps the backdrop. Reattach asks for the tiles again.
+  A new display scale changes the fit decode's size and the tile level, and a test with a stand-in for the display
+  scale shows both.
+- Found and fixed: a bitmap the helper had sent stayed in its footprint after it was freed, because the allocator keeps
+  freed blocks of that size. A 64 MiB prefetch left the helper at 67 MiB, and a released 1:1 decode did not leave
+  either. Pixel buffers now come straight from the kernel in whole pages and return to it. Two tests failed before the
+  change and pass after. The app's frame reads use the same buffers.
+- The zoom commands sit in View, with Cmd-+, Cmd--, Cmd-0, and Cmd-9. A test shows no reserved key and no warning. A
+  test applies one remap of "Actual Size" the way AppKit does, by title, and shows that it moves the terminal's item and
+  the viewer's. A UI test does the same with a real launch argument. The status bar shows the zoom as a percent of
+  actual size while the image is zoomed.
+- Arrows pan a zoomed image by a fifth of the pane, and Space still steps. Dragging pans, which the panning check
+  covers. A double tap on a trackpad toggles actual size, which no check names. See the Decision Log.
+- New UI tests: `testZoomKeysShowActualSizeZoomInAndFit`, `testARemapOfActualSizeMovesTheViewersItemToo`, and
+  `testTheViewMenuZoomsTheImageViewer`. They were built for testing and not run in the agent's sandbox.
+- A step or resize that arrives while a level's first tile is in flight waits for that tile. See the Decision Log.
+- Zooming past fit stops a playing slideshow. The client sizes the helper's kept level from
+  the output space of the source's last decode, and as sixteen-bit floats while that is unknown. A refused request no
+  longer moves its source up the client's recency list.
+- Landed after the row review, as the user's decision in a hands-on review: an animation zooms. See the Decision Log.
+  The viewport and the commands are the stills'. Frames go through the existing frame path with the zoom's level as the
+  decode size, so the protocol stays at version 2. A zoomed frame is a whole frame, with no viewport region, since the
+  helper keeps a level and cuts regions for frame 0 only. The pane keeps the window of the frame on screen and two
+  ahead, drops the others at a level change, and keeps the frame on screen until its replacement arrives. A frame too
+  big for the helper's cap or app-wide budget, a window the bitmap budget cannot hold, or a helper that overruns or dies
+  while it decodes one, ends in the same refusal as a tile and the same return to the last zoom that held its whole
+  window, or to fit. A request for a frame already in flight or waiting is no longer sent again. A frame magnifies with
+  nearest-neighbor sampling past its level. A result for a zoomed frame whose level the pane has already left is
+  dropped, not counted as a limit. A sharper fit still for a zoomed animation does not replace the zoomed frame on
+  screen. Stepping away from a zoomed animation stops it until the next image is chosen. Eight-bit frames of a 1200
+  by 1200 animation at 1:1 are 5.76 MB each, so the window is 17.3 MB beside the 1.44 MB still, whatever the frame
+  count. A 500 by 500 animation shows at its native size in a 300 point pane, so zooming asks for no new frames.
+- Left to the user: how smooth pinching and panning feel, and whether the detail at 1:1 matches Preview. Left to the run
+  coordinator: the region path against the signed, sandboxed helper, and the UI tests. No test moves a window between
+  two real displays. The HDR tile path has no real gain-map file.
 
 ### M4: Control
 
@@ -486,7 +653,102 @@ None.
   stopped slideshow, and the zoom limit now post warnings. A folder that cannot be listed posts once and shows a
   "Folder not listed" warning segment while it holds. The pane keeps the image in each case. This follows the rule the
   user set for the map and data viewers. The 2026-11-03 marker on "Input sources" is replaced by this one.
+- 2026-11-07: (work-queue best guess) Supported types: the helper's list is kept to types that conform to `public.image`,
+  and the open panel and folder listing use that conformance until the helper answers. This narrowed the Rendering
+  bullet that said the set is whatever ImageIO reports. It keeps PDF unopened, which an M1 check requires.
+- 2026-11-07: (work-queue best guess) Values no document set. The per-helper footprint cap is 1 GiB. The app-wide helper
+  budget is the smaller of 4 GiB and a quarter of RAM, with a 256 MiB floor per pane. The bitmap budget is the smaller of
+  1 GiB and a quarter of RAM, with a 256 MiB floor per pane. The decode time bound is 10 seconds. The applet menu is
+  titled "Image Viewer" and its command IDs are `image-viewer.<name>`. The launcher lists the image viewer last. The
+  sandbox comes from an entitlements file outside `App/` with the build setting unset, which is the first of the two ways
+  the sandbox check allows. The shipped helper proves its sandbox with a debug-only probe mode.
+- 2026-11-07: ADR candidate (cuts across the system): the app runs outside the App Sandbox, and a helper that needs no
+  file or network access runs inside it, with `check-sandbox-off.sh` guarding both. Undecided. Found in UTERM-006 M1.
+- 2026-11-07: (work-queue best guess) Play or Pause Slideshow is one command, since a registry command has one title and
+  the registry keeps no per-command state. This narrowed the Navigation bullets that said Play Slideshow toggles to Pause
+  Slideshow. The status segment shows whether it plays.
+- 2026-11-07: (work-queue best guess) A listing in progress keeps images in arrival order, with each batch ordered within
+  itself, and takes the chosen order when the scan ends. A folder opened fresh shows the first image of its first batch.
+  This narrowed "stable order while it runs" and "first image", which cannot both hold for a folder larger than one
+  batch. The first image shown may differ from the first in Finder order until the scan ends.
+- 2026-11-07: (work-queue best guess) A step to an image the pane already holds a decode of, the previous or the
+  prefetched one, shows that decode without opening the file. A file deleted since the listing is found at the next step
+  that needs it. This narrowed "a file deleted since the listing is skipped when reached". Checking the file first would
+  put a disk call on the step's path, on a mount that may stall. The marker on that bullet replaces the 2026-11-05
+  marker, whose folder-not-listed text the bullet now carries.
+- 2026-11-07: (work-queue best guess) Restore of a single file shows the stored current image of the file's folder. When
+  the file and its bookmark are gone, it opens the current image in the file's old folder, makes the stored path that
+  image, and says where it found it. The restore chain was path, then bookmark, then the old folder, and the last step
+  needed this reading for the stored path.
+- 2026-11-07: (work-queue best guess) The image helper keeps up to four opened sources, with no protocol change, so a
+  prefetch can open the next image beside the one on screen. The alternative was a close message and a version bump.
+- 2026-11-07: (work-queue best guess) An animated image does not zoom, and the zoom commands are off for it. The
+  helper decodes animation frames at fit size and cuts tiles from frame 0 only, so a zoom would show blur or the wrong
+  frame. This narrowed the Zoom bullet and the M3 bullet that listed free zoom for any image. Zooming an animation needs
+  tiles per frame inside the bitmap budget, which is its own design.
+- 2026-11-07: (work-queue best guess) The decode level is the smallest power-of-two fraction of native that is not below
+  the device resolution, capped at native. The Zoom bullet said the decode scale is the smaller of the zoom and native
+  1:1. An exact scale would ask the helper for a new full decode on every pinch step. A level can be up to twice the
+  device resolution, which the layers minify.
+- 2026-11-07: (work-queue best guess) A refused zoom, or a zoom whose tiles fail, goes back to the last zoom that showed
+  tiles, or to fit when there is none. The Zoom bullet said only that the zoom is refused. The marker on that bullet
+  replaces the 2026-11-05 marker, whose status bar text the bullet still carries.
+- 2026-11-07: (work-queue best guess) Values no document set. Zoom In and Zoom Out double and halve the scale, and a step
+  that would pass actual size stops on it. The most an image magnifies is 32 device pixels per image pixel. A tile is 512
+  pixels, and the pane keeps one ring of tiles around the viewport. Actual size uses the horizontal resolution for both
+  axes. A file that declares none shows at 72 dots per inch. Arrows pan by a fifth of the pane.
+- 2026-11-07: (work-queue best guess, addition) A double tap on a trackpad toggles between fit and actual size. No check
+  or decision names it. It is UI polish that CLAUDE.md allows building directly. The user may drop it by removing the
+  smart-magnify handler.
+- 2026-11-07: (work-queue best guess, addition) While the image is zoomed, the status bar shows the zoom as a percent of
+  actual size. No check or decision names it, and the UI tests read it. The user may drop it by removing the segment.
+- 2026-11-07: (work-queue best guess) A step or a resize that arrives while the first tile of a level is in flight waits
+  for it. That tile includes the whole decode of the level, which the helper cannot cancel short of a kill. The wait is
+  bounded by the decode time bound, and by about 0.3 s for a 6000 by 4000 PNG in a debug build. A decode in flight was
+  already uncancellable for stills, so this adds no new class of wait. A step does replace every waiting tile.
+- 2026-11-07: (work-queue best guess) The helper draws a tile level at exactly the size the app computes, with one
+  shared function, and the app accepts only a tile of exactly the rectangle it asked for. ImageIO's own thumbnail size
+  differs from the app's by a pixel for many sizes, so the two disagreed at the edge.
+- 2026-11-07: (work-queue best guess) The image protocol moved to version 2. The helper reports each source's resolution
+  and answers region and release messages, since the app may not read image properties and the helper holds the decode
+  that tiles come from. The helper ships in the same bundle, so no skew applies, and the handshake still refuses a
+  mismatch with the message to relaunch uniterm.
+- 2026-11-07: (work-queue best guess) Zooming past fit stops a playing slideshow, as a manual step does. The Navigation
+  bullet said only that a manual step stops it. A tick that stepped away from a zoomed image would have discarded the
+  detail the user zoomed in to see within 5 seconds. Zoom is a manual action, and the proposal had no rule for it. This
+  amended the Navigation slideshow bullet, which keeps its single 2026-11-07 marker. A pinch reports its viewport only
+  when the fingers lift, so the start of a pinch stops the show.
+- 2026-11-07: An animated image zooms, with each frame decoded at the zoom's decode scale and capped at 1:1, so the
+  zoomed animation keeps playing with sharp detail. This was the user's choice in a hands-on review. It replaces the
+  work-queue best guess above that animations stay at fit, whose reason was that tiles are cut from frame 0 only. The
+  Zoom bullet on the commands keeps its single 2026-11-07 marker, with its text replaced. The Zoom refusal bullet, a
+  new Zoom bullet on animations, M3's first, refusal, and detach bullets, and the M3 As built bullet that kept
+  animations at fit are amended to match. The new animation bullet, M3's detach bullet, and both refusal bullets
+  carry the marker. The
+  refusal bullets said the helper cap and the app-wide helper budget refuse a zoom, and that it goes back to the last
+  zoom that showed tiles. They now add the bitmap budget, and the return to the last zoom whose whole window of frames
+  was held, for an animation. The user turned down three alternatives: pause the animation and tile its current
+  frame, magnify the fit-size frames, and keep animations at fit. The first needs a frame-aware tile path and loses
+  the motion. The second is blurry, and the third drops the commands the viewer declares. Cost scales with frame size
+  times zoom, and the bitmap budget and the per-helper cap bound it. A zoom past either is refused as a still's is.
+  Whole frames at the level were built, not viewport regions of frame N, since a region needs a new message and a
+  per-frame level in the helper. The protocol stays at version 2. Region frames are the next step if whole frames
+  prove too big in use.
+- 2026-11-07: (best guess under that choice) A refused or failed zoom of an animation goes back to the last zoom whose
+  whole window of frames was held, or to fit. A zoom whose first frame fit and whose next did not is not a zoom that
+  worked. The level an animation decodes at is used only when it is larger than the fit-size frame, so a small
+  animation that already shows at native size asks for nothing new. The view magnifies zoomed frames with
+  nearest-neighbor sampling, as it does tiles.
+- 2026-11-07: ADR candidate (cuts across the system): the app runs outside the App Sandbox, and a helper that needs no
+  file or network access runs inside it. Written as ADR-10, proposed. It stays proposed until UTERM-003's Janet helper
+  shows whether the rule needs more nuance. The user's choice.
+- 2026-11-07: The double tap that toggles fit and actual size, and the zoom-percent status segment, are kept. The
+  user's choice after a hands-on review. Both were logged above as additions.
+- 2026-11-07: (best guess) The double tap did nothing in the user's hands-on check. It now zooms to actual size around
+  the pointer. When an image already shows at actual size at fit, it steps in once, as Zoom In does. A second double
+  tap returns to fit.
 
 ## References
 
 - Original write-up: `~/projects/private_specs/uniterm/spec/research/original-writeup.md`, APPLET-5
+- ADR-10
