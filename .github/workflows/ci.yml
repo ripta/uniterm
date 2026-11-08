@@ -73,7 +73,9 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # The offline rebuild proves the pinned Ghostty rebuilds with the network off.
+  # The offline rebuild proves the pinned Ghostty rebuilds with the network off. Its result depends
+  # only on the files and the runner image that the proof key names. Once a run proves a key, later
+  # runs with the same key end early. A pull request reads the keys that main saved.
   ghostty-offline:
     needs: changes
     if: needs.changes.outputs.build_required == 'true'
@@ -82,10 +84,40 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: ./.github/actions/macos-setup
+      - name: Name what the rebuild depends on
+        id: proof
+        run: scripts/ghostty-proof-key.sh
+
+      - name: Look for an earlier proof
+        id: earlier
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/ghostty-offline-proof
+          key: ${{ steps.proof.outputs.key }}
+          lookup-only: true
+
+      - name: Report the earlier proof
+        if: steps.earlier.outputs.cache-hit == 'true'
+        run: echo "An earlier run proved ${{ steps.proof.outputs.key }}, so the rebuild is skipped."
+
+      - if: steps.earlier.outputs.cache-hit != 'true'
+        uses: ./.github/actions/macos-setup
 
       - name: make ghostty-offline-check
+        if: steps.earlier.outputs.cache-hit != 'true'
         run: make ghostty-offline-check
+
+      - name: Record the proof
+        if: steps.earlier.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .cache/ghostty-offline-proof
+          echo "${{ steps.proof.outputs.key }}" >.cache/ghostty-offline-proof/key
+
+      - if: steps.earlier.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/ghostty-offline-proof
+          key: ${{ steps.proof.outputs.key }}
 
   # Keep the required check present even when macOS jobs are intentionally skipped or fail.
   ci:

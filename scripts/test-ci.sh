@@ -139,3 +139,59 @@ expect_result "missing decision fails" success "" skipped skipped skipped 1
 expect_result "malformed decision fails" success maybe skipped skipped skipped 1
 expect_result "unexpected work on docs path fails" success false skipped failure skipped 1
 expect_result "unexpected success on docs path fails" success false success skipped skipped 1
+
+# The proven key must change with every input of the offline rebuild, and must never repeat on a
+# runner that reports no image version.
+proof="$scratch/proof"
+proof_inputs=(ghostty.pin scripts/build-ghostty.sh scripts/ghostty-offline-check.sh
+  scripts/ghostty-proof-key.sh .github/workflows/ci.yml .github/actions/macos-setup/action.yml)
+for path in "${proof_inputs[@]}"; do
+  mkdir -p "$proof/$(dirname "$path")"
+  cp "$root/$path" "$proof/$path"
+done
+
+proof_key() {
+  env -u GITHUB_OUTPUT GHOSTTY_PROOF_ROOT="$proof" RUNNER_ARCH=ARM64 "$@" \
+    bash "$root/scripts/ghostty-proof-key.sh" | sed -n 's/^key=//p'
+}
+
+expect_keys() {
+  local name="$1" relation="$2" first="$3" second="$4"
+  if [[ -z "$first" || -z "$second" ]]; then
+    echo "FAIL: $name: a key was empty" >&2
+    exit 1
+  fi
+  if [[ "$relation" == same && "$first" != "$second" ]] ||
+    [[ "$relation" == different && "$first" == "$second" ]]; then
+    echo "FAIL: $name: expected $relation keys, got $first and $second" >&2
+    exit 1
+  fi
+  echo "PASS: $name"
+}
+
+image=(ImageOS=macos26 ImageVersion=20261101.1)
+baseline="$(proof_key "${image[@]}")"
+
+expect_keys "same inputs and image give the same key" same "$baseline" "$(proof_key "${image[@]}")"
+expect_keys "a new runner image changes the key" different "$baseline" \
+  "$(proof_key ImageOS=macos26 ImageVersion=20261108.1)"
+
+for path in "${proof_inputs[@]}"; do
+  cp "$proof/$path" "$scratch/saved"
+  printf '\n# changed\n' >>"$proof/$path"
+  expect_keys "a change to $path changes the key" different "$baseline" "$(proof_key "${image[@]}")"
+  cp "$scratch/saved" "$proof/$path"
+done
+
+expect_keys "restored inputs give the first key again" same "$baseline" "$(proof_key "${image[@]}")"
+
+unknown_first="$(proof_key ImageOS= ImageVersion= GITHUB_RUN_ID=7 GITHUB_RUN_ATTEMPT=1)"
+unknown_second="$(proof_key ImageOS= ImageVersion= GITHUB_RUN_ID=7 GITHUB_RUN_ATTEMPT=1)"
+expect_keys "no image version never repeats a key" different "$unknown_first" "$unknown_second"
+
+rm "$proof/ghostty.pin"
+if proof_key "${image[@]}" >/dev/null 2>&1 && [[ -n "$(proof_key "${image[@]}" 2>/dev/null)" ]]; then
+  echo "FAIL: a missing input still produced a key" >&2
+  exit 1
+fi
+echo "PASS: a missing input produces no key"

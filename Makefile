@@ -135,8 +135,9 @@ check-ghosttykit-imports: ## Fail when any module but TerminalSurface can reach 
 licenses: ## Collect the license notices for Ghostty, its libraries, and the Swift packages into Licenses/
 	scripts/collect-licenses.sh
 
-# CI runs ci-package, ci-app, and ghostty-offline-check as three jobs side by side. The job targets
-# let a failed job be rerun locally on its own.
+# CI runs ci-package, ci-app, and ghostty-offline-check as three jobs side by side, and skips the
+# offline rebuild once an earlier run proved the same Ghostty inputs on the same runner image. The
+# job targets let a failed job be rerun locally on its own.
 .PHONY: ci
 ci: ci-package ci-app ghostty-offline-check ## Run every CI job. Includes the 4-minute offline Ghostty rebuild
 

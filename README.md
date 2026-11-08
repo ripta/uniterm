@@ -55,8 +55,9 @@ Commands:
 - `make help` lists every target.
 
 GitHub CI runs three macOS jobs side by side: `package` for the checks and package tests, `app` for the app build
-and UI tests, and `ghostty-offline` for the offline Ghostty rebuild. The required `ci` check passes only when all
-three pass.
+and UI tests, and `ghostty-offline` for the offline Ghostty rebuild. The rebuild runs only when no earlier run proved
+the same Ghostty inputs on the same runner image. Otherwise the job ends in seconds. The required `ci` check passes
+only when all three pass.
 
 CI skips the macOS jobs when all changed files are root-level Markdown or Markdown under `spec/`. The lightweight
 `ci` check still reports a result. Markdown shipped in the app, such as files under `Licenses/`, still triggers the
