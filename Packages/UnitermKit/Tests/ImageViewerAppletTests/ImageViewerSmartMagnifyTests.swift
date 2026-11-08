@@ -22,16 +22,17 @@ final class ImageViewerSmartMagnifyTests: XCTestCase {
     cg.type = Self.gestureType
     cg.setIntegerValueField(Self.gestureSubtypeField, value: Self.smartMagnifySubtype)
 
-    // The screen is y-up for NSEvent and y-down for CGEvent. The window's content origin is the
-    // anchor between the two.
-    let screen = window.convertPoint(toScreen: point)
+    // An event built from a CGEvent belongs to no window, so its `locationInWindow` is the location
+    // it was built with, and the window takes that as its own coordinates. The window point goes in
+    // directly. Only the flip from the CGEvent's y-down screen to AppKit's y-up one applies.
     let height = NSScreen.screens.first?.frame.height ?? 0
 
-    cg.location = CGPoint(x: screen.x, y: height - screen.y)
+    cg.location = CGPoint(x: point.x, y: height - point.y)
 
     let event = try XCTUnwrap(NSEvent(cgEvent: cg))
 
     XCTAssertEqual(event.type, .smartMagnify)
+    XCTAssertEqual(event.locationInWindow, point)
 
     return event
   }
@@ -44,6 +45,10 @@ final class ImageViewerSmartMagnifyTests: XCTestCase {
       contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false)
 
     window.isReleasedWhenClosed = false
+
+    // Away from the screen's origin, where window and screen points would match by accident and
+    // hide a tap built in the wrong coordinates.
+    window.setFrameOrigin(NSPoint(x: 40, y: 63))
     window.contentView = view
     window.makeFirstResponder(view)
 
