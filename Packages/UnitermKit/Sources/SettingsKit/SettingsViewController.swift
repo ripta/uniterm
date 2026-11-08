@@ -8,8 +8,10 @@ final class SettingsViewController: NSViewController {
   private let statusBarPosition: ChoiceSettingRow<StatusBarPosition>
   private let paletteMode: ChoiceSettingRow<PaletteMode>
   private let paletteDockEdge: ChoiceSettingRow<PaletteDockEdge>
+  private let searchEngine: ChoiceSettingRow<SearchEngine>
+  private let websiteData: ActionSettingRow
 
-  init(store: SettingsStore) {
+  init(store: SettingsStore, clearWebsiteData: @escaping @MainActor () async throws -> Void) {
     appearance = ChoiceSettingRow(
       store: store, key: .appearance, caption: "Appearance:", identifier: "appearance-control"
     ) { preference in
@@ -50,6 +52,16 @@ final class SettingsViewController: NSViewController {
       }
     }
 
+    searchEngine = ChoiceSettingRow(
+      store: store, key: .searchEngine, caption: "Browser search:",
+      identifier: "search-engine-control", title: \.displayName)
+
+    websiteData = ActionSettingRow(
+      caption: "Browser data:", buttonTitle: "Clear Website Data",
+      note: "Removes cookies, logins, and site data from every browser pane. Open tabs keep "
+        + "their current session until they are reloaded or closed.",
+      succeededText: "Cleared.", identifier: "clear-website-data", action: clearWebsiteData)
+
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -62,10 +74,12 @@ final class SettingsViewController: NSViewController {
   /// next edge. The window sizes itself to the form plus the standard margin.
   override func loadView() {
     let grid = NSGridView(views: [
-      [appearance.label, appearance.control],
-      [statusBarPosition.label, statusBarPosition.control],
-      [paletteMode.label, paletteMode.control],
-      [paletteDockEdge.label, paletteDockEdge.control],
+      [appearance.label, appearance.cell],
+      [statusBarPosition.label, statusBarPosition.cell],
+      [paletteMode.label, paletteMode.cell],
+      [paletteDockEdge.label, paletteDockEdge.cell],
+      [searchEngine.label, searchEngine.cell],
+      [websiteData.label, websiteData.cell],
     ])
     grid.translatesAutoresizingMaskIntoConstraints = false
     grid.rowSpacing = 12

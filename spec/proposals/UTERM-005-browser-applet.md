@@ -30,7 +30,9 @@ also the main target for remote control in UTERM-004, such as opening a page fro
 The applet uses `WKWebView`. It bundles no browser engine of its own.
 
 No native bridge is reachable from a page's own script world. The one bridge, the unsent-input tracker, lives in an
-isolated content world and accepts only a boolean per tab. Amended 2026-11-03; see Decision Log.
+isolated content world and accepts only a boolean per tab. One script runs in each page's own world, with no handler and
+no bridge: it makes a request for the camera, the microphone, or the screen fail at once with `NotAllowedError`. Amended
+2026-11-03 and 2026-11-06; see Decision Log.
 
 ### Controls
 
@@ -51,9 +53,17 @@ A page may also open its own `blob:` URLs, and a download may come from any sche
 - A navigation WebKit marks as a download proceeds as a download, per "Downloads", whatever its scheme except
   `javascript:`. That keeps `blob:` and `data:` exports working.
 - `file:`, `javascript:`, and a top-level `data:` page are refused. A typed address leaves the page visible, posts one
-  warning that says why, and marks the address input invalid. Amended 2026-11-06; see Decision Log.
+  warning that says why, and marks the address input invalid.
 - A link or typed address with another scheme that macOS maps to an app asks first, naming the app and the URL, and
-  opens that app only on the user's yes. `mailto:` opens the mail app without asking.
+  opens that app only on the user's yes. `mailto:` opens the mail app without asking. A scheme no app handles loads
+  nothing, posts one warning, and marks a typed address invalid.
+- Only an address the user typed, or a link the user really clicked, may open an app or ask. A click counts when the web
+  view saw a real mouse-up within one second before the navigation was decided, and each mouse-up is used once. WebKit
+  reports a script's click as a followed link, so the navigation type alone proves nothing. A script's click, a
+  script's navigation, a redirect, an iframe, and a key press that activates a focused link are refused with a warning
+  and never open an app or ask. The same guards cover `mailto:`. The pane shows at most one question at a time, of any
+  kind, and only the selected tab asks or opens. A request that finds another question up is refused with a warning. The question goes through
+  the host's confirmation, so it never blocks another pane.
 - A restored tab whose URL is refused shows `about:blank` with a durable explanation in the pane that names the refused
   URL, and the history records one warning. It keeps the stored URL in its description until the user navigates.
   Amended 2026-11-06; see Decision Log.
@@ -85,17 +95,22 @@ a Clear Website Data action.
   browser's logins nor lose their data when it is cleared.
 - Every tab in every browser pane uses it. Logins carry across panes and survive relaunch.
 - Descriptions carry no store reference, and the layout file holds no website data.
-- Clear Website Data removes everything in the browser's store. It reloads no tab. Settings says that open tabs keep
-  their current session until they are reloaded or closed.
+- Clear Website Data removes everything in the browser's store and empties the browser's own list of HTTPS-only
+  hosts, per "Local addresses and plain HTTP". It reloads no tab. Settings says that open tabs keep their current
+  session until they are reloaded or closed. It asks nothing, disables its button while a clear runs, and reports the
+  outcome in Settings. A clear that could not empty the list of HTTPS-only hosts says so and never reads as a
+  success.
 - The store's UUID is a constant. Changing it would orphan every login and all site data, since WebKit cannot move data
   between stores. See Risks.
 - Sharing is hidden state flow between panes: logging in in one pane logs in the others. CLAUDE.md asks for that to be
   an explicit decision. The user kept it at the review gate on 2026-11-03.
-- The pane shows its active profile, so the sharing is visible. With one store, every pane shows the default profile,
-  labelled "Default Profile" or similar. Where the label sits, and whether a profile selector appears on the new pane
-  sheet or on the browser pane, are iterated with the user in hands-on review during M5. A second profile would need its
-  own store, and its profile ID would flow through the pane's description, per CLAUDE.md "Applet Attributes". Adding
-  one is a decision for the user, not an implementation detail. Chosen by the user on 2026-11-03.
+- The pane shows its active profile, so the sharing is visible. With one store, every pane shows the default profile.
+  M5 puts a profile button at the trailing end of the browser's own toolbar. Its icon is the SF Symbol
+  `person.crop.circle`. Clicking it shows a transient popover that names "Default Profile" and says every browser pane
+  shares the profile's logins and site data. The popover has no controls yet. The user expects it to hold creating and
+  switching profiles later. Whether a profile selector also appears on the new pane sheet stays open. A second profile would need its own store, and its profile ID would flow
+  through the pane's description, per CLAUDE.md "Applet Attributes". Adding one is a decision for the user, not an
+  implementation detail. Chosen by the user on 2026-11-03. Amended 2026-11-06; see Decision Log.
 - A browser pane a program creates uses the same store. "Control" decides what a controller may do with it.
 
 Rationale: the motivation is docs and dashboards, and they need logins that last. Per-pane stores make every new pane
@@ -110,8 +125,7 @@ a page can run scripts. Decide whether that counts as running a program under AD
 and loads it only on request.
 
 Decision: the open page is where a tab was, not running state, so restore reopens it. ADR-03 holds unchanged: what
-runs in a page is never restored. Restore loads lazily and never resubmits a form. Amended 2026-11-03; see Decision
-Log.
+runs in a page is never restored. Restore loads lazily and never resubmits a form.
 
 - In a terminal, the working directory is where the pane was, and a running program is state. Restore keeps the first
   and never restarts the second. In a browser, the tab's URL is where the tab was. The page's scripts, in-memory state,
@@ -119,12 +133,17 @@ Log.
 - Reopening a page loads it as a fresh visit, from WebKit's cache or from the network when the cache is stale. It does
   not bring back the page as it was.
 
-- The layout payload stores each tab's last committed URL and title, and which tab is selected. It never stores
-  back/forward history or form data.
+- The layout payload stores each tab's last committed URL and title, and which tab is selected. It stores a URL only
+  when "Schemes" lets a restored tab load it, so a committed `blob:` page is not stored. A URL over 32 KiB is not
+  stored, and a title is cut to 512 characters. A tab keeps the value it last stored when a commit is not storable. It
+  never stores back/forward history or form data. A restored URL that "Schemes" refuses stays in the description
+  unchanged until the user navigates, since only a commit writes a URL.
 - Restore loads only the selected tab of each pane, and only while the pane is attached. Other tabs load when first
   selected. A tab that has not loaded shows its stored URL and title.
-- The undo-only part carries each tab's `interactionState`, so Cmd-Shift-T brings back a tab's or a pane's history
-  within the session. The layout file never writes it, per UTERM-013.
+- The undo-only part carries each closed tab's `interactionState` and a record for each open tab, so Cmd-Shift-T
+  brings back a tab's or a pane's history within the session. The layout file never writes it, per UTERM-013. A tab
+  that has loaded nothing carries no record, and one reopened but not yet loaded keeps the record it was given.
+  Amended 2026-11-06; see Decision Log.
 - No restore path resubmits a form or replays a POST. That includes going back or forward through restored history.
 - A restored URL passes the rule in "Schemes".
 - The payload is stored data that every later build reads. ADR-06's per-type version defuses that one-way door: the
@@ -144,6 +163,15 @@ Decision: input that is not an address runs a search. Settings picks the engine 
 
 - Input with a scheme, or ending in `/`, is always an address. Input with a space is always a search. Other input is
   an address when it holds a dot, is `localhost`, is an IP address, or has a `host:port` form. Anything else searches.
+  Amended 2026-11-06; see Decision Log.
+- A space wins over a trailing `/` and over a `word:` prefix, so `note: buy milk` and `my notes/` search. Only text that
+  starts with `scheme://` stays an address when it holds a space. Text after the colon that is only digits is a port,
+  even when an app registered the word as a scheme. `localhost` is read by its host part, so `localhost/app` is an
+  address. A bare IPv6 address loads in brackets. Text with a control character other than whitespace is refused, not
+  searched. Runs of whitespace collapse to one space in a query. Only typed text searches. A restored or commanded
+  address that is not an address is refused.
+- A query is percent-encoded as UTF-8, with only unreserved characters left bare, so `&`, `=`, `+`, `#`, and `%` stay
+  inside the one query parameter.
 - The list is DuckDuckGo, the default, then Google, Bing, Ecosia, and Kagi. It is an enum-backed setting key.
 - The browser factory passes the applet a read-only view of this setting at construction. The applet reads the current
   engine each time it builds a search URL, so a change applies to the next search in every open pane. This is the first
@@ -164,7 +192,17 @@ by the user's action.
 - Any other scheme-less load tries HTTPS. When it cannot connect, or the server does not speak TLS, the error page
   offers Load over HTTP and says the connection will be unencrypted. Nothing downgrades without that action.
 - A certificate validation failure shows the certificate error, never the HTTP offer. A host under HSTS never shows it.
-- One function applies this rule, for typed input and for any other scheme-less address.
+  Amended 2026-11-06; see Decision Log.
+- The offer shows only when the load that failed is the address whose HTTPS the browser assumed, so a redirect to
+  another host never earns it. It shows for a refused or lost connection and for a server that does not speak TLS. It
+  never shows for a certificate failure, however WebKit words the error. The pane shows the failure natively, so no
+  page's script can reach the action. An explicit `https://` that fails shows a plain warning.
+- WebKit has no public way to ask whether a host is under HSTS. The browser records `Strict-Transport-Security` from
+  main-frame HTTPS responses in its own list, which honours `max-age`, `max-age=0` removal, and `includeSubDomains`,
+  and which survives relaunch. A listed host never shows the offer. A host WebKit has preloaded but the browser has
+  not seen can still show it, and the load stays HTTPS, since WebKit upgrades it, so nothing downgrades.
+- One function applies this rule, for typed input and for any other scheme-less address. Load over HTTP resolves the
+  typed text again through it, with HTTP as the only difference.
 
 Rationale: local dev servers are part of the motivation, and they almost never serve TLS on loopback. Loopback traffic
 never leaves the machine. Defaulting private ranges or single-label names to HTTP would send a router password across a
@@ -180,10 +218,27 @@ Decision: it opens a new tab in the same pane.
 
 - The tab is built with the configuration WebKit passes to the UI delegate, so the opener relationship and the shared
   store hold. Sign-in pop-ups work.
-- It opens right after the opener tab and is selected.
+- A tab a link click opens goes right after the opener tab and is selected. A tab a script opens goes after the last tab
+  that page's script opened and the pane still holds, or after the opener when it has none, so a loop reads in the
+  order it asked, the tabs a yes opens included. Amended 2026-11-06; see Decision Log.
 - A script-opened tab may close itself with `window.close()`.
-- WebKit's macOS default blocks a script with no user gesture from opening a window. The browser keeps that default.
-  No public API reports such a blocked attempt, so the browser shows no indicator for it.
+- A script with no user gesture opens nothing. WKWebView's macOS default lets such a script open a window, so the
+  browser sets `javaScriptCanOpenWindowsAutomatically` to false. No public API reports a blocked attempt, so the browser
+  shows no indicator for it. Amended 2026-11-06; see Decision Log.
+- A script with a gesture may open many windows, so a pane holds at most ten tabs that scripts opened before it asks.
+  WebKit needs an answer at once, so the eleventh call is refused and its address is remembered, at most 50 per page.
+  The pane then asks the user, through the host's confirmation, whether the page may open more. Yes opens every
+  remembered address as an ordinary new tab with no opener, unselected and in order, and lets that page open tabs freely
+  until its next load. No drops the list, posts one warning, and refuses the page's further calls with no further
+  question until its next load. Calls made while the question is up are refused and remembered too. A page that finds
+  another question up keeps its list and is asked once the pane is free. A late answer to a page that loaded again or a
+  pane that closed does nothing. A tab the user's own click on a link or choice from the context menu opens never counts
+  toward the limit and is never refused for it. Amended 2026-11-06; see Decision Log.
+- A pop-up from a tab the user is not looking at opens beside its opener, unselected, and says so. It never takes the
+  selection or the keyboard.
+- `window.close()` closes only a tab a script opened, never the last tab or the pane. A tab that holds unsent input or
+  a download stays open and says why. A tab a script closes is not kept for reopening, since a sign-in address can
+  carry a one-time code.
 
 Rationale: a tab keeps everything an OAuth flow needs, and fits the settled tab model. A new pane needs a new host call
 for an applet to request a split, and a pane built around a web view WebKit supplies. Blocking every new window breaks
@@ -198,19 +253,33 @@ Decision: downloads go to the user's Downloads folder, each file quarantined on 
 status bar.
 
 - A file downloads under a temporary name and takes its final, unique name when complete. A failed or cancelled
-  download removes its partial file.
+  download removes its partial file. Every file operation runs off the main thread, since the folder can be on a
+  network or iCloud volume. A folder that cannot take the quarantine mark fails the download at its end, and the
+  warning names the reason. The first download of a launch into a folder sweeps its leftover temporary files that are
+  more than seven days old.
 - A finished download posts an info message naming the file. A failed download posts a warning naming the file and the
   reason, since no user work is lost. One the user cancels posts nothing. The progress segment shows only for the
   focused pane, and a download can end while its pane is unfocused or detached, so the message is how the user learns
   the outcome. A detached pane withholds the message, records the outcome in the history when it happens, and presents
-  it on reattach. Amended 2026-11-06; see Decision Log.
+  it on reattach.
 - Each finished file gets quarantine properties naming its origin and data URLs. uniterm does not set
   `LSFileQuarantineEnabled`, which would apply to the whole process and could quarantine files the terminal's shells
   create.
 - A status bar segment shows progress. Reveal Latest Download, in the Browser menu and the palette, shows the newest
   finished download in Finder. Segments and status messages stay plain, so the contract does not change.
 - A download keeps going while the pane is detached.
-- A download in progress counts as running something. Closing its pane asks first, and closing cancels it.
+- A page's downloads that no click of the user's started count per load. The first three start as before. The fourth
+  holds its policy decision and the pane asks, through the host's confirmation, whether the page may download more,
+  naming the page and the file when it is known. Yes starts it and lets the page download until its next load. No
+  cancels it at the decision, before WebKit starts a download, posts one warning, and cancels the page's further such
+  downloads with no further question until its next load. A click on a link, a typed address, and a load the user asked
+  for never count and never ask. The decisions held for the question resolve as cancelled when the tab or the pane
+  closes or the page loads again. At most 16 wait. A page that finds another question up keeps its held decisions
+  and is asked once the pane is free. Amended 2026-11-06; see Decision Log.
+- A download in progress counts as running something. Closing its tab or its pane asks first, and closing cancels it.
+  Navigating the tab away does not cancel it.
+- A `blob:` download saves with or without a `download` attribute. A `data:` download saves with one. A top-level
+  `data:` navigation with none is a page, which "Schemes" refuses. Amended 2026-11-06; see Decision Log.
 
 Rationale: dashboard exports are often `blob:` URLs that exist only inside the page, and authenticated downloads need
 uniterm's store, so handing off to another browser fails. Refusing downloads breaks the same exports. A save panel for
@@ -227,8 +296,11 @@ Decision: the browser declares commands for the settled controls in UTERM-002's 
 default key.
 
 - New Tab, Cmd-T, in File. Open Location, Cmd-L, in File, focuses the address bar. Reload, Cmd-R, in View. Reloading
-  the result page of a POST asks before resubmitting. So does the user going back or forward to one. Restore, recovery,
-  and controller commands never resubmit at all.
+  the result page of a POST asks before resubmitting. So does the user going back or forward to one. Only the browser's
+  own Reload, Back, and Forward ask: the toolbar, the Browser menu, the commands, and mouse buttons 4 and 5. They ask
+  only about a post this tab saw a form produce. A page's script, a trackpad swipe, a background tab, and a tab restored
+  or reopened from history are refused with a notice and no question. Restore, recovery, and controller commands never
+  resubmit at all. Amended 2026-11-06; see Decision Log.
 - Select Next Tab, Cmd-Shift-], and Select Previous Tab, Cmd-Shift-[, in Window. Cmd-1 to Cmd-8 select a tab, and
   Cmd-9 is Select Last Tab. The titles match the terminal's, so a user's App Shortcuts remap covers both applets.
 - Back and Forward sit in the applet menu, named Browser, with no default key. The toolbar buttons, trackpad swipes,
@@ -316,14 +388,20 @@ browser pauses media, per ADR-05.
 
 Decision: the browser needs no change to the applet contract. The host gains what any new applet type needs: a launcher
 entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer. The
-factory also passes the browser the search engine setting, per "Search from the address bar". Restore is settled in
-"What restore loads".
+factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
+hosts, and the opener for other apps. The host also passes each pane the browser's website data store, with no
+default. Restore is settled in "What restore loads".
 
 - The description payload holds each tab's last committed URL and title, and the selected tab, with its own version per
-  ADR-06. The undo-only part holds each tab's `interactionState` and the closed-tab list.
+  ADR-06. The undo-only part holds a history record for each open tab, and the closed-tab list with each closed tab's
+  `interactionState`.
 - `currentDirectory` is nil. A browser pane has no directory, and a pane split from it starts in the launcher's default.
-- On detach, the browser suspends media playback in every tab and holds back JavaScript alerts and confirmations until
-  reattach. Downloads keep going. Reattach resumes nothing on its own: the user starts paused media again.
+- On detach, the browser pauses and suspends media playback in every tab and holds back JavaScript alerts, confirmations,
+  and prompts until reattach. Downloads keep going. Reattach resumes nothing on its own: the user starts paused media
+  again. A dialog shows inside the pane, never as a window sheet, and a dialog from a tab in the background waits for
+  its tab. From a page's second dialog in one load, the overlay offers "Don't show more from this page". Choosing it
+  answers the dialog as Cancel would, and every later dialog from that page is dismissed until its next load, with one
+  warning. There is no count limit, and at most 16 dialogs wait. Amended 2026-11-06; see Decision Log.
 - Running something: see "Unsent input" and "Downloads". `runningLabels` names each such tab by title, and a download
   by file name.
 
@@ -343,8 +421,9 @@ isolated-world script tracks it. A download in progress also counts, per "Downlo
   trusted `input` events. That covers `contenteditable`.
 - A tab is marked while some edited field differs from its default value. The mark clears on load, on submit, and when
   the fields return to their defaults. Fields are re-checked on `focusout`, and after `submit` or `click`.
-- The script reports one boolean per tab through a message handler in that isolated world. The native side accepts
-  nothing else from it. Page scripts cannot reach the handler.
+- Each frame's script reports one boolean through a message handler in that isolated world, with a random token that
+  names the frame. The native side accepts nothing else from it, and the tab is marked while any frame is. One frame's
+  report never clears another's. Page scripts cannot reach the handler. Amended 2026-11-06; see Decision Log.
 - The mark clears when the tab's content process terminates, since the input is already gone.
 - It misses drafts a page keeps only in script. "Control" guards the focused tab for that reason.
 
@@ -364,12 +443,31 @@ Decision: a failed tab shows a stopped-page message, and recovery always rebuild
 - WebKit runs page content in a separate process, so a crash, a memory kill, or a hang stays out of uniterm's process.
 - When a tab's content process terminates while the tab is selected in an attached pane, the tab shows a message that
   the page stopped, with a Reload action. Otherwise the tab returns to the not-yet-loaded state of "What restore
-  loads", and loads when next selected.
+  loads", and loads when next selected or attached. A tab that never held a page stays blank and shows no message.
 - Reload builds a new web view from the tab's URL and its last `interactionState`, the same way reopen builds a tab, so
-  the tab keeps its history. It never asks the old process.
+  the tab keeps its history. A tab that holds a history record and no URL, such as a pop-up that opened on a `blob:`
+  preview, loads from the record alone. It never asks the old process. A pop-up's rebuilt view has no opener, which cannot be kept.
 - A user reload or navigation that gets no answer from the content process within a fixed bound replaces the web view
-  the same way. There is no background timer.
+  the same way. There is no background timer. The bound is 10 seconds on a clock that stops while the machine sleeps. It
+  arms only on that user action, and any callback from the content process cancels it, so a slow server never fires
+  it. A page that holds a dialog is waiting for the user, so the bound never replaces it. A page that holds unsent
+  input may only be busy, so the user is asked first and the page is replaced only on yes. A bound that runs out on a
+  tab the user is not looking at, or in a detached pane, drops the view and loads nothing until the tab is selected or
+  attached. In the tab the user is looking at, a typed address then loads in the new web view, and a reload, back, or
+  forward loads the page again.
+- When the bound replaces a hung view, the tab ends that view's content process with SIGKILL first, so the new view
+  cannot land in a process that still spins. A tab that shares the process recovers as from any stopped process. A tab
+  or pane the user closes arms no bound, so the close starts a watch on the process instead. The close reads the
+  process id and releases the web view at once. The watch samples the process's processor time at the close and again
+  when the same bound runs out. It ends the process only when the same process is still there, it used at least half a
+  core over the bound, and no live tab in any pane of the app uses it. A closed pop-up can share its opener's process,
+  and a busy opener is not a hung one. The last live tab on a skipped process starts its own watch when it closes. A
+  closed tab with no web view starts no watch. The id read uses a private WebKit property, so a macOS that drops it
+  leaves the old behaviour. See Risks. Amended 2026-11-08; see Decision Log.
 - No recovery resends a POST.
+- A stop clears the tab's unsent mark and answers its held dialogs and questions. A download belongs to the network
+  process, so it keeps running and still asks on close. A page that came from a form comes back blank, since showing it
+  would send the form again, and the pane says so before and after Reload. Amended 2026-11-06; see Decision Log.
 - Each tab handles its own termination. A pop-up tab may share its opener's process, so both can stop together.
 
 Rationale: a hung process may never handle a `reload()`, so rebuilding the web view is the recovery that always works,
@@ -387,7 +485,8 @@ None.
 - **Web content is untrusted input inside the app** — likelihood: high, impact: medium.
   Mitigation: WebKit runs content out of process, per "Web content failure". No native bridge is reachable from a
   page's own script world, per "WebKit". A compromised content process can still post to the isolated tracker's
-  handler, which accepts only a boolean per tab.
+  handler, which accepts only a frame token and a boolean, keeps at most 64 marked frames, and keeps the tab marked
+  when it drops one.
 - **One website data store serves every browser pane** — likelihood: high, impact: low. Logging in in one pane logs in
   every pane, including panes a program created. Accepted: sharing is the explicit choice in "Website data", for logins
   that last. What a controller may do with it is gated by "Control".
@@ -409,11 +508,40 @@ None.
   `devbox` sends it to the chosen engine. Accepted: the user types `devbox/` or `http://devbox` to go there, per
   "Search from the address bar", and picks the engine.
 - **Any page can write files to Downloads** — likelihood: medium, impact: low. A page can start a download with no
-  prompt. Accepted: each file is quarantined, so Gatekeeper checks it before it runs, and the status bar shows every
-  download.
+  prompt, and a hidden iframe whose response is an attachment starts one with no gesture at all. The first three such
+  downloads of a load start, and the fourth asks the user, per "Downloads". A page the user lets through, or one whose
+  downloads follow a click of the user's, can still start as many as it likes, and each file costs disk space and a
+  status message. Accepted: each file is quarantined, so Gatekeeper checks it before it runs. The status bar shows one
+  download by name and percent, or a count, and only for the focused pane. A crash can leave a hidden temporary file,
+  which the first download of a later launch removes after seven days. A click is judged by the same mouse-up note that
+  judges links, and the tab follows the navigation that click started. A click that starts no main-frame navigation
+  earns nothing for a later script. One window stays open: a script that navigates after a real click has started its
+  navigation, before WebKit confirms it, could pass for the user's. A user choice in a hands-on review; see Decision
+  Log.
 - **The control permissions depend on an amendment to accepted UTERM-004** — likelihood: medium, impact: medium. Until
   UTERM-004 names browser navigation and browser read, its permission set and this proposal disagree. Mitigation: M8
   starts only after UTERM-004 M6, and its first check requires the amendment.
+- **A hung content process is ended with a private WebKit property** — likelihood: medium, impact: low. WebKit leaves a
+  hung process running after its web view is released. Measured under `swift test`: the process survived release of its
+  view for 61 seconds, a non-persistent store, a navigation to `about:blank`, WebKit's private `_close`, and its private
+  `_killWebContentProcess`, which lasted 30 seconds. SIGKILL to the process id that `_webProcessIdentifier` names ends
+  it. The product reads that property in one type, `WebContentProcess`, and uses it when the hang bound replaces a view
+  and when a hung tab or pane is closed without a reload. The read is guarded by `responds(to:)`. A macOS update can
+  remove or rename the property, and the browser then falls back to the old behaviour: a hung page costs one core and
+  its battery until the app quits. The type refuses ids at or below 1, since `kill(0, ...)` signals the app's own process
+  group. It also refuses any process whose path is not a WebKit content process, so a recycled id is left alone.
+  Mitigation: one type owns the private name, tests spin real pages and prove the process is gone, and a missing property
+  degrades to the old behaviour with no crash. The user confirmed it in the running app on 2026-11-06: after a reload, a
+  closed tab, and a typed address on a hung page, the process was gone in about 10 seconds. Not verified: whether the
+  app's own exit ends a process this does not reach. A tab sharing the hung process
+  hears it end and recovers as from any content process that stops. A closed tab keeps no web view. Its watch holds only
+  a process id and one sample for up to the 10-second bound, which ADR-05's bound on work kept after close allows.
+  Holding the closed view until its process answered crashed WebKit on macOS 26.7 when that process died, so no closed
+  view is held. A script-opened pop-up was measured to share its opener's process, so a close that finds a live tab on
+  the same process id signals nothing, and the spinning process stays until its last live tab closes. A tab reopened
+  inside the window was measured to get a process of its own, so the kill leaves it alone. The watch reads processor
+  time with `proc_pid_rusage`, which reports Mach ticks on this macOS. A release that reported nanoseconds would make a
+  spinning process read as idle, so the watch would end nothing rather than something wrong.
 - **Two WebKit applets have not chosen their stores** — likelihood: low, impact: low. UTERM-007 and UTERM-010 are drafts.
   Accepted: the browser's store is its own, so whatever they choose cannot share or clear it.
 
@@ -421,23 +549,103 @@ None.
 
 ### M1: Single-page browser
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A pane can run the browser applet and load a typed address
 - Back, forward, and reload work
 - An address typed without a scheme loads over HTTPS, except loopback, which loads over HTTP
 - The launcher offers the browser, and restore picks the browser by its description type
 
+**As built:**
+
+- The browser has three modules. `BrowserModel` holds the scheme policy, the address policy, and the description
+  payload, with no AppKit and no WebKit. `BrowserApplet` holds the applet and all WebKit use. `BrowserTestSupport` holds
+  an in-process HTTP server on loopback, which has a mode enum so the TLS mode of a later milestone adds one case.
+- A real `WKWebView` loads pages from that server under `swift test`, so WebKit behaviour is proved in package tests.
+  Without a window the web view still loads, and a load takes about 0.1 seconds. The UI tests only cover the launcher
+  entry and restore.
+- Measured under `swift test`: an `https` address aimed at the plain HTTP listener fails with `NSURLErrorDomain` -1200,
+  and a closed port fails with -1004. Both come as one warning naming the address. M4 builds Load over HTTP on these
+  two errors.
+- The scheme policy takes a source and whether the frame is the main frame. A typed, restored, or controller load
+  takes `http`, `https`, and `about:blank`. A page also takes `blob:`, and a subframe takes `data:` and `about:srcdoc`.
+  The web view's navigation delegate applies the page rule to every navigation. WebKit blocks a page's own link to
+  `file:` before the delegate sees it, so the page rule is proved with `ftp:`.
+- The address policy returns the scheme it assumed, so M4 can offer HTTP only after an assumed HTTPS load fails. It reads
+  an IPv4 loopback address only as four decimal parts. `127.1` takes HTTPS.
+- Reload, back, and forward refuse to resend a form post, and say so in one warning. WebKit does resend the post
+  silently when asked. The navigation delegate is the one gate: it cancels a main-frame reload, resubmit, or history
+  step whose request is a post, so a swipe and the web view's own Reload are covered with the buttons. The tab also
+  tracks which history entries a form post produced, so the button methods can answer before they ask WebKit. A post
+  that redirects to a page counts as an ordinary page. Back and forward onto a post result are refused too, which M3
+  turns into the question.
+- The interim scope: a navigation WebKit marks as a download, a response the browser cannot show, and one the server
+  marks as an attachment are each cancelled with one warning that downloads are not available. A link that opens a new
+  window does nothing. M6 builds both. WebKit reports each cancelled load as an interrupted load, code 102, and the
+  tab stays quiet about that code only for the address it cancelled itself.
+- A server that asks for credentials gets none. The browser answers no authentication challenge, so the page shows the
+  server's own 401, and a test pins that no request carries an `Authorization` header. WebKit asks the server twice.
+- Camera and microphone are denied. Measured in the running app against
+  `https://webrtc.github.io/samples/src/content/getusermedia/audio/` on 2026-11-07. With no usage strings, which is the
+  app as shipped, the page is a secure context and `navigator.mediaDevices` is undefined, so a site that does not check
+  first hits a script error and shows nothing. With both strings added, the API exists and a request raises the macOS
+  microphone prompt, so the prompt comes before the UI delegate has a say. Xcode's `xctest` carries both strings, which is
+  why the API exists under `swift test` and not in the app. A real call there never settled, probably waiting on that
+  prompt, which was not measured. The app therefore has no usage strings, and a test pins that. A script injected in each
+  secure page, at document start and in every frame, defines a stand-in `navigator.mediaDevices`. `getUserMedia` and
+  `getDisplayMedia` fail with a `NotAllowedError` `DOMException`, `enumerateDevices` finds nothing, and a site can still
+  listen for events. A page cannot reach a native call that raises the prompt. An insecure page has no `mediaDevices`,
+  and keeps none. It lives in the page's own world, since the page must see it, and a pop-up gets it with the rest of its
+  configuration. In the running app the sample page shows `NotAllowedError`, with no prompt. Package tests race each call
+  against a timer, in the page, a subframe, and a pop-up. The UI delegate's `.deny` stays as the backstop, and a test pins
+  its answer. What a page sees after someone answers the macOS prompt was not measured. WKUIDelegate has no geolocation
+  hook, and the app has no usage strings, so location cannot get the same treatment. Amended 2026-11-07; see Decision Log.
+- `NSAllowsArbitraryLoadsInWebContent` is in `Info.plist`. It also drops the transport rules' TLS version and cipher
+  floor for web content, and certificate validation is unchanged. A test pins the key and that no app-wide exception
+  exists. Loopback is exempt from the transport rules, so no package test can show the key's effect on a named host.
+- The browser uses WebKit's default website data store for now. M5 moves it to the browser's own store.
+- Back, Forward, Reload, and Open Location are declared as commands now. Reload takes Cmd-R and Open Location takes
+  Cmd-L, and the built-in key conflict test passes. M3 adds the rest and its own checks.
+- A restored tab loads at `start`, never at construction. A refused stored address leaves the tab blank, posts one
+  warning, and stays in the description. Reload on that blank tab applies the same rule again and warns again. The
+  durable explanation in the pane is M5's.
+- Layout storage narrows what "What restore loads" said. See the Decision Log entry of 2026-11-06 for the stored URL.
+
 ### M2: Security indicator
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A page with any insecure content shows a warning icon in the address bar
 - A fully secure page shows no warning
 
+**As built:**
+
+- `SecurityIndicator.warns(url:hasOnlySecureContent:)` in `BrowserModel` is the one rule. A blank page never warns, and
+  neither does an empty tab. `isBlank` reads the address string, so `about:blank#x` and `about:blank?q=1` count as
+  blank, and the address bar's own blank check shares it. An `http` page always warns. Any other page warns when WebKit's
+  `hasOnlySecureContent` is false. A table test pins the rule with no WebKit.
+- WebKit moves `url` to a new page before it updates the flag, and a test measured it. A load from a secure page to a
+  stalled `http` address showed the new address with no warning, because the flag still described the old page. The
+  `http` rule closes that gap. A stalled `https` address after an insecure page warns until its flag arrives.
+- The tab observes `hasOnlySecureContent` beside the address, and recomputes `showsSecurityWarning` on every state
+  change. The applet passes the value to the view, which shows or hides the icon.
+- The icon sits between the Reload button and the address bar, and a test shows that it gives its room back to the
+  address bar while hidden. It carries the identifier `browser-security` and the label "Not secure", and it is tinted with
+  the theme's yellow.
+- Measured under `swift test`. A page loaded from a string with an `https` base address commits as an `https` page and
+  WebKit reports it fully secure, so a test uses it for the secure case: no warning, icon hidden. WebKit blocks or
+  upgrades every mixed-content subresource tried there, namely an iframe, a script, a stylesheet, a fetch, an XHR, a
+  video, and an image, and the flag never flipped. `about:blank` reports the flag as false. A `blob:` page made by an
+  `http` page reports false and warns.
+- What is left to the user. No test makes the flag flip after commit, so the observer on the flag is not pinned by a
+  test, and the check that an HTTPS page which loads insecure content gains the warning is left to the user. A secure page
+  fetched over real TLS, and a `blob:` page made by an `https` page, are also unproven, since the fixture has no trusted
+  HTTPS. The fully secure case is pinned only as far as the string-loaded page goes. The `about:blank` guard in the
+  tab is pinned by the table and by a navigation to `about:blank`. No trust override exists, even for tests.
+
 ### M3: Tabs
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The browser opens, switches, and closes tabs
 - The tab bar is hidden when only one tab is open
@@ -446,11 +654,69 @@ None.
 - Back and Forward work from the Browser menu, the toolbar, trackpad swipes, and mouse buttons 4 and 5
 - Cmd-W closes the current tab, and Cmd-Shift-T reopens it in its former place with its history. A pane keeps at most
   20 closed tabs
-- Cmd-R, Back, or Forward onto the result page of a POST asks before resubmitting
+- Cmd-R, Back, or Forward onto the result page of a POST this tab sent asks before resubmitting. Amended 2026-11-06; see
+  Decision Log.
+
+**As built:**
+
+- The tab bar is `AppletTabBar` in `AppletKit`, moved from the terminal with its accessibility identifiers unchanged. The
+  terminal's tab tests are its proof. The browser's view holds the bar above the toolbar, and a hidden bar gives its
+  height back to the toolbar.
+- A tab's web view is built on first use. A restored tab nobody has selected holds no web view and no content process.
+  `start` loads only the selected tab, and a tab loads when it is first selected. A refused stored address is tried
+  once, so selecting that tab again does not warn again. M5 still owns the rule that a detached pane loads nothing.
+- Every tab observes its own web view for its whole life. Only the selected tab drives the toolbar, the address bar, the
+  security icon, and the pane's title. Any tab's title change reaches the palette list through `appletTabsDidChange`.
+  A switch drops an unsent edit in the address bar, since the text belonged to the tab left behind.
+- A new tab opens after the selected one, is selected, and moves the keyboard to the address bar. Closing a tab selects
+  its right neighbour, or the last tab. The last tab answers `.nothingToClose`, so Cmd-W closes the pane. A test pins that
+  a closed tab and its web view are released, so only inert data stays in the closed list.
+- Closed tabs ride in the description's undo-only part with each tab's address, title, and WebKit `interactionState`.
+  The layout payload never holds them. A reopened tab returns to its former index, selected, with its Back history. A
+  reopened tab never fails, so it has no failure text to supply. The host's reopen failure text no longer adds "Check that
+  the shell can start". The terminal's reason carries that sentence itself, so its message reads as before.
+- The resubmit question lives in the navigation delegate, the one gate every resubmit path crosses. The applet's own
+  Reload, Back, and Forward each set a one-shot intent just before they call the web view. The gate takes the intent at the
+  next main-frame decision and clears it, and a commit or a failed load clears it too, so it never carries to a later
+  navigation. A repeat of a post with a matching intent, onto an entry this tab saw a form produce, holds WebKit's decision
+  and asks through `AppletHost.applet(_:confirm:)`. Yes allows that one navigation. No, a second repeat while one question
+  waits, a typed load, and closing the tab each cancel it, and a second repeat is cancelled, not queued. Every other repeat
+  is refused with the M1 warning and no question. That covers a page's script, the web view's own Reload, a trackpad swipe,
+  which cannot be told from a script, a background tab, and a reopened tab. A swipe onto a post result is therefore refused
+  with a notice, and a test calls the web view's `goBack` to stand for it. The button methods no longer pre-check, so
+  `HistoryMove` lost its resubmit case. Measured: reopening a tab on a POST result issues no second POST and shows the
+  stored title with a blank page. A page's `location.reload()` on a post result reaches the server as a GET, so it sends no
+  post and raises no question.
+- WebKit has already made the target the current history entry when the gate runs, for Back, Forward, and Reload alike. The
+  gate therefore keys the set of seen posts on the identity of the current entry. A post to an address this tab never saw
+  cannot borrow the answer for a seen post to the same address, and a test pins that with a reopened tab. WebKit may serve a
+  history step onto a post result from its own cache, so a yes there shows the page and sends no post. No test claims the
+  server's post count after a yes on a history step. A yes on Reload is proved to send one post.
+- A tab keeps its own load origin. A notice from a tab that is not selected names the tab, and is delivered by that tab's
+  origin, so a background tab restored at launch stays as quiet as a restore is. The restore origin ends at the user's first
+  click on a link in the tab, since what follows is the user's own. A background tab never asks. The gate
+  refuses its repeats, and the applet answers no to a question from any tab but the selected one.
+- Mouse buttons 4 and 5 are handled by a `WKWebView` subclass, which sends them through the applet's Back and Forward.
+  A test calls the handler with real events built from `CGEvent`. Trackpad swipes use `allowsBackForwardNavigationGestures`
+  and no code of ours. Swipes, a physical mouse, and the UI tests' keys need real hardware or the window server, so the
+  user checks them. The UI tests are built, and the coordinator runs them.
+- The tab commands copy the terminal's titles and keys. The key test sits in `AppletCatalogTests`, since that target
+  already reaches the window's reserved keys, and it checks the browser's keys by hand against them as the terminal's test
+  does. `Package.swift` did not change.
+- The terminal and the browser both declare Cmd-T, Cmd-1 to Cmd-9, and Cmd-Shift-[ and ]. One remap onto such a key
+  dropped it from both, and the registry posted one warning for each applet. The status bar shows the newest message, so
+  the terminal's warning was hidden behind the browser's. A pass now posts one warning that names every applet that lost a
+  key. It lists at most three commands for each applet and counts the rest, so a remap of Cmd-1 stays readable. The
+  warning code is shared by every applet, so the change is not browser work, and no decision text changed.
+- Left for later milestones. A running download or unsent input does not yet make a tab ask before it closes, which is M6.
+  M8 needs an intent-free path for a controller's reload, back, and forward. The tab's `reload`, `goBack`, and
+  `goForward` set the intent unconditionally, so a controller that called them would ask. See M8. The row built no
+  intent-free path. It also built nothing that loads a controller's background tab, since `loadIfNeverLoaded` loads
+  only the selected tab, and no hook that asks before a download, since the pane's `downloads.adopt` has none.
 
 ### M4: Address bar input
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Non-address input searches with the engine chosen in Settings, and a change applies to the next search in every open
   pane
@@ -458,33 +724,171 @@ None.
   colon is only digits is `host:port`, even when an app has registered that word as a URL scheme
 - A scheme-less loopback address, `*.localhost` included, loads over HTTP
 - A scheme-less address whose HTTPS load cannot connect, or whose server does not speak TLS, offers Load over HTTP. A
-  certificate failure or an HSTS host never offers it
-- A typed `mailto:` address opens the mail app. A link or typed address for another app asks first, naming the app. A
+  certificate failure or an HSTS host never offers it. A host is under HSTS when it sent the header over HTTPS to this
+  browser.
+- A typed `mailto:` address opens the mail app, and so does a real click on a `mailto:` link in the selected tab, with no
+  question. A page's script never opens an app. A real click on a link, or a typed address, for another app asks first,
+  naming the app. A
   typed `file:`, `javascript:`, or `data:` address loads nothing, leaves the page visible, posts one warning that says
   why, and marks the address input invalid. So does a scheme no app handles. Amended 2026-11-06; see Decision Log.
-- A tab shows at most one pending app-handoff question, and the question never blocks other panes
+- The pane shows at most one question at a time, an app-handoff question included, and the question never blocks other
+  panes
 - A stored engine that is no longer on the list shows in Settings as replaced by the default
+
+**As built:**
+
+- The address rule is `AddressClassifier` in `BrowserModel`, and `AddressPolicy.resolve` applies it. A table test holds
+  every example in the milestone text and every edge the plan named: `[::1]:8080`, `user@host`, a trailing dot,
+  `http:` alone, percent-encoded text, whitespace at the edges and inside, internationalized names, an IP with a port,
+  `*.localhost`, and control characters. The refinements it needed are in the Decision Log entry of 2026-11-06 on the
+  classification. `user@host` searches and `user@host.com` loads, since the dot and the port decide, as for any text.
+- `SearchEngine` and its setting key live in `Preferences`. The Settings row is a `ChoiceSettingRow`, which now takes a
+  note under its control. A stored engine that left the list shows the default selected and a note that names the stored
+  text. Settings has no status bar, so the note stands where `PalettePlacement` posts its warning. The stored text is
+  never rewritten. Search addresses are built by hand-encoding every byte outside the unreserved set, and tests hold
+  independently written expected addresses.
+- The factory passes `BrowserServices` at both construction sites. It holds the engine as a read-only closure, the shared
+  HSTS list, and the opener for other apps. The parameter has no default, so a construction site that forgets it does not
+  compile. The applet reads the closure at each search. A test runs two panes on one closure and changes the engine
+  between searches. `BrowserApplet` depends on `Preferences` for the enum only. `BrowserServices.live` builds the list,
+  so the app target needs no `BrowserModel` product.
+- Load over HTTP. The pure rule is `LoadFailure` in `BrowserModel`. Measured under `swift test`, against the fixture's
+  two modes and a closed port: a self-signed server is `-1202` with a failed trust and an underlying `errSSLBadCert`, a
+  plain listener answering HTTPS is `-1200` with `errSSLClosedNoNotify`, and a closed port is `-1004`. `-1200` is
+  ambiguous, so the rule also reads the failed trust and the underlying TLS statuses through every nested error, and a
+  certificate sign wins. The rule is an allow-list. Only `-1004`, `-1005`, and a `-1200` whose status says the peer closed
+  the connection can offer, and anything unclassified gets the plain warning. The
+  fixture gained a TLS mode whose self-signed identity is published test data with an obvious name. No delegate
+  overrides trust, so the handshake fails. A real load proves each case: the plain listener offers, the self-signed
+  server shows the certificate error with no action, and the server sees no request in either until the user chooses.
+  The loopback fixture stands in for a remote host, so the tests build the load the way the address bar builds it for
+  one. `-1005` also offers, which the milestone text did not say. A timeout does not.
+- The pane shows the failure in a native view over the page, so no page's script can reach the action. A failure that
+  leaves nothing to show explains itself there, and the history records one warning with no turn on the bar. Reload on
+  that view repeats the same load. A new load clears the view when it starts, so a later failure that builds no page of its
+  own, such as a failed Back, leaves no stale offer over the pane. The offer is tied to the load whose scheme the browser assumed, so a failure at
+  another server gets a plain warning.
+- HSTS. WebKit's public headers have no HSTS query, which was confirmed first. The browser keeps its own list in a file in
+  the browser's folder, and `UNITERM_BROWSER_DIR` moves it for debug builds and UI tests. Header parsing, the list, and the
+  file are proved at the pure layer with an injected clock, since a self-signed response never reaches the delegate. The
+  call in the navigation delegate is covered by a test that hands the delegate a stand-in response, cast to the WebKit
+  type, with no production seam. A `localhost` entry proves that a listed host gets no
+  offer in a real load, and an unlisted control shows that the test would fail if the list were ignored. A file from a
+  newer build is never overwritten, since the store reads only its version and then keeps its list in memory. A header
+  that moves a live entry's expiry by under an hour records nothing, so a busy site does not rewrite the file on the main
+  thread with every response. A site that serves many host names can push entries out at the 2,048 cap. The impact is low,
+  since WebKit still enforces HSTS and the list only hides an offer. The list is not yet emptied by anything. Clear
+  Website Data empties it in M5.
+- Handoff. A typed `mailto:` opens at once. A typed address for another app, and a link the user followed, ask first
+  through the host's confirmation, naming the app and the address, with an injected opener so no test launches an app. A
+  scheme no app handles posts one warning and marks a typed address. A script's or redirect's navigation to such a
+  scheme stays refused, which keeps M6's script and iframe check open. WebKit reports a script's `a.click()` as a followed
+  link, so the tab trusts only a real left mouse-up that `BrowserWebView` sees, with an injected clock and a one-second
+  bound, spent by the first link decision. A test drives the view's own mouse-up handler with an event built from
+  `CGEvent`, so a real click on the screen is left to the user. A key press that activates a focused link leaves no
+  mouse-up, so it is refused with a notice, which is the choice made. A clicked `mailto:` link in the selected tab
+  opens without a question, as the Schemes text says, after the same selected-tab and one-question guards as any app.
+  The invalid mark already existed from M1. It now also changes the field's accessibility label to
+  "Address, invalid", and tests pin that, its red text, and its clearing on edit.
+- One UI test is built and not run: the Settings row with a replaced engine. The UI test for a refused address's mark was
+  retired after the row. `BrowserAddressTests` owns that contract, in the field's label, its red text, and its clearing
+  on edit.
 
 ### M5: Website data, restore, and reopen
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Logins carry across browser panes and survive relaunch, in a store separate from WebKit's default store
 - Every browser pane shows its active profile, the default profile, and the user confirms its placement in a hands-on
   review
-- Clear Website Data removes the browser's stored data and reloads no tab, and Settings says open tabs keep their
-  session until reloaded or closed
+- Clear Website Data removes the browser's stored data and the browser's list of HTTPS-only hosts, and reloads no tab,
+  and Settings says open tabs keep their session until reloaded or closed.
 - Layout restore loads only the selected tab of each attached pane. An unselected tab shows its stored URL and title,
   and loads when first selected. A detached pane loads nothing until it is attached. The layout file holds no history
   and no form data
-- A restored tab whose URL has a scheme other than `http`, `https`, or `about:blank` shows `about:blank` and a message
-  naming the URL, and its description keeps that URL until the user navigates
+- A restored tab whose URL has a scheme other than `http`, `https`, or `about:blank` shows `about:blank` and an
+  explanation in the pane naming the URL, with one history warning, and its description keeps that URL until the user
+  navigates. Amended 2026-11-06; see Decision Log.
 - A browser pane reports no current directory, and a pane split from it starts in the launcher's default
 - Going back or forward through reopened history never resubmits a form
 
+**As built:**
+
+- The store is `BrowserWebsiteData` in `BrowserApplet`. Its identifier is a constant with a comment that says it must
+  never change, and a test pins the value. `live` builds `WKWebsiteDataStore(forIdentifier:)`. Neither `BrowserApplet`
+  initializer has a default store any more, so no pane can reach WebKit's default store by omission. The host builds
+  one `BrowserWebsiteData` at launch and passes its store to every pane. A debug build reads `UNITERM_BROWSER_STORE`, and
+  the value `memory` gives a store that keeps nothing. The UI tests set it, so they never reach the user's store, which
+  the app's bundle identifier scopes and a UI test shares. How `forIdentifier:` behaves under UI tests was not tried,
+  since an in-memory store makes the question moot. A persistent test store would leave a folder under the app's
+  container per run, and the UI tests have no way to remove it.
+- Package tests run real web views against the fixture server. A cookie a page sets lands in the test's persistent
+  store and never in `.default()`. Two panes on one store send one another's cookie, and a pane on another store sends
+  none. A second store instance over the same identifier sees the first one's cookie. That runs in one process, so it
+  proves that the identifier names the data. It does not prove that the data survives a relaunch, which is left to the
+  user. Each test uses a throwaway identifier and removes its store in teardown.
+- Clear Website Data is `BrowserWebsiteData.clear`, which removes every website data type since the beginning of time
+  and then empties the list of HTTPS-only hosts. A test proves the cookie is gone, another store's cookie is untouched,
+  the list is empty, and an open tab asked the server nothing and kept its title. `HSTSStore.removeAll` now answers
+  whether the file can still hold hosts. A file from a newer build is never written, so for that file the clear throws
+  after it removed the site data, and a test pins that the file's bytes are unchanged. A clear after a failed write tries
+  the file again, so a second clear cannot report success for a file that still holds hosts. WebKit's own removal reports no
+  failure, so the clear has no other failure to show.
+- A restored address is shown through `AddressDisplay`, which now drops bidirectional controls, turns other control
+  characters into spaces, and cuts by characters and by 480 bytes. A layout file can no longer put a reordering override or
+  a long run of combining marks in a pane, a notice, or a question.
+- Settings holds the action in `ActionSettingRow`, which `SettingsKit` links with no WebKit. The host passes a closure
+  through `SettingsWindowController`, which has no default, and there was no action-row precedent. The button is disabled
+  while a clear runs, a second request is ignored, and the row shows "Cleared." or the error's own line, which the error
+  chooses whole. Each state is announced to VoiceOver. A failure never reads as a
+  success, and a retry replaces it. A standing note says open tabs keep their current session until they are reloaded or
+  closed. Tests hold the closure at a gate to prove the double click, and prove the failure text and the retry.
+- The profile button is a borderless icon button, `person.crop.circle`, at the trailing end of the browser's toolbar. It
+  carries the identifier `browser-profile`, the accessibility label and tooltip "Profile: Default Profile", and keeps
+  its width in a narrow pane while the address bar gives way. Clicking it shows a transient popover with the profile
+  name and the line "Every browser pane shares this profile's logins and site data." The popover has no controls. Both
+  follow the palette, and `apply(_:)` updates an open popover in place.
+- A detached pane loads nothing. `start` on a detached pane marks the pane started and loads nothing, and a tab selected
+  or reopened while detached waits. `reattach` loads the selected tab if it never loaded, once. Detach has no host
+  trigger, so the rule is proved by calling the events in tests, as M3 expected. The tab's own load origin survives to
+  the attach, so a restore stays as quiet as at launch.
+- A refused restored address is now a `LoadErrorPage` case, so the pane shows an explanation that names the address and
+  the history records one warning that takes no turn on the bar. The description keeps the address through a save,
+  because only a commit writes a URL and a refusal never commits, so the storable rule does not touch it. A committed
+  `blob:` page is not stored, while a restored `file:` address is kept. The first is the rule for what a commit writes,
+  and the second is what a restore was given. A typed load clears the explanation and the commit replaces the address.
+  Reload on the blank tab warns again and stays refused, as before. Earlier tests that count warnings held without
+  change.
+- Pane reopen lost every open tab's history. The undo-only part held only the closed tabs, so a closed pane rebuilt each
+  tab from its address alone. The part now carries one history record for each open tab, and a restore applies each
+  record at the tab's first load. The layout file never holds it, and a test checks that the encoded layout has no such
+  field. A test closes a pane on a page reached from a form post, rebuilds it, and shows that the history is back, that
+  going back onto the post is refused with a notice and no question, and that the server saw one post.
+- A tab reopened but not yet loaded lost its history when it closed again. A tab whose web view had no page reported an
+  empty record that replaced the record it was given. The tab now hands back the record it holds first, and a tab with
+  no page has none. The regression test failed before the fix with a 137-byte record in place of the 710-byte original.
+  A tab restored and never selected closes with no record and keeps its address and title.
+- `describe()` carries each open tab's history record, and the window calls it at every change an applet reports, at a
+  rate a page chooses. Each tab keeps its last read of the record, and the applet keeps the encoded undo-only part. A
+  commit, a finish, a load, a step, a change of address, or a change of `canGoBack` or `canGoForward` makes the read
+  stale. A title change or a loading toggle never does, so a page that rewrites its title in a loop costs no read. A test
+  sets a title 40 times, describes the pane at every change, and counts reads of the history record: it failed before the
+  change with 24 reads and passes with none. A pane close takes the record as of the last history change, so a scroll
+  position can be as old as that change, and a tab that closes alone reads the live record. A page that pushes history
+  entries in a loop still costs a read for each one, and WebKit rate-limits that. A window-level test shows that a history
+  entry with no new stored address raises no layout change.
+- A pane split from a browser asks the factory for no directory. A test builds a real window around a real browser pane
+  and splits it, and checks that the factory ran. This needed the catalog tests to link the browser and the fixture server, so `Package.swift`
+  changed.
+- Three UI tests are built and not run: the profile button, restoring three tabs with the second selected, and the
+  Settings action with its note. The coordinator runs them. The UI test for a refused restored address was retired after
+  the row. `BrowserLazyRestoreTests` owns that contract, in the error view's visible text, which names the address.
+- Left to the user. Whether the profile button's placement is right, and whether logins survive a real relaunch.
+  Reaching `forIdentifier:` store data across two launches needs a persistent store that the UI tests avoid.
+
 ### M6: Pop-ups, downloads, and running work
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A link or script that opens a window opens a tab right after its opener, selected. A script never closes the last tab
   or the pane. When a pop-up tab closes itself, selection returns to its opener while the opener exists
@@ -498,28 +902,288 @@ None.
   Download shows the focused pane's newest finished file in Finder. It is unavailable with no finished download, and a
   moved or deleted file gets a status message
 - A finished download posts an info message naming it, and a failed one posts a warning. A cancelled one posts nothing.
-  Amended 2026-11-06; see Decision Log.
-- A `blob:` or `data:` download from a page saves like any other, with or without a `download` attribute, and a page's
-  own `blob:` preview opens in its tab. A page's `file:` link saves nothing, even marked as a download
+- A `blob:` download from a page saves like any other, with or without a `download` attribute, and a `data:` download
+  saves with one. A page's own `blob:` preview opens in its tab. A page's `file:` link saves nothing, even marked as a
+  download.
 - `srcdoc` and `data:` subframes load, while a top-level `data:` page is refused
 - A script or iframe navigation to an app's scheme asks or is refused, and never launches the app silently
 - Closing a tab or a pane during a download asks first, names the file, and cancels it. Navigating the tab away does
   not cancel it
 - A tab with edited form input, in any frame or in a `contenteditable`, asks before close and is named in the dialog. It
-  stops asking once the input is submitted or back at its defaults. Synthetic input events never mark a tab, and page
-  scripts cannot reach the tracker's handler
+  stops asking once the input is submitted or back at its defaults. An `input` event a page's script dispatches never
+  marks a tab, and page scripts cannot reach the tracker's handler. A script's `document.execCommand('insertText')` on a
+  focused field raises a trusted event and does mark the tab. Amended 2026-11-06; see Decision Log.
 - Detach suspends media and holds alerts until reattach. Reattach does not resume media. Closing a detached pane
   answers every held alert
 
+**As built:**
+
+- Pop-ups. `createWebViewWith` builds a `BrowserTab` from the configuration WebKit passes, with a fresh content
+  controller, so the opener relationship and the shared store hold. The tab is built at once, since WebKit needs the web
+  view back from the same call. It takes the same delegates, observers, scheme gate, and tracker as any tab, and its
+  first load passes the gate in its own navigation delegate. A window to a scheme the rule refuses opens nothing and
+  warns. A tab a click opens goes right after its opener, and a tab a script opens goes after the page's last script-opened tab,
+  so a loop reads left to right. The opener's selected tab selects it, and a background opener's tab
+  does not. A real test calls `window.open` from a background tab and checks the selection and the notice. A real sign-in
+  flow runs against the fixture: the pop-up posts to `window.opener` and closes itself, the opener hears it, and the
+  selection returns to the opener. `webViewDidClose` closes only a script-opened tab. Never the last tab. A tab with unsent
+  input or a download stays and warns. A tab a script closes is not put on the reopen list. Selection returns to the opener
+  only when the pop-up was selected.
+- WKWebView on macOS does not block a script with no gesture. A page that called `window.open` at load opened a tab, so the
+  text "WebKit's macOS default blocks it" was wrong. The browser now sets `javaScriptCanOpenWindowsAutomatically` to
+  false, and a test pins it on a tab's web view and on a pop-up's. No test can run a script with no gesture, since
+  `evaluateJavaScript` and `callAsyncJavaScript` both carry one, so the block itself is left to the user. A script with a
+  gesture opened 41 tabs in one loop, so a pane holds at most ten tabs that scripts opened, and the rest of a loop gets
+  null. The limit is a policy value with no setting. The eleventh call now starts a question, as "Pop-ups" says: a
+  refused call keeps its address in a per-page list of at most 50, held on the opener tab and reset at its next commit.
+  The question is the host's confirmation and names the page and the count of script-opened tabs the pane holds. It
+  does not quote how many calls the loop made, since the question is built at the eleventh call and the loop is still
+  running. The warning after a no, and after a yes that kept fewer than the page asked for, carries the final count. A tab the user asked for does not count and is never refused: a real
+  mouse-up on a link, or a choice from the context menu, marks the next window request as the user's, once, within one
+  second, and that tab keeps `window.opener`. A real test clicks a `target=_blank` link twelve times past the limit with no
+  warning, and a script still stops at ten. Its first run failed on the eleventh click.
+- The context menu rewrites its four new-window items to new-tab items in `willOpenMenu`, by item identifier, never by
+  title. The item keeps WebKit's own action, which asks for a window, so Open Link in New Tab is the same path as a
+  `target=_blank` link and crosses the same gates. Each rewritten item first tells the web view the user chose it, through a
+  forwarder, so the tab it opens is the user's. A menu click on a link to another app is refused with a warning, as a
+  script's is. Download Linked File and Download Image in the menu are WebKit's own and may not reach the download
+  delegate, since that route has no public hook. They are unproven. No UI test reaches the web view's menu.
+- Downloads. A navigation WebKit marks as a download proceeds for any scheme except `javascript:` and `file:`, by
+  `SchemePolicy.decideDownload`. A response the browser cannot show, or an attachment, downloads too, in a frame as well. M1's interim
+  warnings are gone. The pane holds each `WKDownload` in `BrowserDownloads`, not the tab, and the status segment, the
+  running labels, and the close questions read it. A download writes under a hidden `.uniterm-download-<id>.part` name in
+  the injected Downloads folder. Preparing the folder, marking and naming the file, removing a partial file, and the sweep
+  all run off the main thread through `DownloadFileOperations`, and each reports back as a later main-actor event. A
+  download that is finishing still counts as running. A cancel that arrives then takes it out of the list at once, announces
+  nothing, and removes the file the finish makes. Tests hold the operations with a semaphore and check the thread. At the
+  end the file is marked and then renamed with `renamex_np` and `RENAME_EXCL`, trying
+  `name`, `name 2`, and on, so no check comes before the rename. A test finishes 32 downloads into one name from 32 threads, and
+  two panes share a folder in a real test. A failed download removes the partial file and posts a warning naming the file and the
+  reason. The partial file is removed again when WebKit lets go of a cancelled download, since WebKit may create it after
+  the cancel. A cancelled one posts nothing. A finished one posts an info message. A detached pane records the outcome now and
+  presents it on reattach. A download whose navigation WebKit reports as an interrupted load stays quiet about that load.
+- Names. `DownloadName.sanitize` is pure and table-tested for separators, `..`, a leading dot, bidirectional controls,
+  control characters, every format character such as zero-width marks and the byte order mark, line and paragraph
+  separators, the Hangul fillers and the blank braille pattern, trailing dots and spaces, runs of spaces and every kind of
+  space collapsed to one, an empty result, a long name that keeps its extension, and reserved characters. A long run of
+  spaces cannot push a real extension out of view.
+- Leftovers and a late failure. A crash or a quit can leave `.uniterm-download-<UUID>.part` behind. The first download into a
+  folder in a launch sweeps that folder off the main thread, removing only regular files of that exact name, with an
+  uppercase UUID, last written more than seven days before the injected clock. A second instance may still be writing, so the
+  age is generous. A test plants a user's file that resembles the name, a directory with the name, a fresh temporary file,
+  and an old ordinary file, and only the old temporary file goes. A folder that cannot take the quarantine mark, as a volume
+  with no extended attributes cannot, fails the download only at its end, after the bytes arrived. The warning names the
+  file, says the mark failed and why the volume may not support it, and carries the system's reason. A test stands in for the
+  refusal with a temporary file that is gone at the end, since no test can make a volume reject extended attributes.
+- Quarantine. Each file gets `quarantineProperties` before it takes its final name: the web-download type, the agent bundle
+  identifier and name, the origin page, and the address fetched. A `data:` address is the file's own bytes, so it names no
+  data address. Fails closed: when the mark cannot be set the download fails. A test reads the property back and checks the
+  type, the agent, and an event identifier. The system does not return the origin and data addresses on read, since it keeps
+  them in its own database, so a test pins them on the download before it ends and in the record builder. A test pins
+  that `App/Info.plist` has no quarantine key. The origin comes from the last committed page, since WebKit moves `url`
+  to the new address before it commits.
+- Schemes. A `blob:` download saves with or without a `download` attribute, and a page's own `blob:` preview opens in its tab.
+  A `data:` download saves with one. A top-level `data:` navigation with none is a page and stays refused, since the policy
+  cannot tell it from a page before the response. A page's `file:` link saves nothing, and WebKit stops it before the delegate. `srcdoc` and `data:`
+  subframes load. Each has a real web view test.
+- Download controls. A status bar segment names the one download and its percent, or counts several. Reveal Latest
+  Download is in the Browser menu and the palette, unavailable with no finished download, and a moved file gets a warning
+  with the command still offered. The Downloads folder and the reveal are injected through `BrowserServices`, with no
+  default, so no test reaches the user's folder or Finder. Closing a tab, whether selected or not, asks first and names the file,
+  and a yes cancels. Navigating the tab away does not cancel. The tab that closes releases its web view while the pane holds the
+  download, and the close cancels it. WebKit's behaviour for a download held after its web view is gone was not
+  measured, since a close always cancels.
+- What a page can do with downloads. The pane keeps the in-flight ones and the newest finished file, so its memory follows
+  the number in flight, and a test finishes 30 downloads of one name in a row, each started by a click of the user's. A
+  hidden iframe whose response is an attachment starts a download with no gesture. WebKit serialises navigations in one
+  tab, so typed loads cancel each other, and it holds six connections to one host. The close question and the running
+  labels name at most ten downloads and a count. A page's downloads that no click started now count per load: three start,
+  and the fourth holds its decision and asks. The tab judges a click from the mouse-up it saw, and follows the navigation the click
+  started. A link the user clicked, or a load the user typed, is the user's through its redirects. The mark is armed by
+  the click, confirmed by WebKit's provisional start, and ended by the main-frame response, a failure, a commit, or any
+  action decision that does not continue it. A click that starts no main-frame navigation, such as one on a `#fragment`,
+  on a `download` link, or on a link that opens a window or is cancelled, is never confirmed, so the next action ends
+  it. A frame's attachment is never the user's. A test clicks a `#fragment` link for real and then navigates by script,
+  and the downloads count and ask. It failed first with the earlier rule, which cleared the mark only at a response. A no cancels at the decision, so it never meets the cancel-before-first-byte hazard
+  below. Tests start real downloads from a script and prove no file exists before a yes.
+- A cancel before the first byte. Every download cancelled before WebKit had a byte of its body produced an `EXC_GUARD` report
+  from `NetworkProcessProxy::didReceiveInvalidMessage` in the test crash folder, about one for each run that cancelled one.
+  WebKit treats an IPC message from its network process as invalid, and the process restarts. Measured with a real web view
+  and a store that keeps its cookies only in that process: a session cookie set before the cancel was gone for a load in another
+  tab afterwards. A cancel after a byte, a download that fails, and one that finishes left the cookie and made no report. A user
+  would see: every browser pane of the app loses its session cookies, so sites that keep a login in one are logged out, and a
+  load or download in flight in another pane fails. Persistent cookies and the website data on disk survive, and the next load
+  starts the process again, so a passing test run does not show it. The cause is in WebKit, since the cancel is the documented
+  call. The browser now waits: a cancel with no byte yet takes the download out of the list at once and sends the cancel to
+  WebKit with the first byte, or after 30 seconds if none comes, at which point the hazard is accepted. A cancel that beats the
+  destination answer still gets a destination. A deferred download that finishes or fails first removes its file and says
+  nothing. Tests: one finished all 39 download tests with no new crash report where each run made one before, and a structural
+  test fails on the unfixed code. The cookie loss reproduced in scratch runs of one and of twelve cancels and did not reproduce in
+  the committed test's form, so that test pins the symptom and the structural test is the one that failed first. A pane
+  closed with a download that has no byte yet keeps the cancel pending for up to the grace, with no indicator.
+- App schemes. A script's or an iframe's navigation to an app's scheme is refused with a warning and never asks. A
+  subframe's `window.open`, the main frame's `window.open('mailto:')`, and a script's click in an iframe are real
+  web view tests. A real mouse-up followed by an iframe link was asking, since WebKit calls it a followed link, so a link
+  counts only when its source frame is the main frame. The regression test failed before that change. A real click on a
+  main-frame link still asks.
+- Unsent input. The script is `UnsentInputScript`, in an isolated `WKContentWorld`, in every frame. It watches fields, which
+  include a `contenteditable` element by its text against the text at first focus. Only a trusted `input` event adds
+  a field. Fields are re-checked on `focusout`, a click, `reset`, a trusted `submit`, and `pagehide`. It posts only on a change, at
+  most once in 250 milliseconds, and a loop of 2,000 flips cost one post. The native side takes a frame token and a real
+  boolean, nothing else, and keeps the marked frames, at most 64, so a frame clears only its own mark. A dirty frame past the
+  bound cannot be remembered, so the tab stays marked until the next load, which fails on the side of asking. A marked
+  subframe that its parent removes, and one that navigates away, each clear their mark as the document leaves, which a test
+  measures with a real web view. Each web view has its
+  own content controller. The handler is a proxy that holds the tracker weakly, and `close` removes it. A load clears the mark.
+  Tests use a real web view. A page-world post throws. A page-made `input` event is untrusted, and its regression test failed
+  with the check removed. A limit, measured: a script's `document.execCommand('insertText')` on a focused field raises a
+  trusted `input` event and marks the tab with no typing. No detector was built, since the cost is a question the user can
+  confirm, and a test pins the behaviour. Strict-body checks go through the isolated world. A subframe's edit survives the main frame's clear.
+  A closed tab and its tracker are released. A trusted event cannot come from script, so the tests type through the web
+  view's `NSTextInputClient`, the path of a key press or an input method, in an offscreen window. That proves the script and the
+  handler in the real isolated world. It does not prove a key press through the window server.
+- Running something. `isRunningSomething` is true for edited input or a download in flight, and nothing else. `runningLabels`
+  names a tab by its page title, cleaned of bidirectional and control characters and cut, and a download by its file name, at
+  most ten and a count. The window's pane, window, and quit paths read these two properties, and Cmd-W reaches the applet through
+  `closeCurrentTab`, which answers `nothingToClose` for the last tab so the window asks. The window paths are unchanged and
+  tested with a fake applet, so no window-level test with a real browser was added. `saveUnsavedWork` is unchanged.
+- Detach and reattach. Detach pauses media and then suspends it in every tab. Suspending alone let a pending play resume when
+  the suspension lifted, which the test caught, so the tab pauses first and sends the suspend and resume in pairs. Reattach lifts
+  the suspension and starts nothing. Under `swift test` the page's `play()` stays pending, so no real playing audio
+  is proved. The state goes to suspended and back, and the element stays paused. Alerts, confirmations, and prompts
+  show in an overlay inside the pane, never in a window sheet or through the host, so no other pane waits. A dialog waits while
+  the pane is detached and while its tab is in the background. Every completion handler runs exactly once, by the dialog
+  object, and a tab close, a pane close, and the held bound each answer it. The user stops a page's dialogs. From a
+  page's second dialog in a load, the overlay shows "Don't show more from this page", with the identifier
+  `browser-dialog-stop` and the label "Don't show more dialogs from this page". Choosing it answers the dialog as Cancel,
+  dismisses the tab's other waiting dialogs, and dismisses every later one until the next load, with one warning posted at
+  the first dismissal. At most 16 dialogs wait, a policy value with no setting that guards memory only. Nothing in the host sends
+  detach or reattach, so the tests call them.
+- Not built, and still out of scope: file upload pickers and HTTP authentication dialogs. An upload input does nothing, and a
+  basic-auth page shows its 401.
+- Left to the user. A real sign-in against a real provider. How the download segment looks and reads in the status bar, and
+  the Download Linked File item. Sound that stops on detach and stays stopped. The UI test for the Browser menu's Reveal item is
+  built and not run, and no UI test reaches the context menu.
+
 ### M7: Web content failure
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Killing a selected tab's content process shows the stopped-page message, and Reload brings the page back with its
   history
 - Killing an unselected tab's content process leaves it not yet loaded, and selecting it loads the page
-- A page that hangs its content process comes back on Reload
+- A page that hangs its content process comes back on Reload, and the hung process is gone after the bound, whether the
+  user reloaded or closed the tab. Amended 2026-11-06; see Decision Log.
 - No recovery resends a POST, and a stopped tab no longer counts as running something
+
+**As built:**
+
+- The tab owns its web view and replaces it. `BrowserTab.webView` is built on first use and rebuilt after a stop. The
+  replacement drops every reference to the old view: the delegates, the observers, the mouse and menu closures, the
+  unsent-input handler, and its script. The next view installs them all again, with the data store, the media
+  suspension state, and a fresh content controller. A pop-up's rebuilt view takes the browser's store, since WebKit's
+  configuration is spent, and it has no `window.opener`. The applet shows the new view when the tab is selected and
+  gives it the keyboard if the old one held it. Tests prove the old view is released, that it has no delegates, and that
+  a second stop it reports is ignored.
+- A stop. `webViewWebContentProcessDidTerminate` replaces the view, then the applet decides. The selected tab of an
+  attached pane shows the stopped message in the native error pane, with a Reload button, and the history records one
+  warning with no turn on the bar. Any other tab goes back to not yet loaded, holds no web view, and loads when it is
+  selected or when its pane is attached. A selected tab that was stopped stays stopped when the user switches away and
+  back, and never loads on its own. A blank tab that never held a page stays blank with no message. Reload on a stopped
+  tab loads the stored address with the kept history, the way a reopened tab loads. A tab with a history record and no
+  stored address, such as a pop-up that opened on a `blob:` preview, loads from the record alone, and a tab that stopped
+  before any page committed falls back to the last typed address. The stop stays on screen until the tab knows it will
+  load, so a refused stored address keeps its message. Nothing reloads by itself, so a page that stops again shows
+  the message again and a page that crashes on load cannot loop. A test stops a tab twice in a row, the second time
+  before its page commits, and the history comes back.
+- Measured. WebKit's `_killWebContentProcess` is present on this macOS and the navigation delegate never hears of it. The
+  tests send SIGKILL to the process that `_webProcessIdentifier` names, which is a real crash from WebKit's side. The
+  tests have their own read, apart from the product's guarded one. A process id of 0 means no process exists yet, and `kill(0, ...)` would
+  end the test run's own process group, so the helper waits for an id above 1. SIGKILL leaves no crash report.
+- The history record at a stop. `interactionData` returns the tab's pending record first, and a stop stores the record it
+  reads into that slot, so the description keeps the history until Reload applies it. Measured: a view that has not
+  committed a page reports a small record of its own, 186 bytes against 719 for two pages, so a stop on such a view, as a
+  second stop before the restore commits, would have replaced the history with it. The tab now reads the live record only
+  from a view that committed a page, and takes the last record read from one otherwise. The regression test failed before
+  that change with the 186-byte record.
+- What a stop leaves waiting. The unsent mark clears, so the tab stops counting as running something. A download keeps
+  running, keeps its entry, and still asks on close, and the file finishes after the tab's view is released. Every
+  held dialog of the tab gets its one answer, and a late tap on the dialog view or a second answer does nothing. A
+  question about sending a form again resolves as no at the stop, and a yes the user gives afterwards sends nothing. A
+  question about opening another app is dropped through a per-tab generation, and a late yes opens nothing. The
+  question itself stays on screen until the user answers it, which is stale and harmless. A close question that was up
+  when the tab stopped still closes the tab on yes, and the closed tab reopens with its history. The dialog, resend, and
+  handoff tests each failed with their step removed, and every stop test failed with the stop handler empty.
+- A hang. `HangPolicy` in `BrowserServices` holds the bound and an injected schedule, and a test fires the bound by hand.
+  A user's reload, back, forward, or typed address on an existing web view arms one bound of 10 seconds, and nothing
+  else arms it. The production schedule sleeps on a suspending clock, so a machine that sleeps during the bound does not
+  fire it on wake. Any callback of the navigation delegate or the UI delegate cancels the bound: a policy decision, a
+  provisional start, a commit, a finish, a failure, a dialog, or a window request. A hung process answers none of them,
+  so a reload sent to it reaches no server and fires the bound. A slow server still answers the first, so the bound is
+  cancelled long before it would run out. Tests with a real web view prove both sides. A page running `while(true){}` is
+  replaced when the bound runs out, and its reload never reached the server. A server that holds its answer cancels the
+  bound and the same web view finishes the page. A short real bound proves the production schedule fires once and
+  reaches the tab, which no injected test can show. The bound is a policy value with no setting.
+- What the bound leaves alone. A page that waits on a dialog is not hung. WebKit never raises a `beforeunload` question to
+  the public UI delegate, since it answers the question itself, and a test records that a reload of such a page ends
+  normally. A test holds a `confirm` dialog, reloads, fires the bound, and the page stays. A hung page that holds unsent
+  input is not replaced silently. The user is asked, in a question that names the tab, and the page is replaced only on
+  yes. A no keeps the view and the input, and a process that speaks while the question is up drops a later yes. Only the
+  tab the user is looking at in an attached pane asks, so another tab keeps its view. A bound that runs out on a tab
+  that lost the selection, or in a detached pane, drops the hung view and loads nothing. The tab loads when it is
+  selected or the pane is attached. Each test failed with its rule removed.
+- After a hang in the tab the user is looking at, a reload, back, or forward loads the page again from the address and
+  history, and a typed address loads in the new view after the history is restored. A typed address on a stopped or not-yet-loaded
+  tab applies the kept history first in the same way. The history of the hung page is kept
+  for a typed address, which starts the hung page's own load before the typed one replaces it. A page that hangs on load
+  could in principle hang the new view too. Recovery never repeats on its own, so the user's next action arms the bound
+  again.
+- A rebuilt view starts with no title. The tab kept the old view's title after a stop or a hang, so a rebuilt page that
+  never names itself, or whose title arrives a moment after its load ends, showed the old page's name in the tab bar.
+  `replaceWebView` now clears it, and the tab shows its stored title until the new page reports one.
+- The hung process outlives its view. A scratch test measured the process alive after release of its view for 61 seconds,
+  and after a non-persistent store, a navigation to `about:blank`, `_close`, and `_killWebContentProcess` for 30 seconds.
+  A rebuilt view and four new tabs each got a different process from the hung one. SIGKILL to the id from
+  `_webProcessIdentifier` ends it, and the user chose to ship that in a hands-on review. `WebContentProcess` owns the
+  private read, guarded by `responds(to:)`, and the kill. It refuses ids at or below 1 and any process whose path does
+  not name a WebKit content process. The hang bound kills the process before it builds the new view. A close of a tab
+  or pane reads the id, releases the view, and starts a watch. The watch samples the process's start time and processor
+  time at the close and when the bound runs out. It kills the process when the start time still matches, the process
+  used at least half a core over the bound, and no live tab's view reports the id. A registry of the app's live web
+  views, which tabs add to at creation and remove from at detach, answers that across every pane. Amended 2026-11-08;
+  see Decision Log. `HangPolicy` carries the type, so a test injects a recorder and a sampler. Tests spin real pages
+  from the fixture server and prove the process is gone on replace and on close. They prove a pop-up sharing the
+  process recovers as a stopped tab, and that an idle pop-up closed beside its live opener sends no signal. A closed
+  pop-up that shares its opener's process with the opener spinning signals nothing, and closing the opener afterwards
+  ends the process. A tab reopened inside the window runs in a different process and survives. Unit tests with a fake
+  sampler prove an idle process, a recycled id, and a process that ended are left alone, and that a spinning one ends.
+  A live-sample test proves a spinning page reads between half a core and one and a half, and an idle page under half.
+  A unit test proves ids 0, 1, -1, and the test's own are never signalled. See Risks.
+- No recovery resends a POST. Recovery restores history and never sets the resubmit intent, so the gate refuses the
+  repeated post. Measured: a rebuilt view restores a post result as a blank page with its history, the gate refuses the
+  repeat with one notice, and the server's count of posts stays one. The page is blank, so the message says so. A stopped
+  tab whose page came from a form says that Reload shows it blank and does not send the form, and after Reload the pane
+  says that the form was not sent again, until the next load or commit. This holds for the crash path and for the hang
+  path, in tests.
+- A pop-up shares its opener's process here. A test stops the selected pop-up, and the opener, in the background, lost its
+  content with it. The pop-up shows the message and the opener waits to be selected, then loads with its history. Each tab
+  handled its own stop.
+- Fixed in M6's downloads while checking the flaky `testACancelRightAfterTheDestinationKeepsTheNetworkProcessUp`. A cancel
+  of a download that already had a byte never reached WebKit, since `performCancel` refused an entry the cancel had just
+  taken out of the list. The download then ran to its end, and its complete file stayed at its temporary name. A finish
+  that beat a cancel that did reach WebKit also returned without letting go. Both are fixed, with a test for each that
+  failed first. Run in a loop of 60, the flaky test failed once on the unfixed code and not at all on the fixed code.
+  What stays uncertain is whether the one failure on the unfixed code is the whole of the earlier flake, since it
+  failed once in the full run and not in its class alone.
+- Structure after the row review. `BrowserTab` held about 45 properties, and its flag ladder produced two of the review's
+  bugs. The hang bound moved to `HangRecovery`, the facts about form posts and the held question to `ResendGate`, and
+  `hasBegunLoading`, `isStopped`, `errorPage`, and the held history record became one `LoadState`, so a stopped tab that
+  also began loading cannot be written. `isMaterialized` is now the web view's existence. No behaviour changed, and the
+  package tests passed before and after the move.
+- Not covered. A real kill of a tab that never loaded was not tried, since a view with no page may have no process, so a
+  direct call to the delegate method proves the handler. A memory kill by the system and a content process that a user
+  kills from Activity Monitor take the same path as the signal, and no test reaches them. The message's look and
+  placement are left to the user, and so is how Reload and the stopped tab read with VoiceOver and in a narrow pane.
 
 ### M8: Remote control
 
@@ -537,10 +1201,12 @@ Starts after UTERM-004 M6.
   controller tab stays the controller's after the user types in it. A tab a page opened from it, a reopened tab, and a
   restored tab belong to no controller
 - Open never moves keyboard focus: in a key-focused pane its tab opens unselected and loads at once, and select is
-  refused. Navigate, reload, back, and forward on the selected tab of a key-focused pane, or on a tab with unsent input,
-  return a structured error
-- Controller reload, back, and forward never resubmit a form
-- A download, or a link to another app, `mailto:` included, in a controller tab asks the user first
+  refused. Any background tab a controller opens loads at once. Navigate, reload, back, and forward on the selected tab
+  of a key-focused pane, or on a tab with unsent input, return a structured error
+- Controller reload, back, and forward never resubmit a form. They use an intent-free path that sets no resend intent,
+  so they never ask and never resend. The tab's own `reload`, `goBack`, and `goForward` keep setting the intent
+- A download, or a link to another app, `mailto:` included, in a controller tab asks the user first. Amended 2026-11-06;
+  see Decision Log.
 - A browser pane created by a layout request starts at `about:blank`
 - Exec is refused before anything starts
 
@@ -619,6 +1285,291 @@ Starts after UTERM-004 M6.
   while the pane is detached was said to rely on the message reaching the user. The pane now withholds the message,
   records the outcome at once, and presents it on reattach. The profile label keeps its pane-local placement for M5's
   review.
+- 2026-11-06: Narrowed what the layout payload stores (work-queue best guess). "What restore loads" said the payload
+  stores each tab's last committed URL and title. It now stores a URL only when "Schemes" lets a restored tab load it,
+  drops a URL over 32 KiB, and cuts a title to 512 characters. A committed `blob:` page would restore as a refusal at
+  every launch, and a page chooses the length of both values, which the layout file holds. A tab keeps its last
+  storable value when a commit is not storable.
+- 2026-11-06: Security indicator proof narrowed (work-queue best guess). M2's second check, a fully secure page, is
+  proved only with a page loaded from a string with an `https` base address. Its first check, a page with insecure
+  content, is proved for `http` pages. A page that gains insecure content after commit has no test, and the user checks
+  it by hand. The rest of the checks pass, so M2 is DONE, and As built names what is left to the user. An `http` page
+  warns whatever the flag says, because WebKit updates the address before the flag.
+- 2026-11-06: Narrowed who may ask the resubmit question (work-queue best guess). "Browser commands and keys" and M3's last
+  check said that Reload, Back, and Forward onto the result page of a POST ask before resubmitting, and "Browser commands
+  and keys" said restore, recovery, and controller commands never resubmit. The text now says only the browser's own
+  Reload, Back, and Forward ask, and only about a post this tab saw a form produce. Anything else that repeats a post is
+  refused with a notice. The prior text did not say who may ask. WebKit gives no flag for a user-initiated navigation, so
+  a page reached from a post result could call `history.back()` and raise the question in a loop, and a click would
+  repeat the user's earlier order. A tab restored or reopened from history has no record of which entries were posts, and
+  WebKit restores a POST result there as a repeat of the post, so asking there would open a yes path into restored
+  history, which "What restore loads" forbids. The cost is that a trackpad swipe onto a post result is refused with a
+  notice, since a swipe cannot be told from a script. The question lives in the navigation delegate, so the gate stays
+  the one place a form can be sent again.
+- 2026-11-06: HSTS is the browser's own list (work-queue best guess). M4's check and "Local addresses and plain HTTP" said a
+  host under HSTS never shows the offer, and no text said how the browser knows. WebKit has no public query, so the browser
+  records `Strict-Transport-Security` from main-frame HTTPS responses. It honours `max-age`, removal by `max-age=0`, and
+  `includeSubDomains`, and it keeps the list in a file. A host WebKit preloaded but the browser never saw can still show the
+  offer, and WebKit upgrades the load, so nothing downgrades. Clear Website Data empties the list, which amends "Website
+  data" and M5's check. If wrong, the offer could show for a host that is under HSTS in WebKit, and the user's click would
+  meet an upgraded load that fails again.
+- 2026-11-06: Address classification refined (work-queue best guess). "Search from the address bar" said input with a space is
+  always a search and input with a scheme is always an address, which conflicts for `note: buy milk` and for `file:` paths
+  with a space. A space now wins, except for text that starts with `scheme://`. A bare IPv6 address is an address, and
+  `localhost` is read by its host part so `localhost/app` loads. Text with a control character is refused. Whitespace in a
+  query collapses. Only typed text searches. If wrong, a spaced `javascript:` text searches where it was refused, which sends
+  the text to the engine and runs nothing.
+- 2026-11-06: Load over HTTP and handoff mechanics (work-queue best guess). The offer needs the failing load to be the one whose
+  HTTPS the browser assumed, so a redirect never earns it. `-1005` offers beside `-1200` and `-1004`, and a timeout does not.
+  A certificate sign, a failed trust or an underlying certificate status, wins over `-1200`. A followed link to another app
+  asks, and a followed `mailto:` link opens without asking, per "Schemes", both only after a real click, per the entry
+  below. A script's or redirect's navigation never asks. The factory passes the browser three things, not one. If wrong,
+  the offer could miss a host that resets the handshake.
+- 2026-11-06: Handoff to other apps tightened (work-queue best guess). The first build counted any navigation WebKit calls a
+  followed link as the user's. The prior rules: a followed link for another app asked, a followed `mailto:` link opened with
+  no check, and the selected-tab and one-question guards came after the `mailto:` check. WebKit reports a script's
+  `a.click()` that way, so a page could open the mail app with no gesture, from a background tab, and could loop the
+  question. Now a link is the user's only when the web view saw a real mouse-up within one second before the decision,
+  each mouse-up is used once, and every guard comes before `mailto:`. A script's click, a script's navigation, a redirect,
+  an iframe, and a key press on a focused link are refused with a warning. A real click on `mailto:` in the selected tab
+  still opens with no question. Amends "Schemes" and M4's check. If wrong, a key press on a link that should open an app is
+  refused until the user clicks it.
+- 2026-11-06: Offer rule made an allow-list (work-queue best guess). The prior rule offered for `-1004`, `-1005`, and any
+  `-1200` that showed no certificate sign, which would offer for a `-1200` nobody understood. Now only `-1004`, `-1005`, and
+  a `-1200` with a closed-connection status offer, and the walk covers every nested error. A certificate failure cannot
+  reach the offer by construction. If wrong, the offer misses a server whose closed connection reports a status not on the
+  list.
+- 2026-11-06: HSTS file and error page lifetime (work-queue best guess). The prior rules: a file from a newer build started
+  an empty list and was overwritten by the next change. Any move of an entry's expiry rewrote the file. An error page lasted
+  until a commit or a load of the tab's own, so a failed Back or a page's failed navigation left an old offer live over the
+  pane. Now a newer file is never written, a move of under an hour on a live entry records nothing, and a new provisional
+  load clears the page. If wrong, a newer file's hosts are forgotten by this build until the file is replaced, and an entry
+  can lag a renewal by an hour.
+- 2026-11-06: ADR candidate (cuts across the system): web content hosted anywhere in uniterm may load plain HTTP, with
+  no App Transport Security floor, so each applet that hosts a web view owns its own scheme gate. The key is app-wide,
+  so the text viewer in UTERM-007 and the canvas in UTERM-010 inherit it. Declined by the user on 2026-11-06 as
+  inconsequential. Found in UTERM-005 M1.
+- 2026-11-06: ADR candidate (cuts across the system): a setting reaches an applet only through its factory, explicit and
+  read live, and never through the applet reading the settings store or UserDefaults. Waits on the second applet that
+  takes a setting, since this one instance cannot yet show whether settings belong in a per-applet bundle or on the applet
+  contract. Found in UTERM-005 M4.
+- 2026-11-06: ADR candidate (cuts across the system): content an applet saves from the network is quarantined per file and
+  fails closed, and uniterm never sets the process-wide `LSFileQuarantineEnabled`, which could quarantine what the
+  terminal's shells create. Waits on the second applet that writes fetched files. Found in UTERM-005 M6.
+
+- 2026-11-06: M5 as built (work-queue best guess). The pane's undo-only part now carries a history record for each open
+  tab. The text said it carried each tab's record, and M3 built only the closed tabs', so a closed pane came back with
+  each tab's address and no history. A tab holding a pending record keeps it, and a tab with no page carries none.
+  A restored address that "Schemes" refuses stays in the description untouched, since only a commit writes a URL. A
+  committed `blob:` page is not stored and a restored `file:` address is kept. The first is what a commit writes, and the
+  second is what a restore was given, so the two do not conflict. The store reaches each pane as a required argument,
+  where the text named no path. Settings reports a clear's outcome and says so when the list of HTTPS-only hosts could
+  not be emptied, which the text left open. "Website data" named the label "Default Profile" or similar
+  and left its placement to review. It now reads "Default Profile" and sits at the trailing end of the toolbar, as a first
+  placement for the user's review. "What restore loads" said nothing about a refused URL in the description. It now says the
+  description keeps it. M5's fifth check said a refused restored tab shows "a message naming the URL". It now says an
+  explanation in the pane naming the URL, with one history warning. The undo-only part is kept between history changes,
+  so a pane close can carry a scroll position older than the last history change. A debug build reads `UNITERM_BROWSER_STORE=memory` so UI tests never reach the user's store. If
+  wrong, a pane undo that should carry less history costs one description field to drop, and a clear that should ignore
+  a newer HSTS file would report success while the file still holds hosts.
+
+- 2026-11-06: M6 as built (work-queue best guess). "New windows and pop-ups" said WebKit's macOS default blocks a script with
+  no gesture and the browser keeps it. WKWebView's macOS default allows it, and a script at page load opened a tab, so the
+  browser now sets the preference to false. The same loop with a gesture opened 41 tabs, so a pane holds ten script-opened
+  tabs, which the text did not bound. A pop-up from a background tab opens unselected and says so, a script closes only a tab a
+  script opened, never the last, and never one with input or a download, and such a tab is not kept for reopen because its
+  address can carry a code. "Schemes" and M6 said a `data:` download saves with or without a `download` attribute. A top-level
+  `data:` navigation with none is a page before any response is known, so only `blob:` saves both ways. "Unsent input" said
+  the script reports one boolean per tab. WebKit gives the native side no stable frame identity, so each frame sends a random
+  token and a boolean, and the tab is marked while any frame is, which keeps one frame from clearing another's mark. A link
+  in a subframe is never counted as the user's click, which closes a gap that let a real click in an iframe ask to open an
+  app. Detach pauses then suspends media, since suspension alone let a pending play resume. Dialogs show in an overlay in the pane
+  with bounds of five per load and sixteen held. The finished-download message cannot carry the origin and data addresses on
+  read, since the system keeps them privately. If wrong, a stricter pop-up limit costs one constant, a download limit is a design
+  choice left open, and a `data:` link with no attribute would need a response-time decision.
+
+- 2026-11-06: M6 review fixes (work-queue best guess). The limit of ten tabs counted every tab WebKit asked for, so a user's
+  eleventh click on a link opened nothing and warned falsely. It now counts only tabs a script opened. A real click on a
+  link and a choice from the context menu are the user's, and those tabs never count and are never refused. The unsent-input
+  ledger dropped a dirty frame past 64 and could read it as clean. It now keeps the tab marked until the next load, which
+  fails on the side of asking. A script's `execCommand('insertText')` on a focused field raises a trusted event, so the
+  check "synthetic input events never mark a tab" is narrowed to events a page dispatches, and the limit stays. The name
+  cleaner drops every format and line-separator character, the invisible filler letters, and collapses every run of
+  spaces. File work moved off the main thread, per ADR-08, with a finishing download still counted as running and a cancel
+  that resolves once. A sweep removes leftover temporary files older than seven days at the first download of a launch. The
+  Risks said the handler takes one boolean per tab and the status bar shows every download, and both now say what is built,
+  with the downloads finding stated: nothing bounds how many a page starts. If wrong, the sweep age is one constant, and a
+  download limit stays a design choice for the user.
+- 2026-11-06: Cancelling a download waits for its first byte (work-queue best guess). A cancel of a download that WebKit had
+  received no byte for restarted WebKit's network process, which dropped session cookies and in-flight loads for every pane.
+  "Closing a tab or a pane during a download asks first and cancels it" now holds with one wait: the download leaves the list and
+  the running count at once, and the cancel goes to WebKit with the first byte, or after 30 seconds. The text said nothing about
+  the moment of the cancel. If wrong, the cost is a download that lingers up to 30 seconds after its pane closes.
+
+- 2026-11-06: M7 as built (work-queue best guess). "Web content failure" said a hung process's web view is replaced the same
+  way and left the bound and the signal open. The bound is 10 seconds and arms only on a user's reload, back, forward, or
+  typed address. Any callback from the content process cancels it, since a hung process sends none and a slow server's
+  process sends the first at once. A typed address loads in the new view after the history is restored. The text also said
+  Reload builds a view from the URL and `interactionState` and left three cases open. A tab that never held a page stays
+  blank with no message. A stopped tab that the user switches away from stays stopped. A pop-up's rebuilt view has no
+  opener, which cannot be kept. M5's history read takes a nil `url` for a view with no page, so a stop falls back to the
+  last record read from a live page and never replaces a record with nothing. The text said a stop
+  clears the unsent mark. It also answers held dialogs and questions, and leaves downloads alone. The Risks gain a hung
+  process that outlives its view, since no public call ends it. If wrong, a 10-second bound is one constant, a rebuilt
+  typed address that should drop history costs one line, and a hung process that WebKit does end costs the risk entry.
+
+- 2026-11-06: ADR candidate (cuts across the system): a web view whose content process hangs cannot be ended by public
+  WebKit API, so any applet that hosts a web view and recovers from a hang leaves the hung process running until the app
+  quits. Declined: a known issue, not a decision. The Risks carry it. Found in UTERM-005 M7. Overtaken on 2026-11-06 by
+  the SIGKILL decision below.
+- 2026-11-06: ADR candidate (cuts across the system): shipping code uses no private WebKit or AppKit API, and private calls
+  are allowed in test code only. Declined by the user on 2026-11-06 as inconsequential, and no longer true: the product
+  reads one private WebKit property to end a hung process. Found in UTERM-005 M7.
+- 2026-11-06: M7 review fixes (work-queue best guess). The hang rule said any callback of the navigation delegate cancels the
+  bound. It now counts the UI delegate's callbacks too, and the bound never replaces a page that holds a dialog. The prior
+  rule would have rebuilt a page that waits for the user. The prior rule also replaced a busy page with unsent input without
+  asking, which loses the input. It now asks first, through the host's confirmation, and replaces on yes only. The prior rule
+  reloaded a tab after the bound even when the user had switched tabs or detached the pane, which "What restore loads" and
+  ADR-05 reject. Now such a tab drops the hung view and loads when selected or attached. The production clock stops while
+  the machine sleeps. A stopped tab whose page came from a form said that Reload loads the page again, and it loads a blank
+  one. The message and the pane now say so. M6's downloads: a cancel after the first byte never reached WebKit, and a finish
+  that beat a cancel left its file. If wrong, the question for unsent input is one rule to remove, and the form message is
+  two strings.
+- 2026-11-06: Web content failure restores "when selected or attached" (work-queue best guess). The text said a tab that
+  stopped while unselected or in a detached pane "loads when next selected". A selected tab in a detached pane has no
+  selection event, and the attach loads it, as "What restore loads" does for a restored pane. The text now says selected or
+  attached. If wrong, a detached pane's selected tab would wait for the user to select it, which no event offers.
+- 2026-11-06: Row review fixes (work-queue best guess). M3's As built said M8's controller commands never set the resend
+  intent, so they never ask. That is false, since the tab's reload, back, and forward set it unconditionally. M8 now
+  checks for an intent-free path, and names two things the row did not build: loading a controller's background tab at
+  once, and asking before a download in a controller tab. The facts that the row built none of the three moved from M8's
+  checks to M3's As built. "Any page can write files" ended on a design choice not yet
+  made, while "Design Decisions (Open)" said none. The Risk now states an accepted gap with a revisit hook. The
+  Amended markers were collapsed to one per decision and milestone, since a later revision replaces the marker. The
+  texts on "Schemes", "Downloads", and the milestones that changed keep their one marker. "Schemes" said a tab shows at
+  most one question. The pane now shows one at a time, of any kind, since the window queued a second sheet that could
+  outlive its tab. The text said nothing about Reload on a tab with a history record and no address. It now loads from
+  the record. A page's title is cleaned once, at the applet, for the tab bar, the pane title, notices, and questions.
+  The restore origin of a notice ends at the user's first click in the tab. Terminal titles were raw before this row and
+  are left alone. A single-slot record of the load that a policy decision ended was traced: WebKit reports an
+  interrupted load only for a download here, and each download sets the slot itself, so no genuine failure was seen
+  swallowed. Nothing changed. If wrong, a stale slot could hide one failure notice for an address a policy refused
+  earlier, and the fix is to key the slot to the navigation.
+
+- 2026-11-06: Profile button (the user's choice in a hands-on review, not a best guess). "Website data" said every pane
+  shows the default profile as a text label, "Default Profile", at the trailing end of the toolbar with no selector.
+  M5's As built said the same. The label is now a borderless icon button using `person.crop.circle`. Clicking it shows a
+  transient popover that names "Default Profile" and says every browser pane shares the profile's logins and site data.
+  The popover has no controls. The user expects it to hold creating and switching profiles later, and nothing for that
+  is built. The identifier `browser-profile` stays, and the accessibility label and tooltip read "Profile: Default
+  Profile". The reason is that a text label took toolbar width and had no place to grow into a profile control. M5's
+  As built and its UI test note now describe the button. M5 stays DONE.
+
+- 2026-11-06: End a hung content process with SIGKILL (the user's choice in a hands-on review, not a best guess). The
+  Risks said a hung process outlives its web view, that no public call ends it, that the private ones cannot ship, and
+  that the loss was accepted. M7's As built said production code cannot end it. "Web content failure" said nothing about
+  the process. Measured under `swift test`: the process survived release of its view for 61 seconds, a non-persistent
+  store, a navigation to `about:blank`, private `_close`, and private `_killWebContentProcess` for 30 seconds. SIGKILL to
+  the id from `_webProcessIdentifier` works, and the user chose to ship it. The tab now kills the process when the hang
+  bound replaces its view. A tab or pane the user closes without a reload also leaves the process, since only a reload
+  arms the bound. So a close probes the page, and no reply within the same 10-second bound kills the process. The
+  Risks, "Web content failure", M7's check and As built, and the test comment that said nothing private ships are
+  rewritten. The private read lives in one type behind `responds(to:)`, refuses ids at or below 1 and non-WebKit paths,
+  and falls back to the old behaviour when a macOS drops the property. If wrong, a signal that reaches a recycled id is
+  stopped by the path check, and a probe that kills a live page needs a page that is alive and silent for 10 seconds.
+  A review found that a closed pop-up's probe could kill a busy opener sharing its process, because the check saw only
+  the closed view. Measured with `_webProcessIdentifier`: a script-opened pop-up does share its opener's process. The
+  probe now skips the kill when any live tab in the app reports the same process id, and the last live tab closing
+  runs its own probe. A tab reopened within the window was measured to get its own process. A skipped kill leaves a
+  spinning process until its last live tab goes. The hang replacement path is unchanged, since the user reloaded a page
+  that gave no sign of life, and a tab sharing it recovers as a stopped tab.
+- 2026-11-06: Three ADR candidates declined (the user's choice, since the user called them inconsequential). No private
+  API in shipping code is declined, and the SIGKILL decision above ships one. Plain HTTP in hosted web content with no
+  App Transport Security floor is declined. One question per pane is declined as an ADR, and it stays a rule of this
+  proposal. The two candidates that wait on a second applet, the settings factory and the download quarantine, stay as
+  they were.
+
+- 2026-11-06: Dialogs offer to stop (the user's choice in a hands-on review, not a best guess). "The applet contract" and
+  M6's As built said a page gets five dialogs between loads and the rest are dismissed with one warning. The browser decided
+  for the user and a legitimate page lost its sixth dialog. The limit and its automatic dismissal are removed. From a
+  page's second dialog in one load, the overlay offers "Don't show more from this page". Choosing it answers the current
+  dialog as Cancel would. It also dismisses the tab's other waiting dialogs, which the choice did not name, since the
+  user said stop. Every further dialog from that page is dismissed until its next load, with one warning through the
+  notice path used before. The 16 waiting dialogs stay as a memory guard. If wrong, a stop that should leave waiting
+  dialogs alone costs one line in the applet.
+
+- 2026-11-06: Script tabs ask after ten (the user's choice in a hands-on review, not a best guess). "New windows and
+  pop-ups" and M6's As built said a pane holds at most ten script-opened tabs, the rest of a loop opens nothing, and
+  the pane says so once. The browser decided for the user. The eleventh call is still refused, since WebKit needs the
+  answer at once, but its address is kept, and the pane asks whether the page may open more. Yes opens the kept addresses
+  as ordinary unselected tabs with no opener and lifts the limit for that page until its next load. No drops them,
+  warns once, and refuses the page until its next load. The list holds at most 50 addresses, and a call with no address is
+  counted and not kept. Two choices were not in the user's text. The question names the count the pane holds and does
+  not quote the loop's total, since it is built at the eleventh call. A question that finds another up keeps its list
+  and asks once the pane is free, because dropping or stacking it would lose the user's chance to answer. The stale
+  question of a tab or pane that closed stays on screen until the user answers, as the other questions here do, and its
+  answer does nothing. If wrong, the 50 is one constant, and asking only for the selected tab's page would be one guard.
+
+- 2026-11-06: Downloads ask after three per load (the user's choice in a hands-on review, not a best guess). "Downloads"
+  said nothing limited how many a page starts, and the Risks called that an accepted gap with a revisit hook. M6's As
+  built said a limit needed a design choice and built none. Now a page's downloads that no click of the user's started
+  count per load. The first three start. The fourth holds its policy decision and the pane asks whether the page may
+  download more. Yes starts it and lifts the limit until the page's next load. No cancels at the decision, warns once,
+  and refuses the page's further such downloads with no further question until its next load. A click and a
+  typed address never count. The brief did not say how a click is told from a script for a download that comes as a
+  response, and WebKit gives the response no link to its click. The tab follows the navigation: the click arms a mark,
+  WebKit's provisional start confirms it, and a redirect continues it. The response, a failure, a commit, or any action
+  decision that does not continue it ends it. A click that starts no main-frame navigation is never confirmed, so it
+  cannot lend the mark to a later script. An earlier build cleared the mark only at a response, which let a click on a
+  `#fragment` pass a later script download as the user's. That is fixed in this entry. One window stays: a script that
+  navigates after a click's action is allowed and before WebKit confirms it could pass for the click's. A frame's
+  attachment is never the user's. If wrong, the three is one constant, and a stricter rule needs the response tied to
+  its action, which WebKit does not offer.
+
+- 2026-11-06: Script-opened tabs read in order (the user's choice in a hands-on review, not a best guess). "New windows
+  and pop-ups" said a pop-up opens right after its opener. A loop of script-opened tabs therefore read backwards, and the
+  tabs a yes opens went ahead of the others. Now a script-opened tab goes after the last tab that page's script opened
+  and the pane still holds, or after the last tab one of those opened, so a pop-up's own tabs stay beside it. A tab
+  that was closed leaves the rest of the group together, and a page with none falls
+  back to the opener. The tabs a yes opens join the same group. The same code places a tab a link click opens, and that
+  placement is unchanged: right after the opener. Selection and the return to the opener on close are unchanged.
+
+- 2026-11-06: A rebuilt view no longer keeps the old page's title (found by a flaky test, a correction of fact). M7's
+  As built said nothing about the title. The tab kept the title of the view it dropped, so after a stop or a hang the
+  tab bar showed the old page's name until the new page reported its own, and for good if the new page had none. A
+  repeat of the typed-address recovery test saw it in 6 of 60 runs. The tab now clears the title when it drops the view.
+  If wrong, the tab shows its stored title or its host for a moment longer, and the fix is one line.
+
+- 2026-11-06: Camera and microphone requests fail at once (the user's choice in a hands-on review, not a best guess).
+  "WebKit" said the page's own world holds no bridge, and M1's As built said the UI delegate denies capture and the
+  user should try a request in the running app. The user did: on `http://localhost` `navigator.mediaDevices` is missing,
+  and on a real HTTPS page a request gets no answer, with no error, no prompt, and no audio. The delegate is never
+  reached, and why stays unknown. The user chose to make requests fail at once, so sites show their normal blocked
+  message. This is an addition: a script injected in each page's own world, with no handler, that replaces the capture
+  calls. The delegate's `.deny` stays as the backstop. If wrong, a page that defines its own replacement after document
+  start can undo the script, and the delegate still denies a request that reaches it. (addition)
+- 2026-11-07: Camera and microphone use a stand-in (the user's choice in a hands-on review, not a best guess). The entry
+  above is wrong about the cause. No request stalled in the app. WebKit hides `navigator.mediaDevices` from an app with no
+  usage strings, so the script had nothing to replace and did nothing there, and the user's test still showed no error.
+  Its tests passed because Xcode's `xctest` carries usage strings of its own. As built said a request got no answer with
+  an unknown cause, and that the script replaces functions only where WebKit exposes them, including the legacy forms. Now
+  the script defines a stand-in on every secure page, and the legacy forms are gone, since WebKit exposes neither. The app
+  stays free of usage strings, because with them macOS prompts before the delegate runs. The user chose this over adding
+  the strings and over removing the script. If wrong, removing the script leaves sites that do not check first failing
+  silently, and real capture support must remove it. (addition)
+- 2026-11-08: A closed tab's process is watched by its processor time, and no closed view is held (the user's choice of
+  direction while landing the branch; the half-core threshold is a best guess). "Web content failure", the Risks, and
+  M7's As built said a close probes the page with `evaluateJavaScript`, holds the closed view until a reply, and kills
+  the process when none comes within the bound. On macOS 26.7.2 in CI, the package tests crashed in WebKit's
+  `WebPageProxy::resetStateAfterProcessTermination` in six of eight runs, never on macOS 26.6.2. A bisect put it on the
+  commit that ended hung processes, and an ablation put it on the probe: with the probe off the suite ran clean twice
+  while the hang bound and the tests still killed processes, and with the bound's kill off it still crashed. Holding a
+  closed, detached view with a script call in flight when its process dies is what WebKit does not survive. The close
+  now releases the view at once. Its watch samples the process with `proc_pid_rusage` at the close and when the bound
+  runs out, and kills only the same process, spinning at half a core or more, with no live tab on it. Five raw-WebKit
+  repros of the crash survived, so the trigger is known only through the ablation. If wrong, a busy process below half a
+  core is left running, and a threshold that is too low ends a closed tab's process that was merely busy, which no live
+  tab needed.
 
 ## References
 

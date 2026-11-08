@@ -104,6 +104,8 @@ public enum TabReopenResult: Sendable, Equatable {
   case missing
 
   /// The tab could not come back, and the applet is unchanged. The entry stays for another try.
+  /// The reason is what the window shows after the tab's name. It says why, and what to do next
+  /// when the applet knows. The window adds a full stop when the reason has none.
   case failed(title: String, reason: String)
 }
 

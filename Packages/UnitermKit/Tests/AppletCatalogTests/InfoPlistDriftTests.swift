@@ -21,6 +21,38 @@ final class InfoPlistDriftTests: XCTestCase {
 
   private var declarations: [AppletTypeDeclaration] { BuiltInApplets.declarations }
 
+  /// Catches an Info.plist that loses the web-content exception, so plain `http` pages stop loading
+  /// in the browser. It also catches an app-wide exception in its place, which would let
+  /// uniterm's own network traffic fall back to plain HTTP. Loopback is exempt from the transport
+  /// rules already, so no test can show the key's effect on a named host. The plist is the app's
+  /// real one.
+  func testPlainHTTPIsAllowedInWebContentAndNowhereElse() throws {
+    let security = try XCTUnwrap(try loadPlist()["NSAppTransportSecurity"] as? [String: Any])
+
+    XCTAssertEqual(Set(security.keys), ["NSAllowsArbitraryLoadsInWebContent"])
+    XCTAssertEqual(security["NSAllowsArbitraryLoadsInWebContent"] as? Bool, true)
+  }
+
+  /// Catches camera or microphone usage strings arriving without real capture support. With them,
+  /// WebKit exposes the native API and asks macOS first, measured in the running app, so a page
+  /// could raise a system prompt for capture the browser denies. The plist is the app's real one.
+  func testTheAppDeclaresNoCameraOrMicrophoneUse() throws {
+    let plist = try loadPlist()
+
+    XCTAssertNil(plist["NSCameraUsageDescription"])
+    XCTAssertNil(plist["NSMicrophoneUsageDescription"])
+  }
+
+  /// Catches `LSFileQuarantineEnabled` in the app's Info.plist. It applies to the whole process, so
+  /// every file the terminal's shells create would be quarantined. The browser marks each finished
+  /// download on its own. The plist is the app's real one.
+  func testTheAppDoesNotQuarantineEveryFileItWrites() throws {
+    let plist = try loadPlist()
+
+    XCTAssertNil(plist["LSFileQuarantineEnabled"])
+    XCTAssertFalse(plist.keys.contains { $0.localizedCaseInsensitiveContains("quarantine") })
+  }
+
   /// Catches an applet that declares a type the app never registers with Launch Services, a type
   /// registered with no applet behind it, a rank above Alternate that would displace another app,
   /// and a role other than Viewer. The plist is the app's real one.

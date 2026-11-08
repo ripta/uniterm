@@ -35,6 +35,7 @@ class UnitermUITestCase: XCTestCase {
     try? FileManager.default.removeItem(atPath: scratch + "-shell")
     try? FileManager.default.removeItem(atPath: scratch + "-terminal")
     try? FileManager.default.removeItem(atPath: scratch + "-layout")
+    try? FileManager.default.removeItem(atPath: scratch + "-browser")
   }
 
   /// The folder the app saves its layout in during this test.
@@ -48,20 +49,23 @@ class UnitermUITestCase: XCTestCase {
     try Data(json.utf8).write(to: layoutDirectory.appendingPathComponent("layout.json"))
   }
 
-  /// Launches the app. `settings` are written into the app's isolated defaults first, as
+  /// Launches the app. The app stores `settings` in its isolated defaults before it reads them, as
   /// `defaults write` would, so a test starts with a setting such as `paletteMode` already chosen.
+  ///
+  /// The app writes the seed itself. A seed the runner wrote into the plist would keep answering
+  /// reads on macOS 26.7, even after the app changed the setting.
   func launchApp(
     environment: [String: String] = [:], arguments: [String] = [], settings: [String: String] = [:]
   ) -> XCUIApplication {
-    if !settings.isEmpty, let defaults = UserDefaults(suiteName: scratch) {
-      for (key, value) in settings {
-        defaults.set(value, forKey: key)
+    let app = XCUIApplication()
+    if !settings.isEmpty {
+      guard let seed = try? JSONEncoder().encode(settings) else {
+        preconditionFailure("a dictionary of strings always encodes")
       }
 
-      defaults.synchronize()
+      app.launchEnvironment["UNITERM_DEFAULTS_SEED"] = String(decoding: seed, as: UTF8.self)
     }
 
-    let app = XCUIApplication()
     for (key, value) in environment {
       app.launchEnvironment[key] = value
     }
@@ -71,6 +75,8 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UNITERM_DEFAULTS_PATH"] = scratch
     app.launchEnvironment["UNITERM_TERMINAL_DIR"] = scratch + "-terminal"
     app.launchEnvironment["UNITERM_LAYOUT_DIR"] = scratch + "-layout"
+    app.launchEnvironment["UNITERM_BROWSER_DIR"] = scratch + "-browser"
+    app.launchEnvironment["UNITERM_BROWSER_STORE"] = "memory"
     app.launchEnvironment["SHELL"] = "/bin/zsh"
     app.launchEnvironment["ZDOTDIR"] = scratch + "-shell"
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""

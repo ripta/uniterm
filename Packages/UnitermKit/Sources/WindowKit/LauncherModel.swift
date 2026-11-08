@@ -7,6 +7,7 @@ struct LauncherEntry: Equatable {
     case program
     case dataViewer
     case mapViewer
+    case browser
   }
 
   let kind: Kind
@@ -30,6 +31,9 @@ struct LauncherEntry: Equatable {
     LauncherEntry(
       kind: .mapViewer, name: "Map viewer",
       detail: "Shows a map you can pan and zoom", symbol: "map"),
+    LauncherEntry(
+      kind: .browser, name: "Browser",
+      detail: "Shows web pages", symbol: "safari"),
   ]
 }
 
@@ -147,6 +151,9 @@ struct LauncherModel: Equatable {
     case .mapViewer:
       return .success(.mapViewer(region: nil))
 
+    case .browser:
+      return .success(.browser)
+
     case nil:
       return .failure(LauncherRefusal(reason: "No applet matches."))
     }
@@ -160,6 +167,7 @@ extension LauncherEntry.Kind {
     case .program: return "launcher-program"
     case .dataViewer: return "launcher-data-viewer"
     case .mapViewer: return "launcher-map-viewer"
+    case .browser: return "launcher-browser"
     }
   }
 }

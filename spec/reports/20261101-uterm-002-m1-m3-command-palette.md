@@ -4,7 +4,7 @@ Started 2026-11-01. This report covers a `/work-queue next 2` run. Its first row
 palette, at `spec/proposals/UTERM-002-command-palette.md`. Its second row is `UTERM-013 M1-M2`, shortcut ownership and
 reopening closed tabs, reported in [20261101-uterm-013-m1-m2-shortcut-ownership-and-reopen.md](
 20261101-uterm-013-m1-m2-shortcut-ownership-and-reopen.md). The specs live in the code repo, so every commit below is
-in `/Users/ripta/projects/uniterm`, on `main`. Nothing is pushed.
+in this repo, on `main`. Nothing is pushed.
 
 ## TL;DR
 
@@ -48,7 +48,7 @@ ghostty-offline-check` runs once, at the final review, since no milestone touche
 
 ## Run-level best guesses
 
-These come from the approved plan at `/Users/ripta/.claude/plans/spicy-weaving-fern.md`.
+These come from the approved plan at `~/.claude/plans/spicy-weaving-fern.md`.
 
 - UTERM-002's grace-tier lines are stale, since UTERM-001 M10 removed grace-tier panes. M2 amends them as a correction
   of fact.

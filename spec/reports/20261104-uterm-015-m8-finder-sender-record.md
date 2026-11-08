@@ -4,7 +4,7 @@ Started 2026-11-04. This report covers a `/work-queue` run with no arguments, wh
 row, `UTERM-015 M8`, from `spec/proposals/UTERM-015-cross-applet-file-opening.md`. M8 records the sender a Finder open
 and a Dock drop report, cold and warm. That record says whether Finder can be told apart from `open -a`. If it cannot,
 the decision "Opens that arrive through Launch Services" reopens before M7 builds on it. The specs live in the code
-repo, so every commit below is in `/Users/ripta/projects/uniterm`, on the `agent/petunia` branch.
+repo, so every commit below is in this repo, on the `agent/petunia` branch.
 
 ## Run state
 

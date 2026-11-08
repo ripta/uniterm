@@ -1,6 +1,7 @@
 import AppKit
 import AppletCatalog
 import AppletKit
+import BrowserApplet
 import DataViewerApplet
 import FileRouting
 import MapViewerApplet
@@ -35,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var commandMenu: CommandMenu?
   private var layoutPersistence: LayoutPersistence?
   private var settingsWindowController: SettingsWindowController?
+  private var browserWebsiteData: BrowserWebsiteData?
   private var askingToQuit = false
 
   /// The `UNITERM_` variables the process started with. The scrub of the inherited environment
@@ -50,19 +52,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   /// UI tests set `UNITERM_DEFAULTS_PATH` to a plist path inside the test runner's container, so
-  /// they never touch the developer's real preferences. A write to that file from the sandboxed
-  /// runner reaches the running app the way `defaults write` would. Only debug builds honor it.
+  /// they never touch the developer's real preferences. Only debug builds honor it.
+  ///
+  /// `UNITERM_DEFAULTS_SEED` holds the settings a test starts with, as a JSON object of strings.
+  /// They are stored as given, even when invalid, the way `defaults write` would store them. The
+  /// app writes them itself, so it is the suite's only writer. On macOS 26.7, a suite opened by
+  /// path keeps answering with a value another process wrote, even after this process overwrites
+  /// it, so a seed written by the runner would hide every later change.
   private static func makeDefaults(_ environment: [String: String]) -> UserDefaults {
     #if DEBUG
       if let path = environment["UNITERM_DEFAULTS_PATH"],
         let defaults = UserDefaults(suiteName: path)
       {
+        if let seed = environment["UNITERM_DEFAULTS_SEED"] {
+          for (key, value) in decodeSeed(seed) {
+            defaults.set(value, forKey: key)
+          }
+        }
+
         return defaults
       }
     #endif
 
     return .standard
   }
+
+  #if DEBUG
+    /// A seed that does not decode stops the launch. Ignoring it would start the test from the
+    /// wrong settings, and the test would then fail far from the cause.
+    private static func decodeSeed(_ json: String) -> [String: String] {
+      guard let seed = try? JSONDecoder().decode([String: String].self, from: Data(json.utf8))
+      else {
+        fatalError("UNITERM_DEFAULTS_SEED is not a JSON object of strings: \(json)")
+      }
+
+      return seed
+    }
+  #endif
 
   /// UI tests set `UNITERM_TERMINAL_DIR` so the generated terminal config stays out of the
   /// developer's Application Support folder. Only debug builds honor it, since a release build has
@@ -87,6 +113,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
 
     return try LayoutPersistence.defaultDirectory()
+  }
+
+  /// UI tests set `UNITERM_BROWSER_DIR` so the browser's own files stay out of the developer's
+  /// Application Support folder. Only debug builds honor it, for the same reason as the layout
+  /// folder. Nil means the default folder.
+  private func browserDirectory() -> URL? {
+    #if DEBUG
+      if let path = debugEnvironment["UNITERM_BROWSER_DIR"] {
+        return URL(fileURLWithPath: path, isDirectory: true)
+      }
+    #endif
+
+    return nil
+  }
+
+  /// UI tests set `UNITERM_BROWSER_STORE` to `memory`, so the browser keeps its cookies and site data
+  /// in memory and never reaches the developer's real store. The app's bundle identifier scopes the
+  /// real store, and a UI test runs under the same one. Only debug builds honor it, for the same
+  /// reason as the other folders.
+  private func browserStoreIsInMemory() -> Bool {
+    #if DEBUG
+      return debugEnvironment["UNITERM_BROWSER_STORE"] == "memory"
+    #else
+      return false
+    #endif
   }
 
   /// UI tests set `UNITERM_LAYOUT_DEBOUNCE` to a long delay in seconds, so only the save on quit can
@@ -164,6 +215,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       ProcessInfo.processInfo.environment["UNITERM_PLACE_NAMES"] == "off"
       ? PlaceServices(search: PlaceServices.apple.search) : PlaceServices.apple
 
+    // Every browser pane, new or restored, gets these. The engine is read at each search, so a
+    // change in Settings applies to the next search in every open pane.
+    let browserServices = BrowserServices.live(
+      searchEngine: { settings.value(of: .searchEngine) }, directory: browserDirectory())
+
+    // Every browser pane shares this store. It is never WebKit's default store.
+    let websiteData = BrowserWebsiteData.live(
+      services: browserServices, inMemory: browserStoreIsInMemory())
+    browserWebsiteData = websiteData
+
     let restoreApplet: AppletRestorer = { description in
       switch description.type {
       case TerminalDescription.typeID:
@@ -175,6 +236,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       case MapViewerDescription.typeID:
         return try MapViewerApplet(
           restoring: description, places: places)
+
+      case BrowserApplet.descriptionTypeID:
+        return try BrowserApplet(
+          restoring: description, dataStore: websiteData.store, services: browserServices)
 
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
@@ -195,6 +260,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       case .mapViewer(let region):
         return MapViewerApplet(
           startDirectory: directory, region: region, places: places)
+
+      case .browser:
+        return BrowserApplet(dataStore: websiteData.store, services: browserServices)
       }
     }
 
@@ -456,7 +524,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private func presentSettings() {
-    let controller = settingsWindowController ?? SettingsWindowController(store: settings)
+    let controller =
+      settingsWindowController
+      ?? SettingsWindowController(
+        store: settings,
+        clearWebsiteData: { [weak self] in
+          guard let data = self?.browserWebsiteData else {
+            throw BrowserWebsiteData.ClearError.unavailable
+          }
+
+          try await data.clear()
+        })
     settingsWindowController = controller
     controller.present()
   }

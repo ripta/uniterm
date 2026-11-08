@@ -4,9 +4,9 @@ import XCTest
 /// behavior belongs to AppKit and the window server.
 ///
 /// The app reads a throwaway plist inside the runner's container, so no test touches the
-/// developer's preferences. An out-of-process `defaults write` cannot be proven here. The sandboxed
-/// runner's write never reaches the app as a change notification, and the runner cannot write the
-/// app's real domain. The store's reaction to such a write is covered in the package tests.
+/// developer's preferences. An out-of-process `defaults write` cannot be proven here. The runner
+/// only seeds settings through the launch, and it cannot write the app's real domain. The store's
+/// reaction to such a write is covered in the package tests.
 @MainActor
 final class WindowChromeUITests: UnitermUITestCase {
   /// Catches a content view that covers the traffic lights, or lights that stop working under a

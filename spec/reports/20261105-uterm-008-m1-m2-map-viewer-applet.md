@@ -4,7 +4,7 @@ Started 2026-11-05. This report covers a `/work-queue` run with no arguments, wh
 row, `UTERM-008 M1-M2`, from `spec/proposals/UTERM-008-map-viewer-applet.md`. UTERM-008 adds a MapKit map viewer
 applet. M1 builds the map pane and its description payload. M2 loads pins from a GeoJSON file. M3, pins from programs,
 is a separate row that waits on UTERM-004 M3. The specs live in the code repo, so every commit below is in
-`/Users/ripta/projects/uniterm`, on the `agent/petunia` branch.
+this repo, on the `agent/petunia` branch.
 
 ## Run state
 

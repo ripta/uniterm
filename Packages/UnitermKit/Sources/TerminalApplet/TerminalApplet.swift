@@ -64,7 +64,7 @@ public final class TerminalApplet: Applet {
   public private(set) var segments: [AppletSegment] = []
 
   private let container = TerminalContainerView()
-  private let tabBar = TerminalTabBar()
+  private let tabBar = AppletTabBar()
   private let runPrompt = TerminalRunPrompt()
   private let engine: any TerminalEngine
   private let mode: TerminalDescription.Mode
@@ -542,7 +542,9 @@ public final class TerminalApplet: Applet {
       do {
         try startSession(for: tab)
       } catch {
-        return .failed(title: entry.title, reason: error.localizedDescription)
+        return .failed(
+          title: entry.title,
+          reason: "\(error.localizedDescription). Check that the shell can start, then try again")
       }
     }
 
@@ -632,9 +634,9 @@ public final class TerminalApplet: Applet {
 
   private func layoutContents() {
     let bounds = container.bounds
-    let barHeight = tabBar.isHidden ? 0 : TerminalTabBar.height
+    let barHeight = tabBar.isHidden ? 0 : AppletTabBar.height
 
-    tabBar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: TerminalTabBar.height)
+    tabBar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: AppletTabBar.height)
 
     let content = NSRect(
       x: 0, y: barHeight, width: bounds.width, height: max(0, bounds.height - barHeight))

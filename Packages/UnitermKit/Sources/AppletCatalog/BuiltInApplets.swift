@@ -1,4 +1,5 @@
 import AppletKit
+import BrowserApplet
 import DataViewerApplet
 import MapViewerApplet
 import TerminalApplet
@@ -11,12 +12,16 @@ public enum BuiltInApplets {
     TerminalApplet.typeDeclaration,
     DataViewerApplet.typeDeclaration,
     MapViewerApplet.typeDeclaration,
+    BrowserApplet.typeDeclaration,
   ]
 
   /// The commands each built-in applet type registers. The app registers exactly this list, so a
   /// test over it covers every applet the app ships.
   @MainActor
   public static var commandSets: [AppletCommandSet] {
-    [TerminalApplet.commandSet, DataViewerApplet.commandSet, MapViewerApplet.commandSet]
+    [
+      TerminalApplet.commandSet, DataViewerApplet.commandSet, MapViewerApplet.commandSet,
+      BrowserApplet.commandSet,
+    ]
   }
 }

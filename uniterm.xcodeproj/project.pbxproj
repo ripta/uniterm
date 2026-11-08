@@ -20,6 +20,7 @@
 		7A0000000000000000000044 /* DataViewerApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000045 /* DataViewerApplet */; };
 		7A0000000000000000000046 /* MapViewerApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000047 /* MapViewerApplet */; };
 		7A0000000000000000000048 /* PlaceSearch in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000049 /* PlaceSearch */; };
+		7A000000000000000000004A /* BrowserApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A000000000000000000004B /* BrowserApplet */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +82,7 @@
 				7A0000000000000000000044 /* DataViewerApplet in Frameworks */,
 				7A0000000000000000000046 /* MapViewerApplet in Frameworks */,
 				7A0000000000000000000048 /* PlaceSearch in Frameworks */,
+				7A000000000000000000004A /* BrowserApplet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -147,6 +149,7 @@
 				7A0000000000000000000045 /* DataViewerApplet */,
 				7A0000000000000000000047 /* MapViewerApplet */,
 				7A0000000000000000000049 /* PlaceSearch */,
+				7A000000000000000000004B /* BrowserApplet */,
 			);
 			productName = uniterm;
 			productReference = 7A0000000000000000000006 /* uniterm.app */;
@@ -514,6 +517,10 @@
 		7A0000000000000000000049 /* PlaceSearch */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PlaceSearch;
+		};
+		7A000000000000000000004B /* BrowserApplet */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BrowserApplet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
