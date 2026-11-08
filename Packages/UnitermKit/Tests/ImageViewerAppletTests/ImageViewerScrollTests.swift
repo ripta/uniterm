@@ -56,6 +56,18 @@ final class ImageViewerScrollTests: XCTestCase {
     return (window, scrollView)
   }
 
+  /// Runs the main run loop until the scroll view leaves `start`, or two seconds pass. A fresh
+  /// scroll view applies its first scroll on a later run loop pass, not inside `scrollWheel(with:)`,
+  /// so a fixed wait reads it unmoved under load. A scroll view that never moves still fails the
+  /// caller's "no oracle" check.
+  private func waitForScroll(of scrollView: NSScrollView, from start: NSPoint) {
+    let deadline = Date(timeIntervalSinceNow: 2)
+
+    while scrollView.contentView.bounds.origin == start, Date() < deadline {
+      RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+    }
+  }
+
   private func zoomedView() throws -> ImageViewerView {
     let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
     view.backingScaleSource = { 1 }
@@ -88,7 +100,7 @@ final class ImageViewerScrollTests: XCTestCase {
           scrollView.contentView.scroll(to: NSPoint(x: 1000, y: 1000))
           scrollView.reflectScrolledClipView(scrollView.contentView)
           scrollView.scrollWheel(with: event)
-          RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+          waitForScroll(of: scrollView, from: NSPoint(x: 1000, y: 1000))
 
           let origin = scrollView.contentView.bounds.origin
           let expected = CGSize(width: 1000 - origin.x, height: 1000 - origin.y)
