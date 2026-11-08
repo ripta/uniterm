@@ -3,7 +3,8 @@ import XCTest
 
 @testable import BrowserApplet
 
-/// The toolbar of a real browser view, laid out in a window, and measured through converted frames.
+/// The toolbar of a real browser view, laid out in a window, and measured through converted frames
+/// and the rects the buttons draw their glyphs in.
 ///
 /// A stack view's own vertical insets sit at a priority just under its hugging priority, so the
 /// stack shrank to the field's height. The field then filled the toolbar edge to edge and the page
@@ -54,11 +55,20 @@ final class BrowserToolbarLayoutTests: XCTestCase {
       frame(page).maxY, toolbar.minY + 0.5, "the page starts inside the toolbar, \(name)",
       file: file, line: line)
 
+    // A button's frame carries its bezel's alignment insets, which differ from symbol to symbol,
+    // so a frame's centre is not where its glyph is drawn. The line is measured on the rect the
+    // button's cell draws its image in. The field draws no image, so its frame stands for it.
+    func drawn(_ other: NSView) -> NSRect {
+      guard let button = other as? NSButton, let cell = button.cell else { return frame(other) }
+
+      return view.convert(cell.imageRect(forBounds: button.bounds), from: button)
+    }
+
     let controls: [NSView] = [
       view.backButton, view.forwardButton, view.reloadButton, view.addressField,
       view.profileButton,
     ]
-    let centers = controls.map { frame($0).midY }
+    let centers = controls.map { drawn($0).midY }
 
     // An odd-height control lands on a whole point at 1x, so its centre can sit a point off.
 
