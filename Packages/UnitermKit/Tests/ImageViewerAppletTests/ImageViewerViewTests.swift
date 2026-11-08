@@ -29,11 +29,16 @@ final class ImageViewerViewTests: XCTestCase {
 
     let data = try XCTUnwrap(context.data)
 
+    // Copy the pixels out while the context is certainly alive. The returned closure then owns a
+    // plain array and never touches the context's buffer after the context goes away.
+    let bytes = Array(
+      UnsafeBufferPointer(
+        start: data.assumingMemoryBound(to: UInt8.self), count: width * height * 4))
+
     return { x, y in
       let at = (y * width + x) * 4
-      let bytes = withExtendedLifetime(context) { data.assumingMemoryBound(to: UInt8.self) }
 
-      return [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]
+      return Array(bytes[at..<at + 4])
     }
   }
 
@@ -136,6 +141,9 @@ final class ImageViewerViewTests: XCTestCase {
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.titled],
       backing: .buffered, defer: true)
+
+    window.isReleasedWhenClosed = false
+
     let view = ImageViewerView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
 
     window.contentView = view
