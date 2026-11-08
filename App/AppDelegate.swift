@@ -52,19 +52,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   /// UI tests set `UNITERM_DEFAULTS_PATH` to a plist path inside the test runner's container, so
-  /// they never touch the developer's real preferences. A write to that file from the sandboxed
-  /// runner reaches the running app the way `defaults write` would. Only debug builds honor it.
+  /// they never touch the developer's real preferences. Only debug builds honor it.
+  ///
+  /// `UNITERM_DEFAULTS_SEED` holds the settings a test starts with, as a JSON object of strings.
+  /// They are stored as given, even when invalid, the way `defaults write` would store them. The
+  /// app writes them itself, so it is the suite's only writer. On macOS 26.7, a suite opened by
+  /// path keeps answering with a value another process wrote, even after this process overwrites
+  /// it, so a seed written by the runner would hide every later change.
   private static func makeDefaults(_ environment: [String: String]) -> UserDefaults {
     #if DEBUG
       if let path = environment["UNITERM_DEFAULTS_PATH"],
         let defaults = UserDefaults(suiteName: path)
       {
+        if let seed = environment["UNITERM_DEFAULTS_SEED"] {
+          for (key, value) in decodeSeed(seed) {
+            defaults.set(value, forKey: key)
+          }
+        }
+
         return defaults
       }
     #endif
 
     return .standard
   }
+
+  #if DEBUG
+    /// A seed that does not decode stops the launch. Ignoring it would start the test from the
+    /// wrong settings, and the test would then fail far from the cause.
+    private static func decodeSeed(_ json: String) -> [String: String] {
+      guard let seed = try? JSONDecoder().decode([String: String].self, from: Data(json.utf8))
+      else {
+        fatalError("UNITERM_DEFAULTS_SEED is not a JSON object of strings: \(json)")
+      }
+
+      return seed
+    }
+  #endif
 
   /// UI tests set `UNITERM_TERMINAL_DIR` so the generated terminal config stays out of the
   /// developer's Application Support folder. Only debug builds honor it, since a release build has

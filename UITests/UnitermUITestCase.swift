@@ -49,20 +49,23 @@ class UnitermUITestCase: XCTestCase {
     try Data(json.utf8).write(to: layoutDirectory.appendingPathComponent("layout.json"))
   }
 
-  /// Launches the app. `settings` are written into the app's isolated defaults first, as
+  /// Launches the app. The app stores `settings` in its isolated defaults before it reads them, as
   /// `defaults write` would, so a test starts with a setting such as `paletteMode` already chosen.
+  ///
+  /// The app writes the seed itself. A seed the runner wrote into the plist would keep answering
+  /// reads on macOS 26.7, even after the app changed the setting.
   func launchApp(
     environment: [String: String] = [:], arguments: [String] = [], settings: [String: String] = [:]
   ) -> XCUIApplication {
-    if !settings.isEmpty, let defaults = UserDefaults(suiteName: scratch) {
-      for (key, value) in settings {
-        defaults.set(value, forKey: key)
+    let app = XCUIApplication()
+    if !settings.isEmpty {
+      guard let seed = try? JSONEncoder().encode(settings) else {
+        preconditionFailure("a dictionary of strings always encodes")
       }
 
-      defaults.synchronize()
+      app.launchEnvironment["UNITERM_DEFAULTS_SEED"] = String(decoding: seed, as: UTF8.self)
     }
 
-    let app = XCUIApplication()
     for (key, value) in environment {
       app.launchEnvironment[key] = value
     }
