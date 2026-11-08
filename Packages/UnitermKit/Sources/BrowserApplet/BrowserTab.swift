@@ -625,7 +625,7 @@ final class BrowserTab: NSObject {
     view.stopLoading()
     detach(view)
 
-    if let pid { ClosedViewProbe.watch(view, pid: pid, policy: hangPolicy) }
+    if let pid { ClosedProcessWatch.watch(pid: pid, policy: hangPolicy) }
   }
 
   /// Takes every reference between the web view and this tab away, and the web view off the screen.

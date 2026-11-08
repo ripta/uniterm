@@ -20,13 +20,19 @@ import WebKit
 /// belongs to something else is left alone.
 struct WebContentProcess: Sendable {
   typealias PathOf = @Sendable (pid_t) -> String?
+  typealias Sample = @Sendable (pid_t) -> ProcessSample?
   typealias Signal = @Sendable (pid_t, Int32) -> Void
 
   var pathOf: PathOf
+  var sample: Sample
   var signal: Signal
 
-  init(pathOf: @escaping PathOf = WebContentProcess.executablePath, signal: @escaping Signal) {
+  init(
+    pathOf: @escaping PathOf = WebContentProcess.executablePath,
+    sample: @escaping Sample = WebContentProcess.usage, signal: @escaping Signal
+  ) {
     self.pathOf = pathOf
+    self.sample = sample
     self.signal = signal
   }
 
@@ -67,20 +73,45 @@ struct WebContentProcess: Sendable {
     return true
   }
 
-  /// Ends the content process that a closed `view` had, when the process id still names that
-  /// process and no live web view in the app uses it. A busy page is not a hung one, and a tab
-  /// that shares the process with the closed view may be busy. Returns whether it signalled.
+  /// Ends the content process a closed tab left, when no live web view in the app uses it. A busy
+  /// page is not a hung one, and a tab that shares the process may be busy. Returns whether it
+  /// signalled.
   @MainActor
   @discardableResult
-  func kill(_ pid: pid_t, closedView view: WKWebView) -> Bool {
-    guard identifier(of: view) == pid else { return false }
-
+  func killUnused(_ pid: pid_t) -> Bool {
     guard !LiveContentViews.contains(where: { identifier(of: $0) == pid }) else {
       Self.log.notice("not ending process \(pid): a live tab shares it")
       return false
     }
 
     return kill(pid)
+  }
+
+  /// Reads a process's start time and processor time with `proc_pid_rusage`. Nil when the process
+  /// is gone or not this user's.
+  ///
+  /// The kernel reports processor time in Mach ticks, so the timebase converts it to nanoseconds.
+  /// A release that reported nanoseconds instead would make a spinning process read as idle, and
+  /// the watch would then signal nothing rather than something wrong.
+  static let usage: Sample = { pid in
+    var info = rusage_info_v0()
+    let status = withUnsafeMutablePointer(to: &info) { pointer in
+      pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+        proc_pid_rusage(pid, RUSAGE_INFO_V0, $0)
+      }
+    }
+
+    guard status == 0 else { return nil }
+
+    var base = mach_timebase_info_data_t()
+    mach_timebase_info(&base)
+
+    let ticks = info.ri_user_time + info.ri_system_time
+
+    return ProcessSample(
+      started: info.ri_proc_start_abstime,
+      processorNanoseconds: ticks * UInt64(base.numer) / UInt64(base.denom),
+      takenNanoseconds: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
   }
 
   static let executablePath: PathOf = { pid in
@@ -93,60 +124,57 @@ struct WebContentProcess: Sendable {
   }
 }
 
-/// Watches a web view that a closed tab let go of, and ends its content process when the process
-/// never answers.
+/// One reading of a process. The start time tells a recycled id apart from the process it once
+/// named. Both times are in nanoseconds, so their differences compare.
+struct ProcessSample: Equatable, Sendable {
+  var started: UInt64
+  var processorNanoseconds: UInt64
+  var takenNanoseconds: UInt64
+}
+
+/// Watches the content process a closed tab let go of, and ends it when it spins with no tab left.
 ///
 /// A tab that closes while its page spins never arms the hang bound, since the bound belongs to a
-/// user's reload. The close leaves the spinning process behind. This probe asks the page a trivial
-/// question. A reply from the page, or an error that says the process ended, ends the watch. No
-/// reply within the policy's bound ends the process.
+/// user's reload, so the close would leave the spinning process behind. The close releases the
+/// view at once and keeps only the process id. Holding a closed, detached view until its process
+/// answered a script call crashed WebKit on macOS 26.7 when that process died.
 ///
-/// The probe keeps the web view alive until the watch ends. A released view answers every pending
-/// call at once, which would look like a reply. The work kept after a close is therefore bounded by
-/// the policy's bound, and a page that answers is released within a round trip.
+/// The watch samples the process at the close, and again when the policy's bound runs out. It ends
+/// the process only when the same process is still there, used at least `busyShare` of a core over
+/// the bound, and no live tab uses it. An idle process is left for WebKit to end.
 @MainActor
-final class ClosedViewProbe {
-  private var view: WKWebView?
-  private var cancelBound: HangPolicy.Cancel?
-  private let pid: pid_t
-  private let process: WebContentProcess
+enum ClosedProcessWatch {
+  /// The share of one core a process must use over the bound to count as spinning. A page in an
+  /// endless loop uses a whole core, and half leaves room for a loaded machine.
+  static let busyShare = 0.5
 
   /// Starts the watch. The caller reads `pid` before the view is released.
-  static func watch(_ view: WKWebView, pid: pid_t, policy: HangPolicy) {
-    _ = ClosedViewProbe(view, pid: pid, policy: policy)
+  static func watch(pid: pid_t, policy: HangPolicy) {
+    let process = policy.process
+
+    guard let first = process.sample(pid) else { return }
+
+    _ = policy.schedule(policy.bound) { expired(pid: pid, first: first, process: process) }
   }
 
-  private init(_ view: WKWebView, pid: pid_t, policy: HangPolicy) {
-    self.view = view
-    self.pid = pid
-    self.process = policy.process
+  private static func expired(pid: pid_t, first: ProcessSample, process: WebContentProcess) {
+    guard let last = process.sample(pid), last.started == first.started,
+      last.takenNanoseconds > first.takenNanoseconds,
+      last.processorNanoseconds >= first.processorNanoseconds
+    else { return }
 
-    cancelBound = policy.schedule(policy.bound) { [self] in expired() }
+    let elapsed = Double(last.takenNanoseconds - first.takenNanoseconds)
+    let used = Double(last.processorNanoseconds - first.processorNanoseconds)
 
-    view.evaluateJavaScript("0") { [self] _, _ in finish() }
-  }
+    guard used >= busyShare * elapsed else { return }
 
-  private func finish() {
-    cancelBound?()
-    cancelBound = nil
-    view = nil
-  }
-
-  private func expired() {
-    guard let view else { return }
-
-    cancelBound = nil
-
-    process.kill(pid, closedView: view)
-
-    self.view = nil
+    process.killUnused(pid)
   }
 }
 
-/// The web views that tabs hold now, across every browser pane. A closed tab's view is not in it,
-/// even while a probe keeps that view alive. Browser panes share one website data store, so a
-/// content process can serve a tab in another pane, and only a registry of the whole app can say
-/// whether a process is in use.
+/// The web views that tabs hold now, across every browser pane. A closed tab's view is not in it.
+/// Browser panes share one website data store, so a content process can serve a tab in another
+/// pane, and only a registry of the whole app can say whether a process is in use.
 @MainActor
 enum LiveContentViews {
   private static let views = NSHashTable<WKWebView>.weakObjects()
