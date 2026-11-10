@@ -318,9 +318,6 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     }
     try await waitUntil("an idle prompt") { !session.isRunningSomething }
 
-    // libghostty keeps a pane open with an error when its command dies within 250 ms of launch.
-    // A plain startup file makes the shell that quick, so wait past the window.
-    try await Task.sleep(for: .milliseconds(500))
     try run("exit", in: session)
     try await waitUntil("the exit event") { exited }
     XCTAssertTrue(session.hasExited)
@@ -765,12 +762,13 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     return String(text[range])
   }
 
-  /// Catches program mode that runs a shell instead of the program, that rewrites its arguments, or
-  /// that closes the pane before its output can be read. The program prints its arguments, which
-  /// hold a space, an apostrophe, a semicolon, a glob, and a variable name. None of them may be
-  /// interpreted. The program reads a line, so it is running until Return. After it ends the query
-  /// reads idle, the pane stays, and the next key closes it.
-  func testProgramRunsWithItsArgumentsIntactAndStaysUntilAKey() async throws {
+  /// Catches program mode that runs a shell instead of the program, or that rewrites its
+  /// arguments. Also catches a pane that waits for a key after its program ends. The program
+  /// prints its arguments, which hold a space, an apostrophe, a semicolon, a glob, and a variable
+  /// name. None of them may be interpreted. The program reads a line, so it is running until
+  /// Return. Once it ends, the exit event arrives with no further key, and libghostty's own
+  /// "Press any key" text never appears.
+  func testProgramRunsWithItsArgumentsIntactAndEndsWithoutAKey() async throws {
     let session = try startProgram([
       "/bin/sh", "-c", #"printf 'A:%s:%s:%s:\n' "$1" "$2" "$3"; read x"#, "sh",
       "two words", "it's;*", "$HOME",
@@ -786,15 +784,24 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     XCTAssertTrue(session.isRunningSomething, "a program waiting for input reads as idle")
 
     try press(session, keyCode: 0x24, characters: "\r")
-    try await waitUntil("the program to end") { !session.isRunningSomething }
-
-    // No event announces that the pane stayed open, so a missing exit event can only be seen by
-    // waiting. The wait is bounded and only ever delays the failure case.
-    try await Task.sleep(for: .milliseconds(300))
-    XCTAssertFalse(exited, "the pane closed before a key was pressed")
-
-    try press(session, keyCode: 0x24, characters: "\r")
     try await waitUntil("the exit event") { exited }
+
+    XCTAssertFalse(self.screen(session).contains("Press any key"), self.screen(session))
+  }
+
+  /// Catches a program that ends at once leaving the pane open. libghostty treats a command that
+  /// ends within 250 ms of launch as failed, and waits for a key under its own error text. The
+  /// exit event arrives anyway, and the text never appears.
+  func testAProgramThatEndsAtOnceEndsWithoutAKey() async throws {
+    let session = try startProgram(["/usr/bin/true"])
+    var exited = false
+    session.onEvent = { event in
+      if case .exited = event { exited = true }
+    }
+
+    try await waitUntil("the exit event") { exited }
+
+    XCTAssertFalse(self.screen(session).contains("Press any key"), self.screen(session))
   }
 
   /// Catches a program launch that loses Ghostty's TERM, or an ssh launch that keeps it. A plain

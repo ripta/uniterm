@@ -150,6 +150,29 @@ final class TerminalUITests: UnitermUITestCase {
     XCTAssertEqual(app.state, .runningForeground)
   }
 
+  /// Catches a program pane that waits for a key after its program ends. The launcher's program
+  /// entry runs `sleep 3` in a split, and the split closes on its own once the program ends. No
+  /// key is pressed after Return.
+  func testAProgramPaneClosesWhenItsProgramEnds() {
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    _ = waitForTerminal(in: app)
+
+    app.typeKey("d", modifierFlags: .command)
+    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5), "Cmd-D showed no launcher")
+
+    app.typeKey("2", modifierFlags: .command)
+    XCTAssertTrue(window.textFields["launcher-command"].waitForExistence(timeout: 5))
+    app.typeText("sleep 3")
+    app.typeKey(.return, modifierFlags: [])
+
+    let pane = window.groups["pane-2"]
+
+    XCTAssertTrue(pane.textViews["terminal"].waitForExistence(timeout: 20), "no program pane")
+    XCTAssertTrue(waitUntilGone(pane, timeout: 20), "the program pane stayed after sleep ended")
+    XCTAssertTrue(window.groups["pane-1"].exists, "the first pane went away too")
+  }
+
   /// Catches a Clear Screen command that does not reach the terminal. It has no default key, so
   /// the test runs it from the palette. The marker leaves the screen.
   func testClearScreenClearsTheTerminal() {
