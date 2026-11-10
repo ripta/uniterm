@@ -166,6 +166,51 @@ final class LauncherUITests: UnitermUITestCase {
     }
   }
 
+  /// Catches a short pane that clips the filter box or strands entries out of reach, and keeps a
+  /// picture of it. Two downward splits leave the newest launcher in a pane about a quarter of
+  /// the window tall. Its filter box is on screen. The scroll wheel brings the last entry into
+  /// view, and so do the arrow keys once they reach it.
+  func testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry() {
+    let (app, window) = startedWindow()
+
+    app.typeKey("d", modifierFlags: [.command, .shift])
+    XCTAssertTrue(
+      launcher(in: window).waitForExistence(timeout: 5), "Cmd-Shift-D showed no launcher")
+    Thread.sleep(forTimeInterval: 0.5)
+    attach(window, named: "launcher-half-height")
+
+    app.typeKey("d", modifierFlags: [.command, .shift])
+
+    let pane = window.groups.matching(
+      NSPredicate(format: "identifier BEGINSWITH 'pane-' AND value == 'focused'")
+    ).firstMatch
+    let filter = pane.textFields["launcher-filter"]
+
+    XCTAssertTrue(filter.waitForExistence(timeout: 5), "the second split showed no launcher")
+    XCTAssertTrue(filter.isHittable, "the filter box is off screen")
+    Thread.sleep(forTimeInterval: 0.5)
+    attach(window, named: "launcher-quarter-height")
+
+    let last = pane.buttons["launcher-repl"]
+
+    XCTAssertFalse(last.isHittable, "the pane is tall enough to show every entry")
+
+    pane.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -1000)
+    XCTAssertTrue(last.isHittable, "the scroll wheel did not scroll the list")
+    Thread.sleep(forTimeInterval: 0.5)
+    attach(window, named: "launcher-quarter-height-wheel")
+
+    for _ in 1..<8 {
+      app.typeKey(.downArrow, modifierFlags: [])
+    }
+
+    XCTAssertTrue(
+      waitFor(last, timeout: 5) { $0 == "selected" }, "the arrow keys did not reach the last entry")
+    XCTAssertTrue(last.isHittable, "the last entry is out of sight")
+    Thread.sleep(forTimeInterval: 0.5)
+    attach(window, named: "launcher-quarter-height-last")
+  }
+
   private func attach(_ element: XCUIElement, named name: String) {
     let screenshot = element.screenshot()
 

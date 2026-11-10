@@ -604,22 +604,12 @@ final class LauncherTests: XCTestCase {
   /// Catches a launcher whose constraints cannot all hold in a pane that is tiny or has no size
   /// yet. AppKit logs each unsatisfiable set and breaks one constraint. The test checks that every
   /// required constraint holds after layout, and first proves the check sees a deliberate conflict.
-  /// At the minimum pane size the card is taller than the pane. It must stay top-aligned with its title in view, and the stage must clip it so it never draws
-  /// over the hint bar.
+  /// The stage must clip the card, so it never draws over the hint bar.
   func testTinyAndEmptyPanesLayOutWithoutConflictsAndClipTheCard() throws {
-    let view = LauncherView()
-    let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.borderless],
-      backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false
-    window.contentView = view
-    view.choose(.program)
+    let (view, window) = bareLauncher()
+    defer { window.close() }
 
-    func lay(out size: NSSize) {
-      window.setContentSize(size)
-      view.frame = NSRect(origin: .zero, size: size)
-      view.layoutSubtreeIfNeeded()
-    }
+    view.choose(.program)
 
     let probe = NSView()
     probe.translatesAutoresizingMaskIntoConstraints = false
@@ -632,16 +622,131 @@ final class LauncherTests: XCTestCase {
     probe.removeFromSuperview()
 
     for size in [NSSize.zero, NSSize(width: 200, height: 100), NSSize(width: 380, height: 60)] {
-      lay(out: size)
+      lay(out: view, in: window, at: size)
       let broken = unsatisfiedRequiredConstraints(under: view)
       XCTAssertTrue(broken.isEmpty, "\(size): \(broken)")
     }
 
-    lay(out: NSSize(width: 200, height: 100))
-
-    let title = view.convert(view.titleLabel.bounds, from: view.titleLabel)
-    XCTAssertGreaterThanOrEqual(title.minY, 0, "the title is pushed out of the pane")
     XCTAssertEqual(view.stage.layer?.masksToBounds, true, "the card is not clipped to its stage")
+  }
+
+  /// Catches a short pane that clips the filter box, squashes the legend, or hides the header
+  /// when there is room for it. Only the pane's size decides what shows. With room for the whole
+  /// unfiltered list, the header sits above the filter box. Shorter, the header gives way and the
+  /// filter box moves to the top. Shorter still, the legend gives way too, so the list keeps room.
+  /// A legend that shows is never cut short and sits on the pane's bottom edge.
+  func testAShortPaneGivesUpTheHeaderThenTheLegendButNeverTheFilterBox() throws {
+    let (view, window) = bareLauncher()
+    defer { window.close() }
+
+    let hint = try XCTUnwrap(subview(of: view, identifiedAs: "launcher-hint") as? NSTextField)
+    let cell = try XCTUnwrap(hint.cell)
+
+    for (size, header, legend) in [
+      (NSSize(width: 400, height: 700), true, true),
+      (NSSize(width: 369, height: 300), false, true),
+      (NSSize(width: 369, height: 115), false, false),
+      (NSSize(width: 200, height: 100), false, false),
+    ] {
+      lay(out: view, in: window, at: size)
+
+      let filter = view.convert(view.filterBox.bounds, from: view.filterBox)
+      let stage = view.convert(view.stage.bounds, from: view.stage)
+
+      XCTAssertTrue(
+        stage.insetBy(dx: -0.5, dy: -0.5).contains(filter),
+        "\(size): the filter box \(filter) is clipped by the stage \(stage)")
+      XCTAssertEqual(!view.titleLabel.isHiddenOrHasHiddenAncestor, header, "\(size): the header")
+      XCTAssertEqual(!hint.isHiddenOrHasHiddenAncestor, legend, "\(size): the legend")
+
+      if !header {
+        XCTAssertEqual(filter.minY, 8, accuracy: 0.5, "\(size): the filter box is not at the top")
+      }
+
+      guard legend else { continue }
+
+      let needed = cell.cellSize(
+        forBounds: NSRect(x: 0, y: 0, width: hint.bounds.width, height: 10_000)
+      ).height
+      let text = view.convert(hint.bounds, from: hint)
+
+      XCTAssertGreaterThanOrEqual(hint.bounds.height, needed - 0.5, "\(size): the legend is cut")
+      XCTAssertEqual(
+        text.maxY, view.bounds.maxY - 10, accuracy: 0.5, "\(size): legend off the edge")
+      XCTAssertLessThanOrEqual(stage.maxY, text.minY, "\(size): the stage runs over the legend")
+    }
+  }
+
+  /// Catches a list that cannot scroll in a short pane, or a selection that moves out of sight.
+  /// Picking the last entry and then the first brings each one wholly into view. Picking the
+  /// program entry brings its command field into view, since the field holds the keyboard.
+  func testTheSelectionAndItsFieldScrollIntoViewInAShortPane() throws {
+    let (view, window) = bareLauncher()
+    defer { window.close() }
+
+    lay(out: view, in: window, at: NSSize(width: 369, height: 115))
+
+    for number in [LauncherEntry.all.count, 1] {
+      XCTAssertTrue(view.pick(number: number))
+      view.layoutSubtreeIfNeeded()
+
+      let row = try XCTUnwrap(view.rows.first { $0.isSelected })
+      XCTAssertTrue(isWhollyVisible(row, in: view), "entry \(number) is out of sight")
+    }
+
+    view.choose(.program)
+    view.layoutSubtreeIfNeeded()
+
+    XCTAssertTrue(view.isFocused(view.commandField))
+    XCTAssertTrue(isWhollyVisible(view.commandBox, in: view), "the command field is out of sight")
+  }
+
+  /// A launcher alone in a borderless window. `lay(out:in:at:)` sizes it the way its pane would.
+  ///
+  /// A pane sets its applet view's frame, so the launcher sits in a plain container and keeps the
+  /// frame it is given. As the window's content view, its own constraints would outrank the
+  /// window's size and grow the window to fit the card.
+  private func bareLauncher() -> (view: LauncherView, window: NSWindow) {
+    let view = LauncherView()
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.borderless],
+      backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = NSView()
+    window.contentView?.addSubview(view)
+
+    return (view, window)
+  }
+
+  private func lay(out view: LauncherView, in window: NSWindow, at size: NSSize) {
+    window.setContentSize(size)
+    view.frame = NSRect(origin: .zero, size: size)
+    window.contentView?.layoutSubtreeIfNeeded()
+
+    XCTAssertEqual(view.frame.size, size, "the launcher did not keep its pane's size")
+  }
+
+  private func subview(of root: NSView, identifiedAs identifier: String) -> NSView? {
+    if root.accessibilityIdentifier() == identifier { return root }
+
+    return root.subviews.lazy.compactMap { self.subview(of: $0, identifiedAs: identifier) }.first
+  }
+
+  /// Whether every view from `part` up to `root` shows all of `part`. A clip view shows only its
+  /// bounds, and so does the stage, so a part scrolled or pushed out of either fails.
+  private func isWhollyVisible(_ part: NSView, in root: NSView) -> Bool {
+    var rect = part.bounds
+    var view = part
+
+    while view !== root, let parent = view.superview {
+      rect = parent.convert(rect, from: view)
+
+      guard parent.bounds.insetBy(dx: -0.5, dy: -0.5).contains(rect) else { return false }
+
+      view = parent
+    }
+
+    return view === root
   }
 
   // MARK: Restored windows
@@ -738,7 +843,24 @@ final class LauncherTests: XCTestCase {
 private func unsatisfiedRequiredConstraints(under root: NSView) -> [String] {
   func rect(of item: AnyObject?) -> NSRect? {
     if let view = item as? NSView {
-      return root.convert(view.alignmentRect(forFrame: view.bounds), from: view)
+      var rect = root.convert(view.alignmentRect(forFrame: view.bounds), from: view)
+
+      // A clip view's constraints place its document as if it were not scrolled. Scrolling moves
+      // the document and everything in it by the clip view's bounds origin, so that offset is
+      // taken back out.
+      var ancestor = view.superview
+
+      while let current = ancestor, current !== root {
+        if let clip = current as? NSClipView {
+          let visible = root.convert(clip.bounds.origin, from: clip)
+          let unscrolled = root.convert(NSPoint.zero, from: clip)
+          rect = rect.offsetBy(dx: visible.x - unscrolled.x, dy: visible.y - unscrolled.y)
+        }
+
+        ancestor = current.superview
+      }
+
+      return rect
     }
 
     if let guide = item as? NSLayoutGuide, let owner = guide.owningView {
