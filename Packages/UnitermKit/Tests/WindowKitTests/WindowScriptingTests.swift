@@ -344,6 +344,45 @@ final class WindowScriptingTests: XCTestCase {
       "no pane is stacked with the first")
   }
 
+  /// Catches a pane or tab opened for a caller whose authority ended while its directory was
+  /// checked. The authority check runs after the directory check and before the layout changes,
+  /// and a refusal from it leaves the window as it was.
+  func testACallerRefusedAfterTheDirectoryCheckOpensNoPaneAndNoTab() async throws {
+    let checked = DirectoryCheckLog()
+    let fixture = makeFixture(directoryExists: { _ in
+      checked.record()
+      return true
+    })
+
+    fixture.make = {
+      let applet = FakeApplet()
+      applet.canOpenTab = true
+      return applet
+    }
+
+    let (controller, pane) = try fixture.openWindow()
+    let applet = try XCTUnwrap(fixture.made.first)
+    var checksSeen: [Int] = []
+    let refuse: @MainActor () throws -> Void = {
+      checksSeen.append(checked.count)
+      throw ScriptCallError.refused("synthetic refusal")
+    }
+
+    await assertError(.refused, "synthetic refusal") {
+      try await fixture.scripting.openPane(
+        kind: "terminal", beside: pane, axis: nil, directory: "/synthetic", stillAllowed: refuse)
+    }
+
+    await assertError(.refused, "synthetic refusal") {
+      try await fixture.scripting.openTab(
+        pane: pane, directory: "/synthetic", stillAllowed: refuse)
+    }
+
+    XCTAssertEqual(checksSeen, [1, 2], "the authority check ran before the directory check")
+    XCTAssertEqual(controller.paneIDs.count, 1)
+    XCTAssertEqual(applet.openedTabDirectories, [])
+  }
+
   // MARK: Opening tabs
 
   /// Catches a tab opened in the wrong place or with the wrong directory, and a reference that does
@@ -812,4 +851,23 @@ final class WindowScriptingTests: XCTestCase {
 
 extension UInt64 {
   fileprivate var nodeID: NodeID { NodeID(rawValue: self) }
+}
+
+/// Counts the directory checks, which run off the main actor.
+private final class DirectoryCheckLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var checks = 0
+
+  func record() {
+    lock.lock()
+    checks += 1
+    lock.unlock()
+  }
+
+  var count: Int {
+    lock.lock()
+    defer { lock.unlock() }
+
+    return checks
+  }
 }

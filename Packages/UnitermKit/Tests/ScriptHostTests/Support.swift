@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ScriptTestSupport
 import ScriptWire
 import XCTest
 
@@ -49,6 +50,10 @@ enum ScriptFixtures {
 
     _ = setsockopt(
       socket.rawDescriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+      socklen_t(MemoryLayout<timeval>.size))
+
+    _ = setsockopt(
+      socket.rawDescriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout,
       socklen_t(MemoryLayout<timeval>.size))
 
     return socket
@@ -264,4 +269,11 @@ func mainThreadIsWaiting(_ pid: pid_t) -> Bool {
 /// Waits until the process's main thread is blocked, for at most `timeout`.
 func waitUntilBlocked(_ pid: pid_t, timeout: Duration = .seconds(10)) async -> Bool {
   await pollUntil(timeout: timeout, interval: .milliseconds(10)) { mainThreadIsWaiting(pid) }
+}
+
+/// Records the test process as a session root, so the helpers a test starts are bound to window
+/// 1's pane 1.
+@MainActor
+func recordTestProcessAsSessionRoot(_ host: ScriptHost) {
+  TestSessionRoot.record(in: host)
 }

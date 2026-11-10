@@ -1,4 +1,6 @@
 import AppKit
+import Darwin
+import ProcessInspection
 import Theme
 
 /// What a terminal session starts. The directory and environment are applied to the child process.
@@ -101,12 +103,36 @@ public final class TerminalClipboardRequest: @unchecked Sendable {
   }
 }
 
+/// The process a terminal session spawned: its PID, the second it started, and the session's
+/// generation within its surface. The PID alone can be reused, so the start time tells a later
+/// process with the same PID apart.
+public struct TerminalProcessIdentity: Sendable, Equatable {
+  public let pid: pid_t
+  public let started: Int
+  public let sessionGeneration: UInt64
+
+  public init(pid: pid_t, started: Int, sessionGeneration: UInt64) {
+    self.pid = pid
+    self.started = started
+    self.sessionGeneration = sessionGeneration
+  }
+
+  static func startTime(of pid: pid_t) -> Int? {
+    ProcessInspection.startTime(of: pid)
+  }
+}
+
 /// Something that happened in the terminal. The session reports it on the main actor.
 public enum TerminalEvent: Sendable {
   case titleChanged(String)
 
   /// The shell reported its directory with OSC 7. The value is a path.
   case workingDirectoryChanged(String)
+
+  /// The session's child process started. The identity names the process libghostty spawned,
+  /// never one a program claims. It arrives on the main actor shortly after the session starts,
+  /// so no identity exists at launch.
+  case processStarted(TerminalProcessIdentity)
 
   /// The shell reported that a command ended, with OSC 133. This is the only prompt mark that
   /// libghostty passes to its embedder. Whether the cursor sits at a prompt is answered by

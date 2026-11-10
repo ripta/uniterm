@@ -23,6 +23,14 @@ inputs=(
   .github/actions/macos-setup/action.yml
 )
 
+# Patches are named relative to the repo, and sorted bytewise, so the key is the same in every
+# checkout and every locale.
+if [ -d "$ROOT/ThirdParty/ghostty-patches" ]; then
+  while IFS= read -r -d '' patch; do
+    inputs+=("$patch")
+  done < <(cd "$ROOT" && find ThirdParty/ghostty-patches -type f -name '*.patch' -print0 | LC_ALL=C sort -z)
+fi
+
 if command -v sha256sum >/dev/null; then
   digest=(sha256sum)
 else

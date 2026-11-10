@@ -34,6 +34,8 @@ final class ScriptHostAPITests: XCTestCase {
       listener: listener, issueProducer: { center.issueProducer(kind: .script, name: $0) },
       windows: windows, sentContent: try ScriptSentContent(root: sentRoot))
     host.start()
+
+    recordTestProcessAsSessionRoot(host)
   }
 
   override func tearDown() async throws {
@@ -191,6 +193,7 @@ final class ScriptHostAPITests: XCTestCase {
       listener: other, issueProducer: { center.issueProducer(kind: .script, name: $0) })
 
     bare.start()
+    recordTestProcessAsSessionRoot(bare)
     defer { bare.stop() }
 
     let run = try await ScriptFixtures.run(

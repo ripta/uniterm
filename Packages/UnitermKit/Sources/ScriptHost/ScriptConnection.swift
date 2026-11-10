@@ -1,5 +1,18 @@
 import Foundation
+import ProcessInspection
 import ScriptWire
+
+/// A connection's binding to a session root: one found through the peer's ancestry at admission,
+/// or one the user granted.
+public struct ConnectionBinding: Sendable, Equatable {
+  public let root: ProcessIdentity
+  public let generation: UInt64
+
+  public init(root: ProcessIdentity, generation: UInt64) {
+    self.root = root
+    self.generation = generation
+  }
+}
 
 /// One helper's connection to the app, after its hello was accepted.
 ///
@@ -22,6 +35,12 @@ public final class ScriptConnection: @unchecked Sendable, Identifiable {
   public let id: UInt64
   public let peer: ScriptPeer
 
+  /// The peer's start time, read when the connection was admitted. Used to detect PID reuse.
+  public let peerStartTime: Int
+
+  /// The session root this connection is bound to. Nil when the connection is unbound.
+  private(set) var binding: ConnectionBinding?
+
   let socket: FramedSocket
   let slots = DispatchSemaphore(value: maxInFlight)
 
@@ -33,14 +52,46 @@ public final class ScriptConnection: @unchecked Sendable, Identifiable {
   private var queuedBytes = 0
 
   init(
-    id: UInt64, peer: ScriptPeer, socket: FramedSocket,
+    id: UInt64, peer: ScriptPeer, peerStartTime: Int, socket: FramedSocket,
+    binding: ConnectionBinding? = nil,
     onOverflow: @escaping @Sendable (ScriptConnection) -> Void = { _ in }
   ) {
     self.id = id
     self.peer = peer
+    self.peerStartTime = peerStartTime
     self.socket = socket
+    self.binding = binding
     self.onOverflow = onOverflow
     self.writer = DispatchQueue(label: "uniterm.script.writer.\(id)")
+  }
+
+  /// True when the connection is bound to a validated session root.
+  public var isBound: Bool { binding != nil }
+
+  /// Lets the connection act for the session `root` started, while that root keeps `generation`.
+  /// Each call checks the binding again before it runs.
+  @MainActor
+  func bind(to root: ProcessIdentity, generation: UInt64) {
+    binding = ConnectionBinding(root: root, generation: generation)
+  }
+
+  /// Takes the connection's binding away, so its calls are refused again.
+  @MainActor
+  func unbind() {
+    binding = nil
+  }
+
+  /// Validates that the connection's binding is still valid. Returns false when the peer process is
+  /// no longer running with the same identity, or the session root is no longer recorded with the
+  /// same generation.
+  @MainActor
+  public func validateBinding(registry: SessionRootRegistry) -> Bool {
+    guard let binding else { return false }
+    guard ProcessInspection.isRunning(pid: peer.pid, started: peerStartTime) else { return false }
+    guard let recordedGeneration = registry.sessionGeneration(for: binding.root) else {
+      return false
+    }
+    return recordedGeneration == binding.generation
   }
 
   /// What waits for the writer now, for the tests.

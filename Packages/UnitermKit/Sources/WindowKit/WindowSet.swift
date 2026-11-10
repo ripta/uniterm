@@ -1,6 +1,8 @@
 import AppKit
 import AppletKit
+import Foundation
 import LayoutKit
+import PaneModel
 import StatusKit
 
 /// Where a new window lands when it cascades from an existing one.
@@ -93,6 +95,16 @@ public final class WindowSet {
   /// Runs when a window opens or closes, and when anything a saved layout holds changes in one.
   public var onLayoutChange: (() -> Void)?
 
+  /// Runs when a terminal or REPL session starts, with the window's script ID, the pane, the tab,
+  /// the spawned process and its start time, and the session generation.
+  private var onSessionStarted: ((UInt64, NodeID, AppletTabID, pid_t, Int, UInt64) -> Void)?
+
+  /// Runs when a session ends, with the window's script ID, the pane, the tab, and the process.
+  private var onSessionEnded: ((UInt64, NodeID, AppletTabID, pid_t, Int) -> Void)?
+
+  /// Runs after a window closed, with its script ID. Every session in it has ended by then.
+  private var onScriptWindowClosed: ((UInt64) -> Void)?
+
   /// The states that belong to the window rather than to a pane, as the instance sees them.
   /// Every window shows them, including one that opens later. They live here, above any one
   /// window, and the set never writes them to the layout file.
@@ -109,6 +121,18 @@ public final class WindowSet {
   public func clearWindowState(_ kind: WindowStateKind) {
     windowStates.clear(kind)
     publishWindowStates()
+  }
+
+  /// Sends each window's session starts and ends, and each window close, to the given handlers.
+  /// The app wires them to the script host once it has one.
+  public func wireSessionReporting(
+    onStarted: @escaping (UInt64, NodeID, AppletTabID, pid_t, Int, UInt64) -> Void,
+    onEnded: @escaping (UInt64, NodeID, AppletTabID, pid_t, Int) -> Void,
+    onWindowClosed: @escaping (UInt64) -> Void
+  ) {
+    onSessionStarted = onStarted
+    onSessionEnded = onEnded
+    onScriptWindowClosed = onWindowClosed
   }
 
   private func publishWindowStates() {
@@ -351,6 +375,12 @@ public final class WindowSet {
     controller.onBecomeKey = { [weak self] controller in
       self?.noteKey(controller)
     }
+    controller.onSessionStarted = { [weak self] windowID, pane, tab, pid, started, generation in
+      self?.onSessionStarted?(windowID, pane, tab, pid, started, generation)
+    }
+    controller.onSessionEnded = { [weak self] windowID, pane, tab, pid, started in
+      self?.onSessionEnded?(windowID, pane, tab, pid, started)
+    }
     controller.visibleFrameProvider = visibleFrame
     controller.windowStates = windowStates
     controller.refreshMinimumSize()
@@ -423,6 +453,7 @@ public final class WindowSet {
 
   private func windowDidClose(_ controller: MainWindowController) {
     controllers.removeAll { $0 === controller }
+    onScriptWindowClosed?(controller.scriptWindowID)
 
     keyOrder.removeAll { $0 === controller }
     closing.append(controller)

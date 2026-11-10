@@ -357,6 +357,47 @@ final class WindowSetTests: XCTestCase {
     XCTAssertFalse(other.closed)
   }
 
+  /// Catches a session report that names the wrong window or pane, and a window close that never
+  /// reaches the script host, which would leave grants to the window's panes standing. An applet's
+  /// session start and end arrive with its window's script ID and its pane, and the close arrives
+  /// with the same ID once the window's applets have closed.
+  func testSessionReportsAndAWindowCloseReachTheWiredHandlersWithTheWindowsID() throws {
+    let fixture = makeFixture()
+    var started: [(UInt64, NodeID, pid_t)] = []
+    var ended: [(UInt64, NodeID, pid_t)] = []
+    var closed: [UInt64] = []
+    var appletClosedFirst: Bool?
+
+    fixture.windows.wireSessionReporting(
+      onStarted: { window, pane, _, pid, _, _ in started.append((window, pane, pid)) },
+      onEnded: { window, pane, _, pid, _ in ended.append((window, pane, pid)) },
+      onWindowClosed: {
+        closed.append($0)
+        appletClosedFirst = fixture.log.made.last?.closed
+      })
+
+    _ = try fixture.windows.open()
+
+    let controller = try fixture.windows.open()
+    let applet = try XCTUnwrap(fixture.log.made.last)
+    let pane = try XCTUnwrap(controller.paneIDs.first)
+    let host = try XCTUnwrap(applet.host)
+
+    host.applet(applet, sessionStarted: AppletTabID.make(), pid: 41, started: 1, generation: 1)
+    host.applet(applet, sessionEnded: AppletTabID.make(), pid: 41, started: 1)
+
+    XCTAssertEqual(started.map(\.0), [controller.scriptWindowID])
+    XCTAssertEqual(started.map(\.1), [pane])
+    XCTAssertEqual(started.map(\.2), [41])
+    XCTAssertEqual(ended.map(\.0), [controller.scriptWindowID])
+    XCTAssertEqual(ended.map(\.1), [pane])
+
+    controller.window?.close()
+
+    XCTAssertEqual(closed, [controller.scriptWindowID])
+    XCTAssertEqual(appletClosedFirst, true, "the window reported its close before its applets")
+  }
+
   /// Catches a set that cannot open a window once the last one has closed.
   ///
   /// The set is empty after the last close, and opening again works with the next number.

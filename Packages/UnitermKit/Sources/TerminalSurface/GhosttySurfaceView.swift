@@ -28,6 +28,10 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   /// How many times libghostty has applied a new config to this surface.
   private(set) var configChangeCount = 0
 
+  /// A counter that increments each time a session starts in this view. It identifies the session
+  /// instance for authority checks.
+  private var sessionGeneration: UInt64 = 0
+
   var onEvent: (@MainActor (TerminalEvent) -> Void)?
   private(set) var title = ""
   private(set) var workingDirectory: String?
@@ -90,6 +94,7 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     }
 
     surface = created
+    sessionGeneration += 1
     updateTrackingAreas()
   }
 
@@ -204,6 +209,17 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     case .workingDirectory(let value):
       workingDirectory = value
       onEvent?(.workingDirectoryChanged(value))
+
+    case .processStarted(let pid):
+      // The fork has returned by the time libghostty reports the PID, so the child's record
+      // exists. A child that has already exited reports no start time, and gets no identity, so
+      // nothing can bind to it.
+      guard let started = TerminalProcessIdentity.startTime(of: pid_t(pid)) else { return }
+
+      onEvent?(
+        .processStarted(
+          TerminalProcessIdentity(
+            pid: pid_t(pid), started: started, sessionGeneration: sessionGeneration)))
 
     case .notification(let title, let body):
       onEvent?(.notification(title: title, body: body))

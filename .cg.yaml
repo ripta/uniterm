@@ -2,6 +2,7 @@ version: 1
 allow:
   - exact: [./scripts/check-sandbox-off.sh]
   - exact: [./scripts/check-sandbox-off.sh, .build/DerivedData/Build/Products/Debug/uniterm.app]
+  - prefix: [./scripts/clean-test-processes.sh]
   - prefix: [./scripts/run-ui-tests.sh]
   - prefix: [./scripts/swiftpm-offline-check.sh]
   - prefix: [/usr/bin/lldb, --batch]
@@ -27,6 +28,7 @@ allow:
   - prefix: [sed]
   - prefix: [shasum]
   - prefix: [swift, build]
+  - prefix: [swift, package]
   - prefix: [swift, package, resolve]
   - prefix: [swift, test]
   - prefix: [swiftc]
