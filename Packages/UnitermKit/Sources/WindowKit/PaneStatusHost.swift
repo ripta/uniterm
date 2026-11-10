@@ -104,4 +104,16 @@ final class PaneStatusHost: AppletHost {
   func issueCloseStamp() -> UInt64 {
     window?.issueCloseStamp() ?? 0
   }
+
+  func applet(
+    _ applet: any Applet, sessionStarted tab: AppletTabID, pid: pid_t, started: Int,
+    generation: UInt64
+  ) {
+    window?.applet(
+      applet, in: pane, sessionStarted: tab, pid: pid, started: started, generation: generation)
+  }
+
+  func applet(_ applet: any Applet, sessionEnded tab: AppletTabID, pid: pid_t, started: Int) {
+    window?.applet(applet, in: pane, sessionEnded: tab, pid: pid, started: started)
+  }
 }

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ProcessInspection
 import ScriptWire
 
 /// The app's listening socket for script helpers.
@@ -272,8 +273,16 @@ public final class ScriptListener: @unchecked Sendable {
       return
     }
 
+    guard let peerStartTime = ProcessInspection.startTime(of: peer.pid) else {
+      continuation.yield(
+        .refused(peer, .protocolViolation("the peer process is no longer running")))
+      socket.shutdownAndClose()
+
+      return
+    }
+
     let connection = ScriptConnection(
-      id: id, peer: peer, socket: socket,
+      id: id, peer: peer, peerStartTime: peerStartTime, socket: socket,
       onOverflow: { [continuation] connection in
         continuation.yield(.refused(connection.peer, .peerNotReading))
       })
@@ -405,5 +414,13 @@ public final class ScriptListener: @unchecked Sendable {
 
     _ = setsockopt(
       descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  }
+
+  /// Finds a connection by its ID. Returns nil when the connection is not found or has closed.
+  public func findConnection(_ id: UInt64) -> ScriptConnection? {
+    lock.lock()
+    defer { lock.unlock() }
+
+    return connections[id]
   }
 }

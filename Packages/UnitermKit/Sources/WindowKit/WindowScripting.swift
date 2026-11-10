@@ -106,7 +106,8 @@ public final class WindowScripting: ScriptWindowAPI {
   // MARK: Opening
 
   public func openPane(
-    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?
+    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?,
+    stillAllowed: @MainActor () throws -> Void = {}
   ) async throws -> ScriptValue {
     guard let choice = Self.kinds.first(where: { $0.name == kind })?.choice else {
       let names = Self.kinds.map { ":\($0.name)" }.joined(separator: ", ")
@@ -121,6 +122,8 @@ public final class WindowScripting: ScriptWindowAPI {
 
       try await checkDirectory(directory)
     }
+
+    try stillAllowed()
 
     let (controller, pane, _) = try resolve(beside)
 
@@ -143,10 +146,13 @@ public final class WindowScripting: ScriptWindowAPI {
     ])
   }
 
-  public func openTab(pane reference: ScriptPaneReference, directory: String?) async throws
-    -> ScriptValue
-  {
+  public func openTab(
+    pane reference: ScriptPaneReference, directory: String?,
+    stillAllowed: @MainActor () throws -> Void = {}
+  ) async throws -> ScriptValue {
     if let directory { try await checkDirectory(directory) }
+
+    try stillAllowed()
 
     let (controller, pane, applet) = try resolve(reference)
 

@@ -37,6 +37,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     var title: String
     var workingDirectory: String?
     var failedExitCode: Int?
+    var processIdentity: (pid: pid_t, started: Int)?
 
     /// A program-mode tab restored from a description. It has no session until the user runs it.
     var awaitingRun = false
@@ -313,6 +314,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     alerts.discard()
 
     for tab in tabs {
+      if let identity = tab.processIdentity {
+        host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
+        tab.processIdentity = nil
+      }
       tab.session?.view.removeFromSuperview()
       tab.session?.close()
       tab.session = nil
@@ -584,6 +589,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     let hadFocus = hasFocus
     let tab = tabs.remove(at: index)
 
+    if let identity = tab.processIdentity {
+      host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
+      tab.processIdentity = nil
+    }
     tab.session?.view.removeFromSuperview()
     tab.session?.close()
     tab.session = nil
@@ -686,6 +695,12 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
         host?.appletDidChange(self)
       }
 
+    case .processStarted(let identity):
+      tab.processIdentity = (pid: identity.pid, started: identity.started)
+      host?.applet(
+        self, sessionStarted: tab.id, pid: identity.pid, started: identity.started,
+        generation: identity.sessionGeneration)
+
     case .commandFinished(let exitCode, _):
       tab.failedExitCode = exitCode.flatMap { $0 != 0 ? $0 : nil }
 
@@ -706,6 +721,11 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
     case .exited:
       guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
+
+      if let identity = tab.processIdentity {
+        host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
+        tab.processIdentity = nil
+      }
 
       if tabs.count == 1 {
         host?.appletDidExit(self)

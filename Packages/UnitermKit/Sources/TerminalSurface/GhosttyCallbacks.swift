@@ -6,6 +6,7 @@ internal import GhosttyKit
 enum SurfaceNotice: Sendable {
   case title(String)
   case workingDirectory(String)
+  case processStarted(pid: Int64)
   case notification(title: String, body: String)
   case commandFinished(exitCode: Int?, durationNanoseconds: UInt64)
   case bell
@@ -87,6 +88,10 @@ enum GhosttyCallbacks {
       guard let pwd = action.action.pwd.pwd else { return true }
 
       notice = .workingDirectory(String(cString: pwd))
+
+    case GHOSTTY_ACTION_CHILD_STARTED:
+      let pid = action.action.child_started.pid
+      notice = .processStarted(pid: pid)
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
       let raw = action.action.desktop_notification

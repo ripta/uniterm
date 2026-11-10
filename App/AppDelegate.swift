@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var commandMenu: CommandMenu?
   private var layoutPersistence: LayoutPersistence?
   private var settingsWindowController: SettingsWindowController?
+  private var pendingRequestsWindowController: PendingRequestsWindowController?
   private var browserWebsiteData: BrowserWebsiteData?
   private var scriptHost: ScriptHost?
   private var askingToQuit = false
@@ -181,6 +182,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       host.start()
       scriptHost = host
+
+      host.onPendingRequestsActiveChanged = { [weak windows] active in
+        if active {
+          windows?.setWindowState(.pendingPermissions, text: "Pending permission requests")
+        } else {
+          windows?.clearWindowState(.pendingPermissions)
+        }
+      }
+
+      windows.wireSessionReporting(
+        onStarted: { [weak host] windowID, pane, _, pid, started, generation in
+          host?.recordSessionRoot(
+            ProcessIdentity(pid: pid, started: started), sessionGeneration: generation,
+            window: windowID, pane: pane)
+        },
+        onEnded: { [weak host] windowID, pane, _, pid, started in
+          host?.removeSessionRoot(
+            ProcessIdentity(pid: pid, started: started), window: windowID, pane: pane)
+        },
+        onWindowClosed: { [weak host] windowID in host?.windowClosed(windowID) }
+      )
     } catch {
       logger.error("scripting did not start: \(String(describing: error), privacy: .public)")
       windows.post(level: .warning, text: "Scripts cannot connect to uniterm: \(error)")
@@ -263,6 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       app: AppCommandHooks(
         newWindow: { [weak self] in self?.openWindow() },
         showSettings: { [weak self] in self?.presentSettings() },
+        showPendingRequests: { [weak self] in self?.presentPendingRequests() },
         installCommandLineTool: { [weak self] in self?.installCommandLineTool() },
         openFile: { [weak self] anchor in
           Task { await self?.fileOpens?.open(from: anchor) }
@@ -684,5 +707,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     settingsWindowController = controller
     controller.present()
+  }
+
+  private func presentPendingRequests() {
+    guard let host = scriptHost, let windows = windowSet else { return }
+
+    let controller =
+      pendingRequestsWindowController
+      ?? PendingRequestsWindowController(scriptHost: host, windows: windows)
+    pendingRequestsWindowController = controller
+    controller.showWindow(nil)
   }
 }

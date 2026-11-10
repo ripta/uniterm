@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ProcessInspection
 import ScriptWire
 
 /// The socket files in the app's per-user folder: binding one, holding the well-known address, and
@@ -112,7 +113,7 @@ enum ScriptSocketFiles {
   @discardableResult
   static func removeStaleSockets(
     in directory: URL, current: pid_t = getpid(),
-    startTime: (pid_t) -> Int? = ProcessIdentity.startTime(of:)
+    startTime: (pid_t) -> Int? = ProcessInspection.startTime(of:)
   ) -> [String] {
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else {
       return []

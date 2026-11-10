@@ -69,6 +69,16 @@ public protocol AppletHost: AnyObject {
   /// counter, so the window can order a closed tab against a closed pane. An applet asks for one
   /// when it records a close, after any question has been answered.
   func issueCloseStamp() -> UInt64
+
+  /// Reports that a terminal or REPL session started in the given tab. The PID and start time
+  /// identify the spawned process. The session generation identifies this session instance within
+  /// the tab. The host records this as a session root for authority checking.
+  func applet(
+    _ applet: any Applet, sessionStarted tab: AppletTabID, pid: pid_t, started: Int,
+    generation: UInt64)
+
+  /// Reports that a session ended in the given tab. The host removes the session root.
+  func applet(_ applet: any Applet, sessionEnded tab: AppletTabID, pid: pid_t, started: Int)
 }
 
 extension AppletHost {

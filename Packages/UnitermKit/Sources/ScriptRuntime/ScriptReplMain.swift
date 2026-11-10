@@ -21,10 +21,11 @@ public enum ScriptReplMain {
 
   static var usageText: String {
     """
-    usage: uniterm repl --socket PATH
+    usage: uniterm repl [--allow CAPABILITY]... --socket PATH
 
     Runs a Janet REPL that uniterm started. It needs the token that uniterm passes in the
-    environment, and the socket of the uniterm instance that started it.
+    environment, and the socket of the uniterm instance that started it. Each --allow lifts one
+    capability that the REPL's sandbox denies by default.
     """
   }
 
@@ -33,6 +34,7 @@ public enum ScriptReplMain {
     var probe = false
     var trace = false
     var memoryCap: UInt64?
+    var allowed: [String] = []
     var index = 0
 
     while index < arguments.count {
@@ -41,6 +43,14 @@ public enum ScriptReplMain {
         guard index + 1 < arguments.count else { return fail("--socket needs a value", .usage) }
 
         socket = arguments[index + 1]
+        index += 2
+
+      case "--allow":
+        guard index + 1 < arguments.count else {
+          return fail("--allow needs a capability name", .usage)
+        }
+
+        allowed.append(arguments[index + 1])
         index += 2
 
       case probeFlag:
@@ -75,6 +85,16 @@ public enum ScriptReplMain {
         return fail("unknown option \(ScriptHelperMain.memoryCapFlag)\n\(usageText)", .usage)
       }
     #endif
+
+    // A name Janet does not know is refused before the helper connects, so the pane says why at
+    // once.
+    let sandbox: UInt32
+
+    do {
+      sandbox = try ScriptCapabilities.denied(granting: allowed)
+    } catch {
+      return fail("\(error)", .usage)
+    }
 
     if let memoryCap { uniterm_janet_set_memory_cap(memoryCap) }
 
@@ -147,7 +167,12 @@ public enum ScriptReplMain {
       session.close()
     }
 
-    guard let failure = ScriptVM.runRepl(session: session, sandbox: uniterm_janet_default_sandbox)
+    if !allowed.isEmpty {
+      FileHandle.standardOutput.write(
+        Data("This REPL may use: \(allowed.joined(separator: ", "))\n".utf8))
+    }
+
+    guard let failure = ScriptVM.runRepl(session: session, sandbox: sandbox)
     else { return ScriptHelperMain.Exit.ok }
 
     return fail(failure.description, .scriptFailed)

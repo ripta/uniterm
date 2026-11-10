@@ -1,0 +1,135 @@
+diff --git i/include/ghostty.h w/include/ghostty.h
+index 9a12b9c..32069d8 100644
+--- i/include/ghostty.h
++++ w/include/ghostty.h
+@@ -897,6 +897,10 @@ typedef struct {
+   uint64_t timetime_ms;
+ } ghostty_surface_message_childexited_s;
+
++typedef struct {
++  int64_t pid;
++} ghostty_action_child_started_s;
++
+ // terminal.osc.Command.ProgressReport.State
+ typedef enum {
+   GHOSTTY_PROGRESS_STATE_REMOVE,
+@@ -1015,6 +1019,7 @@ typedef enum {
+   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
+   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
+   GHOSTTY_ACTION_RESIZE_WINDOW,
++  GHOSTTY_ACTION_CHILD_STARTED,
+ } ghostty_action_tag_e;
+
+ typedef union {
+@@ -1053,6 +1058,7 @@ typedef union {
+   ghostty_action_open_url_s open_url;
+   ghostty_action_close_tab_mode_e close_tab_mode;
+   ghostty_surface_message_childexited_s child_exited;
++  ghostty_action_child_started_s child_started;
+   ghostty_action_progress_report_s progress_report;
+   ghostty_action_command_finished_s command_finished;
+   ghostty_action_start_search_s start_search;
+diff --git i/src/Surface.zig w/src/Surface.zig
+index 369bb23..cd5a9dc 100644
+--- i/src/Surface.zig
++++ w/src/Surface.zig
+@@ -1138,6 +1138,14 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
+
+         .close => self.close(),
+
++        .child_started => |v| {
++            _ = try self.rt_app.performAction(
++                .{ .surface = self },
++                .child_started,
++                .{ .pid = v.pid },
++            );
++        },
++
+         .child_exited => |v| self.childExited(v),
+
+         .desktop_notification => |notification| {
+diff --git i/src/apprt/action.zig w/src/apprt/action.zig
+index 708898e..017691a 100644
+--- i/src/apprt/action.zig
++++ w/src/apprt/action.zig
+@@ -354,6 +354,9 @@ pub const Action = union(Key) {
+     /// split or the window is fullscreen.
+     resize_window: ResizeWindow,
+
++    /// The spawned child process has started.
++    child_started: ChildStarted,
++
+     /// Sync with: ghostty_action_tag_e
+     pub const Key = enum(c_int) {
+         quit,
+@@ -435,6 +438,7 @@ pub const Action = union(Key) {
+         copy_title_to_clipboard,
+         move_tab_to_new_window,
+         resize_window,
++        child_started,
+
+         test "ghostty.h Action.Key" {
+             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+@@ -1008,6 +1012,10 @@ pub const CloseTabMode = enum(c_int) {
+     }
+ };
+
++pub const ChildStarted = extern struct {
++    pid: i64,
++};
++
+ pub const CommandFinished = struct {
+     exit_code: ?u8,
+     duration: configpkg.Config.Duration,
+diff --git i/src/apprt/surface.zig w/src/apprt/surface.zig
+index 3b1a04d..c1139c9 100644
+--- i/src/apprt/surface.zig
++++ w/src/apprt/surface.zig
+@@ -106,6 +106,9 @@ pub const Message = union(enum) {
+     /// command are given in the `ChildExited` struct.
+     child_exited: ChildExited,
+
++    /// The child process has started.
++    child_started: ChildStarted,
++
+     /// Show a desktop notification.
+     desktop_notification: DesktopNotification,
+
+@@ -181,6 +184,19 @@ pub const Message = union(enum) {
+             .none => void,
+         };
+     };
++
++    pub const ChildStarted = extern struct {
++        pid: i64,
++
++        pub const getGObjectType = switch (build_config.app_runtime) {
++            .gtk,
++            => @import("gobject").ext.defineBoxed(
++                ChildStarted,
++                .{ .name = "GhosttyApprtChildStarted" },
++            ),
++            else => void,
++        };
++    };
+ };
+
+ /// A surface mailbox.
+diff --git i/src/termio/Exec.zig w/src/termio/Exec.zig
+index df57e0f..6104a8f 100644
+--- i/src/termio/Exec.zig
++++ w/src/termio/Exec.zig
+@@ -117,6 +117,13 @@ pub fn threadEnter(
+     } else return error.ProcessNotStarted;
+     errdefer if (process) |*p| p.deinit();
+
++    // Report the spawned child's PID to the embedder, which records it as the session root.
++    if (self.subprocess.process) |v| if (v == .fork_exec) {
++        if (v.fork_exec.pid) |pid| {
++            _ = td.surface_mailbox.push(.{ .child_started = .{ .pid = @intCast(pid) } }, .{ .forever = {} });
++        }
++    };
++
+     // Track our process start time for abnormal exits
+     const process_start: std.Io.Timestamp = .now(global.io(), .awake);
+
