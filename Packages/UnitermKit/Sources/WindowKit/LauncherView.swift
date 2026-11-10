@@ -170,10 +170,22 @@ final class LauncherFieldBox: NSView {
   }
 }
 
+/// Holds the launcher's list inside its scroll view. It is flipped, so the list starts at the top.
+@MainActor
+private final class LauncherListDocument: NSView {
+  override var isFlipped: Bool { true }
+
+  override var mouseDownCanMoveWindow: Bool { false }
+}
+
 /// What a new pane shows until the user picks an applet.
 ///
 /// The view owns the model and turns keys and clicks into model changes. It never opens an applet
 /// itself. `onChoose` does, and may throw to refuse. `onExit` asks to close the empty pane.
+///
+/// A short pane drops parts in a fixed order: the header first, then the legend. The filter box
+/// always shows, and the list scrolls in whatever room is left. Only the pane's size picks the
+/// parts, so nothing jumps while the user types. See `Fit`.
 ///
 /// The keyboard always belongs to a text field. The filter has it by default, the command field has
 /// it while the program entry is selected, and the place field has it while the map viewer is
@@ -185,7 +197,37 @@ final class LauncherFieldBox: NSView {
 /// the keyboard is inside it.
 @MainActor
 final class LauncherView: NSView, NSTextFieldDelegate {
+  /// How much of the launcher its pane has room for.
+  enum Fit: Equatable {
+    /// The header, the filter box, every entry, and the legend all fit. The card sits in the
+    /// middle of the pane.
+    case full
+
+    /// The header gives way. The filter box sits at the top, and the list scrolls under it.
+    case compact
+
+    /// The legend gives way too, so the list keeps room for an entry.
+    case tight
+  }
+
+  /// The constraints that differ between fits.
+  private struct FitConstraints {
+    let centered: NSLayoutConstraint
+    let atTop: NSLayoutConstraint
+    let aboveLegend: NSLayoutConstraint
+    let onBottom: NSLayoutConstraint
+  }
+
+  private static let cardMargin: CGFloat = 8
+  private static let cardSpacing: CGFloat = 12
+  private static let fieldHeight: CGFloat = 32
+  private static let listSpacing: CGFloat = 2
+  private static let legendInset: CGFloat = 12
+  private static let legendPadding: CGFloat = 10
+
   private(set) var model = LauncherModel()
+
+  private var fit = Fit.full
 
   var onChoose: ((AppletChoice) throws -> Void)?
   var onExit: (() -> Void)?
@@ -196,6 +238,7 @@ final class LauncherView: NSView, NSTextFieldDelegate {
   let titleLabel = NSTextField(labelWithString: "New pane")
   let subtitleLabel = NSTextField(
     labelWithString: "Choose what runs here. Return opens a terminal.")
+  private let header = NSStackView()
   private let magnifier = NSImageView()
   let filterBox = LauncherFieldBox()
   let commandBox = LauncherFieldBox()
@@ -205,6 +248,11 @@ final class LauncherView: NSView, NSTextFieldDelegate {
   private let emptyLabel = NSTextField(labelWithString: "No applet matches.")
   private let commandWrapper = NSView()
   private let placeWrapper = NSView()
+  private let list = NSStackView()
+  private let listDocument = LauncherListDocument()
+
+  /// Scrolls the list when it is taller than the room under the filter box.
+  private let listScroll = NSScrollView()
 
   /// The place field under the map viewer's row, once the launcher has a place search.
   private(set) var placeSearch: PlaceSearchView?
@@ -213,6 +261,10 @@ final class LauncherView: NSView, NSTextFieldDelegate {
   private let hintLabel = NSTextField(wrappingLabelWithString: LauncherView.hint)
   private(set) var rows: [LauncherRowView] = []
   private var palette: ThemePalette = .latte
+  private var fitConstraints: FitConstraints?
+
+  /// Every row is the same height, since every row has the same fonts and the same tile.
+  private var rowHeight: CGFloat = 0
 
   static let hint =
     "Type to filter \u{00B7} \u{2191}\u{2193} Choose \u{00B7} \u{21A9} Open \u{00B7} "
@@ -228,6 +280,10 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     wantsLayer = true
     build()
     apply(.latte)
+
+    rowHeight = rows.first?.fittingSize.height ?? 0
+    adopt(fit(for: bounds.size), force: true)
+
     render()
   }
 
@@ -242,7 +298,7 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
     subtitleLabel.font = .systemFont(ofSize: 12)
 
-    let header = NSStackView(views: [titleLabel, subtitleLabel])
+    header.setViews([titleLabel, subtitleLabel], in: .leading)
     header.orientation = .vertical
     header.alignment = .leading
     header.spacing = 2
@@ -294,10 +350,9 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     emptyLabel.font = .systemFont(ofSize: 12)
     emptyLabel.setAccessibilityIdentifier("launcher-empty")
 
-    let list = NSStackView()
     list.orientation = .vertical
     list.alignment = .leading
-    list.spacing = 2
+    list.spacing = Self.listSpacing
 
     for entry in LauncherEntry.all {
       let row = LauncherRowView(entry: entry)
@@ -322,12 +377,13 @@ final class LauncherView: NSView, NSTextFieldDelegate {
 
     list.addArrangedSubview(emptyLabel)
     pinWidths(of: list.arrangedSubviews, to: list)
+    buildListScroll()
 
-    let card = NSStackView(views: [header, filterBox, list])
+    let card = NSStackView(views: [header, filterBox, listScroll])
     card.orientation = .vertical
     card.alignment = .leading
     pinWidths(of: card.arrangedSubviews, to: card)
-    card.spacing = 12
+    card.spacing = Self.cardSpacing
     card.translatesAutoresizingMaskIntoConstraints = false
 
     stage.translatesAutoresizingMaskIntoConstraints = false
@@ -345,6 +401,9 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     hintBar.addSubview(hintRule)
     hintBar.addSubview(hintLabel)
 
+    // A legend that shows is never cut short. The card's margins give way first.
+    hintLabel.setContentCompressionResistancePriority(.init(800), for: .vertical)
+
     addSubview(stage)
     addSubview(hintBar)
 
@@ -353,30 +412,46 @@ final class LauncherView: NSView, NSTextFieldDelegate {
 
     // A pane narrower than the card squeezes it. The margins give way before the window's
     // required constraints do, so a pane at its minimum size does not log a conflict.
+    //
+    // The top margin outranks the bottom one. A card taller than its stage keeps the filter box in
+    // view and loses room at the bottom, where the list scrolls.
     let margins = [
       card.leadingAnchor.constraint(greaterThanOrEqualTo: stage.leadingAnchor, constant: 16),
       card.trailingAnchor.constraint(lessThanOrEqualTo: stage.trailingAnchor, constant: -16),
-      card.topAnchor.constraint(greaterThanOrEqualTo: stage.topAnchor, constant: 8),
-      card.bottomAnchor.constraint(lessThanOrEqualTo: stage.bottomAnchor, constant: -8),
+      card.topAnchor.constraint(
+        greaterThanOrEqualTo: stage.topAnchor, constant: Self.cardMargin),
+      card.bottomAnchor.constraint(
+        lessThanOrEqualTo: stage.bottomAnchor, constant: -Self.cardMargin),
     ]
 
     for margin in margins {
       margin.priority = NSLayoutConstraint.Priority(760)
     }
 
+    margins[2].priority = NSLayoutConstraint.Priority(780)
     NSLayoutConstraint.activate(margins)
 
-    // Centered while the card fits. When it is taller than the pane, the top margin wins, so the
-    // title stays in view and the stage clips the rest.
     let centered = card.centerYAnchor.constraint(equalTo: stage.centerYAnchor)
     centered.priority = NSLayoutConstraint.Priority(740)
-    centered.isActive = true
+
+    let atTop = card.topAnchor.constraint(equalTo: stage.topAnchor, constant: Self.cardMargin)
+    atTop.priority = NSLayoutConstraint.Priority(740)
+
+    // The legend's text keeps its inset at any width but zero, where it would need a negative
+    // width. A pane has no size until its first layout.
+    let legendTrailing = hintLabel.trailingAnchor.constraint(
+      equalTo: hintBar.trailingAnchor, constant: -Self.legendInset)
+    legendTrailing.priority = NSLayoutConstraint.Priority(999)
+
+    fitConstraints = FitConstraints(
+      centered: centered, atTop: atTop,
+      aboveLegend: stage.bottomAnchor.constraint(equalTo: hintBar.topAnchor),
+      onBottom: stage.bottomAnchor.constraint(equalTo: bottomAnchor))
 
     NSLayoutConstraint.activate([
       stage.leadingAnchor.constraint(equalTo: leadingAnchor),
       stage.trailingAnchor.constraint(equalTo: trailingAnchor),
       stage.topAnchor.constraint(equalTo: topAnchor),
-      stage.bottomAnchor.constraint(equalTo: hintBar.topAnchor),
       hintBar.leadingAnchor.constraint(equalTo: leadingAnchor),
       hintBar.trailingAnchor.constraint(equalTo: trailingAnchor),
       hintBar.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -386,15 +461,52 @@ final class LauncherView: NSView, NSTextFieldDelegate {
       hintRule.trailingAnchor.constraint(equalTo: hintBar.trailingAnchor),
       hintRule.topAnchor.constraint(equalTo: hintBar.topAnchor),
       hintRule.heightAnchor.constraint(equalToConstant: 1),
-      hintLabel.leadingAnchor.constraint(equalTo: hintBar.leadingAnchor, constant: 12),
-      hintLabel.trailingAnchor.constraint(equalTo: hintBar.trailingAnchor, constant: -12),
-      hintLabel.topAnchor.constraint(equalTo: hintBar.topAnchor, constant: 10),
-      hintLabel.bottomAnchor.constraint(equalTo: hintBar.bottomAnchor, constant: -10),
+      hintLabel.leadingAnchor.constraint(
+        equalTo: hintBar.leadingAnchor, constant: Self.legendInset),
+      legendTrailing,
+      hintLabel.topAnchor.constraint(equalTo: hintBar.topAnchor, constant: Self.legendPadding),
+      hintLabel.bottomAnchor.constraint(
+        equalTo: hintBar.bottomAnchor, constant: -Self.legendPadding),
     ])
 
     setAccessibilityElement(true)
     setAccessibilityRole(.group)
     setAccessibilityIdentifier("launcher")
+  }
+
+  /// Puts the list in a scroll view that is as tall as the list when there is room, and shorter
+  /// when there is not. The list then scrolls under the filter box.
+  private func buildListScroll() {
+    list.translatesAutoresizingMaskIntoConstraints = false
+    listDocument.translatesAutoresizingMaskIntoConstraints = false
+    listDocument.addSubview(list)
+
+    listScroll.translatesAutoresizingMaskIntoConstraints = false
+    listScroll.drawsBackground = false
+    listScroll.borderType = .noBorder
+    listScroll.hasVerticalScroller = true
+    listScroll.autohidesScrollers = true
+    listScroll.horizontalScrollElasticity = .none
+    listScroll.documentView = listDocument
+
+    let clip = listScroll.contentView
+
+    // Below the card's margins, so a list taller than the room left shrinks its scroll view
+    // instead of pushing the card past the stage.
+    let fitsList = listScroll.heightAnchor.constraint(equalTo: listDocument.heightAnchor)
+    fitsList.priority = NSLayoutConstraint.Priority(700)
+
+    NSLayoutConstraint.activate([
+      list.leadingAnchor.constraint(equalTo: listDocument.leadingAnchor),
+      list.trailingAnchor.constraint(equalTo: listDocument.trailingAnchor),
+      list.topAnchor.constraint(equalTo: listDocument.topAnchor),
+      list.bottomAnchor.constraint(equalTo: listDocument.bottomAnchor),
+      listDocument.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+      listDocument.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
+      listDocument.topAnchor.constraint(equalTo: clip.topAnchor),
+      listScroll.heightAnchor.constraint(lessThanOrEqualTo: listDocument.heightAnchor),
+      fitsList,
+    ])
   }
 
   /// Stretches each view to the stack's width. A vertical stack's own alignment would only match
@@ -427,7 +539,7 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     lead.setContentCompressionResistancePriority(.required, for: .horizontal)
 
     NSLayoutConstraint.activate([
-      box.heightAnchor.constraint(equalToConstant: 32),
+      box.heightAnchor.constraint(equalToConstant: Self.fieldHeight),
       lead.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 10),
       lead.centerYAnchor.constraint(equalTo: box.centerYAnchor),
       field.leadingAnchor.constraint(equalTo: lead.trailingAnchor, constant: 8),
@@ -509,6 +621,63 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     placeSearch?.stop()
   }
 
+  // MARK: Fit
+
+  override func setFrameSize(_ newSize: NSSize) {
+    super.setFrameSize(newSize)
+
+    adopt(fit(for: newSize))
+  }
+
+  /// The fit for a pane of `size`. It counts every entry and neither inline field, so it depends on
+  /// the pane alone and holds while the filter or the selection changes.
+  private func fit(for size: NSSize) -> Fit {
+    let legend = legendHeight(forWidth: size.width)
+    let count = CGFloat(rows.count)
+    let entries = count * rowHeight + max(0, count - 1) * Self.listSpacing
+    let headerHeight =
+      titleLabel.intrinsicContentSize.height + header.spacing
+      + subtitleLabel.intrinsicContentSize.height
+
+    let everything =
+      Self.cardMargin + headerHeight + Self.cardSpacing + Self.fieldHeight + Self.cardSpacing
+      + entries + Self.cardMargin
+    let fieldAndOneEntry =
+      Self.cardMargin + Self.fieldHeight + Self.cardSpacing + rowHeight + Self.cardMargin
+
+    if size.height >= legend + everything { return .full }
+
+    if size.height >= legend + fieldAndOneEntry { return .compact }
+
+    return .tight
+  }
+
+  /// The legend's height at a pane width, with its text wrapped to fit.
+  private func legendHeight(forWidth width: CGFloat) -> CGFloat {
+    let bounds = NSRect(
+      x: 0, y: 0, width: max(0, width - 2 * Self.legendInset), height: .greatestFiniteMagnitude)
+    let text = hintLabel.cell?.cellSize(forBounds: bounds).height ?? 0
+
+    return ceil(text) + 2 * Self.legendPadding
+  }
+
+  private func adopt(_ fit: Fit, force: Bool = false) {
+    guard let constraints = fitConstraints, force || fit != self.fit else { return }
+
+    self.fit = fit
+    header.isHidden = fit != .full
+    hintBar.isHidden = fit == .tight
+
+    NSLayoutConstraint.deactivate([
+      fit == .full ? constraints.atTop : constraints.centered,
+      fit == .tight ? constraints.aboveLegend : constraints.onBottom,
+    ])
+    NSLayoutConstraint.activate([
+      fit == .full ? constraints.centered : constraints.atTop,
+      fit == .tight ? constraints.onBottom : constraints.aboveLegend,
+    ])
+  }
+
   // MARK: Rendering
 
   private func render() {
@@ -537,6 +706,24 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     if commandField.stringValue != model.command {
       commandField.stringValue = model.command
     }
+
+    revealSelection()
+  }
+
+  /// Scrolls the list so the selected entry shows, along with the field under it. When both do not
+  /// fit, the field wins, since it holds the keyboard.
+  private func revealSelection() {
+    guard let row = rows.first(where: { $0.isSelected }) else { return }
+
+    layoutSubtreeIfNeeded()
+
+    guard let field = [commandWrapper, placeWrapper].first(where: { !$0.isHidden }) else {
+      list.scrollToVisible(row.frame)
+      return
+    }
+
+    list.scrollToVisible(row.frame.union(field.frame))
+    list.scrollToVisible(field.frame)
   }
 
   // MARK: Actions
