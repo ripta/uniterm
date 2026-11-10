@@ -317,12 +317,49 @@ final class ReplAppletTests: XCTestCase {
 
   // MARK: Helper death
 
-  /// Catches a pane that closes when its helper dies, one that loses its history, and one that
-  /// restarts on its own. The pane stays open with a message, restarts only when the user asks, and
-  /// the new helper is sent the history.
-  func testWhenTheHelperDiesThePaneStaysAndRestartKeepsTheHistory() async throws {
+  /// Catches a pane that stays open after its helper ends by itself, as with Ctrl-D or
+  /// `(os/exit 0)`. The connection closes with no reason, and the pane asks to close, the way a
+  /// shell's pane does. It shows no ended message on the way.
+  func testAHelperThatEndsByItselfClosesThePane() async throws {
     let recorder = RecordingHost()
     let applet = makeApplet(host: recorder)
+    let (peer, _) = try await attach(try XCTUnwrap(engine.sessions.first))
+
+    peer.shutdownAndClose()
+
+    let closed = await waitUntil { recorder.exited }
+
+    XCTAssertTrue(closed, "the pane stayed with \(String(describing: applet.endedMessage))")
+    XCTAssertNil(applet.endedMessage)
+  }
+
+  /// Catches the same, when the pty's exit reaches the pane before the connection closes. The
+  /// pane waits for the connection to say whether a reason follows, and none does.
+  func testAPtyExitThenAConnectionClosedWithNoReasonClosesThePane() async throws {
+    let recorder = RecordingHost()
+    let applet = makeApplet(host: recorder)
+    let session = try XCTUnwrap(engine.sessions.first)
+    let (peer, _) = try await attach(session)
+
+    session.onEvent?(.exited)
+
+    XCTAssertNil(applet.endedMessage, "the pane showed a message before the reason could arrive")
+    XCTAssertFalse(recorder.exited)
+
+    peer.shutdownAndClose()
+
+    let closed = await waitUntil { recorder.exited }
+
+    XCTAssertTrue(closed, "the pane stayed with \(String(describing: applet.endedMessage))")
+  }
+
+  /// Catches a pane that closes when uniterm itself ends its helper, one that loses its history,
+  /// and one that restarts on its own. The memory cap is one such end. The pane stays open with
+  /// the reason, restarts only when the user asks, and the new helper is sent the history.
+  func testWhenUnitermEndsTheHelperThePaneStaysAndRestartKeepsTheHistory() async throws {
+    let recorder = RecordingHost()
+    let services = try makeLimitedHost(knobs: Knobs(), budget: 1 << 40)
+    let applet = makeApplet(services: services, host: recorder)
     let first = try XCTUnwrap(engine.sessions.first)
     let (peer, _) = try await attach(first)
 
@@ -332,13 +369,18 @@ final class ReplAppletTests: XCTestCase {
 
     XCTAssertTrue(kept)
 
+    try peer.send(ScriptHelperMessage.memoryLimit.frame())
     peer.shutdownAndClose()
 
     let ended = await waitUntil { applet.endedMessage != nil }
 
     XCTAssertTrue(ended)
-    XCTAssertFalse(recorder.exited, "the pane asked to close when the helper died")
+    XCTAssertFalse(recorder.exited, "the pane asked to close when uniterm ended its helper")
     XCTAssertEqual(applet.segments.first?.text, "Ended")
+
+    first.onEvent?(.exited)
+
+    XCTAssertFalse(recorder.exited, "the pty's later exit closed the pane")
 
     // The only path that starts a helper is `restart`, and it is synchronous. A turn of the main
     // actor is enough for a restart that something scheduled.
@@ -882,26 +924,28 @@ extension ReplAppletTests {
     XCTAssertTrue(message.contains("Restart"), message)
   }
 
-  /// Catches the pty's exit reaching the pane before the helper's memory notice, which would show
-  /// a generic message and drop the reason. The later notice upgrades the message. It cannot prove
+  /// Catches the pty's exit reaching the pane before the helper's memory notice, which would drop
+  /// the reason or close the pane. The pane waits, then names the cap and stays. It cannot prove
   /// the order a real helper's two reports arrive in, since the test sets the order.
   func testAMemoryLimitNoticeAfterThePtyExitedStillGivesThePaneItsReason() async throws {
     let knobs = Knobs()
+    let recorder = RecordingHost()
     let services = try makeLimitedHost(knobs: knobs, budget: 1 << 40)
-    let applet = makeApplet(services: services)
+    let applet = makeApplet(services: services, host: recorder)
     let session = try XCTUnwrap(engine.sessions.first)
     let (peer, _) = try await attach(session)
 
     session.onEvent?(.exited)
 
-    XCTAssertEqual(applet.endedMessage, "The REPL ended.")
+    XCTAssertNil(applet.endedMessage, "the pane showed a message before the reason could arrive")
 
     try peer.send(ScriptHelperMessage.memoryLimit.frame())
     peer.shutdownAndClose()
 
-    let upgraded = await waitUntil { applet.endedMessage?.contains("1 GiB") == true }
+    let named = await waitUntil { applet.endedMessage?.contains("1 GiB") == true }
 
-    XCTAssertTrue(upgraded, "the pane kept \(String(describing: applet.endedMessage))")
+    XCTAssertTrue(named, "the pane showed \(String(describing: applet.endedMessage))")
     XCTAssertTrue(try XCTUnwrap(applet.endedMessage).contains("Restart"))
+    XCTAssertFalse(recorder.exited)
   }
 }
