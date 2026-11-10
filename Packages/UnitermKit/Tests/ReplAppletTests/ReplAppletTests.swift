@@ -3,6 +3,7 @@ import AppletKit
 import AppletTestSupport
 import Darwin
 import Preferences
+import ScriptTestSupport
 import ScriptWire
 import StatusKit
 import TerminalSurface
@@ -84,6 +85,9 @@ final class ReplAppletTests: XCTestCase {
       listener: try ScriptListener.start(directory: directory),
       issueProducer: { _ in nil }, reaper: reaper)
     host.start()
+
+    TestSessionRoot.record(in: host)
+
     engine = ReplFakeEngine()
   }
 
@@ -114,7 +118,16 @@ final class ReplAppletTests: XCTestCase {
   private var services: ReplServices {
     ReplServices(
       helper: { URL(fileURLWithPath: "/synthetic/uniterm") },
-      openChannel: { [host] history in host?.admitRepl(history: history) ?? .refused(.scriptingOff)
+      openChannel: { [host] history in
+        guard let host else { return .refused(.scriptingOff) }
+
+        let opening = host.admitRepl(history: history)
+
+        if case .channel(let channel) = opening {
+          TestSessionRoot.set(on: channel)
+        }
+
+        return opening
       })
   }
 
@@ -485,6 +498,70 @@ final class ReplAppletTests: XCTestCase {
     XCTAssertTrue(reaped)
   }
 
+  // MARK: Capabilities
+
+  /// Catches a capability restart that widens the running helper, keeps its channel, or leaks the
+  /// chosen capabilities past that one helper. The restart ends the old helper's session and
+  /// connection, and starts a fresh helper on a new token with exactly the chosen flags. Nothing is
+  /// saved, and the next restart and a restored pane start with none.
+  func testACapabilityRestartStartsAFreshHelperWithOnlyTheChosenCapabilities() async throws {
+    let recorder = RecordingHost()
+    let applet = makeApplet(host: recorder)
+    let first = try XCTUnwrap(engine.sessions.first)
+    let (oldPeer, _) = try await attach(first)
+    let login = TerminalProcessIdentity(
+      pid: getpid(), started: testRoot.started, sessionGeneration: 1)
+
+    first.onEvent?(.processStarted(login))
+    XCTAssertEqual(applet.helperCapabilities, [])
+
+    applet.restart(withCapabilities: ["fs-read", "net"])
+
+    XCTAssertTrue(first.closed)
+    XCTAssertEqual(
+      recorder.endedSessions.map(\.pid), [getpid()], "the old helper's session never ended")
+    XCTAssertThrowsError(try oldPeer.readFrame(limit: ScriptAppMessage.bodyLimit(type:))) {
+      XCTAssertEqual($0 as? WireError, .closed)
+    }
+
+    XCTAssertEqual(engine.sessions.count, 2)
+
+    let second = engine.sessions[1].launch
+
+    XCTAssertEqual(
+      second.program,
+      [
+        "/synthetic/uniterm", "repl", "--allow", "fs-read", "--allow", "net", "--socket",
+        host.instanceAddress,
+      ])
+    XCTAssertNotEqual(
+      second.environment[ScriptProtocol.replTokenVariable],
+      first.launch.environment[ScriptProtocol.replTokenVariable])
+    XCTAssertEqual(applet.helperCapabilities, ["fs-read", "net"])
+
+    _ = try await attach(engine.sessions[1])
+
+    let saved = applet.describe()
+
+    XCTAssertEqual(try ReplDescription.decode(saved).history, [])
+    XCTAssertFalse(String(describing: saved.payload).contains("fs-read"))
+
+    applet.restart(withCapabilities: [])
+
+    XCTAssertFalse(try XCTUnwrap(engine.sessions.last?.launch.program).contains("--allow"))
+    XCTAssertEqual(applet.helperCapabilities, [])
+
+    let restored = try ReplApplet(
+      engine: engine, services: services, restoring: saved, home: "/synthetic/home")
+
+    applets.append(restored)
+    restored.start(origin: .restore)
+
+    XCTAssertFalse(try XCTUnwrap(engine.sessions.last?.launch.program).contains("--allow"))
+  }
+
+  private var testRoot: ProcessIdentity { TestSessionRoot.identity }
+
   // MARK: Restore
 
   /// Catches a restore that runs a saved line, or carries the history anywhere but the channel. A
@@ -690,11 +767,22 @@ extension ReplAppletTests {
       replProbes: ReplProbes(footprint: { _ in knobs.footprint }, now: { knobs.now }))
 
     limited.start()
+
+    TestSessionRoot.record(in: limited)
+
     extraHosts.append((limited, local))
 
     return ReplServices(
       helper: { URL(fileURLWithPath: "/synthetic/uniterm") },
-      openChannel: { [limited] history in limited.admitRepl(history: history) })
+      openChannel: { [limited] history in
+        let opening = limited.admitRepl(history: history)
+
+        if case .channel(let channel) = opening {
+          TestSessionRoot.set(on: channel)
+        }
+
+        return opening
+      })
   }
 
   private func makeApplet(services: ReplServices, host recorder: RecordingHost? = nil) -> ReplApplet

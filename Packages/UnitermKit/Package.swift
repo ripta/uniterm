@@ -17,6 +17,7 @@ let package = Package(
   name: "UnitermKit",
   platforms: [.macOS("26.0")],
   products: [
+    .library(name: "ProcessInspection", targets: ["ProcessInspection"]),
     .library(name: "ThemeCore", targets: ["ThemeCore"]),
     .library(name: "Theme", targets: ["Theme"]),
     .library(name: "Preferences", targets: ["Preferences"]),
@@ -58,6 +59,9 @@ let package = Package(
     .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20")
   ],
   targets: [
+    // Process info helpers that TerminalSurface and ScriptHost both use, with no dependencies. It
+    // reads process identity and ancestry through sysctl, which works on setuid root processes.
+    .target(name: "ProcessInspection"),
     // The palette's tokens, flavors, color values, and color math, with no AppKit. GeoData reads the
     // accent set from it. Theme adds the AppKit colors and re-exports it, so `import Theme` still
     // sees every name.
@@ -79,7 +83,7 @@ let package = Package(
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
     .target(
       name: "TerminalSurface",
-      dependencies: ["GhosttyKit", "Theme"],
+      dependencies: ["GhosttyKit", "ProcessInspection", "Theme"],
       // ghostty.h is an umbrella header that leaves out the headers beside it in the xcframework.
       // The artifact stays as Ghostty built it, so the warning is silenced here.
       swiftSettings: [.unsafeFlags(["-Xcc", "-Wno-incomplete-umbrella"])],
@@ -192,7 +196,10 @@ let package = Package(
     // The app side of scripting: the listener, the peers, and the dispatch of their calls. It
     // never imports Janet.
     .target(
-      name: "ScriptHost", dependencies: ["FileRouting", "HelperHost", "ScriptWire", "StatusKit"]),
+      name: "ScriptHost",
+      dependencies: [
+        "FileRouting", "HelperHost", "PaneModel", "ProcessInspection", "ScriptWire", "StatusKit",
+      ]),
     // The REPL applet. It hosts a terminal session whose child is the REPL helper, and binds the
     // helper's control channel to its pane through the script host. It never imports Janet.
     .target(
@@ -221,6 +228,11 @@ let package = Package(
     .target(
       name: "AppletTestSupport", dependencies: ["AppletKit", "StatusKit"],
       path: "Tests/AppletTestSupport"),
+    // The one place tests record the test process as a terminal session root, for the script
+    // host's tests and the REPL applet's.
+    .target(
+      name: "ScriptTestSupport", dependencies: ["PaneModel", "ProcessInspection", "ScriptHost"],
+      path: "Tests/ScriptTestSupport"),
     // A local HTTP server for the browser's tests, so a web view loads real pages from a real
     // socket and no test reaches the network.
     .target(name: "BrowserTestSupport", path: "Tests/BrowserTestSupport"),
@@ -291,15 +303,16 @@ let package = Package(
       name: "ScriptRuntimeTests", dependencies: ["ScriptRuntime", "ScriptWire", "CJanet"]),
     .testTarget(
       name: "ScriptHostTests",
-      dependencies: ["ScriptHost", "ScriptWire", "ScriptHelper", "StatusKit"],
+      dependencies: ["ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport", "StatusKit"],
       resources: [.copy("Fixtures")]),
     .testTarget(
       name: "ReplAppletTests",
       dependencies: [
         "ReplApplet", "AppletKit", "ScriptHost", "ScriptWire", "StatusKit", "TerminalSurface",
-        "WindowKit", "Preferences", "AppletTestSupport",
+        "WindowKit", "Preferences", "AppletTestSupport", "ScriptTestSupport",
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
+    .testTarget(name: "ProcessInspectionTests", dependencies: ["ProcessInspection"]),
     .testTarget(name: "AppletKitTests", dependencies: ["AppletKit", "AppletTestSupport"]),
     .testTarget(name: "LayoutKitTests", dependencies: ["LayoutKit", "AppletKit", "PaneModel"]),
     .testTarget(

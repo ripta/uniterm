@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ScriptTestSupport
 import ScriptWire
 import XCTest
 
@@ -193,6 +194,17 @@ func waitUntil(
   timeout: Duration = .seconds(30), _ condition: @MainActor () -> Bool
 ) async -> Bool {
   await pollUntil(timeout: timeout) { condition() }
+}
+
+/// Opens a REPL channel whose helper runs under the test process, as a pane's helper runs under
+/// its terminal session. A helper attaches only once its channel knows that root.
+@MainActor
+func openTestRepl(host: ScriptHost, history: [String] = []) -> ScriptReplChannel {
+  let channel = host.openRepl(history: history)
+
+  TestSessionRoot.set(on: channel)
+
+  return channel
 }
 
 /// What a REPL channel reported, in order.

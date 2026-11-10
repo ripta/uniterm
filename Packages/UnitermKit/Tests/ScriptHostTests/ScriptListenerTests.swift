@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ProcessInspection
 import ScriptWire
 import StatusKit
 import XCTest
@@ -184,7 +185,7 @@ final class ScriptListenerTests: XCTestCase {
     Darwin.close(try FakeApp.listen(path: living))
     try Data().write(to: plain)
 
-    let started = ProcessIdentity.startTime(of: getpid()) ?? 0
+    let started = ProcessInspection.startTime(of: getpid()) ?? 0
     let removed = ScriptSocketFiles.removeStaleSockets(
       in: directory, current: getpid(),
       startTime: { $0 == getpid() + 1 ? started : nil })
@@ -380,6 +381,7 @@ final class ScriptListenerTests: XCTestCase {
     }
 
     sender.cancel()
+    _ = await sender.result
     socket.shutdownAndClose()
 
     let peak = tracker.peak
@@ -397,7 +399,8 @@ final class ScriptListenerTests: XCTestCase {
       let (app, peer) = try FramedSocket.pair()
       let overflowed = OverflowFlag()
       let connection = ScriptConnection(
-        id: 1, peer: ScriptPeer(uid: getuid(), pid: getpid(), token: nil), socket: app,
+        id: 1, peer: ScriptPeer(uid: getuid(), pid: getpid(), token: nil),
+        peerStartTime: ProcessInspection.startTime(of: getpid()) ?? 0, socket: app,
         onOverflow: { _ in overflowed.set() })
 
       defer { peer.shutdownAndClose() }

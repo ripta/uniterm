@@ -29,6 +29,8 @@ final class ScriptLimitsTests: XCTestCase {
       listener: try ScriptListener.start(directory: directory),
       issueProducer: { center.issueProducer(kind: .script, name: $0) })
     host.start()
+
+    recordTestProcessAsSessionRoot(host)
   }
 
   override func tearDown() async throws {

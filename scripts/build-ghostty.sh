@@ -110,7 +110,25 @@ ensure_zig() {
 }
 
 compute_key() {
-  KEY="${GHOSTTY_COMMIT:0:12}-zig${ZIG_VERSION}-xcode${XCODE_BUILD}-sdk${SDK_VERSION}"
+  local patch_digest=""
+  if [ -d "$ROOT/ThirdParty/ghostty-patches" ]; then
+    local patches=()
+    while IFS= read -r -d '' patch; do
+      patches+=("$patch")
+    done < <(find "$ROOT/ThirdParty/ghostty-patches" -type f -name '*.patch' -print0 | LC_ALL=C sort -z)
+    if [ ${#patches[@]} -gt 0 ]; then
+      patch_digest="-$(
+        (
+          cd "$ROOT/ThirdParty/ghostty-patches"
+          for patch in "${patches[@]}"; do
+            printf '%s\n' "$(basename "$patch")"
+            shasum -a 256 < "$patch"
+          done
+        ) | shasum -a 256 | awk '{ print substr($1, 1, 8) }'
+      )"
+    fi
+  fi
+  KEY="${GHOSTTY_COMMIT:0:12}-zig${ZIG_VERSION}-xcode${XCODE_BUILD}-sdk${SDK_VERSION}${patch_digest}"
   ARTIFACT="$CACHE/artifacts/$KEY"
 }
 
@@ -264,6 +282,15 @@ build() {
   # The build runs without git, so Zig is given the version explicitly.
   extract_source "$WORK/src"
   verify_source "$WORK/src"
+
+  if [ -d "$ROOT/ThirdParty/ghostty-patches" ]; then
+    echo "Applying Ghostty patches."
+    for patch in "$ROOT/ThirdParty/ghostty-patches"/*.patch; do
+      [ -f "$patch" ] || continue
+      echo "Applying $(basename "$patch")."
+      (cd "$WORK/src" && patch -p1 -i "$patch") || die "patch $(basename "$patch") failed."
+    done
+  fi
 
   local proxy_env=()
   if [ "$OFFLINE" = "1" ]; then

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ProcessInspection
 import ScriptWire
 import XCTest
 
@@ -75,11 +76,11 @@ final class ScriptSentContentTests: XCTestCase {
   func testALaunchRemovesOnlyWhatEndedInstancesLeft() throws {
     let fileManager = FileManager.default
     let parent = getppid()
-    let started = try XCTUnwrap(ProcessIdentity.startTime(of: parent))
+    let started = try XCTUnwrap(ProcessInspection.startTime(of: parent))
 
     var gone: pid_t = 99_990
 
-    while ProcessIdentity.startTime(of: gone) != nil { gone += 1 }
+    while ProcessInspection.startTime(of: gone) != nil { gone += 1 }
 
     let alive = ProcessIdentity(pid: parent, started: started)
     let ended = ProcessIdentity(pid: gone, started: 1_700_000_000)

@@ -74,26 +74,64 @@ final class FakeWindowAPI: ScriptWindowAPI {
     ])
   }
 
+  /// While true, `openPane` and `openTab` wait where the real layer checks a directory, until
+  /// the test calls `releaseWait`.
+  var holdsDirectoryCheck = false
+
+  /// True while a call waits in its directory check.
+  private(set) var isWaitingInDirectoryCheck = false
+
+  /// How many panes and tabs a call went on to open.
+  private(set) var opened = 0
+
+  private var waiting: CheckedContinuation<Void, Never>?
+
+  func releaseWait() {
+    waiting?.resume()
+    waiting = nil
+  }
+
+  /// Stands in for the real layer's directory check, the one wait between a call's start and its
+  /// effect. The real layer asks `stillAllowed` right after it.
+  private func directoryCheck(stillAllowed: @MainActor () throws -> Void) async throws {
+    if holdsDirectoryCheck {
+      isWaitingInDirectoryCheck = true
+      await withCheckedContinuation { waiting = $0 }
+      isWaitingInDirectoryCheck = false
+    }
+
+    try stillAllowed()
+  }
+
   func openPane(
-    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?
+    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?,
+    stillAllowed: @MainActor () throws -> Void
   ) async throws -> ScriptValue {
     calls.append(.openPane(kind: kind, beside: beside, axis: axis, directory: directory))
 
     guard kind != "bogus" else { throw ScriptCallError.badArgument("the applet kind is not known") }
 
+    try await directoryCheck(stillAllowed: stillAllowed)
     try check(beside)
+
+    opened += 1
 
     return .record(["window": .integer(beside.window), "pane": .integer(99)])
   }
 
-  func openTab(pane: ScriptPaneReference, directory: String?) async throws -> ScriptValue {
+  func openTab(
+    pane: ScriptPaneReference, directory: String?, stillAllowed: @MainActor () throws -> Void
+  ) async throws -> ScriptValue {
     calls.append(.openTab(pane: pane, directory: directory))
 
     guard pane.pane != 403 else {
       throw ScriptCallError.refused("the pane's applet has no tabs to open")
     }
 
+    try await directoryCheck(stillAllowed: stillAllowed)
     try check(pane)
+
+    opened += 1
 
     return .record([
       "window": .integer(pane.window), "pane": .integer(pane.pane), "tab": .integer(5),

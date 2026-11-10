@@ -47,13 +47,19 @@ public protocol ScriptWindowAPI: AnyObject {
 
   /// Splits `beside` and starts the applet `kind` in the new pane. The directory is where the new
   /// pane starts, or nil for the one the pane beside it reports.
+  ///
+  /// The caller's authority can end while the directory is checked. `stillAllowed` runs after
+  /// that wait and before anything changes, and a throw from it stops the call.
   func openPane(
-    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?
+    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?,
+    stillAllowed: @MainActor () throws -> Void
   ) async throws -> ScriptValue
 
   /// Opens a tab in a pane whose applet has tabs. The directory is where the tab starts, or nil
-  /// for the one the pane reports.
-  func openTab(pane: ScriptPaneReference, directory: String?) async throws -> ScriptValue
+  /// for the one the pane reports. `stillAllowed` runs as it does for `openPane`.
+  func openTab(
+    pane: ScriptPaneReference, directory: String?, stillAllowed: @MainActor () throws -> Void
+  ) async throws -> ScriptValue
 
   /// True while the pane the reference names is open. The host asks before it keeps a file for a
   /// pane, and again to find the files of panes that have closed.

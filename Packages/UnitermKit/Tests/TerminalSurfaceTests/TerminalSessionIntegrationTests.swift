@@ -878,4 +878,55 @@ final class TerminalSessionIntegrationTests: XCTestCase {
       XCTAssertTrue(screen(session).contains("ZI:42:no"), "\(command): integration applied")
     }
   }
+
+  /// Catches a backend patch that reports no child, or reports some other process, such as the
+  /// pty's foreground group. The event names a direct child of this process, and that child is
+  /// `login`, the session root a shell runs under.
+  func testProcessStartedEventReportsTheDirectChild() async throws {
+    try await assertReportsLogin(try startShell())
+  }
+
+  /// Catches the same for program mode, where libghostty spawns `login` for the program too.
+  func testProcessStartedEventReportsTheDirectChildInProgramMode() async throws {
+    try await assertReportsLogin(try startProgram(["/bin/sleep", "30"]))
+  }
+
+  /// Waits for the session's identity event, then checks the PID it names: a direct child of
+  /// this process, running `login`, and started at the second the event reports.
+  private func assertReportsLogin(
+    _ session: any TerminalSession, file: StaticString = #filePath, line: UInt = #line
+  ) async throws {
+    var reported: TerminalProcessIdentity?
+
+    session.onEvent = { event in
+      if case .processStarted(let identity) = event { reported = identity }
+    }
+
+    try await waitUntil("the processStarted event") { reported != nil }
+
+    let identity = try XCTUnwrap(reported, file: file, line: line)
+
+    XCTAssertTrue(
+      children(of: getpid()).contains(identity.pid), "the PID is not a direct child", file: file,
+      line: line)
+
+    // The child is setuid-root login, which proc_pidinfo refuses for this user, so read it with
+    // sysctl.
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, identity.pid]
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+
+    XCTAssertEqual(
+      sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0), 0, "no process info", file: file,
+      line: line)
+
+    let command = withUnsafeBytes(of: info.kp_proc.p_comm) { bytes in
+      String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+    }
+
+    XCTAssertEqual(command, "login", "the direct child is not login", file: file, line: line)
+    XCTAssertEqual(
+      Int(info.kp_proc.p_starttime.tv_sec), identity.started, "the start time is not the child's",
+      file: file, line: line)
+  }
 }

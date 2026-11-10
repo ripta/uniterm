@@ -131,6 +131,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// or an applet's description.
   var onLayoutChange: (() -> Void)?
 
+  /// Runs when a terminal or REPL session starts in a pane. Reports to the session registry for
+  /// authority checking.
+  var onSessionStarted:
+    (
+      (UInt64, NodeID, AppletTabID, pid_t, Int, UInt64) -> Void
+    )?
+
+  /// Runs when a session ends.
+  var onSessionEnded: ((UInt64, NodeID, AppletTabID, pid_t, Int) -> Void)?
+
   /// The visible area of the screen the window is on. A window never asks for more room than that.
   /// Tests replace it.
   var visibleFrameProvider: @MainActor (NSWindow) -> NSRect? = { window in
@@ -1176,5 +1186,18 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       confirmTitle: request.confirmTitle, cancelTitle: request.cancelTitle)
 
     return await confirmer(question, window)
+  }
+
+  func applet(
+    _ applet: any Applet, in pane: NodeID, sessionStarted tab: AppletTabID, pid: pid_t,
+    started: Int, generation: UInt64
+  ) {
+    onSessionStarted?(scriptWindowID, pane, tab, pid, started, generation)
+  }
+
+  func applet(
+    _ applet: any Applet, in pane: NodeID, sessionEnded tab: AppletTabID, pid: pid_t, started: Int
+  ) {
+    onSessionEnded?(scriptWindowID, pane, tab, pid, started)
   }
 }

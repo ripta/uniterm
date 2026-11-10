@@ -61,18 +61,24 @@ Decision: use the peer identity on UTERM-003's listener and validate its live pr
 recorded terminal session root. A pane token is not authority.
 
 - TerminalSurface supplies the actual spawned child's process identity, including its generation. Its protocol grows
-  a typed identity event. The pinned libghostty backend needs a narrow patch to expose this; its current public API
-  exposes no PID. No other module reaches through the terminal boundary.
+  a typed identity event, `TerminalEvent.processStarted`. The pinned libghostty backend needs a narrow patch to
+  expose the child. ThirdParty/ghostty-patches/001-child-started-action.patch adds a `child_started` action that
+  carries the child's PID. libghostty's public API does expose `ghostty_surface_foreground_pid`, but that is the
+  pty's foreground process group, not the spawned child. No other module reaches through the terminal boundary.
+- The spawned child is setuid-root `/usr/bin/login`, which becomes the session root. `proc_pidinfo` refuses a root
+  process for a non-root caller, so ProcessInspection reads start times and parents with sysctl(KERN_PROC_PID). The
+  listener reads the peer's uid with LOCAL_PEERCRED and its PID with LOCAL_PEERPID.
 - Each connection is bound to the authenticated peer process instance, the source tab/session, and UTERM-003's
   launch-scoped window and pane references. A reused PID is a different instance. Check the live identity and ancestry
   before granting automatic authority and before dispatch. An unavailable, changed, or ambiguous chain fails closed.
 - App-created REPL and exec processes bind through the same recorded spawn identity. UTERM-003's REPL environment
   token may correlate a pending connection, but never grants authority without the process check.
 - An unbound caller has no pane access. The user can explicitly grant that connection a named source pane in one
-  window. The dialog names the requesting executable and scope. A grant ends on disconnect, process exit, source
-  session close, revocation, or window close. A reconnect needs fresh admission; verified controller policies may supply
-  its permissions. An ordinary unbound
-  caller asks again. An outside caller never receives every window.
+  window. The dialog names the requesting executable and scope. A grant binds to the pane's session. A pane with
+  several tabs runs several sessions, and the grant binds to the newest one still running. A grant ends on disconnect,
+  process exit, source session close, revocation, or window close. A denied or revoked connection is not asked about
+  again. A reconnect needs fresh admission; verified controller policies may supply its permissions. An ordinary
+  unbound caller asks again. An outside caller never receives every window. Amended 2026-11-10; see Decision Log.
 - Ordinary descendants of a terminal session may act for that source pane. A daemon that loses its ancestry needs an
   explicit grant. Focus, a claimed PID, environment state, and a tty name never establish authority.
 - This is application authorization, not an OS sandbox against malicious processes of the same user. Deliberate
@@ -547,7 +553,7 @@ None.
 
 ### M1: Caller identity
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - uniterm identifies which window and pane a calling program runs in
 - A call from outside any uniterm pane is rejected unless the user allows it
@@ -557,6 +563,53 @@ None.
 - Live grants are scoped, revocable, and lost on reconnect; remembered policies require fresh verified admission
 - Replacing or revoking a REPL helper invalidates its pending calls and grants
 - REPL capability selection starts a fresh helper, warns about lost definitions, and restores no grants
+
+**As built:**
+
+- The Ghostty patch adds a `child_started` action that carries the PID of the child libghostty spawns.
+  TerminalSurface reads the child's start time when the report arrives and reports both as
+  `TerminalEvent.processStarted`. The fork has returned by then, so the read cannot miss a live child. A child that
+  already exited gets no identity, so nothing binds to it. An earlier retry loop, left from diagnosing `proc_pidinfo`,
+  was removed. In shell and program mode alike, the child is setuid-root `/usr/bin/login`, which becomes the session
+  root. Two integration tests check that the reported PID is a direct child named `login` with the reported start
+  time.
+- Process records come from sysctl(KERN_PROC_PID), because `proc_pidinfo` refuses a root process. A PID that does not
+  exist returns an empty record, and an exited process that its parent has not yet collected still has one. Both read
+  as not running. The second was found and fixed in this milestone, with a regression test.
+- Applets report each session's start and end to the window, the window set, and the script host. The script host
+  alone keeps which pane each session root runs in. A closed window also tells the host, which forgets that window's
+  roots and ends grants to its panes even when an applet never reported its end.
+- Admission binds a connection to a recorded root through its peer's ancestry. Each call checks the peer's identity,
+  the root's generation, and, for a binding found through ancestry, that the ancestry still leads to that root. A
+  process whose parent exited loses its pane and asks like an outside program. A call that waits on a directory
+  check is checked again after the wait and before the layout changes. An unbound call is refused, and the
+  connection's request appears in the Pending Requests panel. A connection holds one request however many calls it makes. Requests are held per connection, and
+  the listener holds at most 32 connections, so the list holds at most 32. A process that has exited cannot ask.
+- The panel opens from Window > Pending Requests… and from the palette. It lists waiting requests and live grants. Its
+  grant sheet names the program and its PID, offers only panes with a running session, and names each way the grant
+  ends.
+  The pending-permissions slot shows in every window while any request waits. An outside caller has no window, so the
+  slot is not per window.
+- A grant ends on disconnect, process exit, the source session's end, revocation, and window close. A program that
+  forks and exits does not pass its grant to the child that keeps its socket. A grant needs a waiting request and an
+  unbound connection, so a bound connection cannot be moved to another pane. Grant scope for panes with tabs, and the end of asking after a
+  denial or revocation, are best guesses; see the 2026-11-10 Decision Log entry.
+- A REPL helper that attaches before the terminal reports its session root waits for the root, and is then checked
+  against it. A token presented from outside the channel's session is refused before or after the root arrives. The
+  earlier draft refused every attach that arrived first, which would fail a REPL whose helper outran the report. A
+  call made while the attach waits is refused without asking the user, and a completed attach drops any request the
+  connection left.
+- Ending a REPL channel unbinds its helper's connection, so a call the helper sent but the host had not read never
+  runs. A restart ends the old session in the host, so the old helper's binding fails too.
+- Restart REPL with Capabilities… is in the REPL menu while a helper runs. Its sheet warns that definitions are lost
+  and offers every capability `--allow` can grant, none selected. The fresh helper gets a new channel and token and
+  only the chosen `--allow` flags. It prints the capabilities it may use. An unknown name ends the helper before it
+  connects. The capabilities are not saved, and a later restart or a restored pane starts with none.
+- Package tests record the test process as a session root only through the ScriptTestSupport target, which the
+  script host's tests and the REPL applet's tests share. Grant tests use a `sleep` process as the granted pane's
+  session. The forked-and-exited and lost-ancestry cases use a small perl relay fixture, since a Swift test cannot
+  fork. The process readers' tests sit in their own target beside the module. Two UI tests, for the panel and for the capability restart, compile and are run by the
+  coordinator.
 
 ### M2: Remote-controlled and disconnected panes
 
@@ -791,6 +844,21 @@ None.
   callback, which denies them. OSC 52 writes now arrive at the write callback with a confirm flag and are allowed
   there, so M2's write gate belongs in that callback. The earlier "Amended 2026-11-02" marker pointed at "Permission
   scopes and approval flow", which still holds the 2026-11-02 change. The decision itself does not change.
+- 2026-11-10: Amended "How uniterm knows which pane a program runs in" during M1 implementation (work-queue best
+  guess). The proposal said libghostty's public API exposes no PID. It does expose `ghostty_surface_foreground_pid`,
+  but that is the pty's foreground process group, not the spawned child, so the backend patch is still needed. The
+  patch adds a `child_started` action that reports the spawned child. The spawned child is setuid-root `/usr/bin/login`.
+  `proc_pidinfo` refuses a root process for a non-root caller, so ProcessInspection uses sysctl(KERN_PROC_PID) instead
+  to read kinfo_proc for start time and parent relationships, avoiding EPERM. The peer's uid comes from
+  LOCAL_PEERCRED and its PID from LOCAL_PEERPID. The bullet keeps its generation, its typed identity event, and the
+  rule that no other module reaches through the terminal boundary.
+- 2026-11-10: Amended the grant bullet of "How uniterm knows which pane a program runs in" during M1 implementation
+  (work-queue best guess). It said the user grants "a named source pane" and that a grant ends on revocation, and was
+  silent on tabs and on asking again. A terminal pane with several tabs runs several sessions, and the script host
+  knows panes, not tabs. A grant now binds to the newest session still running in the pane. A denied or revoked
+  connection is not asked about again, so a program that keeps retrying cannot keep the panel full. It must reconnect
+  to ask again. If the user wants a grant to name a tab, the grant sheet would list tabs and the host would track
+  roots by tab. The Amended marker moved here from the backend-patch bullet, whose 2026-11-10 entry is above.
 
 ## References
 

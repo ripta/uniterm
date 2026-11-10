@@ -14,7 +14,7 @@ enum StandardCommands {
   private static let commandOption: NSEvent.ModifierFlags = [.command, .option]
 
   static func make(app: AppCommandHooks) -> [Command] {
-    appCommands(app) + paneCommands() + windowCommands()
+    appCommands(app) + paneCommands() + windowCommands(app)
   }
 
   private static func appCommands(_ app: AppCommandHooks) -> [Command] {
@@ -116,7 +116,7 @@ enum StandardCommands {
     }
   }
 
-  private static func windowCommands() -> [Command] {
+  private static func windowCommands(_ app: AppCommandHooks) -> [Command] {
     [
       Command(
         .minimizeWindow, "Minimize", scope: .window, key: KeyChord("m"),
@@ -124,6 +124,10 @@ enum StandardCommands {
       ) { context in
         context.controller?.window?.performMiniaturize(nil)
       },
+      Command(
+        .showPendingRequests, "Pending Requests", scope: .app,
+        menu: MenuPlacement(.window, section: 0, title: "Pending Requests\u{2026}")
+      ) { _ in app.showPendingRequests() },
       Command(
         .showCommandPalette, "Show Command Palette", scope: .window,
         key: KeyChord("k"), menu: MenuPlacement(.view, section: 1),

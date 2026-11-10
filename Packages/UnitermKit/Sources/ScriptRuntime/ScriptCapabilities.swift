@@ -1,5 +1,6 @@
 import CJanet
 import Foundation
+import ScriptWire
 
 /// The capabilities a run may be granted, by the names Janet's own `sandbox` accepts.
 ///
@@ -35,11 +36,7 @@ enum ScriptCapabilities {
   static let alwaysAllowed = ["asm", "compile", "exit", "hrtime", "locale", "unmarshal"]
 
   /// The names `--allow` can grant. The default sandbox denies each one.
-  static let grantable = [
-    "chroot", "env", "ffi", "ffi-define", "ffi-jit", "ffi-use", "fs", "fs-read", "fs-temp",
-    "fs-write", "modules", "net", "net-connect", "net-listen", "sandbox", "signal", "subprocess",
-    "threads",
-  ]
+  static let grantable = ScriptCapabilityNames.grantable
 
   /// The bits that stay denied once every name in `granted` is allowed.
   static func denied(granting granted: [String]) throws -> UInt32 {

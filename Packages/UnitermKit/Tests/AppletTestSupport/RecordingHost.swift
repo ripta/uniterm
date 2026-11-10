@@ -1,4 +1,5 @@
 import AppletKit
+import Foundation
 import StatusKit
 
 /// Stands in for the pane's host in applet tests. It collects what an applet tells its pane, and it
@@ -99,5 +100,28 @@ public final class RecordingHost: AppletHost {
   public func issueCloseStamp() -> UInt64 {
     lastStamp += 1
     return lastStamp
+  }
+
+  /// A terminal session an applet reported, by its spawned process.
+  public struct Session: Equatable {
+    public let tab: AppletTabID
+    public let pid: pid_t
+    public let started: Int
+  }
+
+  /// The sessions applets reported starting, and those they reported ending, oldest first.
+  public private(set) var startedSessions: [Session] = []
+  public private(set) var endedSessions: [Session] = []
+
+  public func applet(
+    _ applet: any Applet, sessionStarted tab: AppletTabID, pid: pid_t, started: Int,
+    generation: UInt64
+  ) {
+    startedSessions.append(Session(tab: tab, pid: pid, started: started))
+  }
+
+  public func applet(_ applet: any Applet, sessionEnded tab: AppletTabID, pid: pid_t, started: Int)
+  {
+    endedSessions.append(Session(tab: tab, pid: pid, started: started))
   }
 }

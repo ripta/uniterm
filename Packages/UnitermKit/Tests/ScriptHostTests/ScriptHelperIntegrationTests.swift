@@ -37,6 +37,8 @@ final class ScriptHelperIntegrationTests: XCTestCase {
         self?.refused?.fulfill()
       })
     host.start()
+
+    recordTestProcessAsSessionRoot(host)
   }
 
   override func tearDown() async throws {

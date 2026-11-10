@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import HelperHost
+import ProcessInspection
 import ScriptWire
 
 /// What a REPL's helper needs to start: where to connect, and the token that binds its connection
@@ -87,6 +88,13 @@ public final class ScriptReplChannel {
   /// The helper's process, once it has attached.
   public private(set) var helper: ProcessIdentity?
 
+  /// The terminal session the helper runs under, once the terminal reports the process it
+  /// spawned. Only a descendant of it may spend the token.
+  private(set) var sessionRoot: ProcessIdentity?
+
+  /// The generation the terminal reported with the session root.
+  private(set) var sessionGeneration: UInt64?
+
   public var onEvent: (@MainActor (ScriptReplEvent) -> Void)?
 
   let tokenData: Data
@@ -128,10 +136,19 @@ public final class ScriptReplChannel {
   /// True from the moment the helper attaches until its connection closes.
   public var isAttached: Bool { connection != nil && !ended }
 
+  /// Records the terminal session the helper runs under. The applet calls it when the terminal
+  /// reports the process it spawned. A helper that attached before then is checked now.
+  public func setSessionRoot(_ root: ProcessIdentity, generation: UInt64) {
+    sessionRoot = root
+    sessionGeneration = generation
+
+    host?.sessionRootArrived(for: self)
+  }
+
   func bind(_ connection: ScriptConnection) {
     self.connection = connection
 
-    let started = ProcessIdentity.startTime(of: connection.peer.pid) ?? 0
+    let started = ProcessInspection.startTime(of: connection.peer.pid) ?? 0
 
     helper = ProcessIdentity(pid: connection.peer.pid, started: started)
     liveness.markBusy(now: probes.now())
@@ -306,23 +323,71 @@ extension ScriptHost {
     return channel
   }
 
-  /// Takes the token of a channel that ends before its helper used it.
+  /// Takes the token of a channel that ends before its helper used it. The helper's connection
+  /// loses its binding, so a call it sent that is not answered yet is never run.
   func withdraw(_ channel: ScriptReplChannel) {
     pendingRepls[channel.tokenData] = nil
 
     for (id, bound) in boundRepls where bound === channel {
       boundRepls[id] = nil
+      listener.findConnection(id)?.unbind()
+      sessions[id, default: Session()].refused = true
+    }
+
+    for (id, waiting) in awaitingRoot where waiting.channel === channel {
+      awaitingRoot[id] = nil
+      waiting.connection.close()
     }
   }
 
   /// Spends the token a helper presented. A token the host did not issue, or one already spent,
   /// is refused with a message and the connection closes.
+  ///
+  /// The terminal reports the session root on its own schedule, so a helper can attach first. Its
+  /// attach then waits for the root, and is checked against it when it arrives.
   func attach(_ connection: ScriptConnection, token: Data) {
     guard let channel = pendingRepls.removeValue(forKey: token) else {
       refuseAttach(connection)
 
       return
     }
+
+    guard channel.sessionRoot != nil else {
+      awaitingRoot[connection.id] = (connection, channel)
+
+      return
+    }
+
+    completeAttach(connection, to: channel)
+  }
+
+  /// Completes the attach that waited for this channel's session root.
+  func sessionRootArrived(for channel: ScriptReplChannel) {
+    guard let (id, waiting) = awaitingRoot.first(where: { $0.value.channel === channel }) else {
+      return
+    }
+
+    awaitingRoot[id] = nil
+    completeAttach(waiting.connection, to: channel)
+  }
+
+  /// Binds the helper to its pane when the peer descends from the channel's own session root, and
+  /// that root is still the recorded one. A token used from any other process is refused.
+  private func completeAttach(_ connection: ScriptConnection, to channel: ScriptReplChannel) {
+    let peer = ProcessIdentity(pid: connection.peer.pid, started: connection.peerStartTime)
+
+    guard !connection.isClosed, peer.isRunning, let channelRoot = channel.sessionRoot,
+      let generation = channel.sessionGeneration,
+      ProcessAncestry.findRoot(for: peer, in: sessionRoots) == channelRoot,
+      sessionRoots.sessionGeneration(for: channelRoot) == generation
+    else {
+      refuseAttach(connection)
+
+      return
+    }
+
+    connection.bind(to: channelRoot, generation: generation)
+    forget(connection: connection.id)
 
     boundRepls[connection.id] = channel
     sessions[connection.id, default: Session()].name = "repl"

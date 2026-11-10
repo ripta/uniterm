@@ -34,6 +34,8 @@ final class ScriptReplTests: XCTestCase {
       issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: windows,
       reaper: .inert)
     host.start()
+
+    recordTestProcessAsSessionRoot(host)
   }
 
   override func tearDown() async throws {
@@ -61,7 +63,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a REPL that does not evaluate what is typed, that prints a result the way Janet's own
   /// REPL does not, or that reports no line and no evaluation to the app.
   func testATypedExpressionPrintsItsResultAndReportsItsLineAndEvaluation() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -88,7 +90,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a REPL that cannot call the host API, or whose calls arrive as another source. The
   /// module is imported before the first line, so `uniterm/` works with no import.
   func testExpressionsCallTheHostApiAsTheRepl() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -107,7 +109,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a definition that does not outlive an error in a later form, which would lose a
   /// user's work to a typo.
   func testAnErrorReturnsToThePromptWithTheDefinitionsIntact() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -129,7 +131,7 @@ final class ScriptReplTests: XCTestCase {
   /// earlier definitions, and one that leaves a pending interrupt behind. The second form after
   /// the interrupt would stop at once if the count were left raised.
   func testAnInterruptStopsARunningFormAndKeepsTheDefinitions() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -161,7 +163,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a Ctrl-C that stops one form and goes on to run the rest of the line. The line holds a
   /// loop and a print, and the print must never run.
   func testAnInterruptAbandonsTheRestOfTheLine() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -190,7 +192,7 @@ final class ScriptReplTests: XCTestCase {
   /// Ctrl-C is the byte 3 written to the pty, which only reaches the helper as SIGINT when the
   /// editor has given the terminal its signal handling back before the form runs.
   func testACtrlCByteOnTheTerminalStopsARunningForm() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try ReplProcess(
       address: channel.launch.address, environment: environment(channel), session: true)
@@ -225,7 +227,7 @@ final class ScriptReplTests: XCTestCase {
     prelude: String, arguments: [String] = [], traced: Bool = false, direct: Bool = false,
     file: StaticString = #filePath, line: UInt = #line
   ) async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try ReplProcess(
       address: channel.launch.address, environment: environment(channel), arguments: arguments,
@@ -296,7 +298,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a Ctrl-C at an idle prompt that kills the helper or interrupts the next form. The
   /// signal arrives with nothing evaluating, so it must change nothing.
   func testAnInterruptAtAnIdlePromptChangesNothing() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -327,7 +329,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a token that attaches more than once, and a connection that binds to a pane that did
   /// not issue the token. A raw peer presents the token twice, then an unknown one.
   func testATokenWorksOnceAndAnUnknownTokenIsRefused() async throws {
-    let first = host.openRepl(history: ["(+ 1 2)"])
+    let first = openTestRepl(host: host, history: ["(+ 1 2)"])
     let events = ReplEvents(first)
     let token = try XCTUnwrap(ReplEnvironmentHex.decode(first.launch.token))
 
@@ -403,7 +405,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a connection that begins as a script and then presents a token. A call before any
   /// declaration is refused on its own, in the listener tests.
   func testATokenAfterABeginIsAProtocolViolation() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let token = try XCTUnwrap(ReplEnvironmentHex.decode(channel.launch.token))
     let events = ReplEvents(channel)
     let peer = try ScriptFixtures.connectPeer(path: host.instanceAddress)
@@ -448,7 +450,7 @@ final class ScriptReplTests: XCTestCase {
   /// without telling the user why a refused token failed. A helper given a spent token exits with
   /// the unavailable status and says why on its own terminal.
   func testAHelperWithASpentTokenSaysWhyAndExits() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let first = try start(channel)
 
@@ -511,7 +513,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a launch that wraps the helper so it is no longer the process the terminal started.
   /// The app signals and kills the peer it sees, so the peer must be the pty's own child.
   func testTheHelperRunsInTheProcessTheShellStarted() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel, shell: true)
 
@@ -531,11 +533,13 @@ final class ScriptReplTests: XCTestCase {
 
     defer { try? FileManager.default.removeItem(at: marker) }
 
-    let channel = host.openRepl(history: [
-      "(uniterm/post-status :error \"restored line ran\")",
-      "(spit \"\(marker.path)\" \"ran\")",
-      "(os/exit 3)",
-    ])
+    let channel = openTestRepl(
+      host: host,
+      history: [
+        "(uniterm/post-status :error \"restored line ran\")",
+        "(spit \"\(marker.path)\" \"ran\")",
+        "(os/exit 3)",
+      ])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -556,7 +560,7 @@ final class ScriptReplTests: XCTestCase {
   /// full mode. Up Arrow recalls the newest restored line, and the editor draws it at the prompt.
   /// Nothing runs, and Ctrl-C then clears the line.
   func testRestoredHistoryIsRecalledByTheLineEditorOnAPty() async throws {
-    let channel = host.openRepl(history: ["(+ 100 200)", "(* 7 8)"])
+    let channel = openTestRepl(host: host, history: ["(+ 100 200)", "(* 7 8)"])
     let events = ReplEvents(channel)
     let pty = try PseudoTerminal()
     let repl = try ReplProcess(
@@ -597,7 +601,7 @@ final class ScriptReplTests: XCTestCase {
   func testARecalledLineLongerThanThePaneShowsItsTail() async throws {
     let long =
       "(uniterm/open-pane :text-viewer (first (uniterm/list-panes (first (uniterm/list-windows)))))"
-    let channel = host.openRepl(history: [long, "(+ 40 2)"])
+    let channel = openTestRepl(host: host, history: [long, "(+ 40 2)"])
     let events = ReplEvents(channel)
     let pty = try PseudoTerminal(columns: 30)
     let repl = try ReplProcess(
@@ -658,7 +662,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a REPL whose helper dies and the app never hears. A killed helper closes its
   /// connection, and the channel reports it.
   func testAKilledHelperEndsItsChannel() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -673,7 +677,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a close that leaves the helper running. Ending the channel closes its connection, and
   /// the helper exits on its own.
   func testEndingTheChannelEndsTheHelper() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -688,7 +692,7 @@ final class ScriptReplTests: XCTestCase {
   /// Catches a helper stuck in a loop that survives its pane closing. The watchdog thread ends it
   /// when the connection closes, though the VM thread never reads the socket.
   func testEndingTheChannelEndsAHelperThatIsBusyInALoop() async throws {
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -718,7 +722,7 @@ final class ScriptReplTests: XCTestCase {
           return running
         }, kill: { killed.add($0) })
       let local = try makeHost(reaper: reaper)
-      let channel = local.host.openRepl(history: [])
+      let channel = openTestRepl(host: local.host, history: [])
       let peer = try await attach(channel, to: local.host)
 
       let before = killed.all.count
@@ -746,6 +750,7 @@ final class ScriptReplTests: XCTestCase {
       issueProducer: { center.issueProducer(kind: .script, name: $0) }, reaper: reaper)
 
     host.start()
+    recordTestProcessAsSessionRoot(host)
 
     return (host, directory)
   }
@@ -779,8 +784,8 @@ final class ScriptReplTests: XCTestCase {
 
     XCTAssertNotEqual(other.host.instanceAddress, host.instanceAddress)
 
-    let mine = host.openRepl(history: [])
-    let theirs = other.host.openRepl(history: [])
+    let mine = openTestRepl(host: host, history: [])
+    let theirs = openTestRepl(host: other.host, history: [])
 
     XCTAssertEqual(mine.launch.address, host.instanceAddress)
     XCTAssertEqual(theirs.launch.address, other.host.instanceAddress)

@@ -27,6 +27,8 @@ final class ScriptRunCommandTests: XCTestCase {
     host = ScriptHost(
       listener: listener, issueProducer: { center.issueProducer(kind: .script, name: $0) })
     host.start()
+
+    recordTestProcessAsSessionRoot(host)
   }
 
   override func tearDown() async throws {

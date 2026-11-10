@@ -109,6 +109,7 @@ public final class ReplApplet: Applet, InputOwning {
   private var phase = Phase.idle
   private var session: (any TerminalSession)?
   private var channel: ScriptReplChannel?
+  private var processIdentity: (pid: pid_t, started: Int)?
   private var evaluating = false
   private var started = false
 
@@ -219,12 +220,78 @@ public final class ReplApplet: Applet, InputOwning {
     focus()
   }
 
+  /// The Janet capabilities the running helper was started with. A helper starts with none unless
+  /// the user picks some for that one start. They are never saved, and a later restart has none.
+  public private(set) var helperCapabilities: [String] = []
+
+  /// Asks which Janet capabilities a fresh helper gets, then restarts the REPL with them. The live
+  /// helper's sandbox cannot be widened, so its definitions are lost.
+  public func showCapabilityRestartSheet() {
+    guard let window = view.window else { return }
+
+    let alert = NSAlert()
+
+    alert.messageText = "Restart REPL with Capabilities"
+    alert.informativeText =
+      "The REPL restarts, and every definition in it is lost. The new REPL may use only the "
+      + "capabilities you select. They last until it ends."
+    alert.alertStyle = .warning
+
+    let names = ScriptCapabilityNames.grantable
+    let columns = 3
+    let checkboxes = names.map { name in
+      let checkbox = NSButton(checkboxWithTitle: name, target: nil, action: nil)
+
+      checkbox.state = .off
+      checkbox.setAccessibilityIdentifier("repl-capability-\(name)")
+
+      return checkbox
+    }
+
+    let rows = stride(from: 0, to: checkboxes.count, by: columns).map { start in
+      (start..<start + columns).map { $0 < checkboxes.count ? checkboxes[$0] : NSView() }
+    }
+
+    let grid = NSGridView(views: rows)
+
+    grid.rowSpacing = 6
+    grid.columnSpacing = 16
+    grid.setFrameSize(grid.fittingSize)
+
+    alert.accessoryView = grid
+    alert.addButton(withTitle: "Restart")
+    alert.addButton(withTitle: "Cancel")
+
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard response == .alertFirstButtonReturn else { return }
+
+      let selected = zip(names, checkboxes).filter { $0.1.state == .on }.map(\.0)
+
+      self?.restart(withCapabilities: selected)
+    }
+  }
+
+  /// Ends the helper and starts a fresh one with exactly `capabilities`. The fresh helper has a
+  /// new channel and token, and the old helper's calls and pane authority end with it.
+  func restart(withCapabilities capabilities: [String]) {
+    stopHelper()
+    launchHelper(capabilities: capabilities)
+    focus()
+  }
+
   /// The words and environment of a helper launch. The token travels in the environment, the
   /// address as an argument, and the working directory is the home folder.
   public static func launch(
-    helper: URL, channel: ScriptReplLaunch, home: String, traceSigint: Bool = false
+    helper: URL, channel: ScriptReplLaunch, home: String, traceSigint: Bool = false,
+    capabilities: [String] = []
   ) -> TerminalLaunch {
-    var words = [helper.path, "repl", "--socket", channel.address]
+    var words = [helper.path, "repl"]
+
+    for capability in capabilities {
+      words += ["--allow", capability]
+    }
+
+    words += ["--socket", channel.address]
 
     #if DEBUG
       if traceSigint {
@@ -237,7 +304,7 @@ public final class ReplApplet: Applet, InputOwning {
       environment: [ScriptProtocol.replTokenVariable: channel.token])
   }
 
-  private func launchHelper() {
+  private func launchHelper(capabilities: [String] = []) {
     guard let helper = services.helper() else {
       showEnded("The REPL helper is missing from this copy of uniterm. Reinstall uniterm.")
 
@@ -262,7 +329,8 @@ public final class ReplApplet: Applet, InputOwning {
     }
 
     let launch = Self.launch(
-      helper: helper, channel: channel.launch, home: home, traceSigint: services.traceSigint)
+      helper: helper, channel: channel.launch, home: home, traceSigint: services.traceSigint,
+      capabilities: capabilities)
 
     let session: any TerminalSession
 
@@ -277,6 +345,7 @@ public final class ReplApplet: Applet, InputOwning {
 
     self.channel = channel
     self.session = session
+    helperCapabilities = capabilities
 
     channel.onEvent = { [weak self] event in self?.handle(event) }
     session.onEvent = { [weak self] event in self?.handle(event) }
@@ -297,6 +366,7 @@ public final class ReplApplet: Applet, InputOwning {
   /// Ends the helper and lets the session go. The channel closes the connection first, which makes
   /// the helper exit, and the app kills a helper still there after a short wait.
   private func stopHelper() {
+    reportSessionEnded()
     releaseChannel()
 
     session?.onEvent = nil
@@ -305,6 +375,16 @@ public final class ReplApplet: Applet, InputOwning {
     session = nil
 
     evaluating = false
+    helperCapabilities = []
+  }
+
+  /// Tells the host that the helper's terminal session is gone, so nothing can act for this pane
+  /// through it any more.
+  private func reportSessionEnded() {
+    guard let identity = processIdentity else { return }
+
+    processIdentity = nil
+    host?.applet(self, sessionEnded: tabID, pid: identity.pid, started: identity.started)
   }
 
   /// A Ctrl-C in the pane. The first while a form runs asks the helper to stop it. A second, after a
@@ -398,10 +478,20 @@ public final class ReplApplet: Applet, InputOwning {
   private func handle(_ event: TerminalEvent) {
     switch event {
     case .exited:
+      reportSessionEnded()
       ptyExited()
 
     case .clipboardRequest(let request):
       confirm(request)
+
+    case .processStarted(let identity):
+      processIdentity = (pid: identity.pid, started: identity.started)
+      host?.applet(
+        self, sessionStarted: tabID, pid: identity.pid, started: identity.started,
+        generation: identity.sessionGeneration)
+      channel?.setSessionRoot(
+        ProcessIdentity(pid: identity.pid, started: identity.started),
+        generation: identity.sessionGeneration)
 
     case .titleChanged, .workingDirectoryChanged, .commandFinished, .notification, .bell:
       break
