@@ -157,7 +157,8 @@ final class ReplUITests: UnitermUITestCase {
   /// Catches a form stuck in a C call that nothing can end. `(file/read stdin 1)` waits on the
   /// terminal in one C call, which Janet's interrupt flag never reaches. The first Ctrl-C leaves it
   /// running. A second, a second later, ends the helper. The pane stays open with the reason and a
-  /// Restart button, and keeps its history.
+  /// Restart button, under no "Press any key" text, since no key closes it. Restart starts a fresh
+  /// helper that recalls the line that was stuck.
   func testASecondCtrlCEndsAFormStuckInACallThatIgnoresTheFirst() {
     let app = launchApp()
     let (window, _) = openRepl(in: app)
@@ -181,7 +182,30 @@ final class ReplUITests: UnitermUITestCase {
       waitFor(message, timeout: 5) { $0.contains("Ctrl-C twice") },
       "the pane gave another reason: \(message.value as? String ?? "")")
     XCTAssertTrue(window.groups["pane-2"].exists, "the pane closed")
-    XCTAssertTrue(window.buttons["repl-restart-button"].exists, "the pane offered no restart")
+
+    let terminal = window.groups["pane-2"].textViews["terminal"]
+
+    XCTAssertFalse(
+      (terminal.value as? String ?? "").contains("Press any key"),
+      "the pane promised a close that no key makes")
+
+    let restart = window.buttons["repl-restart-button"]
+
+    XCTAssertTrue(restart.exists, "the pane offered no restart")
+    XCTAssertFalse(
+      waitUntilGone(message, timeout: 3), "the REPL restarted without the user pressing Restart")
+
+    restart.click()
+
+    XCTAssertTrue(waitUntilGone(message, timeout: 15), "Restart left the message up")
+    XCTAssertTrue(
+      waitFor(terminal, timeout: 40) { $0.contains("repl:1:> ") },
+      "the restarted REPL never showed its prompt")
+
+    app.typeKey(.upArrow, modifierFlags: [])
+    XCTAssertTrue(
+      waitFor(terminal, timeout: 20) { $0.contains("repl:1:> (file/read stdin 1)") },
+      "the restarted REPL did not keep the history")
   }
 
   /// Catches a history that does not survive close and undo, a restore that runs a saved line, and
@@ -246,39 +270,26 @@ final class ReplUITests: UnitermUITestCase {
     return nil
   }
 
-  /// Catches a pane that closes when its helper ends, one that offers no way back, and a restart
-  /// that loses the history. `(os/exit 0)` ends the helper, the pane stays with a message, and
-  /// Restart starts a fresh helper that recalls the line that ended the last one.
-  func testWhenTheHelperEndsThePaneStaysAndRestartKeepsTheHistory() {
+  /// Catches a REPL pane that stays after the user ends the REPL, and one that waits for a key
+  /// first. `(os/exit 0)` ends the helper, and its pane closes on its own, the way a shell's does.
+  func testOsExitClosesTheReplPane() {
     let app = launchApp()
     let (window, _) = openRepl(in: app)
 
     app.typeText("(os/exit 0)\n")
 
-    let message = window.staticTexts["repl-ended-message"]
+    XCTAssertTrue(waitUntilGone(window.groups["pane-2"], timeout: 20), "the REPL pane stayed")
+    XCTAssertTrue(window.groups["pane-1"].exists, "the first pane went away too")
+  }
 
-    XCTAssertTrue(message.waitForExistence(timeout: 20), "the pane showed no message")
-    XCTAssertTrue(window.groups["pane-2"].exists, "the pane closed")
+  /// Catches the same for Ctrl-D at an empty prompt, the other way a user ends the REPL.
+  func testCtrlDClosesTheReplPane() {
+    let app = launchApp()
+    let (window, _) = openRepl(in: app)
 
-    let restart = window.buttons["repl-restart-button"]
+    app.typeKey("d", modifierFlags: .control)
 
-    XCTAssertTrue(restart.exists, "the pane offered no restart")
-    XCTAssertFalse(
-      waitUntilGone(message, timeout: 3), "the REPL restarted without the user pressing Restart")
-
-    restart.click()
-
-    XCTAssertTrue(waitUntilGone(message, timeout: 15), "Restart left the message up")
-
-    let terminal = window.groups["pane-2"].textViews["terminal"]
-
-    XCTAssertTrue(
-      waitFor(terminal, timeout: 40) { $0.contains("repl:1:> ") },
-      "the restarted REPL never showed its prompt")
-
-    app.typeKey(.upArrow, modifierFlags: [])
-    XCTAssertTrue(
-      waitFor(terminal, timeout: 20) { $0.contains("repl:1:> (os/exit 0)") },
-      "the restarted REPL did not keep the history")
+    XCTAssertTrue(waitUntilGone(window.groups["pane-2"], timeout: 20), "the REPL pane stayed")
+    XCTAssertTrue(window.groups["pane-1"].exists, "the first pane went away too")
   }
 }

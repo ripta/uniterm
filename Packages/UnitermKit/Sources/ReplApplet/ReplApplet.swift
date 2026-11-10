@@ -77,8 +77,10 @@ private final class ReplContainerView: NSView {
 /// The applet owns its input, so a script's send to it is refused. It reports no current
 /// directory. Nothing flows into it from the app or from another pane.
 ///
-/// When the helper dies, the pane stays open with a message and a Restart button. Only the user
-/// can restart it, and the history carries over. A closed pane ends the helper.
+/// A helper that ends by itself, as with Ctrl-D or `(os/exit)`, closes the pane, the way a shell's
+/// pane closes when the shell exits. A helper that uniterm ended keeps the pane open with the
+/// reason and a Restart button, and so does a helper that never connected. Only the user can
+/// restart it, and the history carries over. A closed pane ends the helper.
 @MainActor
 public final class ReplApplet: Applet, InputOwning {
   private static let title = "REPL"
@@ -107,10 +109,6 @@ public final class ReplApplet: Applet, InputOwning {
   private var phase = Phase.idle
   private var session: (any TerminalSession)?
   private var channel: ScriptReplChannel?
-
-  /// True while the pane shows the generic end of a helper whose channel still listens for why.
-  private var reasonMayFollow = false
-
   private var evaluating = false
   private var started = false
 
@@ -393,18 +391,14 @@ public final class ReplApplet: Applet, InputOwning {
       evaluating = running
 
     case .ended:
-      if reasonMayFollow {
-        releaseChannel()
-      } else {
-        helperEnded("The REPL's connection to uniterm closed.")
-      }
+      helperLeft()
     }
   }
 
   private func handle(_ event: TerminalEvent) {
     switch event {
     case .exited:
-      helperEnded("The REPL ended.", reasonMayFollow: true)
+      ptyExited()
 
     case .clipboardRequest(let request):
       confirm(request)
@@ -414,33 +408,39 @@ public final class ReplApplet: Applet, InputOwning {
     }
   }
 
-  /// The helper is gone. The pane stays, keeps its history, and offers a restart. The helper's
-  /// last output stays on screen above the message.
-  ///
-  /// The pty's exit and the helper's own report of why it ended arrive in either order. When the
-  /// exit comes first, the channel stays open until the connection closes, and a reason that
-  /// arrives meanwhile replaces the generic message.
-  private func helperEnded(_ message: String, reasonMayFollow: Bool = false) {
-    if phase == .running {
-      evaluating = false
+  /// The helper was ended for a reason the pane can say. The pane stays, keeps its history, and
+  /// offers a restart. The helper's last output stays on screen above the message.
+  private func helperEnded(_ message: String) {
+    guard phase == .running else { return }
 
-      if reasonMayFollow {
-        self.reasonMayFollow = true
-      } else {
-        releaseChannel()
-      }
+    evaluating = false
+    releaseChannel()
+    showEnded(message)
+  }
 
-      showEnded(message)
-    } else if reasonMayFollow == false, self.reasonMayFollow {
-      releaseChannel()
-      showEnded(message)
-    }
+  /// The helper's connection closed with no reason, so the helper ended by itself. The pane
+  /// closes. A reason always comes before the close, so a helper that uniterm ended never gets
+  /// here.
+  private func helperLeft() {
+    guard phase == .running else { return }
+
+    evaluating = false
+    releaseChannel()
+    host?.appletDidExit(self)
+  }
+
+  /// The pty's exit and the connection's report arrive in either order. While the helper is
+  /// connected, the connection decides: a reason keeps the pane, and a bare close closes it. A
+  /// helper that never connected has nothing more to say, so the pane says it ended.
+  private func ptyExited() {
+    guard phase == .running, channel?.isAttached != true else { return }
+
+    helperEnded("The REPL ended.")
   }
 
   private func releaseChannel() {
     channel?.end()
     channel = nil
-    reasonMayFollow = false
   }
 
   private func showEnded(_ message: String) {
