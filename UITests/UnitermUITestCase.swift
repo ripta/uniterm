@@ -120,6 +120,17 @@ class UnitermUITestCase: XCTestCase {
     return terminal
   }
 
+  /// Enables remote control on the focused pane from the File menu, as a user does, and waits for
+  /// the pane's control badge. Every new pane starts disconnected, so a script that acts from it
+  /// needs this first.
+  func enableRemoteControl(pane: Int, in app: XCUIApplication, window number: Int = 1) {
+    app.menuBars.menuItems["Enable Remote Control"].click()
+
+    XCTAssertTrue(
+      mainWindow(number, in: app).buttons["pane-control-\(pane)"].waitForExistence(timeout: 10),
+      "the pane never showed its control badge")
+  }
+
   /// Waits until the app reports `runningForeground`. State reads lag a window change, so a single
   /// read right after a close can still say background. With `activating`, the app is asked to
   /// activate once when the first read is not foreground. Without it, only the app's own behavior

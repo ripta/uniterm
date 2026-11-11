@@ -86,6 +86,18 @@ public final class RecordingHost: AppletHost {
 
   public func appletTabsDidChange(_ applet: any Applet) { tabChanges += 1 }
 
+  /// The permissions asked for, and the answer each gets.
+  public var permissions: [AppletPermissionRequest] = []
+  public var permissionAnswer = AppletPermissionAnswer.deny
+
+  public func applet(_ applet: any Applet, askPermission request: AppletPermissionRequest) async
+    -> AppletPermissionAnswer
+  {
+    permissions.append(request)
+
+    return permissionAnswer
+  }
+
   public func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
     confirmations.append(request)
     questions.continuation.yield()

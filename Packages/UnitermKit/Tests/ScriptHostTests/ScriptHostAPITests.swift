@@ -67,19 +67,28 @@ final class ScriptHostAPITests: XCTestCase {
       ])
   }
 
-  /// Catches an open-pane that drops the kind, the axis, the directory, or the tab of a reference,
-  /// or that turns a directory the script left out into one it did not name.
+  /// Catches an open-pane that drops the kind, the axis, the directory, the control, or the tab of
+  /// a reference, that turns a directory the script left out into one it did not name, or that
+  /// loses a nearest target's kind.
   func testOpenPaneCarriesItsArgumentsToTheApp() async throws {
     try await run("open-pane")
 
     XCTAssertEqual(
       windows.calls,
       [
-        .openPane(kind: "terminal", beside: pane, axis: nil, directory: nil),
         .openPane(
-          kind: "data-viewer", beside: ScriptPaneReference(window: 7, pane: 1, tab: 2),
-          axis: .column, directory: "/synthetic/work"),
-        .openPane(kind: "browser", beside: pane, axis: .row, directory: nil),
+          kind: "terminal", beside: .pane(pane), axis: nil, directory: nil, access: .disconnected),
+        .openPane(
+          kind: "data-viewer", beside: .pane(ScriptPaneReference(window: 7, pane: 1, tab: 2)),
+          axis: .column, directory: "/synthetic/work", access: .disconnected),
+        .openPane(
+          kind: "browser", beside: .pane(pane), axis: .row, directory: nil, access: .disconnected),
+        .openPane(
+          kind: "map-viewer", beside: .nearest(kind: "data-viewer"), axis: nil, directory: nil,
+          access: .remoteControlled),
+        .openPane(
+          kind: "text-viewer", beside: .pane(pane), axis: nil, directory: nil,
+          access: .disconnected),
       ])
   }
 
@@ -90,8 +99,8 @@ final class ScriptHostAPITests: XCTestCase {
     XCTAssertEqual(
       windows.calls,
       [
-        .openTab(pane: pane, directory: nil),
-        .openTab(pane: pane, directory: "/synthetic/tab"),
+        .openTab(pane: .pane(pane), directory: nil),
+        .openTab(pane: .pane(pane), directory: "/synthetic/tab"),
       ])
   }
 

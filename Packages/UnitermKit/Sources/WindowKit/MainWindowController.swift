@@ -72,10 +72,15 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   var isPaletteVisible: Bool { paletteTarget != nil }
 
-  /// Who owns the groups of panes a controller drives. The window asks it nothing yet, and tells
-  /// it about every ordinary split. A routed split is never reported, so a routed pane joins no
-  /// group.
-  var paneGroups: any PaneGroupOwnership = NoPaneGroups()
+  /// The access mode of each pane. The window holds it, never an applet.
+  var paneControls = PaneControlTable()
+
+  /// Which connections act for which pane, and their names. The set of windows gives it to each
+  /// window. Without one, no connection acts for any pane.
+  weak var controllerAuthority: (any ControllerAuthority)?
+
+  /// Asks the user for a permission an applet requests. Tests replace it.
+  var permissionAsker: PermissionAsker = PermissionDialog.present
 
   /// The tabs that took focus, newest first. It lives in memory only. A tab ID is never reused,
   /// so an entry for a tab that closed is harmless and the palette prunes it when it lists.
@@ -185,6 +190,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     let panes = try restored.map { try PaneRestoration.restore($0, restorer: restoreApplet) }
 
+    for (pane, intent) in panes?.intents ?? [:] {
+      paneControls.remember(intent, for: pane)
+    }
+
     if let panes {
       launchRestored = Set(panes.applets.values.map { ObjectIdentifier($0) })
       paneArea = PaneAreaView(restoring: panes.tree, applets: panes.applets, focus: panes.focus)
@@ -221,6 +230,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       if let applet = paneArea.applet(for: pane) { bindHost(of: applet, to: pane) }
     }
 
+    refreshControlMarks()
+
     for applet in paneArea.applets { adopt(applet) }
 
     paneArea.onAppletPlaced = { [weak self] applet, pane in
@@ -228,6 +239,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     paneArea.onTreeChange = { [weak self] in
+      self?.refreshControlMarks()
       self?.updateMinimumSize()
       self?.refreshCommandPalette()
       self?.commands.menu?.sync()
@@ -475,12 +487,23 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   ///
   /// The window holds each host for as long as its applet lives. Entries for applets that are gone
   /// are dropped here, so the table stays as small as the applets that can still post.
+  ///
+  /// The applet learns its pane's control here too, before anything can start it. The badge's
+  /// actions are wired to the pane at the same time.
   private func bindHost(of applet: any Applet, to pane: NodeID) {
     hosts = hosts.filter { $0.value.applet != nil }
 
     let host = PaneStatusHost(pane: pane, applet: applet, window: self)
     hosts[ObjectIdentifier(applet)] = HostEntry(applet: applet, host: host)
     applet.host = host
+    applet.controlDidChange(paneControls.control(of: pane))
+
+    paneArea.paneView(for: pane)?.onControlAction = { [weak self] action in
+      self?.runControlAction(action, on: pane)
+    }
+    paneArea.paneView(for: pane)?.currentControlMark = { [weak self] in
+      self?.controlMark(for: pane)
+    }
   }
 
   /// Makes the applet ready for the window. A launcher also learns how to open its choice, and gets
@@ -647,7 +670,55 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       return nil
     }
 
-    paneGroups.paneSplit(created, from: pane)
+    startPendingApplets()
+    paneArea.focus(created)
+    return created
+  }
+
+  /// Splits `pane` for a controller and starts the chosen applet in the new pane, which joins the
+  /// controller's group. The new pane starts with `access`, which its applet type must support,
+  /// and its applet learns that before it starts. Returns nil when the type does not support the
+  /// access, the pane is too small, or the applet could not start. A refusal of the access
+  /// builds nothing.
+  @discardableResult
+  func openPane(
+    _ choice: AppletChoice, typeID: String, axis: Axis, from pane: NodeID, directory: String?,
+    owner: GroupOwner, access: PaneAccessMode
+  ) -> NodeID? {
+    let combination = ControlCombination(access: access, driver: .none)
+
+    guard
+      AppletTypeDeclaration.supportedControl(forType: typeID, in: appletTypes).contains(
+        combination)
+    else { return nil }
+
+    contentController.view.layoutSubtreeIfNeeded()
+
+    let applet: any Applet
+    do {
+      applet = try makeApplet(choice, directory)
+    } catch {
+      statusCenter.post(level: .error, text: "The pane did not open: \(error.localizedDescription)")
+      return nil
+    }
+
+    adopt(applet)
+
+    let created: NodeID
+    do {
+      created = try paneArea.split(pane, axis, adding: applet, for: owner)
+    } catch {
+      applet.close()
+      postNoRoom()
+      return nil
+    }
+
+    if access != .disconnected {
+      let control = paneControls.set(access, for: created)
+      applet.controlDidChange(control)
+    }
+
+    refreshControlMarks()
     startPendingApplets()
     paneArea.focus(created)
     return created
@@ -840,6 +911,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
     applet.close()
+    paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)
 
     if let next = removed.refocus {
@@ -857,6 +929,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
     applet.close()
+    paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)
 
     if let next = removed.refocus {
@@ -1065,6 +1138,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       focusedPane: paneArea.focusedPane, highWaterMark: paneArea.tree.highWaterMark)
   }
 
+  /// A pane saves the control it has as intent, or the intent it was restored with while the user
+  /// has not changed it. A group saves its structure with no owner.
   private func savedNode(_ node: Node, described: inout [NodeID: AppletDescription]) -> SavedNode? {
     switch node {
     case .pane(let pane):
@@ -1072,7 +1147,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
       let description = applet.describe().withoutUndoState
       described[pane.id] = description
-      return .pane(id: pane.id, applet: description)
+      return .pane(id: pane.id, applet: description, control: savedControl(of: pane.id))
+
+    case .group(let group):
+      guard let inner = savedNode(group.content, described: &described) else { return nil }
+
+      let members = group.members.filter { inner.paneIDs.contains($0) }
+
+      guard !members.isEmpty else { return inner }
+
+      return .group(id: group.id, source: group.source, members: Array(members), node: inner)
 
     case .split(let split):
       var children: [SavedChild] = []
@@ -1180,12 +1264,27 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     schedulePaletteRefresh()
   }
 
+  /// The question names what asked: the subject the applet gives, such as a background tab, or
+  /// else the applet's title.
   public func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
+    let name = request.subject ?? applet.title
+
     let question = CloseConfirmation(
-      title: request.title, detail: "Pane \u{201C}\(applet.title)\u{201D}. \(request.detail)",
+      title: request.title, detail: "Pane \u{201C}\(name)\u{201D}. \(request.detail)",
       confirmTitle: request.confirmTitle, cancelTitle: request.cancelTitle)
 
     return await confirmer(question, window)
+  }
+
+  public func applet(_ applet: any Applet, askPermission request: AppletPermissionRequest) async
+    -> AppletPermissionAnswer
+  {
+    let name = request.subject ?? applet.title
+
+    var named = request
+    named.detail = "Pane \u{201C}\(name)\u{201D}. \(request.detail)"
+
+    return await permissionAsker(named, window)
   }
 
   func applet(

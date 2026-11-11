@@ -3,6 +3,7 @@ import AppletKit
 import Foundation
 import LayoutKit
 import PaneModel
+import ScriptHost
 import StatusKit
 
 /// Where a new window lands when it cascades from an existing one.
@@ -364,8 +365,35 @@ public final class WindowSet {
     controllers.first { $0.scriptWindowID == id }
   }
 
+  /// Which connections act for which pane. Every window gets it as it opens.
+  public weak var controllerAuthority: (any ControllerAuthority)? {
+    didSet {
+      for controller in controllers { controller.controllerAuthority = controllerAuthority }
+    }
+  }
+
+  /// Makes the scripting host this set's authority on controllers, and wires its reports. A
+  /// controller's end takes its groups away in every window, and any change to who acts for a
+  /// pane refreshes every pane's badge.
+  public func wireControllers(to host: ScriptHost) {
+    controllerAuthority = host
+    host.onControllerEnded = { [weak self] id in self?.controllerEnded(id) }
+    host.onControllersChanged = { [weak self] in self?.refreshControlMarks() }
+  }
+
+  /// Tells every pane's badge what to show now.
+  public func refreshControlMarks() {
+    for controller in controllers { controller.refreshControlMarks() }
+  }
+
+  /// A controller's authority ended. Every window takes away the groups it owned.
+  public func controllerEnded(_ id: UInt64) {
+    for controller in controllers { controller.controllerEnded(id) }
+  }
+
   private func register(_ controller: MainWindowController) {
     controller.scriptWindowID = windowIDs.next()
+    controller.controllerAuthority = controllerAuthority
     controller.onClose = { [weak self] controller in
       self?.windowDidClose(controller)
     }
