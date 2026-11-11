@@ -1,0 +1,247 @@
+import AppletKit
+import Foundation
+
+/// The exec wire's version and bounds, which the app and every driver share.
+///
+/// The wire is UTF-8 JSON, one object per LF-terminated line, on the driver's stdin and stdout.
+/// Both sides start with a hello that names the protocol version, the applet type, and its command
+/// schema version. No command or event flows until both sides accept the other's hello.
+public enum ExecProtocol {
+  public static let version = 1
+
+  /// The longest frame, newline excluded. The reader refuses a longer line before it has
+  /// buffered the whole of it.
+  public static let maxFrameBytes = 1 << 20
+
+  /// The most bytes held for a driver in each direction: frames read but not yet handled, and
+  /// frames written but not yet taken by the driver.
+  public static let maxRetainedBytes = 4 << 20
+
+  /// How deeply a frame's values may nest.
+  public static let maxDepth = 32
+
+  /// The most values one frame may hold. With the frame's size, it bounds the decoded memory.
+  public static let maxValues = 65_536
+
+  /// The most frames the main thread handles in one turn.
+  public static let framesPerTurn = 64
+
+  /// The longest request ID a driver may choose, as a string, in UTF-8 bytes.
+  public static let maxRequestIDBytes = 64
+
+  /// The longest command or applet type name, in UTF-8 bytes.
+  public static let maxNameBytes = 64
+
+  /// The longest refusal text a driver may send, in UTF-8 bytes. Longer text is cut.
+  public static let maxRefusalBytes = 512
+}
+
+/// Why the wire failed. Each one closes the channel, and the pane shows the text.
+public enum ExecWireError: Error, Sendable, Equatable, CustomStringConvertible {
+  case frameTooLong
+  case partialFrameAtEOF
+  case malformed(String)
+  case tooDeep
+  case tooManyValues
+
+  public var description: String {
+    switch self {
+    case .frameTooLong:
+      return "the driver wrote a line longer than \(ExecProtocol.maxFrameBytes) bytes"
+
+    case .partialFrameAtEOF:
+      return "the driver's output ended in the middle of a line"
+
+    case .malformed(let why):
+      return "the driver wrote a line that is not a message: \(why)"
+
+    case .tooDeep:
+      return "the driver wrote a message nested more than \(ExecProtocol.maxDepth) levels deep"
+
+    case .tooManyValues:
+      return "the driver wrote a message with more than \(ExecProtocol.maxValues) values"
+    }
+  }
+}
+
+/// A message from a driver. The app validates each one and trusts none of them.
+public enum ExecDriverMessage: Sendable, Equatable {
+  case hello(protocolVersion: Int, appletType: String, schemaVersion: Int)
+
+  /// A command for the applet. The ID is the driver's own, and the reply carries it back.
+  case command(id: JSONValue, name: String, arguments: JSONValue)
+
+  /// The driver refuses the app, such as for an app hello it does not support. The text is shown.
+  case refusal(String)
+}
+
+/// A message to a driver.
+public enum ExecAppMessage: Sendable, Equatable {
+  case hello(protocolVersion: Int, appletType: String, schemaVersion: Int)
+  case event(name: String, data: JSONValue)
+  case reply(id: JSONValue, result: JSONValue)
+  case error(id: JSONValue?, code: String, message: String)
+}
+
+public enum ExecWire {
+  /// One line for the driver, with its newline. A JSON encoder escapes every newline inside a
+  /// string, so the line holds exactly one.
+  public static func frame(_ message: ExecAppMessage) -> Data {
+    let object: [String: JSONValue]
+
+    switch message {
+    case .hello(let version, let type, let schema):
+      object = [
+        "type": .string("hello"), "protocol": .number(Double(version)),
+        "applet": .string(type), "schema": .number(Double(schema)),
+      ]
+
+    case .event(let name, let data):
+      object = ["type": .string("event"), "name": .string(name), "data": data]
+
+    case .reply(let id, let result):
+      object = ["type": .string("reply"), "id": id, "result": result]
+
+    case .error(let id, let code, let text):
+      object = [
+        "type": .string("error"), "id": id ?? .null,
+        "error": .object(["code": .string(code), "message": .string(text)]),
+      ]
+    }
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+
+    // Encoding a JSON value of finite numbers cannot fail. A number that is not finite comes only
+    // from a bug, and an empty object is sent in its place so the line stays one message.
+    let data = (try? encoder.encode(JSONValue.object(object))) ?? Data("{}".utf8)
+
+    return data + Data([0x0A])
+  }
+
+  /// Decodes one line, without its newline. The bounds on nesting and values are checked before
+  /// the JSON decoder sees the bytes.
+  public static func decode(_ line: Data) throws(ExecWireError) -> ExecDriverMessage {
+    try checkBounds(line)
+
+    let value: JSONValue
+
+    do {
+      value = try JSONDecoder().decode(JSONValue.self, from: line)
+    } catch {
+      throw .malformed("it is not JSON")
+    }
+
+    guard case .object(let fields) = value else { throw .malformed("it is not an object") }
+
+    guard case .string(let type)? = fields["type"] else { throw .malformed("it has no type") }
+
+    switch type {
+    case "hello":
+      return .hello(
+        protocolVersion: try integer(fields["protocol"], "protocol"),
+        appletType: try name(fields["applet"], "applet"),
+        schemaVersion: try integer(fields["schema"], "schema"))
+
+    case "command":
+      let arguments = fields["arguments"] ?? .object([:])
+
+      guard case .object = arguments else { throw .malformed("its arguments are not an object") }
+
+      return .command(
+        id: try requestID(fields["id"]), name: try name(fields["name"], "name"),
+        arguments: arguments)
+
+    case "error":
+      var text = "the driver gave no reason"
+
+      if case .object(let error)? = fields["error"], case .string(let message)? = error["message"] {
+        text = message
+      } else if case .string(let message)? = fields["message"] {
+        text = message
+      }
+
+      return .refusal(
+        String(decoding: text.utf8.prefix(ExecProtocol.maxRefusalBytes), as: UTF8.self))
+
+    default:
+      throw .malformed("its type \"\(type.prefix(32))\" is unknown")
+    }
+  }
+
+  private static func integer(_ value: JSONValue?, _ field: String) throws(ExecWireError) -> Int {
+    guard case .number(let number)? = value, number.isFinite, number == number.rounded(),
+      abs(number) < 2_147_483_648.0
+    else { throw .malformed("its \(field) is not a whole number") }
+
+    return Int(number)
+  }
+
+  private static func name(_ value: JSONValue?, _ field: String) throws(ExecWireError) -> String {
+    guard case .string(let text)? = value, !text.isEmpty,
+      text.utf8.count <= ExecProtocol.maxNameBytes
+    else { throw .malformed("its \(field) is not a name") }
+
+    return text
+  }
+
+  /// A request ID is a whole number or a short string, as the driver chose it.
+  private static func requestID(_ value: JSONValue?) throws(ExecWireError) -> JSONValue {
+    switch value {
+    case .number(let number)? where number.isFinite && number == number.rounded():
+      return .number(number)
+
+    case .string(let text)? where text.utf8.count <= ExecProtocol.maxRequestIDBytes:
+      return .string(text)
+
+    default:
+      throw .malformed("its id is not a whole number or a short string")
+    }
+  }
+
+  /// Counts nesting and values in one pass over the bytes, outside strings. It reads every byte
+  /// once and keeps two counters, so a hostile line costs no more than its length.
+  static func checkBounds(_ line: Data) throws(ExecWireError) {
+    var depth = 0
+    var values = 0
+    var inString = false
+    var escaped = false
+
+    for byte in line {
+      if inString {
+        if escaped {
+          escaped = false
+        } else if byte == 0x5C {
+          escaped = true
+        } else if byte == 0x22 {
+          inString = false
+        }
+
+        continue
+      }
+
+      switch byte {
+      case 0x22:
+        inString = true
+        values += 1
+
+      case 0x5B, 0x7B:
+        depth += 1
+        values += 1
+
+        guard depth <= ExecProtocol.maxDepth else { throw .tooDeep }
+
+      case 0x5D, 0x7D:
+        depth -= 1
+
+      case 0x2C:
+        values += 1
+
+      default:
+        break
+      }
+
+      guard values <= ExecProtocol.maxValues else { throw .tooManyValues }
+    }
+  }
+}

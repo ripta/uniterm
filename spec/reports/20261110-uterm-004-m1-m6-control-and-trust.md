@@ -18,8 +18,8 @@ line. Nothing is held, blocked, or skipped, and no work is stashed.
 |---|---|---|
 | UTERM-004 M1: Caller identity | DONE | "Bind script callers to their pane through process ancestry" |
 | UTERM-004 M2: Remote-controlled and disconnected panes | DONE | "Keep panes disconnected until the user enables remote control" |
-| UTERM-004 M3: Exec panes | QUEUED | |
-| UTERM-004 M4: Layout requests | QUEUED | |
+| UTERM-004 M3: Exec panes | DONE | "Let a local program drive an applet through an exec pane" |
+| UTERM-004 M4: Layout requests | IN PROGRESS | |
 | UTERM-004 M5: Verified controller artifacts and run binding | QUEUED | |
 | UTERM-004 M6: Consent, remembered trust, and permission management | QUEUED | |
 
@@ -568,3 +568,132 @@ After the last fix, the coordinator reran `caffeinate -dimsu make test-package`,
 During the UI run, `ReplUITests.testHistorySurvivesCloseAndUndoWithoutRunningAgain` logged six "Conflicting
 constraints detected" issues. They come from `TextViewerApplet.FindBarView`, where the `NSSearchField`'s
 `width >= 160` constraint is broken against a `TextViewerView` of width 0. M2 does not touch that view. The test passed.
+
+## UTERM-004 M3: Exec panes
+
+### First round
+
+The opus implementer reported every local check passing. Its numbers were 2312 package tests, 0 failures, and 2 of 2
+`ExecPaneUITests` passing. The coordinator reran `caffeinate -dimsu make test-package`. It ran 2312 tests with 7
+skipped and 0 failures, in 205 seconds.
+
+The implementer tried to show that the two delivery-time authority tests fail without the delivery check. The
+auto-mode classifier denied that edit as a security weakening, so the file never changed. The reviewer then read both
+tests. It judged that each fails when the check is removed. That is a reading, not a run.
+
+### UI runs
+
+The coordinator ran `ExecPaneUITests` directly three times:
+
+| Run | Result |
+|---|---|
+| Class order, once | `testWindowShortcutsWorkWhileTheDriverStalls` failed: "the Pending Requests panel never opened" |
+| That test alone, 3 iterations | 3 of 3 passed |
+| Class order, 3 iterations | 5 of 6 passed. Iteration 1 of `testARestored…DrivesTheApplet` failed: "the driver's stderr never reached the history as info" |
+
+The two failures are separate and intermittent. Both block M3 and go to the fix round. In the failed stderr iteration,
+7 `history-row` elements were present on every poll. The iteration-2 screenshot shows the expected row, "info perl
+(driver) (applet 1): got event advance-requested". The failed iteration kept no element screenshot, so its cause is
+unresolved for now.
+
+### Screen recording on failure
+
+On each failure, Xcode attached a screen recording and "Synthesized Event" captures to the result bundle. These can
+hold the user's whole display, the same hazard as M2's first menu shot. The coordinator deleted the exported copies
+and both failed runs' result bundles without viewing them. UI runs now pass `-collect-test-diagnostics never`. The
+fix round adds it to `make test-app`. That is a best guess. It rests on the M2 incident and the project memory on
+screenshots.
+
+### ADR check
+
+No conflicts and no supersessions. ADR-01, 04, 05, 06, 07, 09, and 10 are consistent. The implementer named two ADR
+candidates. The first was the single per-window dispatcher with a delivery recheck. The second was the exec child
+owned by the applet's outlet while the host owns the authority. The checker said both meet the bar. The coordinator
+did not raise them. The user declined a similar dispatcher candidate on 2026-11-03. The second only applies ADR-05.
+
+### Review
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | Quitting never stops running exec drivers, and a driver that ignores EOF outlives uniterm | fix |
+| 2 | SIGKILL skipped once the leader is reaped, so a grandchild and the reader threads leak | fix |
+| 3 | Argv and environment values reach the approval text unescaped | fix |
+| 4 | Child-side pipe ends lack FD_CLOEXEC until spawn returns, and the comment over-claims | fix |
+| 5 | A command that ran can reach the script as a plain failure when its reply cannot be encoded | fix |
+| 6 | Starting with the outlet already closed leaves the child unreaped and the strip "running" | fix |
+| 7 | The delivery check does not compare the pane's control generation | fix |
+| 8 | The Release app links the fixture applets' code | fix, best guess: keep the code out of Release |
+| 9 | `testNoScriptCallApprovesOrRunsALaunch` catches no credible regression | fix |
+| 10 | No test covers the exec driver's own delivery-time authority | fix |
+| 11-12 | Proposal date and amendment marker placement | fix |
+| 13-15 | Three comment fixes | fix |
+
+### Fix round stalls
+
+The implementer stalled twice in the fix round, for 26 and 24 minutes. Each time, its pending calls were ad-hoc
+commands through `cg_run`: `mkdir`, `xcrun swiftc`, `nm`, and `strings`. `.cg.yaml` does not allow these, so cg held
+each one for a user approval. The coordinator stopped the implementer each time and resumed it. Ad-hoc commands now go
+through the sandboxed Bash tool, one per call.
+
+### Fixture code and Release builds
+
+The coordinator checked finding 8 directly. It compiled the fixture sources without `DEBUG`, and the object held only
+module force-load stubs. With `DEBUG` it held 379 fixture symbols and the `fixture-slides` type string.
+
+A full Release build cannot be produced. `swift build -c release` and the Release `xcodebuild` both crash the Swift
+compiler, with an ownership verifier error in `StatusKit.Queue.present(level:source:text:record:showsMessage:raisesSignal:at:)`.
+StatusKit is unchanged since this run's base. The crash is unowned and predates this run. It does not block M3, and it
+is raised in the final report.
+
+### Fix round
+
+The implementer fixed findings 1 through 15. Each regression test failed on the unfixed code first, apart from these:
+finding 4 has no test, finding 9 is replaced by a source-reading guard test, and finding 10 is new coverage that passes
+on the current code. The fix round's own best guesses:
+
+1. The fixture sources compile only under `DEBUG`, because Xcode cannot cleanly link a package product for one
+   configuration only.
+2. A driver's whole process group dies when the driver ends, however it ends. A program meant to outlive its driver
+   must leave the group. The quit wait is 0.5 seconds.
+3. A command that ran but whose reply cannot be sent reports `reply-lost`. The reply is not trimmed to fit.
+
+The approval panel shows environment values in plain text, though they are typed into secure fields. That rests on
+the first round's guess that Allow once shows what it binds. It is raised in the final report.
+
+### Intermittent UI failures
+
+These stay unresolved. Across the fix round, `ExecPaneUITests` failed 4 times in 76 iterations. Three were
+synthesized clicks that did nothing: Run, the Pending Requests menu item, and Allow once. Each was followed by a
+5.4-second wait for the app to idle. Passing runs never went past 0.74 seconds. In the fourth, another app's windows
+sat above uniterm's panel, so uniterm was not frontmost. No uniterm code was found that deactivates the app or blocks
+its main thread, and no hang report was written. The likely cause is outside uniterm, but that is not proven.
+
+After the fix round, the implementer's last 40 iterations passed. So did the coordinator's 16-test class run. An
+unchanged M1 class, `PendingRequestsUITests`, also passed 16 of 16 under the same conditions. The comparison neither
+implicates nor clears M3. The test now records a trail of each click and key press, with app state and timing, and
+puts the trail in every failure message. The next failure should explain itself. Nothing was retried, slowed, or
+weakened. This is recorded as unresolved and does not hold M3.
+
+### Visual check
+
+The coordinator viewed the element screenshots from the passing 8-iteration run. The restored pane reads "Driver
+perl: Restored. Nothing runs until you choose Run." The approval panel lists each argv entry on its own line, then the
+directory, the environment, and the pane. The running pane shows the badge, and the driver's stderr reaches the
+history as info. Every capture holds only uniterm's own windows. The exported copies were deleted.
+
+### Final checks
+
+The coordinator ran these after the fix round:
+
+| Command | Result |
+|---|---|
+| `caffeinate -dimsu make test-package` | 2319 tests, 7 skipped, 0 failures, 209 seconds |
+| `ExecPaneUITests`, 8 iterations | 16 of 16 passed |
+| `PendingRequestsUITests`, 8 iterations | 16 of 16 passed |
+| `make build`, after unlinking the three Debug helpers | pass |
+| `make test-helper-sandbox` | pass |
+| `scripts/check-sandbox-off.sh` | "The App Sandbox is off." |
+| `proposals.py check` | `[]` |
+
+The `.cg.yaml` change, which allows `swift format`, came from a user approval during the run. It goes into this commit,
+per the project memory on committing `.cg.yaml`.

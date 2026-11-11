@@ -256,7 +256,8 @@ enum {
     CALL_LIST_PANES = 3,
     CALL_OPEN_PANE = 4,
     CALL_OPEN_TAB = 5,
-    CALL_SEND = 6
+    CALL_SEND = 6,
+    CALL_SEND_COMMAND = 7
 };
 
 /* The largest ID a script may hold. Every integer below it is exact in a double. */
@@ -265,6 +266,9 @@ enum {
 #define MAX_VALUE_STRING 4096
 #define MAX_VALUE_KEY 32
 #define MAX_VALUE_FIELDS 64
+#define MAX_JSON_DEPTH 16
+#define MAX_JSON_FIELDS 64
+#define MAX_SCHEMA_VERSION 2147483647.0
 
 static void put_u8(JanetBuffer *buffer, uint8_t value) {
     janet_buffer_push_u8(buffer, value);
@@ -536,6 +540,20 @@ static int skip_value(const uint8_t **cursor, const uint8_t *end, int depth) {
         return value <= (uint64_t)MAX_ID;
     }
 
+    case 7: {
+        if (end - *cursor < 8) return 0;
+
+        uint64_t bits = 0;
+
+        for (int step = 0; step < 8; step++) bits = (bits << 8) | *(*cursor)++;
+
+        double number;
+
+        memcpy(&number, &bits, sizeof(number));
+
+        return isfinite(number);
+    }
+
     case 4: {
         if (end - *cursor < 4) return 0;
 
@@ -628,6 +646,18 @@ static Janet decode_value(const uint8_t **cursor) {
         return janet_wrap_number((double)value);
     }
 
+    case 7: {
+        uint64_t bits = 0;
+
+        for (int step = 0; step < 8; step++) bits = (bits << 8) | *(*cursor)++;
+
+        double number;
+
+        memcpy(&number, &bits, sizeof(number));
+
+        return janet_wrap_number(number);
+    }
+
     case 4: {
         uint32_t length = 0;
 
@@ -678,8 +708,24 @@ static Janet decode_value(const uint8_t **cursor) {
     }
 }
 
-/* Runs one call through the host and turns its reply into a Janet value. */
-static Janet invoke(JanetBuffer *request) {
+/* The keyword a failure kind from the app goes by in a structured error. */
+static const char *failure_kind_name(int32_t status) {
+    switch (status - UNITERM_JANET_APP_FAILURE_BASE) {
+    case 1: return "bad-argument";
+    case 2: return "refused";
+    case 4: return "not-found";
+    case 5: return "unsupported";
+    case 6: return "reply-lost";
+    default: return "failed";
+    }
+}
+
+/*
+ * Runs one call through the host and turns its reply into a Janet value. A failure raises the
+ * app's text. With `structured`, it raises a struct of :kind and :message instead, so a script
+ * can tell a refusal from its own mistake without reading the words.
+ */
+static Janet invoke_call(JanetBuffer *request, int structured) {
     const uniterm_host *host = active_host;
 
     if (host == NULL || host->call == NULL) janet_panic("this function is not available");
@@ -697,7 +743,19 @@ static Janet invoke(JanetBuffer *request) {
 
     if (status != 0) {
         free(reply);
-        janet_panicf("%s", error[0] != '\0' ? error : "the host refused the call");
+
+        const char *text = error[0] != '\0' ? error : "the host refused the call";
+
+        if (structured) {
+            JanetKV *record = janet_struct_begin(2);
+
+            janet_struct_put(record, janet_ckeywordv("kind"),
+                             janet_ckeywordv(failure_kind_name(status)));
+            janet_struct_put(record, janet_ckeywordv("message"), janet_cstringv(text));
+            janet_panicv(janet_wrap_struct(janet_struct_end(record)));
+        }
+
+        janet_panicf("%s", text);
     }
 
     if (reply == NULL || reply_length == 0) {
@@ -722,6 +780,10 @@ static Janet invoke(JanetBuffer *request) {
     free(reply);
 
     return value;
+}
+
+static Janet invoke(JanetBuffer *request) {
+    return invoke_call(request, 0);
 }
 
 static Janet cfun_list_windows(int32_t argc, Janet *argv) {
@@ -841,6 +903,212 @@ static Janet cfun_send(int32_t argc, Janet *argv) {
     return invoke(request);
 }
 
+/*
+ * Writes a Janet value as JSON for an applet command's arguments. A struct or table becomes an
+ * object whose keys are keywords or strings, an array or tuple becomes an array, and a keyword
+ * value becomes a string. Anything else, a number that is not finite, text that is not UTF-8, a
+ * repeated key, or a value past the bounds is the script's mistake, and nothing is sent.
+ */
+static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length) {
+    if (!valid_utf8(text, length)) janet_panic("a string in the arguments is not UTF-8");
+
+    janet_buffer_push_u8(out, '"');
+
+    for (int32_t index = 0; index < length; index++) {
+        uint8_t byte = text[index];
+
+        if (byte == '"' || byte == '\\') {
+            janet_buffer_push_u8(out, '\\');
+            janet_buffer_push_u8(out, byte);
+        } else if (byte < 0x20) {
+            char escaped[8];
+
+            snprintf(escaped, sizeof(escaped), "\\u%04x", byte);
+            janet_buffer_push_cstring(out, escaped);
+        } else {
+            janet_buffer_push_u8(out, byte);
+        }
+    }
+
+    janet_buffer_push_u8(out, '"');
+}
+
+static void json_value(JanetBuffer *out, Janet value, int depth) {
+    if (depth > MAX_JSON_DEPTH) janet_panic("the arguments nest too deeply");
+
+    if (out->count > UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES) {
+        janet_panicf("the arguments are more than %d bytes as JSON",
+                     UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES);
+    }
+
+    switch (janet_type(value)) {
+    case JANET_NIL:
+        janet_buffer_push_cstring(out, "null");
+        return;
+
+    case JANET_BOOLEAN:
+        janet_buffer_push_cstring(out, janet_unwrap_boolean(value) ? "true" : "false");
+        return;
+
+    case JANET_NUMBER: {
+        double number = janet_unwrap_number(value);
+        char text[40];
+
+        if (!isfinite(number)) janet_panic("a number in the arguments is not finite");
+
+        if (number == floor(number) && fabs(number) <= MAX_ID) {
+            snprintf(text, sizeof(text), "%.0f", number);
+        } else {
+            snprintf(text, sizeof(text), "%.17g", number);
+        }
+
+        janet_buffer_push_cstring(out, text);
+        return;
+    }
+
+    case JANET_STRING:
+    case JANET_KEYWORD:
+    case JANET_SYMBOL: {
+        const uint8_t *text = janet_unwrap_string(value);
+
+        json_text(out, text, janet_string_length(text));
+        return;
+    }
+
+    case JANET_BUFFER: {
+        JanetBuffer *buffer = janet_unwrap_buffer(value);
+
+        json_text(out, buffer->data, buffer->count);
+        return;
+    }
+
+    case JANET_ARRAY:
+    case JANET_TUPLE: {
+        const Janet *items = NULL;
+        int32_t count = 0;
+
+        janet_indexed_view(value, &items, &count);
+        janet_buffer_push_u8(out, '[');
+
+        for (int32_t index = 0; index < count; index++) {
+            if (index > 0) janet_buffer_push_u8(out, ',');
+
+            json_value(out, items[index], depth + 1);
+        }
+
+        janet_buffer_push_u8(out, ']');
+        return;
+    }
+
+    case JANET_STRUCT:
+    case JANET_TABLE: {
+        const JanetKV *entries = NULL;
+        int32_t count = 0;
+        int32_t capacity = 0;
+        const uint8_t *keys[MAX_JSON_FIELDS];
+        int32_t key_lengths[MAX_JSON_FIELDS];
+        int32_t written = 0;
+
+        janet_dictionary_view(value, &entries, &count, &capacity);
+
+        if (count > MAX_JSON_FIELDS) {
+            janet_panicf("an object in the arguments has more than %d fields", MAX_JSON_FIELDS);
+        }
+
+        janet_buffer_push_u8(out, '{');
+
+        for (const JanetKV *entry = janet_dictionary_next(entries, capacity, NULL); entry != NULL;
+             entry = janet_dictionary_next(entries, capacity, entry)) {
+            if (!janet_checktypes(entry->key, JANET_TFLAG_KEYWORD | JANET_TFLAG_STRING)) {
+                janet_panic("a key in the arguments must be a keyword or a string");
+            }
+
+            const uint8_t *key = janet_unwrap_string(entry->key);
+            int32_t length = janet_string_length(key);
+
+            for (int32_t earlier = 0; earlier < written; earlier++) {
+                if (key_lengths[earlier] == length && memcmp(keys[earlier], key, (size_t)length) == 0) {
+                    janet_panic("a key in the arguments is given twice");
+                }
+            }
+
+            keys[written] = key;
+            key_lengths[written] = length;
+
+            if (written > 0) janet_buffer_push_u8(out, ',');
+
+            written++;
+            json_text(out, key, length);
+            janet_buffer_push_u8(out, ':');
+            json_value(out, entry->value, depth + 1);
+        }
+
+        janet_buffer_push_u8(out, '}');
+        return;
+    }
+
+    default:
+        janet_panicf("the arguments cannot hold a %T", value);
+    }
+}
+
+static Janet cfun_send_command(int32_t argc, Janet *argv) {
+    janet_arity(argc, 4, 5);
+
+    if (!janet_checktype(argv[1], JANET_KEYWORD)) {
+        janet_panic("the applet type must be a keyword such as :fixture-slides");
+    }
+
+    JanetString type = janet_unwrap_keyword(argv[1]);
+
+    check_text(type, "the applet type", UNITERM_JANET_MAX_KIND_BYTES, 1);
+
+    if (!janet_checktype(argv[2], JANET_NUMBER)) janet_panic("the schema version must be a number");
+
+    double version = janet_unwrap_number(argv[2]);
+
+    if (!isfinite(version) || version != floor(version) || version < 0 ||
+        version > MAX_SCHEMA_VERSION) {
+        janet_panic("the schema version must be a whole number that is not negative");
+    }
+
+    if (!janet_checktypes(argv[3], JANET_TFLAG_KEYWORD | JANET_TFLAG_STRING)) {
+        janet_panic("the command must be a keyword or a string such as :show-slide");
+    }
+
+    JanetString command = janet_unwrap_string(argv[3]);
+
+    check_text(command, "the command", UNITERM_JANET_MAX_COMMAND_NAME_BYTES, 1);
+
+    Janet arguments = argc > 4 ? argv[4] : janet_wrap_nil();
+    JanetBuffer *json = janet_buffer(64);
+
+    if (janet_checktype(arguments, JANET_NIL)) {
+        janet_buffer_push_cstring(json, "{}");
+    } else if (janet_checktypes(arguments, JANET_TFLAG_STRUCT | JANET_TFLAG_TABLE)) {
+        json_value(json, arguments, 0);
+    } else {
+        janet_panic("the arguments must be a struct or a table");
+    }
+
+    if (json->count > UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES) {
+        janet_panicf("the arguments are more than %d bytes as JSON",
+                     UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES);
+    }
+
+    JanetBuffer *request = janet_buffer(json->count + 128);
+
+    put_u16(request, CALL_SEND_COMMAND);
+    put_target(request, argv[0]);
+    put_text(request, type);
+    put_u32(request, (uint32_t)version);
+    put_text(request, command);
+    put_u32(request, (uint32_t)json->count);
+    janet_buffer_push_bytes(request, json->data, json->count);
+
+    return invoke_call(request, 1);
+}
+
 static const JanetReg uniterm_cfuns[] = {
     {"api-version", cfun_api_version,
      "(uniterm/api-version)\n\nThe version of the host API. A change that breaks a script "
@@ -872,6 +1140,15 @@ static const JanetReg uniterm_cfuns[] = {
      "name such as \"report.csv\", and its extension picks how the viewer reads the content. "
      "The pane of a terminal refuses it. The pane may be {:nearest kind}, such as "
      "{:nearest :data-viewer}."},
+    {"send-command", cfun_send_command,
+     "(uniterm/send-command pane applet-type schema-version command &opt arguments)\n\nSends one "
+     "command to the applet of a pane the script may control, and returns the applet's reply. "
+     "The applet type and the command schema version are the ones the script was written for, "
+     "and a pane that does not support them refuses. The command is a keyword or a string, and "
+     "the arguments a struct or a table. A failure raises a struct of :kind and :message, where "
+     ":kind is :bad-argument, :refused, :not-found, :unsupported, or :failed, or :reply-lost "
+     "when the command ran and its reply could not reach the script. The pane may be "
+     "{:nearest kind}."},
     {NULL, NULL, NULL}};
 
 /*

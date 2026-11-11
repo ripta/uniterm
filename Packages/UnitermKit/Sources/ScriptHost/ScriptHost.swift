@@ -234,7 +234,7 @@ public final class ScriptHost {
       releaseFilesOfClosedPanes()
 
       switch call {
-      case .openPane, .openTab:
+      case .openPane, .openTab, .sendCommand:
         Task { @MainActor [weak self] in
           let result =
             await self?.runAsync(call, connection: connection)
@@ -283,7 +283,7 @@ public final class ScriptHost {
         try requireWindows().listPanes(window: window, caller: try requireCaller(connection))
       }
 
-    case .openPane, .openTab:
+    case .openPane, .openTab, .sendCommand:
       return .failure(.failed, "the call needs to wait, and was run as if it did not")
 
     case .send(let target, let name, let content):
@@ -321,6 +321,13 @@ public final class ScriptHost {
         return Self.result(
           of: try await requireWindows().openTab(
             pane: pane, directory: directory, caller: caller, stillAllowed: stillAllowed))
+
+      case .sendCommand(let pane, let type, let version, let command, let arguments):
+        return Self.result(
+          of: try await requireWindows().sendCommand(
+            to: pane, appletType: type, schemaVersion: version, command: command,
+            arguments: arguments, caller: caller, stillAllowed: stillAllowed),
+          commandRan: true)
 
       default:
         return .failure(.failed, "the call does not wait")
@@ -546,18 +553,23 @@ public final class ScriptHost {
     }
   }
 
-  /// A reply the frame cannot hold becomes a failure the script sees.
-  private static func result(of value: ScriptValue) -> ScriptResult {
+  /// A reply the frame cannot hold becomes a failure the script sees. For an applet command,
+  /// which has already run by then, the failure says so, so the script never takes the command
+  /// for one that was refused.
+  private static func result(of value: ScriptValue, commandRan: Bool = false) -> ScriptResult {
+    let kind: ScriptFailureKind = commandRan ? .replyLost : .failed
+    let lead = commandRan ? "the command ran, but its reply" : "the answer"
+
     do {
       let payload = try value.encoded()
 
       guard payload.count <= ScriptProtocol.maxReplyPayload else {
-        return .failure(.failed, "the answer is too large for one reply")
+        return .failure(kind, "\(lead) is too large for one reply")
       }
 
       return .ok(payload)
     } catch {
-      return .failure(.failed, "the answer could not be sent: \(error)")
+      return .failure(kind, "\(lead) could not be sent: \(error)")
     }
   }
 
