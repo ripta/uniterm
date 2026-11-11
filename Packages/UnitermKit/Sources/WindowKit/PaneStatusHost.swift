@@ -101,6 +101,14 @@ final class PaneStatusHost: AppletHost {
     return await window.applet(applet, confirm: request)
   }
 
+  func applet(_ applet: any Applet, askPermission request: AppletPermissionRequest) async
+    -> AppletPermissionAnswer
+  {
+    guard let window else { return .deny }
+
+    return await window.applet(applet, askPermission: request)
+  }
+
   func issueCloseStamp() -> UInt64 {
     window?.issueCloseStamp() ?? 0
   }

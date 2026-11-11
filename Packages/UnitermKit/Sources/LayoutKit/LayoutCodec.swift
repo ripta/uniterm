@@ -40,8 +40,11 @@ public struct LayoutMigrations: Sendable {
     self.steps = steps
   }
 
-  /// The steps this build ships. Version 1 is the first schema, so there is none yet.
-  public static let standard = LayoutMigrations()
+  /// The steps this build ships.
+  ///
+  /// Version 2 adds the group node and a pane's saved control. A version 1 file holds neither, so
+  /// its windows read as they are, and every pane comes back disconnected with no group.
+  public static let standard = LayoutMigrations(steps: [1: LayoutCodec.upgradeFromVersion1])
 
   /// Upgrades `document` from `version` to `target`, applying each step in turn. A missing step
   /// means the version is not upgradable. The result carries the target version.
@@ -62,11 +65,12 @@ public struct LayoutMigrations: Sendable {
 
 /// Reads and writes the layout file's JSON.
 ///
-/// The top level is `{"version": 1, "windows": [...]}`.
+/// The top level is `{"version": 2, "windows": [...]}`.
 ///
 /// A window holds its frame, its screen, its focused pane, the high-water mark of its node IDs,
-/// and a tree. A tree node is either a pane with an applet description or a split with an axis
-/// and weighted children.
+/// and a tree. A tree node is a pane with an applet description, a split with an axis and
+/// weighted children, or a group around one node. A pane may name the control it had, and a
+/// group names its source and its members. Neither grants anything on restore.
 ///
 /// Each description keeps its own type and version.
 public enum LayoutCodec {
@@ -75,7 +79,18 @@ public enum LayoutCodec {
   public static let maximumNodeID: UInt64 = 1 << 48
 
   /// The schema version this build writes.
-  public static let currentVersion = 1
+  public static let currentVersion = 2
+
+  /// A version 1 document carries over unchanged under the version 2 number. Only the windows
+  /// list is kept, byte for byte, so no applet description is rewritten.
+  @Sendable
+  static func upgradeFromVersion1(_ document: Data) throws -> Data {
+    guard let windows = try RawJSON(document).member("windows") else {
+      throw LayoutReadError.unreadable("the windows list is missing")
+    }
+
+    return Data(#"{"version":2,"windows":"#.utf8) + windows.bytes + Data("}".utf8)
+  }
 
   // MARK: Writing
 
@@ -123,11 +138,35 @@ public enum LayoutCodec {
 
   private static func encode(_ node: SavedNode) throws -> JSONOut {
     switch node {
-    case .pane(let id, let applet):
-      return .object([
+    case .pane(let id, let applet, let control):
+      var members: [(String, JSONOut)] = [
         ("kind", .string("pane")), ("id", .unsigned(id.rawValue)),
-        ("applet", try encode(applet)),
-      ])
+      ]
+
+      if control != .disconnected {
+        members.append(
+          (
+            "control",
+            .object([
+              ("access", .string(control.access.rawValue)),
+              ("driver", .string(control.driver.rawValue)),
+            ])
+          ))
+      }
+
+      members.append(("applet", try encode(applet)))
+      return .object(members)
+
+    case .group(let id, let source, let groupMembers, let inner):
+      var members: [(String, JSONOut)] = [
+        ("kind", .string("group")), ("id", .unsigned(id.rawValue)),
+      ]
+
+      if let source { members.append(("source", .unsigned(source.rawValue))) }
+
+      members.append(("members", .array(groupMembers.sorted().map { .unsigned($0.rawValue) })))
+      members.append(("node", try encode(inner)))
+      return .object(members)
 
     case .split(let id, let axis, let children):
       return .object([
@@ -268,7 +307,45 @@ public enum LayoutCodec {
         throw LayoutReadError.unreadable("pane \(id) has no applet")
       }
 
-      return .pane(id: id, applet: decodeDescription(applet))
+      return .pane(
+        id: id, applet: decodeDescription(applet), control: decodeControl(members["control"]))
+
+    case "group":
+      guard let nodeValue = members["node"] else {
+        throw LayoutReadError.unreadable("group \(id) has no node")
+      }
+
+      let inner = try decodeNode(nodeValue, seen: &seen)
+      let panes = Set(inner.paneIDs)
+
+      var source: NodeID?
+      if let value = members["source"] {
+        guard let raw = value.unsignedInteger, raw > 0, raw <= maximumNodeID else {
+          throw LayoutReadError.unreadable("group \(id) has no valid source")
+        }
+
+        source = NodeID(rawValue: raw)
+      }
+
+      guard let list = try members["members"]?.elements() else {
+        throw LayoutReadError.unreadable("group \(id) has no members list")
+      }
+
+      var listed: [NodeID] = []
+
+      for item in list {
+        guard let raw = item.unsignedInteger, raw > 0, raw <= maximumNodeID else {
+          throw LayoutReadError.unreadable("group \(id) has a member without a valid ID")
+        }
+
+        // A member outside the group's own node names nothing the group holds. It is dropped,
+        // so a damaged list can only shrink a group.
+        let member = NodeID(rawValue: raw)
+
+        if panes.contains(member), !listed.contains(member) { listed.append(member) }
+      }
+
+      return .group(id: id, source: source, members: listed, node: inner)
 
     case "split":
       guard let axisName = members["axis"]?.text, axisName == "row" || axisName == "column"
@@ -295,6 +372,18 @@ public enum LayoutCodec {
     default:
       throw LayoutReadError.unreadable("node \(id) has the unknown kind \(kind)")
     }
+  }
+
+  /// A pane's saved control. A missing, damaged, or unknown value reads as disconnected, since it
+  /// is only intent and never grants anything.
+  private static func decodeControl(_ raw: RawJSON?) -> SavedPaneControl {
+    guard let raw, let members = try? Members(raw.members()) else { return .disconnected }
+
+    let access = members["access"]?.text.flatMap(PaneAccessMode.init(rawValue:)) ?? .disconnected
+    let driver =
+      members["driver"]?.text.flatMap(PaneDriverKind.init(rawValue:)) ?? PaneDriverKind.none
+
+    return SavedPaneControl(access: access, driver: driver)
   }
 
   /// The members of one object, scanned once. The last of a repeated key wins, as in JSON.

@@ -19,6 +19,10 @@ struct RestoredPanes {
 
   /// How many panes show a placeholder because their description could not be restored.
   let placeholders: Int
+
+  /// The control each pane had when the layout was saved. It is inert: every restored pane starts
+  /// disconnected, and no group has an owner.
+  let intents: [NodeID: SavedPaneControl]
 }
 
 @MainActor
@@ -33,15 +37,18 @@ enum PaneRestoration {
   ) throws -> RestoredPanes {
     var applets: [NodeID: any Applet] = [:]
     var placeholders = 0
+    var intents: [NodeID: SavedPaneControl] = [:]
 
     let root = node(
-      from: window.saved.tree, restorer: restorer, applets: &applets, placeholders: &placeholders)
+      from: window.saved.tree, restorer: restorer, applets: &applets, placeholders: &placeholders,
+      intents: &intents)
 
     let tree = try PaneTree(
       restoring: root, highWaterMark: window.saved.highWaterMark, metrics: metrics)
 
     let focus = window.saved.focusedPane ?? tree.paneIDs[0]
-    return RestoredPanes(tree: tree, applets: applets, focus: focus, placeholders: placeholders)
+    return RestoredPanes(
+      tree: tree, applets: applets, focus: focus, placeholders: placeholders, intents: intents)
   }
 
   /// The applet for a description. The launcher lives in WindowKit, and the app's restorer does
@@ -63,10 +70,10 @@ enum PaneRestoration {
 
   private static func node(
     from saved: SavedNode, restorer: AppletRestorer, applets: inout [NodeID: any Applet],
-    placeholders: inout Int
+    placeholders: inout Int, intents: inout [NodeID: SavedPaneControl]
   ) -> Node {
     switch saved {
-    case .pane(let id, let description):
+    case .pane(let id, let description, let control):
       let restored = applet(for: description, restorer: restorer)
       applets[id] = restored.applet
 
@@ -74,17 +81,29 @@ enum PaneRestoration {
         placeholders += 1
       }
 
+      if control != .disconnected { intents[id] = control }
+
       return .pane(Pane(id: id))
 
     case .split(let id, let axis, let children):
       let nodes = children.map {
         Child(
           node: node(
-            from: $0.node, restorer: restorer, applets: &applets, placeholders: &placeholders),
+            from: $0.node, restorer: restorer, applets: &applets, placeholders: &placeholders,
+            intents: &intents),
           weight: $0.weight)
       }
 
       return .split(Split(id: id, axis: axis, children: nodes))
+
+    // A restored group has no owner. A live connection must be granted it again by the user.
+    case .group(let id, let source, let members, let inner):
+      let content = node(
+        from: inner, restorer: restorer, applets: &applets, placeholders: &placeholders,
+        intents: &intents)
+
+      return .group(
+        Group(id: id, owner: nil, source: source, members: Set(members), content: content))
     }
   }
 

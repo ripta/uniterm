@@ -218,6 +218,47 @@ final class ScriptGrantTests: XCTestCase {
     XCTAssertEqual(host.allPendingRequests(), [])
   }
 
+  /// Catches a call that reaches the window layer without the pane its connection acts for, or with
+  /// another pane. The window layer checks every target against that pane.
+  func testEachCallNamesThePaneItsConnectionActsFor() async throws {
+    let (_, connection) = try await grantedPeer()
+
+    XCTAssertEqual(
+      windows.callers.last, ScriptCaller(connection: connection, window: window, pane: pane))
+    XCTAssertEqual(host.controllers(actingFrom: window, pane: pane), [connection])
+    XCTAssertEqual(host.controllers(actingFrom: window, pane: NodeID(rawValue: 2)), [])
+    XCTAssertEqual(host.controllerName(connection), "outside (PID \(getpid()))")
+  }
+
+  /// Catches a revoked controller whose calls still run, one the panel asks about again, and a
+  /// window layer that never hears the controller's authority ended, which would leave its groups
+  /// owned.
+  func testRevokingAControllerRefusesItsCallsAndEndsItsAuthority() async throws {
+    let (peer, connection) = try await grantedPeer()
+    var ended: [UInt64] = []
+
+    host.onControllerEnded = { ended.append($0) }
+    host.revokeControllers([connection])
+
+    XCTAssertTrue(ended.contains(connection))
+    XCTAssertEqual(host.allGrants(), [])
+    assertRefused(try await call(peer, id: 3), saying: "revoked")
+    XCTAssertEqual(host.allPendingRequests(), [])
+    XCTAssertEqual(host.controllers(actingFrom: window, pane: pane), [])
+  }
+
+  /// Catches a connection that goes away while the window layer still counts it as the owner of
+  /// its groups.
+  func testAClosedConnectionEndsItsAuthority() async throws {
+    let (peer, connection) = try await grantedPeer()
+    var ended: [UInt64] = []
+
+    host.onControllerEnded = { ended.append($0) }
+    peer.shutdownAndClose()
+
+    expect(await waitUntil { ended.contains(connection) }, "the close never ended the controller")
+  }
+
   /// Catches a grant that outlives the session of the pane it names. The program may ask again,
   /// since its session is what ended and not the user's answer.
   func testTheSourceSessionClosingEndsTheGrant() async throws {
@@ -335,17 +376,18 @@ final class ScriptGrantTests: XCTestCase {
       (
         "open-pane",
         .openPane(
-          kind: "terminal", beside: ScriptPaneReference(window: window, pane: pane.rawValue),
-          axis: nil, directory: "/synthetic")
+          kind: "terminal", beside: .pane(ScriptPaneReference(window: window, pane: pane.rawValue)),
+          axis: nil, directory: "/synthetic", access: .disconnected)
       ),
       (
         "open-tab",
-        .openTab(pane: ScriptPaneReference(window: window, pane: pane.rawValue), directory: nil)
+        .openTab(
+          pane: .pane(ScriptPaneReference(window: window, pane: pane.rawValue)), directory: nil)
       ),
     ]
 
     for (label, held) in calls {
-      for ends in ["revoke", "session"] {
+      for ends in ["revoke", "session", "controller"] {
         let (peer, connection) = try await grantedPeer()
 
         windows.holdsDirectoryCheck = true
@@ -353,10 +395,10 @@ final class ScriptGrantTests: XCTestCase {
 
         expect(await waitUntil { self.windows.isWaitingInDirectoryCheck }, "\(label) never waited")
 
-        if ends == "revoke" {
-          host.revokeGrant(connection: connection)
-        } else {
-          host.removeSessionRoot(sourceRoot, window: window, pane: pane)
+        switch ends {
+        case "revoke": host.revokeGrant(connection: connection)
+        case "controller": host.revokeControllers([connection])
+        default: host.removeSessionRoot(sourceRoot, window: window, pane: pane)
         }
 
         windows.holdsDirectoryCheck = false

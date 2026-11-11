@@ -61,8 +61,9 @@ final class ScriptRunUITests: UnitermUITestCase {
     return nil
   }
 
-  /// Catches a scripting host that is not wired to the real windows. One script posts a status
-  /// message, lists the windows and panes, and opens a pane. The status bar shows the message, a
+  /// Catches a scripting host that is not wired to the real windows. The user enables remote
+  /// control on the terminal's pane first. One script posts a status message, lists the windows and
+  /// panes, and opens a pane. The status bar shows the message, a
   /// second pane appears, and the listing reaches the command's own standard output.
   ///
   /// The shell runs the command again while it exits 69, no uniterm reachable, for up to ten
@@ -75,6 +76,8 @@ final class ScriptRunUITests: UnitermUITestCase {
 
     _ = waitForTerminal(in: app)
     XCTAssertFalse(window.groups["pane-2"].exists)
+
+    enableRemoteControl(pane: 1, in: app)
 
     let fixture = scratch + "-run.janet"
     let shell = scratch + "-run.sh"

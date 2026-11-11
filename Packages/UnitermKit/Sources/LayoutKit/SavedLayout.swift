@@ -3,27 +3,54 @@ import CoreGraphics
 import Foundation
 import PaneModel
 
-/// A pane or a split, as the layout file holds it.
+/// The control a pane had when the layout was saved. It is inert intent: a restored pane starts
+/// disconnected with no driver whatever this says, and the user enables it again by hand.
+public struct SavedPaneControl: Sendable, Equatable {
+  public var access: PaneAccessMode
+  public var driver: PaneDriverKind
+
+  public init(access: PaneAccessMode, driver: PaneDriverKind) {
+    self.access = access
+    self.driver = driver
+  }
+
+  public static let disconnected = SavedPaneControl(access: .disconnected, driver: .none)
+}
+
+/// A pane, a split, or a group, as the layout file holds it.
+///
+/// A group keeps its structure, its source, and its members as placement metadata. It has no
+/// owner, since an owner is a live connection that a file cannot hold.
 public indirect enum SavedNode: Sendable, Equatable {
-  case pane(id: NodeID, applet: AppletDescription)
+  case pane(id: NodeID, applet: AppletDescription, control: SavedPaneControl)
   case split(id: NodeID, axis: Axis, children: [SavedChild])
+  case group(id: NodeID, source: NodeID?, members: [NodeID], node: SavedNode)
+
+  /// A pane saved with no control intent.
+  public static func pane(id: NodeID, applet: AppletDescription) -> SavedNode {
+    .pane(id: id, applet: applet, control: .disconnected)
+  }
 
   /// The IDs of every node under this one, in file order.
   var allIDs: [NodeID] {
     switch self {
-    case .pane(let id, _):
+    case .pane(let id, _, _):
       return [id]
 
     case .split(let id, _, let children):
       return [id] + children.flatMap { $0.node.allIDs }
+
+    case .group(let id, _, _, let node):
+      return [id] + node.allIDs
     }
   }
 
   /// The IDs of the panes under this node, in reading order.
   public var paneIDs: [NodeID] {
     switch self {
-    case .pane(let id, _): return [id]
+    case .pane(let id, _, _): return [id]
     case .split(_, _, let children): return children.flatMap { $0.node.paneIDs }
+    case .group(_, _, _, let node): return node.paneIDs
     }
   }
 }

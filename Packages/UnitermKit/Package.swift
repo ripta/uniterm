@@ -329,7 +329,7 @@ let package = Package(
       name: "WindowKitTests",
       dependencies: [
         "WindowKit", "Theme", "Preferences", "StatusKit", "AppletKit", "PaneModel", "LayoutKit",
-        "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire",
+        "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
       ]),
   ],
   swiftLanguageModes: [.v6],

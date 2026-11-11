@@ -16,8 +16,8 @@ line. Nothing is held, blocked, or skipped, and no work is stashed.
 
 | Milestone | Run status | Commit |
 |---|---|---|
-| UTERM-004 M1: Caller identity | DONE, UI run pending | "Bind script callers to their pane through process ancestry" |
-| UTERM-004 M2: Remote-controlled and disconnected panes | QUEUED | |
+| UTERM-004 M1: Caller identity | DONE | "Bind script callers to their pane through process ancestry" |
+| UTERM-004 M2: Remote-controlled and disconnected panes | DONE | "Keep panes disconnected until the user enables remote control" |
 | UTERM-004 M3: Exec panes | QUEUED | |
 | UTERM-004 M4: Layout requests | QUEUED | |
 | UTERM-004 M5: Verified controller artifacts and run binding | QUEUED | |
@@ -134,9 +134,27 @@ The coordinator reran `caffeinate -dimsu make test-package` after the review fix
 `scripts/swiftpm-offline-check.sh`, `make ghostty-offline-check`, and `proposals.py check`. All passed. A scoped
 `swift test --sanitize=address --filter ScriptWireFuzzTests` passed after ScriptWire gained the capability names.
 
-The UI tests did not run. `PendingRequestsUITests` and `ReplCapabilityUITests` compile in a `build-for-testing`. The
-run waits on macOS Automation Mode, which on this machine requires user authentication. They run once that is
-allowed, with `ScriptRunUITests` and `ReplUITests`, and any fix lands in its own commit.
+The UI tests ran after the M1 commit. The first attempt timed out with "Timed out while enabling automation mode",
+because the user's Touch ID prompt went unanswered within 60 seconds. A second attempt in the main tree failed to build,
+because M2's unfinished edits leave `WindowScripting` not conforming to `ScriptWindowAPI`. The run was moved to a
+detached worktree at the M1 commit. That worktree linked the cached Ghostty artifact and the main tree's Swift
+packages:
+
+```
+caffeinate -dimsu ./scripts/run-ui-tests.sh xcodebuild -project uniterm.xcodeproj -scheme uniterm \
+  -configuration Debug -derivedDataPath .build/DerivedData \
+  -clonedSourcePackagesDirPath /Users/ripta/projects/uniterm/.build/SourcePackages \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 120 \
+  -only-testing:"uniterm UITests/PendingRequestsUITests" \
+  -only-testing:"uniterm UITests/ReplCapabilityUITests" \
+  -only-testing:"uniterm UITests/ScriptRunUITests" \
+  -only-testing:"uniterm UITests/ReplUITests" test
+```
+
+It reported "Executed 12 tests, with 0 failures" in 148.9 seconds, then "TEST SUCCEEDED". No crash report in
+`~/Library/Logs/DiagnosticReports` is newer than the run's start. The worktree was then removed with plain `git
+worktree remove`.
 
 New and changed test files, run alone with `swift test --skip-build --filter`, serially:
 
@@ -412,3 +430,141 @@ Two changes depart from the plan:
 
 - The shared test-root helper lives in a new `ScriptTestSupport` target, not in AppletTestSupport.
 - A connection that loses its ancestry may ask for a grant again.
+
+## UTERM-004 M2: Remote-controlled and disconnected panes
+
+### Commits
+
+- "Keep panes disconnected until the user enables remote control"
+
+### Restarts
+
+The M2 implementer, running on opus, stopped once mid-work with "API Error: 403 The security token included in the
+request is expired". Its last line was "Now the group node kind in PaneModel". The user refreshed the credentials.
+The coordinator resumed the same agent with SendMessage, so it kept its context and its partial tree.
+
+### What landed
+
+- **Control table.** Each pane has an access mode, disconnected by default, held by the host per window and pane.
+  Only a local action changes it: Enable Remote Control, Disconnect, or Revoke Controller. These are pane commands
+  in the menu and the palette.
+- **Badge.** A host-owned badge in `PaneFrameView` shows on a pane that is remote-controlled, owned, or driven. It
+  carries the same three actions. SF Symbols has no robot, so the badge uses `antenna.radiowaves.left.and.right`.
+- **Declared support.** `AppletTypeDeclaration.controlSupport` defaults to disconnected with no driver. The terminal
+  and the REPL declare remote control too.
+- **Groups.** A group node kind never splices or collapses, and it dissolves when no member is left. A user split of
+  a member adds no member.
+- **Layout v2.** Groups and inert control intent are saved in layout envelope v2, and a v1 file upgrades in place.
+  A restored pane starts disconnected, and a restored group has no owner.
+- **Scoped host API.** Every UTERM-003 host call is scoped to the caller's own remote-controlled pane and the members
+  of its owned groups. Anything out of scope is answered "not found".
+- **Nearest target.** A `{:nearest kind}` target filters by authority first. It then ranks by tree distance, reading
+  order, and pane ID, and it never creates a pane. ScriptWire moved from version 4 to 5 for it, earlier than
+  run-level guess 14 assumed, so M3's bump becomes 6.
+- **Clipboard.** A per-session `TerminalClipboardPolicy` gates reads in the confirm callback and OSC 52 writes in the
+  write callback. Kitty requests stay denied. Stale answers are refused after a policy or generation change.
+- **Prompt subject.** A clipboard prompt now names the tab that asked, not the selected tab.
+
+### Checks
+
+The coordinator ran these:
+
+- `caffeinate -dimsu make test-package` passed with 0 failures, in 207 seconds.
+- A UI run passed: "Executed 12 tests, with 0 failures". It covered `PaneControlUITests` with 1 test,
+  `PendingRequestsUITests` with 2, `ReplUITests` with 7, and `ScriptRunUITests` with 2, all through `cg_run` in the
+  main tree with the M1 command form. No crash report is newer than the run.
+- The run produced no screenshot. The fix round adds named attachments to `PaneControlUITests` so the badge can be
+  checked by eye.
+
+The implementer reports these passing: `make fmt-check`, `make lint`, `make check`, `make build`, a
+`build-for-testing`, `make test-helper-sandbox` after the helper re-sign, `scripts/check-sandbox-off.sh`, a scoped
+ScriptWire fuzz at 20000 iterations, and `proposals.py check`. Two regression tests were seen failing on the unfixed
+code: the prompt naming the asking tab, and stale clipboard answers.
+
+### Review
+
+`adr-impact` found no conflict. It judged ADR-01, ADR-02, ADR-03, ADR-04, ADR-05, ADR-06, ADR-07, ADR-08, and ADR-09
+consistent. It raised three uncovered decisions, and none clears the ADR bar:
+
+- The badge's placement and menu are UI detail.
+- Disconnected by default, and a script can never enable a pane, are settled in the proposal and covered by ADR-09:
+  "Remembered permission does not override a user's disconnected pane".
+- The nearest algorithm is a settled decision scoped to this feature.
+
+The reviewer traced these paths and found no fail-open authorization path among them:
+
+- local-only enable
+- dispatch-time resolution, so Disconnect and Revoke refuse queued calls
+- revoke across windows
+- group semantics
+- the nearest ranking
+- the layout v2 upgrade
+- clipboard policy ordering and stale answers
+- the `controlSupport` default
+
+Its findings:
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | The badge's Revoke Controller item is stale, and stays disabled while a controller acts from the pane | fix, CONFIRMED |
+| 2 | Two settled lines in "What anchors trust" changed with no Amended marker or prior text in the log | fix |
+| 3 | Each OSC 52 request in a controlled session opens its own sheet, so a loop floods the user | trace, then bound now: one pending prompt per kind per session |
+| 4 | The ScriptWire 4→5 entry has no skew analysis | verify, then fix |
+| 5 | The `ScriptWindowAPI` doc misstates the refusal rule | fix |
+| 6 | The UTERM-003 freeze hunk, origin `other` | user |
+
+Finding 3 is bounded in M2 rather than left for M6. M2 added the write prompt, and the settled "Permission scopes and
+approval flow" text already says repeated protocol messages cannot spawn repeated modal dialogs.
+
+The reviewer also flagged one reading for the user, and did not count it as a finding. A caller whose own pane is
+disconnected, but who owns a group, can still open remote-controlled panes beside its owned members. That follows
+"outbound calls to targets it already owns". The settled "Once enabled, a source program may…" could be read more
+narrowly.
+
+The fix round settled each finding:
+
+- **#1** Fixed. ScriptHost gained `onControllersChanged`. It fires when a binding through ancestry starts, when a
+  grant is made, when a REPL attach completes, and whenever authority ends. `WindowSet.wireControllers(to:)` refreshes
+  every badge on each report, and the badge rebuilds its mark from live state when its menu opens. The new
+  `ControllerBadgeTests` failed five ways with the wiring removed.
+- **#2** Fixed. "What anchors trust" now carries an Amended marker, and its Decision Log entry quotes both former
+  lines.
+- **#3** Confirmed by trace, then fixed. Every controlled request went through `TerminalApplet.confirm` and
+  `askPermission` to its own `NSAlert` sheet. Each session now holds at most one pending prompt per kind. A second
+  read is denied at once, and a second write is dropped at once with its text. The new flood test sends 20 writes in
+  one `printf`. On the unfixed code it failed with "20 is not equal to 1".
+- **#4** Verified, then fixed. The app's `validateHello` throws on any version but 5, before `readCalls` runs. The
+  command validates the app's hello before it returns a session. The Decision Log entry now says both directions are
+  refused at the hello, so no deploy order is needed.
+- **#5** Fixed.
+
+The implementer reported `make test-package` at 2272 tests and 0 failures, in 228 seconds.
+
+### Visual check
+
+The coordinator exported the screenshot attachments from the fix-round UI run with
+`xcrun xcresulttool export attachments`. The window shot shows the badge at the top right of the remote-controlled
+pane: an orange antenna in a grey rounded square. The menu shot showed the right items: "Remote-controlled", "Driver:
+none", a disabled Enable Remote Control, Disconnect, and a disabled Revoke Controller, which is disabled because no
+controller is connected in the test.
+
+The first menu shot captured `XCUIScreen.main`, which was the user's whole display: other apps, a browser, and other
+projects. The test kept it with `.keepAlways`, and CI would upload it. The coordinator deleted the exported copies and
+the result bundle that held it. The test now captures only uniterm's UI.
+
+The first replacement used `app.menus.firstMatch`. It matched a menu with an empty frame, and the screenshot call
+failed the test at `PaneControlUITests.swift:39`. The badge's menu items now carry the accessibility identifiers
+`pane-control-enable`, `pane-control-disconnect`, and `pane-control-revoke`. The test captures the menu that contains
+`pane-control-disconnect`, once that menu has a frame. The new menu shot holds only the popup, and the class passes.
+
+### Final checks
+
+After the last fix, the coordinator reran `caffeinate -dimsu make test-package`, which passed with 0 failures in
+222 seconds. `proposals.py check` returned `[]`. The implementer's own run of `PaneControlUITests` reported 1 test and
+0 failures.
+
+### Unowned observation
+
+During the UI run, `ReplUITests.testHistorySurvivesCloseAndUndoWithoutRunningAgain` logged six "Conflicting
+constraints detected" issues. They come from `TextViewerApplet.FindBarView`, where the `NSSearchField`'s
+`width >= 160` constraint is broken against a `TextViewerView` of width 0. M2 does not touch that view. The test passed.

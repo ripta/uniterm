@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import PaneModel
 import Preferences
 import ScriptHost
 import ScriptWire
@@ -12,6 +13,8 @@ import XCTest
 /// prove what the window layer's own fakes cannot: that a terminal in shell mode takes a tab in the
 /// named directory, that a terminal running one program refuses, and that a terminal owns its
 /// input, so a script cannot send to it. They cannot prove a real shell starts.
+///
+/// The script acts for the window's first pane, which the user has made remote-controlled.
 @MainActor
 final class ScriptTerminalTests: XCTestCase {
   private var suite = ""
@@ -24,6 +27,8 @@ final class ScriptTerminalTests: XCTestCase {
 
     UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
   }
+
+  private var caller = ScriptCaller(connection: 1, window: 0, pane: NodeID(rawValue: 0))
 
   private func scripting(engine: FakeEngine) throws
     -> (WindowScripting, ScriptPaneReference, TerminalApplet)
@@ -60,7 +65,7 @@ final class ScriptTerminalTests: XCTestCase {
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: store, identifier: identifier, startingIn: directory,
-          makeApplet: makeApplet)
+          appletTypes: [TerminalApplet.typeDeclaration], makeApplet: makeApplet)
       })
 
     windows = set
@@ -70,6 +75,10 @@ final class ScriptTerminalTests: XCTestCase {
 
     let pane = ScriptPaneReference(
       window: controller.scriptWindowID, pane: controller.focusedPane.rawValue)
+
+    controller.enableRemoteControl(controller.focusedPane)
+    caller = ScriptCaller(
+      connection: 1, window: controller.scriptWindowID, pane: controller.focusedPane)
 
     return (
       WindowScripting(windows: set, directoryExists: { _ in true }), pane, try XCTUnwrap(first)
@@ -82,7 +91,8 @@ final class ScriptTerminalTests: XCTestCase {
     let engine = FakeEngine()
     let (scripting, pane, applet) = try scripting(engine: engine)
 
-    let reply = try await scripting.openTab(pane: pane, directory: "/synthetic/tab")
+    let reply = try await scripting.openTab(
+      pane: .pane(pane), directory: "/synthetic/tab", caller: caller)
 
     XCTAssertEqual(
       engine.sessions.map { $0.launch.workingDirectory }, [NSHomeDirectory(), "/synthetic/tab"])
@@ -108,7 +118,7 @@ final class ScriptTerminalTests: XCTestCase {
 
     XCTAssertEqual(applet.currentDirectory, "/synthetic/reported")
 
-    _ = try await scripting.openTab(pane: pane, directory: nil)
+    _ = try await scripting.openTab(pane: .pane(pane), directory: nil, caller: caller)
 
     XCTAssertEqual(engine.sessions.last?.launch.workingDirectory, "/synthetic/reported")
     XCTAssertNotEqual(
@@ -116,7 +126,7 @@ final class ScriptTerminalTests: XCTestCase {
   }
 
   /// Catches a terminal that runs one program being given a second shell. Program mode never opens
-  /// another tab, and the refusal starts nothing.
+  /// another tab, and the refusal starts nothing. The program pane is one the script owns.
   func testAProgramTerminalRefusesATab() async throws {
     let engine = FakeEngine()
     let (scripting, pane, applet) = try scripting(engine: engine)
@@ -124,14 +134,16 @@ final class ScriptTerminalTests: XCTestCase {
 
     let program = try XCTUnwrap(
       controller.openPane(
-        .terminalProgram(command: "tail -f log"), axis: .row, from: controller.focusedPane))
+        .terminalProgram(command: "tail -f log"), typeID: "terminal", axis: .row,
+        from: controller.focusedPane, directory: nil,
+        owner: GroupOwner(connection: caller.connection), access: .remoteControlled))
     let programPane = ScriptPaneReference(window: pane.window, pane: program.rawValue)
     let sessions = engine.sessions.count
 
     XCTAssertEqual(applet.tabCount, 1)
 
     do {
-      _ = try await scripting.openTab(pane: programPane, directory: nil)
+      _ = try await scripting.openTab(pane: .pane(programPane), directory: nil, caller: caller)
       XCTFail("a program terminal opened a tab")
     } catch let error as ScriptCallError {
       XCTAssertEqual(error.kind, .refused)
@@ -152,7 +164,7 @@ final class ScriptTerminalTests: XCTestCase {
     XCTAssertTrue(owner is any InputOwning)
 
     do {
-      try scripting.prepareSend(to: pane)
+      _ = try scripting.prepareSend(to: .pane(pane), caller: caller)
       XCTFail("a send to a terminal was prepared")
     } catch let error as ScriptCallError {
       XCTAssertEqual(error.kind, .refused)
@@ -169,7 +181,9 @@ final class ScriptTerminalTests: XCTestCase {
 
     engine.sessions[0].onEvent?(.workingDirectoryChanged("/synthetic/reported"))
 
-    _ = try await scripting.openPane(kind: "terminal", beside: pane, axis: nil, directory: nil)
+    _ = try await scripting.openPane(
+      kind: "terminal", beside: .pane(pane), axis: nil, directory: nil, access: .disconnected,
+      caller: caller)
 
     XCTAssertEqual(engine.sessions.last?.launch.workingDirectory, "/synthetic/reported")
   }

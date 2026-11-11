@@ -20,7 +20,7 @@ final class LayoutCodecTests: XCTestCase {
     let text = try encoded(saved)
 
     let expected =
-      #"{"version":1,"windows":[{"frame":{"x":100.0,"y":200.0,"width":900.0,"height":600.0},"#
+      #"{"version":2,"windows":[{"frame":{"x":100.0,"y":200.0,"width":900.0,"height":600.0},"#
       + #""screen":{"x":0.0,"y":0.0,"width":1440.0,"height":900.0},"focusedPane":5,"highWaterMark":9,"#
       + #""tree":{"kind":"split","id":3,"axis":"row","children":["#
       + #"{"weight":0.25,"node":{"kind":"pane","id":1,"applet":{"type":"fake","version":1,"payload":"p1"}}},"#
@@ -63,10 +63,13 @@ final class LayoutCodecTests: XCTestCase {
   // MARK: Version
 
   func testAVersionNewerThanThisBuildIsRefused() {
-    let data = Data(#"{"version":2,"windows":[]}"#.utf8)
+    let newer = LayoutCodec.currentVersion + 1
+    let data = Data(#"{"version":\#(newer),"windows":[]}"#.utf8)
 
     XCTAssertThrowsError(try LayoutCodec.decode(data)) {
-      XCTAssertEqual($0 as? LayoutReadError, .newerSchema(found: 2, supported: 1))
+      XCTAssertEqual(
+        $0 as? LayoutReadError,
+        .newerSchema(found: newer, supported: LayoutCodec.currentVersion))
     }
   }
 
@@ -207,7 +210,7 @@ final class LayoutCodecTests: XCTestCase {
   private func appletBytes(in data: Data) throws -> Data {
     let layout = try LayoutCodec.decode(data)
 
-    guard case .pane(_, let applet) = layout.windows[0].tree else {
+    guard case .pane(_, let applet, _) = layout.windows[0].tree else {
       throw LayoutReadError.unreadable("the test tree is not a pane")
     }
 
@@ -236,8 +239,8 @@ final class LayoutCodecTests: XCTestCase {
       let rewritten = try LayoutCodec.encode(layout)
       let again = try LayoutCodec.decode(rewritten)
 
-      guard case .pane(_, let before) = layout.windows[0].tree,
-        case .pane(_, let after) = again.windows[0].tree
+      guard case .pane(_, let before, _) = layout.windows[0].tree,
+        case .pane(_, let after, _) = again.windows[0].tree
       else { return XCTFail("expected a pane") }
 
       XCTAssertEqual(after.verbatim, before.verbatim)
@@ -250,7 +253,7 @@ final class LayoutCodecTests: XCTestCase {
   func testAReadableDescriptionParsesAndStillKeepsItsBytes() throws {
     let data = file(applet: #"{"type":"terminal","version":1,"payload":{"mode":"shell"}}"#)
 
-    guard case .pane(_, let applet) = try LayoutCodec.decode(data).windows[0].tree else {
+    guard case .pane(_, let applet, _) = try LayoutCodec.decode(data).windows[0].tree else {
       return XCTFail("expected a pane")
     }
 

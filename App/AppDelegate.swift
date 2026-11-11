@@ -183,6 +183,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       host.start()
       scriptHost = host
 
+      windows.wireControllers(to: host)
+
       host.onPendingRequestsActiveChanged = { [weak windows] active in
         if active {
           windows?.setWindowState(.pendingPermissions, text: "Pending permission requests")

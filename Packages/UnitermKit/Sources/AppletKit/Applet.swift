@@ -29,12 +29,47 @@ public struct AppletConfirmation: Sendable, Equatable {
   public var confirmTitle: String
   public var cancelTitle: String
 
-  public init(title: String, detail: String, confirmTitle: String, cancelTitle: String) {
+  /// What in the pane asks, such as the tab a request came from. The host names it in place of
+  /// the applet's title, which follows the selected tab. Nil names the applet.
+  public var subject: String?
+
+  public init(
+    title: String, detail: String, confirmTitle: String, cancelTitle: String,
+    subject: String? = nil
+  ) {
     self.title = title
     self.detail = detail
     self.confirmTitle = confirmTitle
     self.cancelTitle = cancelTitle
+    self.subject = subject
   }
+}
+
+/// A permission an applet asks the user for on behalf of programs in a pane. The user may allow
+/// the one request, allow requests of the same kind for the rest of the session, or deny it.
+public struct AppletPermissionRequest: Sendable, Equatable {
+  public var title: String
+  public var detail: String
+
+  /// What in the pane asks, as for a confirmation.
+  public var subject: String?
+
+  /// The session button says exactly what it covers, such as every program in one terminal tab.
+  public var sessionTitle: String
+
+  public init(title: String, detail: String, subject: String? = nil, sessionTitle: String) {
+    self.title = title
+    self.detail = detail
+    self.subject = subject
+    self.sessionTitle = sessionTitle
+  }
+}
+
+/// The user's answer to a permission request.
+public enum AppletPermissionAnswer: Sendable, Equatable {
+  case deny
+  case allowOnce
+  case allowForSession
 }
 
 /// The pane side of the applet contract. The host knows which pane an applet runs in, so it fills in
@@ -65,6 +100,11 @@ public protocol AppletHost: AnyObject {
   /// Asks the user. Nothing happens until the user answers.
   func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool
 
+  /// Asks the user for a permission. Nothing happens until the user answers. A host that cannot
+  /// ask answers deny.
+  func applet(_ applet: any Applet, askPermission request: AppletPermissionRequest) async
+    -> AppletPermissionAnswer
+
   /// The next close stamp of the window. Stamps only grow, and pane closes draw from the same
   /// counter, so the window can order a closed tab against a closed pane. An applet asks for one
   /// when it records a close, after any question has been answered.
@@ -86,6 +126,11 @@ extension AppletHost {
   public func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
     self.applet(applet, send: .message, level: level, text: text, presenting: nil)
   }
+
+  /// A host that has no way to ask denies, so a permission is never granted by omission.
+  public func applet(_ applet: any Applet, askPermission request: AppletPermissionRequest) async
+    -> AppletPermissionAnswer
+  { .deny }
 }
 
 /// What built an applet that is about to start.
@@ -231,9 +276,17 @@ public protocol Applet: AnyObject {
   /// Tells the applet the palette to draw its own chrome with. The host calls it when the applet
   /// is installed and whenever the palette changes.
   func apply(_ palette: ThemePalette)
+
+  /// Tells the applet its pane's control state. The host calls it as the applet takes a pane,
+  /// before it starts, and on every change. A change that makes the pane controlled arrives before
+  /// any program can address the pane, so the applet tightens its own policies first. An applet
+  /// with no policy that depends on control ignores it.
+  func controlDidChange(_ control: PaneControl)
 }
 
 extension Applet {
+  public func controlDidChange(_ control: PaneControl) {}
+
   public func closeCurrentTab() async -> TabCloseResult { .nothingToClose }
 
   public var closedTabStamps: [UInt64] { [] }
