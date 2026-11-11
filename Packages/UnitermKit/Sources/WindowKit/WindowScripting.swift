@@ -12,6 +12,9 @@ import StatusKit
 /// Every function runs on the main actor, starts nothing that waits, and checks each argument
 /// before it touches a window. A reference is looked up by its IDs in this launch. An ID that is
 /// not open names nothing, so it can never name a different window, pane, or tab.
+///
+/// Every target is checked against the caller's authority when the call runs. The rules are the
+/// ones `ScriptWindowAPI` states.
 @MainActor
 public final class WindowScripting: ScriptWindowAPI {
   /// The applets a script may start, by the kind name it passes.
@@ -49,29 +52,42 @@ public final class WindowScripting: ScriptWindowAPI {
 
   // MARK: Lists
 
-  public func listWindows() throws -> ScriptValue {
-    .array(
-      windows.controllers.map { controller in
-        .record([
-          "window": .integer(controller.scriptWindowID),
-          "title": .string(Self.reported(controller.window?.title ?? "")),
-          "key": .bool(controller.window?.isKeyWindow == true),
-        ])
-      })
+  /// The caller's own window, and nothing about any other. A caller whose pane is disconnected
+  /// learns only its binding: the window, the pane, and the pane's control.
+  public func listWindows(caller: ScriptCaller) throws -> ScriptValue {
+    let controller = try window(of: caller)
+    let access = controller.control(of: caller.pane).access
+
+    var fields: [String: ScriptValue] = [
+      "window": .integer(controller.scriptWindowID),
+      "pane": .integer(caller.pane.rawValue),
+      "control": .string(access.rawValue),
+    ]
+
+    if access == .remoteControlled {
+      fields["title"] = .string(Self.reported(controller.window?.title ?? ""))
+      fields["key"] = .bool(controller.window?.isKeyWindow == true)
+    }
+
+    return .array([.record(fields)])
   }
 
-  public func listPanes(window: UInt64) throws -> ScriptValue {
-    guard let controller = windows.controller(forScriptWindow: window) else { return .null }
+  public func listPanes(window: UInt64, caller: ScriptCaller) throws -> ScriptValue {
+    guard window == caller.window, let controller = windows.controller(forScriptWindow: window)
+    else { return .null }
+
+    try requireSomeAuthority(caller, in: controller)
 
     var panes: [ScriptValue] = []
 
-    for pane in controller.paneIDs {
+    for pane in controller.paneIDs where isAuthorized(pane, for: caller, in: controller) {
       guard let applet = controller.paneArea.applet(for: pane) else { continue }
 
       var fields: [String: ScriptValue] = [
         "window": .integer(window),
         "pane": .integer(pane.rawValue),
         "applet": .string(applet.typeID),
+        "control": .string(controller.control(of: pane).access.rawValue),
         "title": .string(Self.reported(applet.title)),
         "focused": .bool(pane == controller.focusedPane),
         "tabs": .array(tabs(of: applet, pane: pane, in: controller)),
@@ -105,14 +121,29 @@ public final class WindowScripting: ScriptWindowAPI {
 
   // MARK: Opening
 
+  /// The access is checked against the applet type before anything waits or opens. The target is
+  /// resolved after the directory check, so a pane disconnected or a controller revoked meanwhile
+  /// stops the call.
   public func openPane(
-    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?,
+    kind: String, beside: ScriptTarget, axis: ScriptAxis?, directory: String?,
+    access: ScriptPaneAccess, caller: ScriptCaller,
     stillAllowed: @MainActor () throws -> Void = {}
   ) async throws -> ScriptValue {
     guard let choice = Self.kinds.first(where: { $0.name == kind })?.choice else {
       let names = Self.kinds.map { ":\($0.name)" }.joined(separator: ", ")
 
       throw ScriptCallError.badArgument("the applet kind is not known. The kinds are \(names)")
+    }
+
+    let mode: PaneAccessMode = access == .remoteControlled ? .remoteControlled : .disconnected
+    let combination = ControlCombination(access: mode, driver: .none)
+
+    let declarations = try window(of: caller).appletTypes
+
+    guard
+      AppletTypeDeclaration.supportedControl(forType: kind, in: declarations).contains(combination)
+    else {
+      throw ScriptCallError.refused("a \(kind) pane does not support \(combination) control")
     }
 
     if let directory {
@@ -125,7 +156,7 @@ public final class WindowScripting: ScriptWindowAPI {
 
     try stillAllowed()
 
-    let (controller, pane, _) = try resolve(beside)
+    let (controller, pane, _) = try resolve(beside, for: caller)
 
     guard controller.paneActionsEnabled else { throw Self.waitingForAnAnswer }
 
@@ -137,7 +168,10 @@ public final class WindowScripting: ScriptWindowAPI {
 
     let start = directory ?? controller.directory(of: pane)
 
-    guard let created = controller.openPane(choice, axis: split, from: pane, directory: start)
+    guard
+      let created = controller.openPane(
+        choice, typeID: kind, axis: split, from: pane, directory: start,
+        owner: GroupOwner(connection: caller.connection), access: mode)
     else { throw ScriptCallError.refused("the pane did not open. The status bar says why") }
 
     return .record([
@@ -147,14 +181,14 @@ public final class WindowScripting: ScriptWindowAPI {
   }
 
   public func openTab(
-    pane reference: ScriptPaneReference, directory: String?,
+    pane target: ScriptTarget, directory: String?, caller: ScriptCaller,
     stillAllowed: @MainActor () throws -> Void = {}
   ) async throws -> ScriptValue {
     if let directory { try await checkDirectory(directory) }
 
     try stillAllowed()
 
-    let (controller, pane, applet) = try resolve(reference)
+    let (controller, pane, applet) = try resolve(target, for: caller)
 
     guard controller.paneActionsEnabled else { throw Self.waitingForAnAnswer }
 
@@ -181,19 +215,30 @@ public final class WindowScripting: ScriptWindowAPI {
     ])
   }
 
-  /// True while the reference names an open window and pane, and tab when it has one.
+  /// True while the reference names an open window and pane, and tab when it has one. It checks no
+  /// authority, since the host asks it only about panes it holds files for.
   public func isOpen(_ pane: ScriptPaneReference) -> Bool {
-    (try? resolve(pane)) != nil
+    (try? locate(pane)) != nil
   }
 
   // MARK: Sending
 
-  public func prepareSend(to pane: ScriptPaneReference) throws {
-    _ = try sendTarget(pane)
+  public func prepareSend(to target: ScriptTarget, caller: ScriptCaller) throws
+    -> ScriptPaneReference
+  {
+    let (controller, pane, _, _) = try sendTarget(target, caller: caller)
+
+    var reference = ScriptPaneReference(window: controller.scriptWindowID, pane: pane.rawValue)
+
+    if case .pane(let named) = target { reference.tab = named.tab }
+
+    return reference
   }
 
-  public func send(to pane: ScriptPaneReference, file: URL) throws -> ScriptValue {
-    let (applet, target) = try sendTarget(pane)
+  public func send(to pane: ScriptPaneReference, file: URL, caller: ScriptCaller) throws
+    -> ScriptValue
+  {
+    let (_, _, applet, target) = try sendTarget(.pane(pane), caller: caller)
 
     do {
       try target.replaceSource(
@@ -208,10 +253,10 @@ public final class WindowScripting: ScriptWindowAPI {
 
   /// The pane's applet and the way it takes content. An applet that owns its input is refused
   /// before anything else, even when it could also take a source.
-  private func sendTarget(_ reference: ScriptPaneReference) throws -> (
-    any Applet, any SourceReplacing
+  private func sendTarget(_ reference: ScriptTarget, caller: ScriptCaller) throws -> (
+    MainWindowController, NodeID, any Applet, any SourceReplacing
   ) {
-    let (controller, _, applet) = try resolve(reference)
+    let (controller, pane, applet) = try resolve(reference, for: caller)
 
     guard controller.paneActionsEnabled else { throw Self.waitingForAnAnswer }
 
@@ -224,7 +269,139 @@ public final class WindowScripting: ScriptWindowAPI {
       throw ScriptCallError.refused("this pane's applet cannot show sent content")
     }
 
-    return (applet, target)
+    return (controller, pane, applet, target)
+  }
+
+  // MARK: Authority
+
+  /// What a caller whose own pane is disconnected is told. It names the local action, so the user
+  /// knows what to do, and opens nothing.
+  static let disconnectedSource = ScriptCallError.refused(
+    "This program's pane is disconnected, so it cannot control panes. To allow it, choose "
+      + "Enable Remote Control from the pane's control badge or the File menu.")
+
+  /// The answer for a pane the caller may not reach. It is the same as for a pane that is not
+  /// open, so it tells the caller nothing about the pane.
+  private static let outOfScope = ScriptCallError.notFound("the pane is not open in that window")
+
+  private func window(of caller: ScriptCaller) throws -> MainWindowController {
+    guard let controller = windows.controller(forScriptWindow: caller.window),
+      controller.contains(pane: caller.pane)
+    else { throw ScriptCallError.notFound("the window is not open") }
+
+    return controller
+  }
+
+  /// True when the caller's own pane is remote-controlled.
+  private func sourceEnabled(_ caller: ScriptCaller, in controller: MainWindowController) -> Bool {
+    controller.control(of: caller.pane).access == .remoteControlled
+  }
+
+  /// True when the pane is a member of a group the caller owns. Nesting grants nothing: the group
+  /// must hold the pane as its own member.
+  private func owns(_ pane: NodeID, _ caller: ScriptCaller, in controller: MainWindowController)
+    -> Bool
+  {
+    let owner = GroupOwner(connection: caller.connection)
+
+    return controller.paneArea.tree.enclosingGroups(of: pane).contains {
+      $0.owner == owner && $0.members.contains(pane)
+    }
+  }
+
+  /// The caller may address the pane: it is remote-controlled, and it is the caller's own pane or
+  /// a member of a group the caller owns. Position in the tree grants nothing.
+  private func isAuthorized(
+    _ pane: NodeID, for caller: ScriptCaller, in controller: MainWindowController
+  ) -> Bool {
+    guard controller.control(of: pane).access == .remoteControlled else { return false }
+
+    return pane == caller.pane || owns(pane, caller, in: controller)
+  }
+
+  /// A caller whose pane is disconnected keeps the groups it already owns. With none, it may do
+  /// nothing but learn its binding.
+  private func requireSomeAuthority(_ caller: ScriptCaller, in controller: MainWindowController)
+    throws
+  {
+    guard !sourceEnabled(caller, in: controller) else { return }
+
+    let owner = GroupOwner(connection: caller.connection)
+
+    guard controller.paneArea.tree.groups.contains(where: { $0.owner == owner }) else {
+      throw Self.disconnectedSource
+    }
+  }
+
+  /// Finds the window, pane, and applet a target names, and checks the caller may address it. A
+  /// reference that names a tab must name one the pane's applet still lists.
+  private func resolve(_ target: ScriptTarget, for caller: ScriptCaller) throws -> (
+    MainWindowController, NodeID, any Applet
+  ) {
+    let controller = try window(of: caller)
+
+    switch target {
+    case .pane(let reference):
+      guard reference.window == caller.window else {
+        throw ScriptCallError.notFound("the window is not open")
+      }
+
+      let pane = NodeID(rawValue: reference.pane)
+
+      guard isAuthorized(pane, for: caller, in: controller) else {
+        try requireSomeAuthority(caller, in: controller)
+
+        if controller.contains(pane: pane),
+          pane == caller.pane || owns(pane, caller, in: controller)
+        {
+          throw ScriptCallError.refused(
+            "The pane is disconnected. The user must enable remote control on it.")
+        }
+
+        throw Self.outOfScope
+      }
+
+      return try locate(reference)
+
+    case .nearest(let kind):
+      guard controller.appletTypes.contains(where: { $0.typeID == kind }) else {
+        throw ScriptCallError.badArgument("the applet kind \(kind) is not known")
+      }
+
+      try requireSomeAuthority(caller, in: controller)
+
+      guard let pane = nearest(kind, to: caller, in: controller),
+        let applet = controller.paneArea.applet(for: pane)
+      else {
+        throw ScriptCallError.notFound(
+          "no \(kind) pane that this program may control is open in its window")
+      }
+
+      return (controller, pane, applet)
+    }
+  }
+
+  /// The nearest pane of the applet type among those the caller may address. Proximity counts only
+  /// after that filter, so it never grants anything. The rank is edge distance from the caller's
+  /// pane in the tree, with groups transparent, then reading order, then pane ID. It is resolved
+  /// each time a call runs, and never opens a pane.
+  func nearest(_ kind: String, to caller: ScriptCaller, in controller: MainWindowController)
+    -> NodeID?
+  {
+    let order = controller.paneIDs
+    let distances = controller.paneArea.tree.edgeDistances(from: caller.pane)
+
+    let candidates = order.enumerated().filter { _, pane in
+      controller.paneArea.applet(for: pane)?.typeID == kind
+        && isAuthorized(pane, for: caller, in: controller)
+    }
+
+    return candidates.min { lhs, rhs in
+      let left = (distances[lhs.element] ?? Int.max, lhs.offset, lhs.element.rawValue)
+      let right = (distances[rhs.element] ?? Int.max, rhs.offset, rhs.element.rawValue)
+
+      return left < right
+    }?.element
   }
 
   // MARK: Arguments
@@ -256,9 +433,9 @@ public final class WindowScripting: ScriptWindowAPI {
   private static let waitingForAnAnswer = ScriptCallError.refused(
     "the window is waiting for an answer to a question")
 
-  /// Finds the window, pane, and applet a reference names. A reference that names a tab must name
-  /// one the pane's applet still lists.
-  private func resolve(_ reference: ScriptPaneReference) throws -> (
+  /// Finds the window, pane, and applet a reference names, with no check of authority. A
+  /// reference that names a tab must name one the pane's applet still lists.
+  private func locate(_ reference: ScriptPaneReference) throws -> (
     MainWindowController, NodeID, any Applet
   ) {
     guard let controller = windows.controller(forScriptWindow: reference.window) else {

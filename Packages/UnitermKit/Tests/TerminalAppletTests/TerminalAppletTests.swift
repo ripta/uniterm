@@ -12,6 +12,11 @@ private final class Answers: @unchecked Sendable {
   private let lock = NSLock()
   private var values: [Bool] = []
 
+  /// Records whether the answer let the request through.
+  func append(_ answer: TerminalClipboardAnswer) {
+    append(answer != .deny)
+  }
+
   func append(_ value: Bool) {
     lock.lock()
     values.append(value)
@@ -45,6 +50,12 @@ final class FakeSession: TerminalSession {
   func resize(to size: CGSize) {}
   func setFocused(_ focused: Bool) {}
   func setVisible(_ visible: Bool) { self.visible = visible }
+
+  /// Every policy the session was given, the one it was made with first.
+  var clipboardPolicies: [TerminalClipboardPolicy] = []
+  var clipboardPolicy: TerminalClipboardPolicy { clipboardPolicies.last ?? .interactive }
+  func setClipboardPolicy(_ policy: TerminalClipboardPolicy) { clipboardPolicies.append(policy) }
+
   func close() { closed = true }
 }
 
@@ -56,10 +67,13 @@ final class FakeEngine: TerminalEngine {
   /// When set, the next sessions fail to start with this error.
   var failure: (any Error)?
 
-  func makeSession(launch: TerminalLaunch) throws -> any TerminalSession {
+  func makeSession(launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
+    -> any TerminalSession
+  {
     if let failure { throw failure }
 
     let session = FakeSession(launch: launch)
+    session.clipboardPolicies = [clipboardPolicy]
     sessions.append(session)
     return session
   }

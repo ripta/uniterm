@@ -1,12 +1,14 @@
 import Darwin
 import Foundation
+import PaneModel
 import ScriptWire
 import XCTest
 
 @testable import ScriptHost
 
 /// A stand-in for the window layer, with fixed answers keyed by the IDs a fixture script passes.
-/// Window 7 is open, pane 404 is closed, and pane 403 is one that refuses.
+/// Window 7 is open, pane 404 is closed, and pane 403 is one that refuses. A nearest target names
+/// pane 2.
 ///
 /// It stands in for the layer only to prove how a script's call travels through the helper, the
 /// wire, and the host. The window layer's own tests prove what the calls do to real windows.
@@ -25,7 +27,10 @@ final class FakeWindowAPI: ScriptWindowAPI {
   private(set) var sent: [Sent] = []
 
   /// The panes a send asked about before it wrote anything.
-  private(set) var prepared: [ScriptPaneReference] = []
+  private(set) var prepared: [ScriptTarget] = []
+
+  /// The caller the host named for each call, oldest first.
+  private(set) var callers: [ScriptCaller] = []
 
   /// False for a test that sends many large files and only needs to count them.
   var keepsContent = true
@@ -36,8 +41,9 @@ final class FakeWindowAPI: ScriptWindowAPI {
   /// How many windows `listWindows` reports.
   var windowCount = 2
 
-  func listWindows() throws -> ScriptValue {
+  func listWindows(caller: ScriptCaller) throws -> ScriptValue {
     calls.append(.listWindows)
+    callers.append(caller)
 
     return .array(
       (0..<windowCount).map { index in
@@ -49,8 +55,9 @@ final class FakeWindowAPI: ScriptWindowAPI {
       })
   }
 
-  func listPanes(window: UInt64) throws -> ScriptValue {
+  func listPanes(window: UInt64, caller: ScriptCaller) throws -> ScriptValue {
     calls.append(.listPanes(window: window))
+    callers.append(caller)
 
     guard window == 7 else { return .null }
 
@@ -104,14 +111,18 @@ final class FakeWindowAPI: ScriptWindowAPI {
   }
 
   func openPane(
-    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?,
-    stillAllowed: @MainActor () throws -> Void
+    kind: String, beside target: ScriptTarget, axis: ScriptAxis?, directory: String?,
+    access: ScriptPaneAccess, caller: ScriptCaller, stillAllowed: @MainActor () throws -> Void
   ) async throws -> ScriptValue {
-    calls.append(.openPane(kind: kind, beside: beside, axis: axis, directory: directory))
+    calls.append(
+      .openPane(kind: kind, beside: target, axis: axis, directory: directory, access: access))
+    callers.append(caller)
 
     guard kind != "bogus" else { throw ScriptCallError.badArgument("the applet kind is not known") }
 
     try await directoryCheck(stillAllowed: stillAllowed)
+
+    let beside = Self.reference(target)
     try check(beside)
 
     opened += 1
@@ -120,9 +131,13 @@ final class FakeWindowAPI: ScriptWindowAPI {
   }
 
   func openTab(
-    pane: ScriptPaneReference, directory: String?, stillAllowed: @MainActor () throws -> Void
+    pane target: ScriptTarget, directory: String?, caller: ScriptCaller,
+    stillAllowed: @MainActor () throws -> Void
   ) async throws -> ScriptValue {
-    calls.append(.openTab(pane: pane, directory: directory))
+    calls.append(.openTab(pane: target, directory: directory))
+    callers.append(caller)
+
+    let pane = Self.reference(target)
 
     guard pane.pane != 403 else {
       throw ScriptCallError.refused("the pane's applet has no tabs to open")
@@ -142,8 +157,19 @@ final class FakeWindowAPI: ScriptWindowAPI {
     pane.window == 7 && pane.pane != 404 && !closedPanes.contains(pane.pane)
   }
 
-  func prepareSend(to pane: ScriptPaneReference) throws {
-    prepared.append(pane)
+  /// A nearest target stands for pane 2 of window 7.
+  static func reference(_ target: ScriptTarget) -> ScriptPaneReference {
+    switch target {
+    case .pane(let reference): return reference
+    case .nearest: return ScriptPaneReference(window: 7, pane: 2)
+    }
+  }
+
+  func prepareSend(to target: ScriptTarget, caller: ScriptCaller) throws -> ScriptPaneReference {
+    prepared.append(target)
+    callers.append(caller)
+
+    let pane = Self.reference(target)
 
     guard pane.pane != 403 else {
       throw ScriptCallError.refused(
@@ -151,9 +177,11 @@ final class FakeWindowAPI: ScriptWindowAPI {
     }
 
     try check(pane)
+
+    return pane
   }
 
-  func send(to pane: ScriptPaneReference, file: URL) throws -> ScriptValue {
+  func send(to pane: ScriptPaneReference, file: URL, caller: ScriptCaller) throws -> ScriptValue {
     var info = stat()
     var folder = stat()
 

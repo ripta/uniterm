@@ -10,8 +10,12 @@ import XCTest
 
 /// Real windows and panes, with fake applets, behind the window side of the host API. Each test
 /// builds its own set, so a window's ID and its panes' IDs are the ones a script would see.
+///
+/// Unless a test says otherwise, the script acts for the first window's first pane, which the user
+/// has made remote-controlled. The fake applet type and the launcher declare remote control here,
+/// so a test can make any of its panes a source or a member.
 @MainActor
-private final class ScriptingFixture {
+final class ScriptingFixture {
   let suite = "uniterm-scripting-test-\(UUID().uuidString)"
   let defaults: UserDefaults
   let store: SettingsStore
@@ -30,6 +34,26 @@ private final class ScriptingFixture {
   /// Makes the applet for the next request. A test replaces it to hand out a different stand-in.
   var make: @MainActor () -> FakeApplet = { FakeApplet() }
 
+  /// Who the calls come from. `openWindow` sets it to the first window's first pane.
+  var caller = ScriptCaller(connection: 1, window: 0, pane: NodeID(rawValue: 0))
+
+  static let declarations = [
+    AppletTypeDeclaration(
+      typeID: "fake", displayName: "Fake", symbolName: "questionmark", opens: [],
+      controlSupport: [.remoteControlled]),
+    AppletTypeDeclaration(
+      typeID: LauncherApplet.identifier, displayName: "Launcher", symbolName: "plus", opens: [],
+      controlSupport: [.remoteControlled]),
+    AppletTypeDeclaration(
+      typeID: "terminal", displayName: "Terminal", symbolName: "terminal", opens: [],
+      controlSupport: [.remoteControlled]),
+    AppletTypeDeclaration(
+      typeID: "data-viewer", displayName: "Data Viewer", symbolName: "tablecells", opens: []),
+    AppletTypeDeclaration(
+      typeID: "viewer", displayName: "Viewer", symbolName: "doc", opens: [],
+      controlSupport: [.remoteControlled]),
+  ]
+
   init(
     windowIDs: WindowIDSource = WindowIDSource(),
     directoryExists: @escaping @Sendable (String) -> Bool = { _ in true }
@@ -45,10 +69,19 @@ private final class ScriptingFixture {
 
     windows = WindowSet(
       visibleFrame: { _ in NSRect(x: 0, y: 0, width: 4000, height: 3000) },
+      makeRestoredController: { identifier, restored in
+        try MainWindowController(
+          appearance: appearance, settings: store, identifier: identifier,
+          appletTypes: ScriptingFixture.declarations, restoring: restored,
+          restoreApplet: { _ in FakeApplet() },
+          makeApplet: { choice, directory in try factory(choice, directory) }
+        ).detachFromRealScreen()
+      },
       windowIDs: windowIDs,
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: store, identifier: identifier, startingIn: directory,
+          appletTypes: ScriptingFixture.declarations,
           makeApplet: { choice, directory in try factory(choice, directory) }
         ).detachFromRealScreen()
       })
@@ -74,15 +107,88 @@ private final class ScriptingFixture {
     defaults.removePersistentDomain(forName: suite)
   }
 
-  /// Opens a window and returns its controller and a reference to its first pane.
-  func openWindow() throws -> (MainWindowController, ScriptPaneReference) {
+  /// Opens a window and returns its controller and a reference to its first pane. The first
+  /// window's first pane becomes the caller's, remote-controlled.
+  func openWindow(enabled: Bool = true) throws -> (MainWindowController, ScriptPaneReference) {
     let controller = try windows.open()
     let pane = ScriptPaneReference(
       window: controller.scriptWindowID, pane: controller.focusedPane.rawValue)
 
     controller.window?.contentView?.layoutSubtreeIfNeeded()
 
+    if windows.controllers.count == 1 {
+      caller = ScriptCaller(connection: 1, window: pane.window, pane: controller.focusedPane)
+
+      if enabled { controller.enableRemoteControl(controller.focusedPane) }
+    }
+
     return (controller, pane)
+  }
+
+  // The calls as a script makes them, from `caller` unless a test names another.
+
+  func listWindows(as who: ScriptCaller? = nil) throws -> ScriptValue {
+    try scripting.listWindows(caller: who ?? caller)
+  }
+
+  func listPanes(window: UInt64, as who: ScriptCaller? = nil) throws -> ScriptValue {
+    try scripting.listPanes(window: window, caller: who ?? caller)
+  }
+
+  func openPane(
+    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?,
+    access: ScriptPaneAccess = .disconnected, as who: ScriptCaller? = nil,
+    stillAllowed: @MainActor () throws -> Void = {}
+  ) async throws -> ScriptValue {
+    try await openPane(
+      kind: kind, target: .pane(beside), axis: axis, directory: directory, access: access, as: who,
+      stillAllowed: stillAllowed)
+  }
+
+  func openPane(
+    kind: String, target: ScriptTarget, axis: ScriptAxis? = nil, directory: String? = nil,
+    access: ScriptPaneAccess = .disconnected, as who: ScriptCaller? = nil,
+    stillAllowed: @MainActor () throws -> Void = {}
+  ) async throws -> ScriptValue {
+    try await scripting.openPane(
+      kind: kind, beside: target, axis: axis, directory: directory, access: access,
+      caller: who ?? caller, stillAllowed: stillAllowed)
+  }
+
+  func openTab(
+    pane: ScriptPaneReference, directory: String?, as who: ScriptCaller? = nil,
+    stillAllowed: @MainActor () throws -> Void = {}
+  ) async throws -> ScriptValue {
+    try await scripting.openTab(
+      pane: .pane(pane), directory: directory, caller: who ?? caller, stillAllowed: stillAllowed)
+  }
+
+  @discardableResult
+  func prepareSend(to pane: ScriptPaneReference, as who: ScriptCaller? = nil) throws
+    -> ScriptPaneReference
+  {
+    try scripting.prepareSend(to: .pane(pane), caller: who ?? caller)
+  }
+
+  func send(to pane: ScriptPaneReference, file: URL, as who: ScriptCaller? = nil) throws
+    -> ScriptValue
+  {
+    try scripting.send(to: pane, file: file, caller: who ?? caller)
+  }
+
+  /// Opens a pane the caller owns, remote-controlled, beside `pane`, and returns its ID.
+  func openOwned(beside pane: ScriptPaneReference, as who: ScriptCaller? = nil) async throws
+    -> NodeID
+  {
+    let reply = try await openPane(
+      kind: "terminal", beside: pane, axis: nil, directory: nil, access: .remoteControlled,
+      as: who)
+
+    guard case .record(let fields) = reply, case .integer(let id)? = fields["pane"] else {
+      throw ScriptCallError.failed("no pane in \(reply)")
+    }
+
+    return NodeID(rawValue: id)
   }
 }
 
@@ -135,38 +241,33 @@ final class WindowScriptingTests: XCTestCase {
 
   // MARK: Lists
 
-  /// Catches a window listed twice, one missing, or an ID that is not the one the window answers
-  /// to. Every ID must also fit a Janet number exactly.
-  func testListWindowsReportsEachOpenWindowOnceWithItsOwnID() async throws {
+  /// Catches a caller that learns about windows other than its own, or a window ID that is not
+  /// the one the window answers to. The caller's binding names its own pane and its control.
+  func testListWindowsReportsOnlyTheCallersOwnWindow() async throws {
     let fixture = makeFixture()
-    let (first, _) = try fixture.openWindow()
-    let (second, _) = try fixture.openWindow()
+    let (first, pane) = try fixture.openWindow()
+    _ = try fixture.openWindow()
 
     first.window?.title = "Synthetic first"
 
-    let listed = try array(try fixture.scripting.listWindows())
+    let listed = try array(try fixture.listWindows())
 
-    XCTAssertEqual(listed.count, 2)
+    XCTAssertEqual(listed.count, 1)
 
-    let ids = try listed.map { entry -> UInt64 in
-      guard case .integer(let id)? = try record(entry)["window"] else {
-        XCTFail("a window has no ID")
-        return 0
-      }
+    let entry = try record(listed[0])
 
-      return id
-    }
-
-    XCTAssertEqual(ids, [first.scriptWindowID, second.scriptWindowID])
-    XCTAssertEqual(Set(ids).count, 2)
-    XCTAssertTrue(ids.allSatisfy { $0 > 0 && $0 <= ScriptProtocol.maxID })
-    XCTAssertEqual(try record(listed[0])["title"], .string("Synthetic first"))
-    XCTAssertNotNil(try record(listed[1])["key"])
+    XCTAssertEqual(entry["window"], .integer(first.scriptWindowID))
+    XCTAssertEqual(entry["pane"], .integer(pane.pane))
+    XCTAssertEqual(entry["control"], .string("remote-controlled"))
+    XCTAssertEqual(entry["title"], .string("Synthetic first"))
+    XCTAssertNotNil(entry["key"])
+    XCTAssertTrue(first.scriptWindowID > 0 && first.scriptWindowID <= ScriptProtocol.maxID)
   }
 
-  /// Catches a pane listing that leaves out the applet type, the title, the directory the applet
-  /// reports, or a tab, and a directory that shows up for an applet that reports none. A tab keeps
-  /// its number from one listing to the next.
+  /// Catches a pane listing that leaves out the applet type, the control, the title, the directory
+  /// the applet reports, or a tab, and a directory that shows up for an applet that reports none. A
+  /// tab keeps its number from one listing to the next. A pane the user opened is not the
+  /// caller's, so it is left out.
   func testListPanesReportsTypeTitleDirectoryAndTabs() async throws {
     let fixture = makeFixture()
     fixture.make = {
@@ -181,9 +282,10 @@ final class WindowScriptingTests: XCTestCase {
 
     fixture.make = { FakeApplet() }
 
-    let second = try XCTUnwrap(controller.openPane(.dataViewer, axis: .row))
+    let second = try await fixture.openOwned(beside: pane)
+    _ = try XCTUnwrap(controller.openPane(.dataViewer, axis: .row))
 
-    let panes = try array(try fixture.scripting.listPanes(window: pane.window))
+    let panes = try array(try fixture.listPanes(window: pane.window))
 
     XCTAssertEqual(panes.count, 2)
 
@@ -192,6 +294,7 @@ final class WindowScriptingTests: XCTestCase {
     XCTAssertEqual(first["pane"], .integer(pane.pane))
     XCTAssertEqual(first["window"], .integer(pane.window))
     XCTAssertEqual(first["applet"], .string("fake"))
+    XCTAssertEqual(first["control"], .string("remote-controlled"))
     XCTAssertEqual(first["title"], .string("Synthetic title"))
     XCTAssertEqual(first["directory"], .string("/synthetic/here"))
 
@@ -204,7 +307,7 @@ final class WindowScriptingTests: XCTestCase {
     XCTAssertNil(try record(panes[1])["directory"])
     XCTAssertEqual(try record(panes[1])["pane"], .integer(second.rawValue))
 
-    let again = try array(try fixture.scripting.listPanes(window: pane.window))
+    let again = try array(try fixture.listPanes(window: pane.window))
     let againTabs = try array(try XCTUnwrap(try record(again[0])["tabs"]))
 
     XCTAssertEqual(againTabs, tabs, "a tab changed its number between two listings")
@@ -218,9 +321,9 @@ final class WindowScriptingTests: XCTestCase {
 
     controller.window?.close()
 
-    XCTAssertEqual(try fixture.scripting.listPanes(window: pane.window), .null)
-    XCTAssertEqual(try fixture.scripting.listPanes(window: 12345), .null)
-    XCTAssertEqual(try fixture.scripting.listPanes(window: UInt64.max), .null)
+    XCTAssertEqual(try fixture.listPanes(window: pane.window), .null)
+    XCTAssertEqual(try fixture.listPanes(window: 12345), .null)
+    XCTAssertEqual(try fixture.listPanes(window: UInt64.max), .null)
   }
 
   // MARK: Opening panes
@@ -239,7 +342,7 @@ final class WindowScriptingTests: XCTestCase {
     fixture.make = { FakeApplet() }
 
     let created = try record(
-      try await fixture.scripting.openPane(
+      try await fixture.openPane(
         kind: "data-viewer", beside: pane, axis: nil, directory: "/synthetic/named"))
 
     XCTAssertEqual(fixture.requested.last, "/synthetic/named")
@@ -266,7 +369,7 @@ final class WindowScriptingTests: XCTestCase {
 
     fixture.make = { FakeApplet() }
 
-    _ = try await fixture.scripting.openPane(
+    _ = try await fixture.openPane(
       kind: "terminal", beside: pane, axis: nil, directory: nil)
 
     XCTAssertEqual(fixture.requested.last, "/synthetic/neighbour")
@@ -279,7 +382,7 @@ final class WindowScriptingTests: XCTestCase {
     let fixture = makeFixture()
     let (_, pane) = try fixture.openWindow()
 
-    _ = try await fixture.scripting.openPane(
+    _ = try await fixture.openPane(
       kind: "terminal", beside: pane, axis: nil, directory: nil)
 
     XCTAssertEqual(fixture.requested.count, 2)
@@ -297,23 +400,23 @@ final class WindowScriptingTests: XCTestCase {
     let made = fixture.made.count
 
     await assertError(.badArgument, "kind is not known") {
-      try await fixture.scripting.openPane(kind: "bogus", beside: pane, axis: nil, directory: nil)
+      try await fixture.openPane(kind: "bogus", beside: pane, axis: nil, directory: nil)
     }
 
     await assertError(.badArgument, "kind is not known") {
-      try await fixture.scripting.openPane(
+      try await fixture.openPane(
         kind: "launcher", beside: pane, axis: nil, directory: nil)
     }
 
     for directory in ["relative", "", "./here", "/synthetic/missing", "/a\u{0}b"] {
       await assertError(.badArgument, "directory") {
-        try await fixture.scripting.openPane(
+        try await fixture.openPane(
           kind: "terminal", beside: pane, axis: nil, directory: directory)
       }
     }
 
     await assertError(.badArgument, "browser has no directory") {
-      try await fixture.scripting.openPane(
+      try await fixture.openPane(
         kind: "browser", beside: pane, axis: nil, directory: "/synthetic/exists")
     }
 
@@ -327,7 +430,7 @@ final class WindowScriptingTests: XCTestCase {
     let (controller, pane) = try fixture.openWindow()
 
     for axis in ScriptAxis.allCases {
-      _ = try await fixture.scripting.openPane(
+      _ = try await fixture.openPane(
         kind: "terminal", beside: pane, axis: axis, directory: nil)
     }
 
@@ -369,12 +472,12 @@ final class WindowScriptingTests: XCTestCase {
     }
 
     await assertError(.refused, "synthetic refusal") {
-      try await fixture.scripting.openPane(
+      try await fixture.openPane(
         kind: "terminal", beside: pane, axis: nil, directory: "/synthetic", stillAllowed: refuse)
     }
 
     await assertError(.refused, "synthetic refusal") {
-      try await fixture.scripting.openTab(
+      try await fixture.openTab(
         pane: pane, directory: "/synthetic", stillAllowed: refuse)
     }
 
@@ -400,8 +503,8 @@ final class WindowScriptingTests: XCTestCase {
     let applet = try XCTUnwrap(fixture.made.first)
 
     let named = try record(
-      try await fixture.scripting.openTab(pane: pane, directory: "/synthetic/tab"))
-    let plain = try record(try await fixture.scripting.openTab(pane: pane, directory: nil))
+      try await fixture.openTab(pane: pane, directory: "/synthetic/tab"))
+    let plain = try record(try await fixture.openTab(pane: pane, directory: nil))
 
     XCTAssertEqual(applet.openedTabDirectories, ["/synthetic/tab", "/synthetic/pane"])
     XCTAssertEqual(applet.tabCount, 3)
@@ -431,7 +534,7 @@ final class WindowScriptingTests: XCTestCase {
     let (_, pane) = try fixture.openWindow()
     let applet = try XCTUnwrap(fixture.made.first)
 
-    _ = try await fixture.scripting.openTab(pane: pane, directory: nil)
+    _ = try await fixture.openTab(pane: pane, directory: nil)
 
     XCTAssertEqual(applet.openedTabDirectories, [nil])
   }
@@ -446,7 +549,7 @@ final class WindowScriptingTests: XCTestCase {
     applet.canOpenTab = false
 
     await assertError(.refused, "cannot open another tab") {
-      try await fixture.scripting.openTab(pane: pane, directory: nil)
+      try await fixture.openTab(pane: pane, directory: nil)
     }
 
     XCTAssertEqual(applet.tabCount, 1)
@@ -455,20 +558,23 @@ final class WindowScriptingTests: XCTestCase {
     applet.tabsStartInDirectory = false
 
     await assertError(.badArgument, "no directory") {
-      try await fixture.scripting.openTab(pane: pane, directory: "/synthetic/tab")
+      try await fixture.openTab(pane: pane, directory: "/synthetic/tab")
     }
 
-    _ = try await fixture.scripting.openTab(pane: pane, directory: nil)
+    _ = try await fixture.openTab(pane: pane, directory: nil)
 
     let launcher = try XCTUnwrap(controller.openLauncher(axis: .row))
     let plain = ScriptPaneReference(window: pane.window, pane: launcher.rawValue)
+    let fromLauncher = ScriptCaller(connection: 2, window: pane.window, pane: launcher)
+
+    controller.enableRemoteControl(launcher)
 
     await assertError(.refused, "no tabs to open") {
-      try await fixture.scripting.openTab(pane: plain, directory: nil)
+      try await fixture.openTab(pane: plain, directory: nil, as: fromLauncher)
     }
 
     await assertError(.badArgument, "absolute path") {
-      try await fixture.scripting.openTab(pane: pane, directory: "relative")
+      try await fixture.openTab(pane: pane, directory: "relative")
     }
   }
 
@@ -488,15 +594,15 @@ final class WindowScriptingTests: XCTestCase {
     let applet = try XCTUnwrap(fixture.made.first)
     let file = URL(fileURLWithPath: "/private/synthetic/spool/report.csv")
 
-    try fixture.scripting.prepareSend(to: pane)
-    XCTAssertEqual(try fixture.scripting.send(to: pane, file: file), .null)
+    try fixture.prepareSend(to: pane)
+    XCTAssertEqual(try fixture.send(to: pane, file: file), .null)
 
     XCTAssertEqual(applet.replacedSources.map(\.file), [file])
     XCTAssertEqual(applet.replacedSources.map(\.start), ["/synthetic/viewer"])
 
     applet.currentDirectory = nil
 
-    _ = try fixture.scripting.send(to: pane, file: file)
+    _ = try fixture.send(to: pane, file: file)
 
     XCTAssertEqual(applet.replacedSources.last?.start, NSHomeDirectory())
   }
@@ -513,21 +619,24 @@ final class WindowScriptingTests: XCTestCase {
     let file = URL(fileURLWithPath: "/private/synthetic/spool/a.txt")
 
     await assertError(.refused, "owns this pane's input") {
-      try fixture.scripting.prepareSend(to: pane)
+      try fixture.prepareSend(to: pane)
       return 0
     }
 
     await assertError(.refused, "owns this pane's input") {
-      try fixture.scripting.send(to: pane, file: file)
+      try fixture.send(to: pane, file: file)
     }
 
     XCTAssertTrue(owned.replacedSources.isEmpty)
 
     let launcher = try XCTUnwrap(controller.openLauncher(axis: .row))
     let plain = ScriptPaneReference(window: pane.window, pane: launcher.rawValue)
+    let fromLauncher = ScriptCaller(connection: 2, window: pane.window, pane: launcher)
+
+    controller.enableRemoteControl(launcher)
 
     await assertError(.refused, "cannot show sent content") {
-      try fixture.scripting.prepareSend(to: plain)
+      try fixture.prepareSend(to: plain, as: fromLauncher)
       return 0
     }
   }
@@ -541,7 +650,7 @@ final class WindowScriptingTests: XCTestCase {
     applet.replaceFailure = NSError(domain: "synthetic", code: 1)
 
     await assertError(.failed, "could not open the content") {
-      try fixture.scripting.send(to: pane, file: URL(fileURLWithPath: "/private/synthetic/b.txt"))
+      try fixture.send(to: pane, file: URL(fileURLWithPath: "/private/synthetic/b.txt"))
     }
   }
 
@@ -565,16 +674,16 @@ final class WindowScriptingTests: XCTestCase {
     let file = URL(fileURLWithPath: "/private/synthetic/spool/a.txt")
 
     await assertError(.refused, "waiting for an answer") {
-      try fixture.scripting.prepareSend(to: pane)
+      try fixture.prepareSend(to: pane)
       return 0
     }
 
     await assertError(.refused, "waiting for an answer") {
-      try fixture.scripting.send(to: pane, file: file)
+      try fixture.send(to: pane, file: file)
     }
 
     await assertError(.refused, "waiting for an answer") {
-      try await fixture.scripting.openPane(
+      try await fixture.openPane(
         kind: "terminal", beside: pane, axis: nil, directory: nil)
     }
 
@@ -607,14 +716,14 @@ final class WindowScriptingTests: XCTestCase {
     XCTAssertNotNil(window.attachedSheet)
 
     await assertError(.refused, "waiting for an answer") {
-      try await fixture.scripting.openTab(pane: pane, directory: nil)
+      try await fixture.openTab(pane: pane, directory: nil)
     }
 
     XCTAssertEqual(applet.tabCount, 1)
 
     window.endSheet(sheet)
 
-    _ = try await fixture.scripting.openTab(pane: pane, directory: nil)
+    _ = try await fixture.openTab(pane: pane, directory: nil)
 
     XCTAssertEqual(applet.tabCount, 2, "the tab did not open once the sheet was answered")
   }
@@ -656,9 +765,9 @@ final class WindowScriptingTests: XCTestCase {
 
     let (_, pane) = try fixture.openWindow()
 
-    _ = try await fixture.scripting.openPane(
+    _ = try await fixture.openPane(
       kind: "terminal", beside: pane, axis: nil, directory: "/synthetic/x")
-    _ = try await fixture.scripting.openTab(pane: pane, directory: "/synthetic/y")
+    _ = try await fixture.openTab(pane: pane, directory: "/synthetic/y")
 
     XCTAssertEqual(probe.onMain, [false, false], "a directory check ran on the main thread")
   }
@@ -676,7 +785,7 @@ final class WindowScriptingTests: XCTestCase {
     let made = fixture.made.count
 
     let call = Task { @MainActor in
-      try await fixture.scripting.openPane(
+      try await fixture.openPane(
         kind: "terminal", beside: pane, axis: nil, directory: "/synthetic/x")
     }
 
@@ -741,19 +850,19 @@ final class WindowScriptingTests: XCTestCase {
     XCTAssertNotEqual(old.window, current.window)
 
     await assertError(.notFound) {
-      try await later.scripting.openPane(kind: "terminal", beside: old, axis: nil, directory: nil)
+      try await later.openPane(kind: "terminal", beside: old, axis: nil, directory: nil)
     }
 
     await assertError(.notFound) {
-      try await later.scripting.openTab(pane: old, directory: nil)
+      try await later.openTab(pane: old, directory: nil)
     }
 
     await assertError(.notFound) {
-      try later.scripting.prepareSend(to: old)
+      try later.prepareSend(to: old)
       return 0
     }
 
-    XCTAssertEqual(try later.scripting.listPanes(window: old.window), .null)
+    XCTAssertEqual(try later.listPanes(window: old.window), .null)
     XCTAssertEqual(later.made.count, 1, "an earlier launch's reference opened something")
   }
 
@@ -763,7 +872,7 @@ final class WindowScriptingTests: XCTestCase {
     let fixture = makeFixture()
     let (controller, pane) = try fixture.openWindow()
     let created = try record(
-      try await fixture.scripting.openPane(
+      try await fixture.openPane(
         kind: "terminal", beside: pane, axis: nil, directory: nil))
 
     guard case .integer(let closedID)? = created["pane"] else { return XCTFail("no pane ID") }
@@ -773,19 +882,19 @@ final class WindowScriptingTests: XCTestCase {
     let closed = ScriptPaneReference(window: pane.window, pane: closedID)
 
     await assertError(.notFound, "pane is not open") {
-      try await fixture.scripting.openTab(pane: closed, directory: nil)
+      try await fixture.openTab(pane: closed, directory: nil)
     }
 
     let edges: [UInt64] = [0, ScriptProtocol.maxID, ScriptProtocol.maxID + 1, UInt64.max]
 
     for edge in edges {
       await assertError(.notFound) {
-        try await fixture.scripting.openTab(
+        try await fixture.openTab(
           pane: ScriptPaneReference(window: pane.window, pane: edge), directory: nil)
       }
 
       await assertError(.notFound, "window is not open") {
-        try await fixture.scripting.openTab(
+        try await fixture.openTab(
           pane: ScriptPaneReference(window: edge, pane: pane.pane), directory: nil)
       }
     }
@@ -793,7 +902,7 @@ final class WindowScriptingTests: XCTestCase {
     controller.window?.close()
 
     await assertError(.notFound, "window is not open") {
-      try await fixture.scripting.openTab(pane: pane, directory: nil)
+      try await fixture.openTab(pane: pane, directory: nil)
     }
   }
 
@@ -808,11 +917,11 @@ final class WindowScriptingTests: XCTestCase {
       return applet
     }
 
-    let (controller, pane) = try fixture.openWindow()
-    let other = try XCTUnwrap(controller.openPane(.terminalShell, axis: .row))
+    let (_, pane) = try fixture.openWindow()
+    let other = try await fixture.openOwned(beside: pane)
     let applet = try XCTUnwrap(fixture.made.first)
 
-    let listed = try array(try fixture.scripting.listPanes(window: pane.window))
+    let listed = try array(try fixture.listPanes(window: pane.window))
     let tabs = try array(try XCTUnwrap(try record(listed[0])["tabs"]))
     let numbers = try tabs.map { entry -> UInt64 in
       guard case .integer(let number)? = try record(entry)["tab"] else { return 0 }
@@ -823,25 +932,25 @@ final class WindowScriptingTests: XCTestCase {
       ScriptPaneReference(window: pane.window, pane: paneID, tab: tab)
     }
 
-    XCTAssertNoThrow(try fixture.scripting.prepareSend(to: reference(tab: numbers[0])))
+    XCTAssertNoThrow(try fixture.prepareSend(to: reference(tab: numbers[0])))
 
     await assertError(.notFound, "tab is not open") {
-      try await fixture.scripting.openTab(pane: reference(tab: 9999), directory: nil)
+      try await fixture.openTab(pane: reference(tab: 9999), directory: nil)
     }
 
     await assertError(.notFound, "tab is not open") {
-      try await fixture.scripting.openTab(
+      try await fixture.openTab(
         pane: reference(tab: numbers[0], in: other.rawValue), directory: nil)
     }
 
     applet.removeTab(at: 1)
 
     await assertError(.notFound, "tab is not open") {
-      try await fixture.scripting.openTab(pane: reference(tab: numbers[1]), directory: nil)
+      try await fixture.openTab(pane: reference(tab: numbers[1]), directory: nil)
     }
 
     let fresh = try record(
-      try await fixture.scripting.openTab(pane: reference(tab: nil), directory: nil))
+      try await fixture.openTab(pane: reference(tab: nil), directory: nil))
 
     guard case .integer(let freshNumber)? = fresh["tab"] else { return XCTFail("no tab number") }
 

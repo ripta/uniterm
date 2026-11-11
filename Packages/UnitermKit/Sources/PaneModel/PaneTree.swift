@@ -135,15 +135,64 @@ public struct PaneTree: Sendable, Equatable {
   ///
   /// The split is refused when either pane would end up below the minimum size. Nothing changes
   /// then, and no ID is used.
+  ///
+  /// A split inside a group puts the new pane in the group's content, but not among its members.
+  /// Only an owner's split adds a member.
   @discardableResult
   public mutating func split(_ target: NodeID, axis: Axis, in size: CGSize) throws -> NodeID {
+    try split(target, axis: axis, in: size, joining: nil).pane
+  }
+
+  /// Splits a pane for a controller and makes the new pane a member of that controller's group.
+  /// The group is the innermost one around `target` that `owner` owns and that holds `target` as
+  /// its source or a member. Without one, a new group wraps `target` alone, with `target` as its
+  /// source. Returns the new pane and the group.
+  ///
+  /// The split is refused as `split(_:axis:in:)` refuses it. Nothing changes then, no group is
+  /// made, and no ID is used.
+  @discardableResult
+  public mutating func split(
+    _ target: NodeID, axis: Axis, in size: CGSize, for owner: GroupOwner
+  ) throws -> (pane: NodeID, group: NodeID) {
+    let existing = enclosingGroups(of: target).last {
+      $0.owner == owner && ($0.source == target || $0.members.contains(target))
+    }
+
+    let result = try split(target, axis: axis, in: size, joining: (owner, existing?.id))
+
+    guard let group = result.group else { preconditionFailure("an owner's split always joins") }
+
+    return (result.pane, group)
+  }
+
+  private mutating func split(
+    _ target: NodeID, axis: Axis, in size: CGSize, joining: (GroupOwner, NodeID?)?
+  ) throws -> (pane: NodeID, group: NodeID?) {
     guard root.paneIDs.contains(target) else { throw PaneTreeError.unknownPane(target) }
 
     var allocator = self.allocator
     let newPane = allocator.next()
+    var base = root
+    var group: NodeID?
 
-    guard let inserted = root.splitting(target, axis: axis, newPane: newPane, allocator: &allocator)
+    if let (owner, existing) = joining {
+      if let existing {
+        group = existing
+      } else {
+        let id = allocator.next()
+        let wrapper = Group(
+          id: id, owner: owner, source: target, members: [], content: .pane(Pane(id: target)))
+
+        base = base.wrapping(target, in: wrapper)
+        group = id
+      }
+    }
+
+    guard var inserted = base.splitting(target, axis: axis, newPane: newPane, allocator: &allocator)
     else { throw PaneTreeError.unknownPane(target) }
+
+    // The member joins before normalizing, since a group with no member dissolves.
+    if let group { inserted = inserted.addingMember(newPane, to: group) }
 
     let candidate = inserted.normalizedRoot()
     let ideal = layout(in: size, clamped: false, of: candidate)
@@ -164,7 +213,7 @@ public struct PaneTree: Sendable, Equatable {
 
     root = candidate
     self.allocator = allocator
-    return newPane
+    return (newPane, group)
   }
 
   /// True when `split(_:axis:in:)` would succeed.
@@ -178,13 +227,21 @@ public struct PaneTree: Sendable, Equatable {
   /// Removes a pane. Its space goes to the siblings on either side, half to each. A pane with one
   /// neighbor gives all of it to that neighbor. A split left with one child collapses. The pane's
   /// ID is retired.
+  ///
+  /// A pane leaves every group it was a member of. A group left with no member is removed, and its
+  /// ID is retired too.
   public mutating func close(_ target: NodeID) throws -> CloseOutcome {
-    guard root.paneIDs.contains(target) else { throw PaneTreeError.unknownPane(target) }
+    let panes = root.paneIDs
 
-    guard case .split(let split) = root else { return .lastPane }
+    guard panes.contains(target) else { throw PaneTreeError.unknownPane(target) }
+
+    guard panes.count > 1 else { return .lastPane }
 
     var focus: NodeID?
-    let removed = split.removing(target, focus: &focus)
+
+    guard let removed = root.removing(target, focus: &focus) else {
+      preconditionFailure("a tree with two panes keeps one after a close")
+    }
 
     root = removed.normalizedRoot()
 
@@ -370,18 +427,177 @@ public struct PaneTree: Sendable, Equatable {
   }
 
   static let tolerance: CGFloat = 0.000_1
+
+  // MARK: Groups
+
+  /// Every group in the tree, outermost first.
+  public var groups: [Group] { root.groups }
+
+  /// The groups around a pane, outermost first. A pane in no group has none.
+  public func enclosingGroups(of pane: NodeID) -> [Group] {
+    root.groups.filter { $0.content.paneIDs.contains(pane) }
+  }
+
+  /// Takes ownership away from `owner` in every group it owns. The groups and their panes stay,
+  /// with no owner, and no one can claim them again. Returns the panes that were members of them.
+  @discardableResult
+  public mutating func releaseOwner(_ owner: GroupOwner) -> Set<NodeID> {
+    var released = Set<NodeID>()
+
+    root = root.releasing(owner, into: &released)
+
+    return released
+  }
+
+  // MARK: Distance
+
+  /// How many split edges lie between `source` and each pane, in the tree as it is now. A group is
+  /// transparent: entering or leaving one costs nothing. The source is 0 from itself. A pane not in
+  /// the tree has no entry, and an unknown source gives an empty map.
+  public func edgeDistances(from source: NodeID) -> [NodeID: Int] {
+    var paths: [NodeID: [NodeID]] = [:]
+
+    root.collectSplitPaths(prefix: [], into: &paths)
+
+    guard let from = paths[source] else { return [:] }
+
+    var distances: [NodeID: Int] = [:]
+
+    for (pane, path) in paths {
+      guard pane != source else {
+        distances[pane] = 0
+        continue
+      }
+
+      // Two different panes always share the root split, so the common prefix is at least one.
+      let common = zip(from, path).prefix { $0 == $1 }.count
+
+      distances[pane] = from.count + path.count - 2 * (common - 1)
+    }
+
+    return distances
+  }
 }
 
 // MARK: Recursive edits
 
 extension Node {
   /// Where `target` sits, as a neighbor and a side. Returns nil when it is not a child of a split.
+  /// A pane alone in a group sits where its group does.
   func placement(of target: NodeID) -> PanePlacement? {
-    guard case .split(let split) = self else { return nil }
+    switch self {
+    case .pane: return nil
+    case .group(let group): return group.content.placement(of: target)
+    case .split(let split): return split.placement(of: target)
+    }
+  }
 
-    if let index = split.children.firstIndex(where: { $0.node.id == target }),
-      case .pane = split.children[index].node
-    {
+  /// This node with the pane `target` replaced by `group`, which wraps it. Nothing is normalized.
+  func wrapping(_ target: NodeID, in group: Group) -> Node {
+    switch self {
+    case .pane(let pane):
+      return pane.id == target ? .group(group) : self
+
+    case .split(var split):
+      for index in split.children.indices {
+        split.children[index].node = split.children[index].node.wrapping(target, in: group)
+      }
+
+      return .split(split)
+
+    case .group(var outer):
+      outer.content = outer.content.wrapping(target, in: group)
+      return .group(outer)
+    }
+  }
+
+  /// This node with `pane` added to the members of the group `group`. Nothing is normalized.
+  func addingMember(_ pane: NodeID, to group: NodeID) -> Node {
+    switch self {
+    case .pane:
+      return self
+
+    case .split(var split):
+      for index in split.children.indices {
+        split.children[index].node = split.children[index].node.addingMember(pane, to: group)
+      }
+
+      return .split(split)
+
+    case .group(var found):
+      if found.id == group {
+        found.members.insert(pane)
+      } else {
+        found.content = found.content.addingMember(pane, to: group)
+      }
+
+      return .group(found)
+    }
+  }
+
+  func releasing(_ owner: GroupOwner, into released: inout Set<NodeID>) -> Node {
+    switch self {
+    case .pane:
+      return self
+
+    case .split(var split):
+      for index in split.children.indices {
+        split.children[index].node = split.children[index].node.releasing(owner, into: &released)
+      }
+
+      return .split(split)
+
+    case .group(var group):
+      if group.owner == owner {
+        group.owner = nil
+        released.formUnion(group.members)
+      }
+
+      group.content = group.content.releasing(owner, into: &released)
+      return .group(group)
+    }
+  }
+
+  /// The splits above each pane, from the root down. Groups are left out of the paths.
+  func collectSplitPaths(prefix: [NodeID], into paths: inout [NodeID: [NodeID]]) {
+    switch self {
+    case .pane(let pane):
+      paths[pane.id] = prefix
+
+    case .split(let split):
+      for child in split.children {
+        child.node.collectSplitPaths(prefix: prefix + [split.id], into: &paths)
+      }
+
+    case .group(let group):
+      group.content.collectSplitPaths(prefix: prefix, into: &paths)
+    }
+  }
+
+  /// This node with the pane `target` gone, or nil when nothing is left of it.
+  func removing(_ target: NodeID, focus: inout NodeID?) -> Node? {
+    switch self {
+    case .pane(let pane):
+      return pane.id == target ? nil : self
+
+    case .split(let split):
+      return split.removing(target, focus: &focus)
+
+    case .group(var group):
+      guard let content = group.content.removing(target, focus: &focus) else { return nil }
+
+      group.content = content
+      group.members.remove(target)
+      return .group(group)
+    }
+  }
+}
+
+extension Split {
+  func placement(of target: NodeID) -> PanePlacement? {
+    let split = self
+
+    if let index = split.children.firstIndex(where: { $0.node.isSolely(target) }) {
       let weight = split.children[index].weight
 
       if index > 0 {
@@ -401,7 +617,9 @@ extension Node {
 
     return nil
   }
+}
 
+extension Node {
   /// This node with `pane` added as the placement describes. The result is a normalized root.
   func inserting(
     _ pane: NodeID, at placement: PanePlacement, weight: Double?, allocator: inout NodeIDAllocator
@@ -435,6 +653,22 @@ extension Node {
     _ pane: NodeID, beside neighbor: NodeID, axis: Axis, side: Side, weight: Double?,
     allocator: inout NodeIDAllocator
   ) -> Node? {
+    if case .group(var group) = self {
+      if group.content.id == neighbor {
+        group.content = group.content.wrapping(
+          pane, axis: axis, side: side, weight: weight, allocator: &allocator)
+      } else {
+        guard
+          let inner = group.content.inserting(
+            pane, beside: neighbor, axis: axis, side: side, weight: weight, allocator: &allocator)
+        else { return nil }
+
+        group.content = inner
+      }
+
+      return .group(group)
+    }
+
     guard case .split(var split) = self else { return nil }
 
     if let index = split.children.firstIndex(where: { $0.node.id == neighbor }) {
@@ -492,6 +726,15 @@ extension Node {
           ]
         ))
 
+    case .group(var group):
+      guard
+        let replaced = group.content.splitting(
+          target, axis: axis, newPane: newPane, allocator: &allocator)
+      else { return nil }
+
+      group.content = replaced
+      return .group(group)
+
     case .split(var split):
       guard let index = split.children.firstIndex(where: { $0.node.contains(target) }) else {
         return nil
@@ -518,6 +761,10 @@ extension Node {
 
   /// The split that holds `leading` immediately followed by `trailing`.
   func split(holding leading: NodeID, then trailing: NodeID) -> Split? {
+    if case .group(let group) = self {
+      return group.content.split(holding: leading, then: trailing)
+    }
+
     guard case .split(let split) = self else { return nil }
 
     let ids = split.children.map { $0.node.id }
@@ -535,6 +782,12 @@ extension Node {
   func settingWeights(
     split target: NodeID, leading: (NodeID, Double), trailing: (NodeID, Double)
   ) -> Node {
+    if case .group(var group) = self {
+      group.content = group.content.settingWeights(
+        split: target, leading: leading, trailing: trailing)
+      return .group(group)
+    }
+
     guard case .split(var split) = self else { return self }
 
     if split.id == target {
@@ -569,13 +822,12 @@ extension Split {
     children.insert(Child(node: .pane(Pane(id: pane)), weight: share), at: index)
   }
 
-  /// Removes the pane from this split or a split below it. The result may need normalizing.
+  /// Removes the pane from this split or a node below it. A child that is the pane, or a group
+  /// around the pane alone, goes as a whole. The result may need normalizing.
   func removing(_ target: NodeID, focus: inout NodeID?) -> Node {
     var split = self
 
-    if let index = split.children.firstIndex(where: { $0.node.id == target }),
-      case .pane = split.children[index].node
-    {
+    if let index = split.children.firstIndex(where: { $0.node.isSolely(target) }) {
       let weight = split.children[index].weight
       let previous = index > 0 ? index - 1 : nil
       let next = index + 1 < split.children.count ? index + 1 : nil
@@ -603,8 +855,8 @@ extension Split {
     }
 
     for index in split.children.indices where split.children[index].node.contains(target) {
-      if case .split(let inner) = split.children[index].node {
-        split.children[index].node = inner.removing(target, focus: &focus)
+      if let remaining = split.children[index].node.removing(target, focus: &focus) {
+        split.children[index].node = remaining
       }
     }
 

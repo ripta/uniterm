@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-07
+**Updated:** 2026-11-10
 
 ## Dependencies
 
@@ -122,9 +122,11 @@ set of notes, and a chart.
 
 ### Group node kind
 
-This proposal defines a group node kind for UTERM-001's pane tree. A layout request creates a group. The group records
-its owner and never merges into its parent. UTERM-001's pane tree lets a node kind define its own merge rule. Its
-layout file bumps the schema version for a new node kind. The details are part of "What anchors trust" below.
+This proposal defines a group node kind for UTERM-001's pane tree. A program's first pane request creates a group, and a
+layout request creates one too. The group records its owner and never merges into its parent. UTERM-001's pane tree
+lets a node kind define its own merge rule. Its layout file bumps the schema version for a new node kind, to version 2.
+M2 builds the group and its saved form, since its checks need owned members. M4 builds layout requests on it. The
+details are part of "What anchors trust" below. Amended 2026-11-10; see Decision Log.
 
 ### What anchors trust
 
@@ -143,16 +145,17 @@ Context from UTERM-001's implementation, in support of an ADR candidate on ID sc
 Decision: explicit ownership and membership anchored by a nonmerging group, never ordinary split-tree shape.
 
 - A group's owner is a live connection bound to its source process and session. Group and pane IDs carry UTERM-003's
-  launch-scoped window reference. A group never merges or collapses into its parent, including with one child. An
-  empty group is removed and its ID retires.
+  launch-scoped window reference. A group never merges or collapses into its parent, including with one child. A
+  group left with no member is removed and its ID retires. The source pane is placement metadata, not a member.
 - The first layout wraps only the source pane and newly created panes. It preserves the source pane and applet.
   Later requests rearrange only still-owned members and create new ones. They cannot import unrelated panes,
   replace existing applets, or silently discard members.
 - Nested layouts create explicit nested groups. Authority intersects the live connection's grant, window, explicit
   membership, target access mode, and supported operation at dispatch. Children gain no authority over parents or
   siblings by being nested. An ancestor owner retains only its existing explicit scope.
-- User splits create panes outside the owned group boundary. A user move cannot add a pane to program ownership.
-  Removing a pane from a group removes that group's authority over it. A new move UI is not required here.
+- User splits create panes outside the owned group boundary. A user split of a member puts the new pane beside it,
+  inside the group's area but not among its members. A user move cannot add a pane to program ownership. Removing a
+  pane from a group removes that group's authority over it. A new move UI is not required here.
 - Disconnect, process exit, source-session close, window close, or user revocation removes the owner's authority.
   Group and content remain visible with no live owner. Another process cannot claim them by presenting their IDs.
   An attached exec driver retains only its explicitly attached channel, subject to its own lifetime.
@@ -165,7 +168,8 @@ Decision: explicit ownership and membership anchored by a nonmerging group, neve
   after the tree commits. A later launch failure reports in its pane without automatic retry or a claim of rollback.
 
 Rationale: per-pane marks alone do not delimit structural edits. The wrapper preserves the boundary through
-normalization. Explicit membership prevents unrelated user panes from gaining an owner by changing position.
+normalization. Explicit membership prevents unrelated user panes from gaining an owner by changing position. Amended
+2026-11-10; see Decision Log.
 
 ### Exec wire format
 
@@ -322,7 +326,9 @@ state dependency. The documented base is explicit. CLAUDE.md requires the user t
 Decision: filter to authorized remote-enabled targets of the requested applet type in the caller's window first.
 Rank by shortest edge distance from the source pane in the current normalized pane tree, treating group wrappers as
 transparent. Break ties by reading order, then stable pane ID. This is tree distance, not physical screen distance.
-Explicit references remain available when the caller needs a fixed target.
+Explicit references remain available when the caller needs a fixed target. A script names a nearest target as
+`{:nearest kind}` wherever a pane reference goes, and the caller's own pane counts as a candidate. Amended 2026-11-10;
+see Decision Log.
 
 Resolve and revalidate at dispatch. No match returns a structured not-found error. It never falls back to an
 unauthorized pane or creates one implicitly. Creating a pane or layout is a separate explicit request.
@@ -613,8 +619,10 @@ None.
 
 ### M2: Remote-controlled and disconnected panes
 
-**Status:** NOT STARTED
+**Status:** DONE
 
+- The group node kind, open-pane's owned members, and layout envelope version 2 land here, ahead of M4's layout
+  requests. Amended 2026-11-10; see Decision Log.
 - A remote-controlled pane shows a visible marker
 - Controlled clipboard policy covers background, newly opened, and reopened tabs before those sessions emit output
 - New user panes start disconnected; enable and revoke remain accessible when applet content consumes input
@@ -627,6 +635,51 @@ None.
   that declares none resolves to disconnected with no driver
 - Controlled OSC 52 writes check once/session permission through real backend callbacks; denial changes nothing
 - Pending clipboard approvals cannot release data or write after revocation, mode change, or session replacement
+
+**As built:**
+
+- The window holds each pane's access mode, keyed by pane ID, and issues it a new generation on every change. A pane
+  with no entry is disconnected, so every new pane, and every pane reopened by undo, starts disconnected. The applet
+  contract gained a hook that tells the applet its pane's control. The window calls it as the applet takes the pane,
+  before it starts, and on every change. Enabling tells the applet first and records the mode after, with nothing
+  suspended between.
+- Enable Remote Control, Disconnect Pane, and Revoke Controller are pane commands in the File menu and the palette, with
+  no key. They work while a sheet shows. There is no pane context menu, so the badge's own menu carries the same three
+  actions. The badge is the `antenna.radiowaves.left.and.right` symbol in the pane's top right corner, since SF Symbols
+  has no robot. It shows on a pane that is remote-controlled, owned, driven, in an unowned group, or restored with
+  saved intent. Its tooltip and menu name the mode, the owner, every controller with authority over the pane, and the
+  driver. The host reports each binding, grant, REPL attach, and end of one, and every window refreshes its badges.
+  The menu also rebuilds from live state as it opens. Review found the badge's Revoke going stale while a controller
+  bound by ancestry, and its test failed with the report's wiring removed.
+- `AppletTypeDeclaration` carries the supported combinations. The terminal and the REPL declare remote control with no
+  driver. Every other type declares nothing and resolves to disconnected. Open-pane checks the requested access against
+  the kind's declaration before it checks the directory or builds anything.
+- The group node never splices or collapses. Its content normalizes as a root, and members that are not panes of its
+  content drop out. A group with no member dissolves into its parent. Tree distance counts split edges only, so a group
+  is transparent. An owner's split extends the innermost group it owns that holds the target as source or member, and
+  otherwise wraps the target in a new nested group.
+- The layout envelope is version 2. The upgrade from version 1 keeps the windows list byte for byte. A group saves its
+  source and members, never an owner. A pane saves its mode only when it is not disconnected. A damaged member list can
+  only shrink a group, and a damaged or unknown mode reads as disconnected. A restored pane starts disconnected, and
+  its badge shows the saved mode as inactive until the user acts on the pane.
+- The host passes every call's caller, its connection and the pane it acts for, to the window layer. The window layer
+  checks every target there, for lists, reads, and changes alike. A target out of scope answers as one that is not
+  open. Revoke Controller ends every controller that acts from the pane or owns a group holding it. The host refuses
+  the revoked connections' calls from then on, and every window releases their groups. A closed connection, an ended
+  grant, a lost binding, and a closed source session release them too. The host API's rules, nearest targets, and the
+  open-pane `:control` option are best guesses in the 2026-11-10 Decision Log entries. ScriptWire is at version 5.
+- TerminalSurface takes a clipboard policy per session, at creation and on change. The write callback reads
+  libghostty's confirm flag, so an OSC 52 write asks in a controlled session and a user's copy never asks. The prompt
+  offers Deny, Allow Once, and a session button named for the tab. Session permission is kept per kind and ends with
+  the policy. An answer counts only while the session is open and its policy is the one it was asked under. A session
+  holds at most one waiting prompt per kind. A later read or write of that kind is denied at once and its text dropped,
+  until M6's coalesced permission panel replaces this bound. Review found each OSC 52 write queuing its own sheet. The
+  flood test saw 20 prompts for 20 writes before the bound, and 1 after. Both
+  prompts now name the tab that asked, not the selected one. The window's and the terminal's naming tests failed with
+  the fix reverted.
+- Two new real-backend tests drive OSC 52 through libghostty's callbacks. With the policy check removed, the stale-answer
+  test failed on both its read and its write. `PaneControlUITests` and the updated `ScriptRunUITests` and `ReplUITests`
+  compile and are run by the coordinator. No layout codec fuzz target exists, so the codec changes have no fuzz run.
 
 ### M3: Exec panes
 
@@ -665,6 +718,8 @@ None.
 
 **Status:** NOT STARTED
 
+- Layout requests build on the group node kind and layout envelope version 2 from M2. Amended 2026-11-10; see Decision
+  Log.
 - A program can request a layout for its own subtree
 - A request for panes outside its subtree is refused
 - Publication rechecks grants after asynchronous preparation; revocation or source close leaves no partial layout
@@ -859,6 +914,36 @@ None.
   connection is not asked about again, so a program that keeps retrying cannot keep the panel full. It must reconnect
   to ask again. If the user wants a grant to name a tab, the grant sheet would list tabs and the host would track
   roots by tab. The Amended marker moved here from the backend-patch bullet, whose 2026-11-10 entry is above.
+
+- 2026-11-10: Moved the group node kind into M2 (work-queue best guess). The proposal had M4 build groups with layout
+  requests, and "Group node kind" said only a layout request makes one. M2's checks need owned members, and a live group
+  must save, so M2 builds the group, open-pane's owned members, and layout envelope version 2. M4 keeps layout requests
+  and the restore checks. A user split of a member puts the new pane inside the group's area, not among its members,
+  and a group is removed once it has no member. The source pane is not a member. "What anchors trust" said "An empty
+  group is removed and its ID retires." It now says a group left with no member is removed, and that the source is
+  placement metadata. It said "User splits create panes outside the owned group boundary." It now adds that a user
+  split of a member puts the new pane beside it, inside the group's area but not among its members. If the user wants
+  user splits placed outside the group's area instead, a split of a member would split beside the whole group.
+- 2026-11-10: Put UTERM-003's host API behind pane authority (work-queue best guess). The proposal settles the scope
+  rules but not each call's answer. `list-windows` returns the caller's own window, with its pane and that pane's mode,
+  and adds the title only once the pane is enabled. `list-panes`, reads, `send`, `open-tab`, and `open-pane` reach the
+  caller's own remote-controlled pane and remote-controlled members of groups it owns. A target out of scope answers as
+  one that is not open. A caller whose pane is disconnected and owns no group gets an error naming Enable Remote
+  Control. One that owns a group keeps its members but cannot act on its own pane. `post-status` stays open to bound
+  callers. Open-pane takes `:control :disconnected`, the default, or `:remote-controlled`. If the user wants another
+  default, scripts that send to a pane they open would change.
+- 2026-11-10: Named nearest targets `{:nearest kind}` in place of a pane reference (work-queue best guess). "Nearest"
+  pane did not say how a script names one, or whether the caller's own pane counts. It counts. The form changes the
+  wire, so ScriptWire went from version 4 to 5 here, and M3's bump becomes 6. The hello is one 16-bit version in every
+  version, and each side refuses any version but its own before a call runs. An old `uniterm` command with a new app,
+  and a new command with an old app, are both refused at the hello. No deploy order is needed. If the user wants
+  a separate call, the wire would carry a new call code instead.
+- 2026-11-10: Settled controlled-terminal clipboard details (work-queue best guess). The prompt offers Deny, Allow Once,
+  and a button that allows reads, or writes, in the tab. Each kind's session permission ends with any policy change,
+  including a new generation from a revoke. An unsafe paste keeps its own question. If the user wants a session
+  permission to survive a revoke, the generation check would narrow to the mode. A session holds at most one waiting
+  prompt per kind: a later read or write of that kind is denied at once, with no prompt, and its text dropped. That
+  bounds the prompts "Permission scopes and approval flow" forbids flooding until M6's coalesced panel can replace it.
 
 ## References
 

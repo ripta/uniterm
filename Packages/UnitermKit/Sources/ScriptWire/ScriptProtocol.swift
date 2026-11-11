@@ -7,7 +7,7 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 4
+  public static let version: UInt16 = 5
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -100,7 +100,36 @@ public struct ScriptPaneReference: Sendable, Equatable {
   }
 }
 
+/// The pane a call acts on: one a script names, or the nearest pane of an applet type to the
+/// caller's own pane. The app resolves a nearest target when it runs the call, among the panes the
+/// caller may control, and never opens one when none matches.
+public enum ScriptTarget: Sendable, Equatable {
+  case pane(ScriptPaneReference)
+
+  /// The kind is an applet type, such as `browser`.
+  case nearest(kind: String)
+}
+
+/// The access a pane a script opens starts with. A script can enable control only on a pane it
+/// creates in its own group, never on a pane that exists.
+public enum ScriptPaneAccess: UInt8, Sendable, Equatable, CaseIterable {
+  case disconnected = 0
+  case remoteControlled = 1
+}
+
 extension ByteWriter {
+  mutating func put(target: ScriptTarget) {
+    switch target {
+    case .pane(let reference):
+      put(UInt8(0))
+      put(reference: reference)
+
+    case .nearest(let kind):
+      put(UInt8(1))
+      put(string: kind, limit: ScriptProtocol.maxKindBytes)
+    }
+  }
+
   mutating func put(id: UInt64) {
     put(UInt32(truncatingIfNeeded: id >> 32))
     put(UInt32(truncatingIfNeeded: id))
@@ -156,6 +185,14 @@ extension ByteReader {
     }
   }
 
+  mutating func target() throws -> ScriptTarget {
+    switch try u8() {
+    case 0: return .pane(try reference())
+    case 1: return .nearest(kind: try string(limit: ScriptProtocol.maxKindBytes))
+    default: throw WireError.badValue("a target has an unknown form")
+    }
+  }
+
   mutating func optionalString(limit: Int) throws -> String? {
     switch try u8() {
     case 0: return nil
@@ -179,9 +216,10 @@ public enum ScriptCall: Equatable, Sendable {
   case listWindows
   case listPanes(window: UInt64)
   case openPane(
-    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?)
-  case openTab(pane: ScriptPaneReference, directory: String?)
-  case send(pane: ScriptPaneReference, name: String, content: Data)
+    kind: String, beside: ScriptTarget, axis: ScriptAxis?, directory: String?,
+    access: ScriptPaneAccess)
+  case openTab(pane: ScriptTarget, directory: String?)
+  case send(pane: ScriptTarget, name: String, content: Data)
 
   var code: UInt16 {
     switch self {
@@ -211,18 +249,19 @@ public enum ScriptCall: Equatable, Sendable {
     case .listPanes(let window):
       body.put(id: window)
 
-    case .openPane(let kind, let beside, let axis, let directory):
+    case .openPane(let kind, let beside, let axis, let directory, let access):
       body.put(string: kind, limit: ScriptProtocol.maxKindBytes)
-      body.put(reference: beside)
+      body.put(target: beside)
       body.put(axis?.rawValue ?? 0)
       body.put(optional: directory, limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(access.rawValue)
 
     case .openTab(let pane, let directory):
-      body.put(reference: pane)
+      body.put(target: pane)
       body.put(optional: directory, limit: ScriptProtocol.maxDirectoryBytes)
 
     case .send(let pane, let name, let content):
-      body.put(reference: pane)
+      body.put(target: pane)
       body.put(string: name, limit: ScriptProtocol.maxFileNameBytes)
       body.put(raw: content)
     }
@@ -247,24 +286,30 @@ public enum ScriptCall: Equatable, Sendable {
 
     case 4:
       let kind = try reader.string(limit: ScriptProtocol.maxKindBytes)
-      let beside = try reader.reference()
+      let beside = try reader.target()
       let axisByte = try reader.u8()
 
       guard axisByte == 0 || ScriptAxis(rawValue: axisByte) != nil else {
         throw WireError.badValue("an unknown split axis")
       }
 
+      let directory = try reader.optionalString(limit: ScriptProtocol.maxDirectoryBytes)
+
+      guard let access = ScriptPaneAccess(rawValue: try reader.u8()) else {
+        throw WireError.badValue("an unknown pane access")
+      }
+
       return .openPane(
-        kind: kind, beside: beside, axis: ScriptAxis(rawValue: axisByte),
-        directory: try reader.optionalString(limit: ScriptProtocol.maxDirectoryBytes))
+        kind: kind, beside: beside, axis: ScriptAxis(rawValue: axisByte), directory: directory,
+        access: access)
 
     case 5:
       return .openTab(
-        pane: try reader.reference(),
+        pane: try reader.target(),
         directory: try reader.optionalString(limit: ScriptProtocol.maxDirectoryBytes))
 
     case 6:
-      let pane = try reader.reference()
+      let pane = try reader.target()
       let name = try reader.string(limit: ScriptProtocol.maxFileNameBytes)
       let content = reader.rest()
 

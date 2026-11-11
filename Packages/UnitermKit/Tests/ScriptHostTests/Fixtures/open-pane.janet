@@ -7,3 +7,5 @@
 
 (uniterm/open-pane :data-viewer {:window 7 :pane 1 :tab 2} :axis :column :directory "/synthetic/work")
 (uniterm/open-pane :browser {:window 7 :pane 1} :axis :row :directory nil)
+(uniterm/open-pane :map-viewer {:nearest :data-viewer} :control :remote-controlled)
+(uniterm/open-pane :text-viewer {:window 7 :pane 1} :control :disconnected)

@@ -32,12 +32,25 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   /// instance for authority checks.
   private var sessionGeneration: UInt64 = 0
 
+  private(set) var clipboardPolicy: TerminalClipboardPolicy
+
+  /// The kinds of clipboard request the user allowed for the rest of the session, under the
+  /// current policy. A new policy clears them.
+  private var sessionAllowed: Set<TerminalClipboardRequest.Kind> = []
+
+  /// The kinds of program clipboard request with a prompt waiting. While one waits, a later request
+  /// of that kind is denied at once and its text dropped, so a program that loops cannot queue a
+  /// prompt per escape sequence or hold its data in memory.
+  private var asking: Set<TerminalClipboardRequest.Kind> = []
+
   var onEvent: (@MainActor (TerminalEvent) -> Void)?
   private(set) var title = ""
   private(set) var workingDirectory: String?
   private(set) var hasExited = false
 
-  init(app: ghostty_app_t, launch: TerminalLaunch) throws {
+  init(app: ghostty_app_t, launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
+  {
+    self.clipboardPolicy = clipboardPolicy
     super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
     setAccessibilityIdentifier("terminal")
 
@@ -164,6 +177,14 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     ghostty_surface_set_occlusion(surface, visible)
   }
 
+  func setClipboardPolicy(_ policy: TerminalClipboardPolicy) {
+    guard policy != clipboardPolicy else { return }
+
+    clipboardPolicy = policy
+    sessionAllowed = []
+    asking = []
+  }
+
   func close() {
     guard let surface else { return }
 
@@ -287,12 +308,34 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     return GHOSTTY_CLIPBOARD_READ_STARTED
   }
 
+  /// A read of a controlled session that the user allowed for the session is answered at once.
+  /// Every other read and unsafe paste asks. A read that arrives while another read's prompt waits
+  /// is denied at once.
   func askAboutClipboard(
     kind: TerminalClipboardRequest.Kind, text: String, state: OpaqueToken
   ) {
-    let request = TerminalClipboardRequest(kind: kind, text: text) { [weak self] allow in
+    let asked = clipboardPolicy
+
+    if kind == .read, asked.controlled, sessionAllowed.contains(.read) {
+      answerClipboard(text: text, state: state, answer: .allowOnce, asked: asked)
+      return
+    }
+
+    if kind == .read {
+      guard onEvent != nil, asking.insert(.read).inserted else {
+        denyClipboard(state: state)
+        return
+      }
+    }
+
+    let request = TerminalClipboardRequest(
+      kind: kind, text: text, offersSession: kind == .read && asked.controlled
+    ) { [weak self] answer in
       DispatchQueue.main.async {
-        MainActor.assumeIsolated { self?.answerClipboard(text: text, state: state, allow: allow) }
+        MainActor.assumeIsolated {
+          if kind == .read { self?.doneAsking(.read, under: asked) }
+          self?.answerClipboard(text: text, state: state, answer: answer, asked: asked)
+        }
       }
     }
 
@@ -304,6 +347,20 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     onEvent(.clipboardRequest(request))
   }
 
+  /// A prompt asked under an older policy was already cleared when the policy changed, so its
+  /// answer must not clear a prompt asked since.
+  private func doneAsking(
+    _ kind: TerminalClipboardRequest.Kind, under asked: TerminalClipboardPolicy
+  ) {
+    if clipboardPolicy == asked { asking.remove(kind) }
+  }
+
+  /// True when an answer given under `asked` still holds: the session is open and its policy has
+  /// not changed. Anything else makes the answer a denial.
+  private func stillCurrent(_ asked: TerminalClipboardPolicy) -> Bool {
+    surface != nil && !hasExited && clipboardPolicy == asked
+  }
+
   /// libghostty keeps every request until the embedder answers it. A denial sends an OSC 52 read
   /// empty data, a Kitty request an `EPERM` status, and a paste nothing.
   func denyClipboard(state: OpaqueToken) {
@@ -312,11 +369,16 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     ghostty_surface_deny_clipboard_request(surface, state.pointer)
   }
 
-  private func answerClipboard(text: String, state: OpaqueToken, allow: Bool) {
-    guard allow, let surface else {
+  private func answerClipboard(
+    text: String, state: OpaqueToken, answer: TerminalClipboardAnswer,
+    asked: TerminalClipboardPolicy
+  ) {
+    guard answer != .deny, stillCurrent(asked), let surface else {
       denyClipboard(state: state)
       return
     }
+
+    if answer == .allowForSession, asked.controlled { sessionAllowed.insert(.read) }
 
     complete(state, surface: surface, text: text, confirmed: true)
   }
@@ -367,8 +429,40 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     }
   }
 
-  /// Copies and OSC 52 writes are allowed without asking.
-  func writeClipboard(_ text: String) {
+  /// A copy the user made always lands. A program's OSC 52 write lands at once in an interactive
+  /// session. In a controlled session it asks, unless the user allowed writes for the session. A
+  /// write that arrives while another write's prompt waits is dropped. A denied or stale write
+  /// leaves the clipboard as it was.
+  func writeClipboard(_ text: String, fromProgram: Bool) {
+    let asked = clipboardPolicy
+
+    guard fromProgram, asked.controlled, !sessionAllowed.contains(.write) else {
+      Self.store(text)
+      return
+    }
+
+    guard onEvent != nil, asking.insert(.write).inserted else { return }
+
+    let request = TerminalClipboardRequest(kind: .write, text: text, offersSession: true) {
+      [weak self] answer in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          self?.doneAsking(.write, under: asked)
+          self?.answerWrite(text: text, answer: answer, asked: asked)
+        }
+      }
+    }
+
+    onEvent?(.clipboardRequest(request))
+  }
+
+  private func answerWrite(
+    text: String, answer: TerminalClipboardAnswer, asked: TerminalClipboardPolicy
+  ) {
+    guard answer != .deny, stillCurrent(asked) else { return }
+
+    if answer == .allowForSession { sessionAllowed.insert(.write) }
+
     Self.store(text)
   }
 

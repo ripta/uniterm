@@ -137,6 +137,27 @@ final class PaneAreaView: NSView {
     return created
   }
 
+  /// Splits `pane` for a controller, puts `applet` in the new pane, and makes it a member of the
+  /// controller's group. Throws when the pane is too small. The caller moves focus to the new pane.
+  @discardableResult
+  func split(
+    _ pane: NodeID, _ axis: Axis, adding applet: any Applet, for owner: GroupOwner
+  ) throws -> NodeID {
+    let created = try tree.split(pane, axis: axis, in: bounds.size, for: owner).pane
+
+    install(applet, as: created)
+    changed()
+    layoutSubtreeIfNeeded()
+    return created
+  }
+
+  /// Takes ownership away from `owner` in every group it owns, and returns the panes that were
+  /// members of them. The groups stay.
+  @discardableResult
+  func releaseOwner(_ owner: GroupOwner) -> Set<NodeID> {
+    tree.releaseOwner(owner)
+  }
+
   /// Opens a new pane where `placement` says and puts `applet` in it. The pane gets a fresh ID.
   /// Throws when the pane does not fit. Focus stays where it was, and the caller moves it.
   @discardableResult

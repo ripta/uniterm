@@ -11,20 +11,26 @@ final class ScriptCodecTests: XCTestCase {
   /// One of each call, with and without its optional parts, and an ID at the top of the range.
   static let calls: [ScriptCall] = {
     let top = ScriptProtocol.maxID
-    let pane = ScriptPaneReference(window: top, pane: 3)
-    let tab = ScriptPaneReference(window: 1, pane: 2, tab: top)
+    let pane = ScriptTarget.pane(ScriptPaneReference(window: top, pane: 3))
+    let tab = ScriptTarget.pane(ScriptPaneReference(window: 1, pane: 2, tab: top))
+    let nearest = ScriptTarget.nearest(kind: "data-viewer")
 
     return [
       .listWindows,
       .listPanes(window: 0),
       .listPanes(window: top),
-      .openPane(kind: "terminal", beside: pane, axis: nil, directory: nil),
-      .openPane(kind: "data-viewer", beside: tab, axis: .row, directory: "/synthetic/dir"),
-      .openPane(kind: "browser", beside: pane, axis: .column, directory: nil),
+      .openPane(kind: "terminal", beside: pane, axis: nil, directory: nil, access: .disconnected),
+      .openPane(
+        kind: "data-viewer", beside: tab, axis: .row, directory: "/synthetic/dir",
+        access: .remoteControlled),
+      .openPane(
+        kind: "browser", beside: nearest, axis: .column, directory: nil, access: .disconnected),
       .openTab(pane: pane, directory: nil),
       .openTab(pane: tab, directory: "/synthetic/tab"),
+      .openTab(pane: nearest, directory: nil),
       .send(pane: pane, name: "report.csv", content: Data("a,b\n1,2\n".utf8)),
       .send(pane: tab, name: "empty.txt", content: Data()),
+      .send(pane: nearest, name: "near.csv", content: Data("a\n".utf8)),
     ]
   }()
 
@@ -207,7 +213,7 @@ extension ScriptCodecTests {
   /// every other call has, or an ordinary call that rides in the large frame, which would let any
   /// call make the reader allocate a megabyte.
   func testOnlyASendHasTheLargeFrame() throws {
-    let pane = ScriptPaneReference(window: 1, pane: 2)
+    let pane = ScriptTarget.pane(ScriptPaneReference(window: 1, pane: 2))
     let send = ScriptHelperMessage.request(
       id: 1, call: .send(pane: pane, name: "a.txt", content: Data("x".utf8)))
     let other = ScriptHelperMessage.request(id: 1, call: .listWindows)
@@ -233,7 +239,7 @@ extension ScriptCodecTests {
   /// Catches content past the limit that the decoder still carries, and the largest content that
   /// it refuses.
   func testSentContentIsHeldToItsLimit() throws {
-    let pane = ScriptPaneReference(window: 1, pane: 2)
+    let pane = ScriptTarget.pane(ScriptPaneReference(window: 1, pane: 2))
     let largest = Data(repeating: 0x61, count: ScriptProtocol.maxSendBytes)
 
     let message = ScriptHelperMessage.request(
@@ -277,27 +283,57 @@ extension ScriptCodecTests {
     }
   }
 
-  /// Catches a reader that guesses at a split axis or a tab flag it does not know.
+  /// Catches a reader that guesses at a split axis, a tab flag, a target form, or a pane access it
+  /// does not know.
   func testUnknownAxisAndFlagsAreRefused() {
     var axis = ByteWriter()
     axis.put(UInt32(1))
     axis.put(UInt16(4))
     axis.put(string: "terminal", limit: 32)
-    axis.put(reference: ScriptPaneReference(window: 1, pane: 2))
+    axis.put(target: .pane(ScriptPaneReference(window: 1, pane: 2)))
     axis.put(UInt8(3))
     axis.put(UInt8(0))
+    axis.put(UInt8(0))
 
-    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: axis.bytes))
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: axis.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("an unknown split axis"))
+    }
 
     var flag = ByteWriter()
     flag.put(UInt32(1))
     flag.put(UInt16(5))
+    flag.put(UInt8(0))
     flag.put(id: 1)
     flag.put(id: 2)
     flag.put(UInt8(2))
     flag.put(UInt8(0))
 
-    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: flag.bytes))
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: flag.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("a reference has an unknown tab flag"))
+    }
+
+    var form = ByteWriter()
+    form.put(UInt32(1))
+    form.put(UInt16(5))
+    form.put(UInt8(2))
+    form.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: form.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("a target has an unknown form"))
+    }
+
+    var access = ByteWriter()
+    access.put(UInt32(1))
+    access.put(UInt16(4))
+    access.put(string: "terminal", limit: 32)
+    access.put(target: .nearest(kind: "terminal"))
+    access.put(UInt8(0))
+    access.put(UInt8(0))
+    access.put(UInt8(2))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: access.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("an unknown pane access"))
+    }
   }
 
   /// Catches a reply value that does not survive the bytes the shim reads, including the largest

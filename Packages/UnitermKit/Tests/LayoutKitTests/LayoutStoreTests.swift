@@ -167,7 +167,7 @@ final class LayoutStoreTests: XCTestCase {
 
   func testANewerFileIsKeptAside() throws {
     let directory = try makeScratch(self)
-    try plant(#"{"version":2,"windows":[]}"#, in: directory)
+    try plant(#"{"version":\#(LayoutCodec.currentVersion + 1),"windows":[]}"#, in: directory)
 
     let store = makeStore(directory)
     XCTAssertTrue(try store.acquire())

@@ -36,6 +36,11 @@ final class ReplFakeSession: TerminalSession {
   func resize(to size: CGSize) {}
   func setFocused(_ focused: Bool) {}
   func setVisible(_ visible: Bool) {}
+
+  var clipboardPolicies: [TerminalClipboardPolicy] = []
+  var clipboardPolicy: TerminalClipboardPolicy { clipboardPolicies.last ?? .interactive }
+  func setClipboardPolicy(_ policy: TerminalClipboardPolicy) { clipboardPolicies.append(policy) }
+
   func close() { closed = true }
 }
 
@@ -44,8 +49,11 @@ final class ReplFakeEngine: TerminalEngine {
   var sessions: [ReplFakeSession] = []
   var anySessionRunningSomething = false
 
-  func makeSession(launch: TerminalLaunch) throws -> any TerminalSession {
+  func makeSession(launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
+    -> any TerminalSession
+  {
     let session = ReplFakeSession(launch: launch)
+    session.clipboardPolicies = [clipboardPolicy]
     sessions.append(session)
 
     return session
@@ -609,6 +617,7 @@ final class ReplAppletTests: XCTestCase {
       makeController: { [weak self] identifier, directory in
         let controller = try MainWindowController(
           appearance: appearance, settings: store, identifier: identifier, startingIn: directory,
+          appletTypes: [ReplApplet.typeDeclaration],
           restoreApplet: { description in
             try ReplApplet(
               engine: engine, services: services, restoring: description, home: "/synthetic/home")
@@ -640,18 +649,24 @@ final class ReplAppletTests: XCTestCase {
   private var asked = 0
 
   /// Catches a script that can type into a REPL. The refusal is the property the REPL declares,
-  /// proved against a real REPL applet in a real window set, and nothing is written.
+  /// proved against a real REPL applet in a real window set, and nothing is written. The script
+  /// acts for the REPL pane itself, which the user made remote-controlled, so only the input
+  /// rule can refuse it.
   func testAScriptsSendToARealReplPaneIsRefused() async throws {
     let (set, controller) = try makeWindows()
     let pane = try XCTUnwrap(controller.openPane(.repl, axis: .row, from: controller.focusedPane))
     let reference = ScriptPaneReference(window: controller.scriptWindowID, pane: pane.rawValue)
     let scripting = WindowScripting(windows: set, directoryExists: { _ in true })
 
+    controller.enableRemoteControl(pane)
+
+    let caller = ScriptCaller(connection: 1, window: controller.scriptWindowID, pane: pane)
+
     XCTAssertTrue(controller.paneArea.applet(for: pane) is ReplApplet)
     XCTAssertTrue((controller.paneArea.applet(for: pane) as Any) is any InputOwning)
 
     do {
-      try scripting.prepareSend(to: reference)
+      _ = try scripting.prepareSend(to: .pane(reference), caller: caller)
       XCTFail("a send to a REPL pane was prepared")
     } catch let error as ScriptCallError {
       XCTAssertEqual(error.kind, .refused)

@@ -8,19 +8,6 @@ import XCTest
 
 @testable import WindowKit
 
-/// A group fixture. An ordinary split joins the anchor's group, as UTERM-004's groups will make it
-/// do. A routed split is never reported, so it joins nothing.
-@MainActor
-private final class FixtureGroups: PaneGroupOwnership {
-  var owned: Set<NodeID> = []
-
-  func controllerOwnsGroup(containing pane: NodeID) -> Bool { owned.contains(pane) }
-
-  func paneSplit(_ created: NodeID, from anchor: NodeID) {
-    if owned.contains(anchor) { owned.insert(created) }
-  }
-}
-
 /// Windows, a router, and fixture applets. A text file routes to a viewer. A folder routes to a
 /// fixture terminal. Types come from the real type database, so the fixtures use real files.
 @MainActor
@@ -167,30 +154,39 @@ final class RoutedOpenerTests: XCTestCase {
     XCTAssertEqual(anchor.controller.focusedPane, report.opened[0].pane)
   }
 
-  /// Catches a routed pane that joins a group a controller owns. The same fixture shows an
-  /// ordinary split does join, so the check can fail.
+  /// Catches a routed pane that joins a group a controller owns. The anchor is a member of a
+  /// group, and the routed pane lands beside it but outside the membership, with no control.
   func testARoutedSplitNeverJoinsAControllerGroup() async throws {
     let fixture = try makeFixture()
     let anchor = try fixture.anchoredWindow()
-    let groups = FixtureGroups()
-    groups.owned = [anchor.pane]
-    anchor.controller.paneGroups = groups
+    let owner = GroupOwner(connection: 41)
 
-    let ordinary = try XCTUnwrap(anchor.controller.openPane(.terminalShell, axis: .row))
-    XCTAssertTrue(groups.controllerOwnsGroup(containing: ordinary))
+    let member = try XCTUnwrap(
+      anchor.controller.openPane(
+        .terminalShell, typeID: "fake", axis: .row, from: anchor.pane, directory: nil,
+        owner: owner, access: .disconnected))
 
-    let report = await fixture.opener.open([try fixture.textFile("a.txt")], from: anchor)
+    XCTAssertEqual(anchor.controller.owner(of: member), owner)
+
+    let report = await fixture.opener.open(
+      [try fixture.textFile("a.txt")],
+      from: RouteAnchor(controller: anchor.controller, pane: member))
 
     let created = try XCTUnwrap(report.opened.first?.pane)
-    XCTAssertFalse(groups.controllerOwnsGroup(containing: created))
+
+    XCTAssertNil(anchor.controller.owner(of: created))
+    XCTAssertFalse(
+      anchor.controller.paneArea.tree.groups.contains { $0.members.contains(created) })
+    XCTAssertEqual(anchor.controller.control(of: created).access, .disconnected)
   }
 
-  /// Catches the production seam answering yes before any group exists.
+  /// Catches a window whose panes start in a group, or with an owner, before any controller asked.
   func testNoControllerOwnsAGroupYet() throws {
     let fixture = try makeFixture()
     let anchor = try fixture.anchoredWindow()
 
-    XCTAssertFalse(anchor.controller.paneGroups.controllerOwnsGroup(containing: anchor.pane))
+    XCTAssertNil(anchor.controller.owner(of: anchor.pane))
+    XCTAssertTrue(anchor.controller.paneArea.tree.groups.isEmpty)
   }
 
   // MARK: New windows

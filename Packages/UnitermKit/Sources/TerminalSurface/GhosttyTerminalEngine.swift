@@ -111,7 +111,9 @@ public final class GhosttyTerminalEngine: TerminalEngine {
     sessions.allObjects.contains { !$0.hasExited && $0.isRunningSomething }
   }
 
-  public func makeSession(launch: TerminalLaunch) throws -> any TerminalSession {
+  public func makeSession(launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
+    -> any TerminalSession
+  {
     guard let app else { throw TerminalEngineError.appCreateFailed }
 
     var launch = launch
@@ -119,7 +121,7 @@ public final class GhosttyTerminalEngine: TerminalEngine {
       launch.environment, helperDirectory: helperDirectory,
       inheritedPath: ProcessInfo.processInfo.environment["PATH"])
 
-    let view = try GhosttySurfaceView(app: app, launch: launch)
+    let view = try GhosttySurfaceView(app: app, launch: launch, clipboardPolicy: clipboardPolicy)
     sessions.add(view)
     return view
   }

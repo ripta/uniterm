@@ -332,6 +332,7 @@ extension ScriptHost {
       boundRepls[id] = nil
       listener.findConnection(id)?.unbind()
       sessions[id, default: Session()].refused = true
+      authorityEnded(id)
     }
 
     for (id, waiting) in awaitingRoot where waiting.channel === channel {
@@ -391,6 +392,7 @@ extension ScriptHost {
 
     boundRepls[connection.id] = channel
     sessions[connection.id, default: Session()].name = "repl"
+    controllersChanged()
 
     for message in Self.historyMessages(channel.history) {
       connection.send(message)

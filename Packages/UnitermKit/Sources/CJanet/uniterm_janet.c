@@ -390,6 +390,41 @@ static void put_pane_reference(JanetBuffer *buffer, Janet reference) {
     }
 }
 
+static void check_text(JanetString text, const char *what, int32_t limit, int forbid_slash);
+static void put_text(JanetBuffer *buffer, JanetString text);
+
+/*
+ * A target is a pane reference, or {:nearest kind} for the nearest pane of an applet type to the
+ * caller's own pane. The app picks the nearest pane among those the caller may control, in the
+ * caller's window, so a nearest target names no window.
+ */
+static void put_target(JanetBuffer *buffer, Janet reference) {
+    require_reference(reference);
+
+    Janet nearest = janet_get(reference, janet_ckeywordv("nearest"));
+
+    if (janet_checktype(nearest, JANET_NIL)) {
+        put_u8(buffer, 0);
+        put_pane_reference(buffer, reference);
+        return;
+    }
+
+    if (!janet_checktype(janet_get(reference, janet_ckeywordv("window")), JANET_NIL) ||
+        !janet_checktype(janet_get(reference, janet_ckeywordv("pane")), JANET_NIL)) {
+        janet_panic("a :nearest target names no :window or :pane");
+    }
+
+    if (!janet_checktype(nearest, JANET_KEYWORD)) {
+        janet_panic("the :nearest kind must be a keyword such as :browser");
+    }
+
+    JanetString kind = janet_unwrap_keyword(nearest);
+
+    check_text(kind, "the :nearest kind", UNITERM_JANET_MAX_KIND_BYTES, 1);
+    put_u8(buffer, 1);
+    put_text(buffer, kind);
+}
+
 static void check_text(JanetString text, const char *what, int32_t limit, int forbid_slash) {
     int32_t length = janet_string_length(text);
 
@@ -445,12 +480,15 @@ static void put_optional_directory(JanetBuffer *buffer, Janet value) {
 typedef struct call_options {
     Janet axis;
     Janet directory;
+    Janet control;
 } call_options;
 
+/* A call that splits takes :axis and :control too. Every call that opens takes :directory. */
 static call_options parse_options(int32_t argc, Janet *argv, int32_t first, int allow_axis) {
-    call_options options = {janet_wrap_nil(), janet_wrap_nil()};
+    call_options options = {janet_wrap_nil(), janet_wrap_nil(), janet_wrap_nil()};
     int seen_axis = 0;
     int seen_directory = 0;
+    int seen_control = 0;
 
     if ((argc - first) % 2 != 0) janet_panic("each option needs a value, as in :directory \"/tmp\"");
 
@@ -459,12 +497,16 @@ static call_options parse_options(int32_t argc, Janet *argv, int32_t first, int 
             if (seen_axis++) janet_panic("the :axis is given twice");
 
             options.axis = argv[index + 1];
+        } else if (allow_axis && janet_keyeq(argv[index], "control")) {
+            if (seen_control++) janet_panic("the :control is given twice");
+
+            options.control = argv[index + 1];
         } else if (janet_keyeq(argv[index], "directory")) {
             if (seen_directory++) janet_panic("the :directory is given twice");
 
             options.directory = argv[index + 1];
         } else {
-            janet_panic(allow_axis ? "the options are :axis and :directory"
+            janet_panic(allow_axis ? "the options are :axis, :control, and :directory"
                                    : "the only option is :directory");
         }
     }
@@ -720,7 +762,7 @@ static Janet cfun_open_pane(int32_t argc, Janet *argv) {
 
     put_u16(request, CALL_OPEN_PANE);
     put_text(request, kind);
-    put_pane_reference(request, argv[1]);
+    put_target(request, argv[1]);
 
     if (janet_checktype(options.axis, JANET_NIL)) {
         put_u8(request, 0);
@@ -734,6 +776,14 @@ static Janet cfun_open_pane(int32_t argc, Janet *argv) {
 
     put_optional_directory(request, options.directory);
 
+    if (janet_checktype(options.control, JANET_NIL) || janet_keyeq(options.control, "disconnected")) {
+        put_u8(request, 0);
+    } else if (janet_keyeq(options.control, "remote-controlled")) {
+        put_u8(request, 1);
+    } else {
+        janet_panic("the :control must be :disconnected or :remote-controlled");
+    }
+
     return invoke(request);
 }
 
@@ -744,7 +794,7 @@ static Janet cfun_open_tab(int32_t argc, Janet *argv) {
     JanetBuffer *request = janet_buffer(64);
 
     put_u16(request, CALL_OPEN_TAB);
-    put_pane_reference(request, argv[0]);
+    put_target(request, argv[0]);
     put_optional_directory(request, options.directory);
 
     return invoke(request);
@@ -784,7 +834,7 @@ static Janet cfun_send(int32_t argc, Janet *argv) {
     JanetBuffer *request = janet_buffer(length + 64);
 
     put_u16(request, CALL_SEND);
-    put_pane_reference(request, argv[0]);
+    put_target(request, argv[0]);
     put_text(request, name);
     janet_buffer_push_bytes(request, bytes, length);
 
@@ -799,25 +849,29 @@ static const JanetReg uniterm_cfuns[] = {
      "(uniterm/post-status level text)\n\nPosts a message to the status bar. The level is "
      ":info, :warning, or :error."},
     {"list-windows", cfun_list_windows,
-     "(uniterm/list-windows)\n\nReturns the open windows, oldest first, as an array of "
-     "{:window id :title text :key bool}."},
+     "(uniterm/list-windows)\n\nReturns the script's own window as an array of one "
+     "{:window id :pane id :control mode}, with :title and :key when its pane is "
+     "remote-controlled. A script outside any pane gets an error."},
     {"list-panes", cfun_list_panes,
-     "(uniterm/list-panes window)\n\nReturns the panes of a window as an array of structs with "
-     ":window, :pane, :applet, :title, :focused, :tabs, and :directory when the applet reports "
-     "one. Returns nil when the window is not open."},
+     "(uniterm/list-panes window)\n\nReturns the panes the script may control in its own window "
+     "as an array of structs with :window, :pane, :applet, :control, :title, :focused, :tabs, and "
+     ":directory when the applet reports one. Returns nil for any other window."},
     {"open-pane", cfun_open_pane,
-     "(uniterm/open-pane kind pane &named axis directory)\n\nSplits a pane and starts an applet "
-     "in the new one. The kind is :terminal, :data-viewer, :map-viewer, :image-viewer, "
-     ":text-viewer, or :browser. The axis is :row or :column. The directory is an absolute path, "
-     "and defaults to the one the pane reports. Returns the new pane's reference."},
+     "(uniterm/open-pane kind pane &named axis control directory)\n\nSplits a pane the script "
+     "may control and starts an applet in the new one, in the script's group. The kind is "
+     ":terminal, :data-viewer, :map-viewer, :image-viewer, :text-viewer, or :browser. The axis "
+     "is :row or :column. The control is :disconnected, the default, or :remote-controlled. The "
+     "directory is an absolute path, and defaults to the one the pane reports. The pane may be "
+     "{:nearest kind}. Returns the new pane's reference."},
     {"open-tab", cfun_open_tab,
      "(uniterm/open-tab pane &named directory)\n\nOpens a tab in a pane that has tabs and "
      "returns the tab's reference. The directory is an absolute path, and defaults to the one the "
-     "pane reports."},
+     "pane reports. The pane may be {:nearest kind}."},
     {"send", cfun_send,
      "(uniterm/send pane name content)\n\nSends content to a viewer pane. The name is a file "
      "name such as \"report.csv\", and its extension picks how the viewer reads the content. "
-     "The pane of a terminal refuses it."},
+     "The pane of a terminal refuses it. The pane may be {:nearest kind}, such as "
+     "{:nearest :data-viewer}."},
     {NULL, NULL, NULL}};
 
 /*

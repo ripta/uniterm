@@ -113,6 +113,14 @@ public final class ReplApplet: Applet, InputOwning {
   private var evaluating = false
   private var started = false
 
+  /// The pane's control state, as the host last pushed it. The REPL's session gets the clipboard
+  /// policy it implies, from its creation on.
+  private var control = PaneControl.disconnected
+
+  private var clipboardPolicy: TerminalClipboardPolicy {
+    TerminalClipboardPolicy(controlled: control.isControlled, generation: control.generation)
+  }
+
   public init(
     engine: any TerminalEngine, services: ReplServices, history: ReplHistory = ReplHistory(),
     home: String = NSHomeDirectory()
@@ -195,6 +203,11 @@ public final class ReplApplet: Applet, InputOwning {
 
   public func apply(_ palette: ThemePalette) {
     endedView.apply(palette)
+  }
+
+  public func controlDidChange(_ control: PaneControl) {
+    self.control = control
+    session?.setClipboardPolicy(clipboardPolicy)
   }
 
   public func describe() -> AppletDescription {
@@ -335,7 +348,7 @@ public final class ReplApplet: Applet, InputOwning {
     let session: any TerminalSession
 
     do {
-      session = try engine.makeSession(launch: launch)
+      session = try engine.makeSession(launch: launch, clipboardPolicy: clipboardPolicy)
     } catch {
       channel.end()
       showEnded("The REPL could not start: \(error.localizedDescription)")
@@ -563,10 +576,42 @@ public final class ReplApplet: Applet, InputOwning {
       x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - strip))
   }
 
-  /// A request is never answered without the user's say. With no host to ask, it is refused.
+  /// A request is never answered without the user's say. With no host to ask, it is refused. A
+  /// request from a controlled session can allow the rest of the session, which covers every
+  /// program in the REPL's terminal, since an escape sequence names none.
   private func confirm(_ request: TerminalClipboardRequest) {
     guard let host else {
-      request.resolve(allow: false)
+      request.resolve(.deny)
+
+      return
+    }
+
+    if request.offersSession, request.kind != .unsafePaste {
+      let reads = request.kind == .read
+
+      let permission = AppletPermissionRequest(
+        title: reads
+          ? "Allow a program to read your clipboard?"
+          : "Allow a program to replace your clipboard?",
+        detail: reads
+          ? "This pane is controlled by another program. A program in this REPL asked for the clipboard with an escape sequence."
+          : "This pane is controlled by another program. A program in this REPL asked to replace the clipboard with an escape sequence.",
+        subject: title,
+        sessionTitle: reads ? "Allow Reads in This REPL" : "Allow Writes in This REPL")
+
+      Task { @MainActor [weak self] in
+        guard let self else {
+          request.resolve(.deny)
+
+          return
+        }
+
+        switch await host.applet(self, askPermission: permission) {
+        case .deny: request.resolve(.deny)
+        case .allowOnce: request.resolve(.allowOnce)
+        case .allowForSession: request.resolve(.allowForSession)
+        }
+      }
 
       return
     }
@@ -580,6 +625,12 @@ public final class ReplApplet: Applet, InputOwning {
         detail: "A program in this pane asked for the clipboard with an escape sequence.",
         confirmTitle: "Allow", cancelTitle: "Deny")
 
+    case .write:
+      confirmation = AppletConfirmation(
+        title: "Allow a program to replace your clipboard?",
+        detail: "A program in this pane asked to replace the clipboard with an escape sequence.",
+        confirmTitle: "Allow", cancelTitle: "Deny")
+
     case .unsafePaste:
       confirmation = AppletConfirmation(
         title: "Paste text that could run code?",
@@ -589,7 +640,7 @@ public final class ReplApplet: Applet, InputOwning {
 
     Task { @MainActor [weak self] in
       guard let self else {
-        request.resolve(allow: false)
+        request.resolve(.deny)
 
         return
       }

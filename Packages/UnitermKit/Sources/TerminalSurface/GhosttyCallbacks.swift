@@ -195,7 +195,8 @@ enum GhosttyCallbacks {
   }
 
   /// Takes copies from the surface and OSC 52 writes. With `clipboard-write` set to `ask`, an OSC
-  /// 52 write arrives with `confirm` set, and it is allowed without asking. A Kitty write never
+  /// 52 write arrives with `confirm` set and a copy the user made arrives without it. The session's
+  /// clipboard policy decides whether a write with `confirm` set asks first. A Kitty write never
   /// arrives here, since the confirm callback denies it first.
   static func writeClipboard(
     _ userdata: UnsafeMutableRawPointer?, _ location: ghostty_clipboard_e,
@@ -205,7 +206,7 @@ enum GhosttyCallbacks {
 
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     DispatchQueue.main.async {
-      MainActor.assumeIsolated { view.writeClipboard(plain) }
+      MainActor.assumeIsolated { view.writeClipboard(plain, fromProgram: confirm) }
     }
   }
 

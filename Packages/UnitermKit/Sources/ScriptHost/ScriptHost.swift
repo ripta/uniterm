@@ -90,6 +90,19 @@ public final class ScriptHost {
   /// connection. The attach completes or is refused once the root is known.
   var awaitingRoot: [UInt64: (connection: ScriptConnection, channel: ScriptReplChannel)] = [:]
 
+  /// The connections whose control the user revoked. Their calls stay refused for as long as they
+  /// stay connected, even when they still run in a remote-controlled pane.
+  private var revokedControllers: Set<UInt64> = []
+
+  /// Runs with a connection's ID when its authority to control panes ends: it closed, the user
+  /// revoked it, or its binding to a pane ended. The window layer takes away every group it owns.
+  /// It may run more than once for one connection.
+  public var onControllerEnded: ((UInt64) -> Void)?
+
+  /// Runs whenever a connection starts or stops acting for a pane: a binding through ancestry, a
+  /// grant, a REPL attach, or any end of one. Pane chrome that names controllers reads them again.
+  public var onControllersChanged: (() -> Void)?
+
   /// Runs when a request or a grant appears or goes away.
   public var onPendingRequestsChanged: (() -> Void)?
 
@@ -184,6 +197,7 @@ public final class ScriptHost {
     pendingRequests = []
     declined = []
     grants = [:]
+    revokedControllers = []
   }
 
   func handle(_ event: ScriptEvent) {
@@ -239,7 +253,9 @@ public final class ScriptHost {
       boundRepls.removeValue(forKey: connection.id)?.connectionClosed()
       awaitingRoot[connection.id] = nil
       declined.remove(connection.id)
+      revokedControllers.remove(connection.id)
       forget(connection: connection.id)
+      authorityEnded(connection.id)
 
     case .refused(_, let refusal):
       onRefusal(refusal)
@@ -260,16 +276,20 @@ public final class ScriptHost {
       return .ok(Data())
 
     case .listWindows:
-      return answer { try requireWindows().listWindows() }
+      return answer { try requireWindows().listWindows(caller: try requireCaller(connection)) }
 
     case .listPanes(let window):
-      return answer { try requireWindows().listPanes(window: window) }
+      return answer {
+        try requireWindows().listPanes(window: window, caller: try requireCaller(connection))
+      }
 
     case .openPane, .openTab:
       return .failure(.failed, "the call needs to wait, and was run as if it did not")
 
-    case .send(let pane, let name, let content):
-      return answer { try send(content, named: name, to: pane) }
+    case .send(let target, let name, let content):
+      return answer {
+        try send(content, named: name, to: target, caller: try requireCaller(connection))
+      }
     }
   }
 
@@ -278,18 +298,29 @@ public final class ScriptHost {
     if let refusal = authorize(connection) { return refusal }
 
     do {
+      let caller = try requireCaller(connection)
+
+      // A call that waits keeps the caller it started with. A connection that came to act for
+      // another pane meanwhile is refused, so the call never runs with authority it no longer has.
+      let stillAllowed: @MainActor () throws -> Void = {
+        try self.requireAuthority(connection)
+
+        guard try self.requireCaller(connection) == caller else {
+          throw ScriptCallError.refused("This program no longer acts for the pane it called from.")
+        }
+      }
+
       switch call {
-      case .openPane(let kind, let beside, let axis, let directory):
+      case .openPane(let kind, let beside, let axis, let directory, let access):
         return Self.result(
           of: try await requireWindows().openPane(
-            kind: kind, beside: beside, axis: axis, directory: directory,
-            stillAllowed: { try self.requireAuthority(connection) }))
+            kind: kind, beside: beside, axis: axis, directory: directory, access: access,
+            caller: caller, stillAllowed: stillAllowed))
 
       case .openTab(let pane, let directory):
         return Self.result(
           of: try await requireWindows().openTab(
-            pane: pane, directory: directory,
-            stillAllowed: { try self.requireAuthority(connection) }))
+            pane: pane, directory: directory, caller: caller, stillAllowed: stillAllowed))
 
       default:
         return .failure(.failed, "the call does not wait")
@@ -303,6 +334,12 @@ public final class ScriptHost {
   /// is asked about once. A binding is checked again on every call, so a peer that exited, or a
   /// session that closed, takes its authority with it.
   private func authorize(_ connection: ScriptConnection) -> ScriptResult? {
+    if revokedControllers.contains(connection.id) {
+      return .failure(
+        .refused,
+        "You revoked this program's control of uniterm panes. It must reconnect to try again.")
+    }
+
     guard connection.isBound else {
       // A REPL helper waiting for its session root is not a program to ask about. It binds to its
       // own pane or not at all.
@@ -324,6 +361,7 @@ public final class ScriptHost {
 
     guard connection.validateBinding(registry: sessionRoots) else {
       endGrants { $0.connection == connection.id }
+      authorityEnded(connection.id)
 
       return .failure(.refused, "The session this program was running in has closed.")
     }
@@ -336,6 +374,7 @@ public final class ScriptHost {
 
       guard ProcessAncestry.findRoot(for: peer, in: sessionRoots) == binding.root else {
         connection.unbind()
+        authorityEnded(connection.id)
 
         return authorize(connection)
       }
@@ -350,6 +389,78 @@ public final class ScriptHost {
     guard case .failure(let kind, let text)? = authorize(connection) else { return }
 
     throw ScriptCallError(kind, text)
+  }
+
+  /// The pane a bound connection acts for: the pane of its grant, or the pane whose session root
+  /// its ancestry leads to. Nil when the root is in no pane the host knows.
+  func caller(for connection: ScriptConnection) -> ScriptCaller? {
+    if let grant = grants[connection.id] {
+      return ScriptCaller(connection: connection.id, window: grant.window, pane: grant.pane)
+    }
+
+    guard let root = connection.binding?.root,
+      let key = paneRoots.first(where: { $0.value.contains(root) })?.key
+    else { return nil }
+
+    return ScriptCaller(
+      connection: connection.id, window: key.window, pane: NodeID(rawValue: key.pane))
+  }
+
+  private func requireCaller(_ connection: ScriptConnection) throws -> ScriptCaller {
+    guard let caller = caller(for: connection) else {
+      throw ScriptCallError.refused("uniterm cannot tell which pane this program acts for.")
+    }
+
+    return caller
+  }
+
+  func authorityEnded(_ id: UInt64) {
+    onControllerEnded?(id)
+    controllersChanged()
+  }
+
+  func controllersChanged() {
+    onControllersChanged?()
+  }
+
+  // MARK: Controllers
+
+  /// The connections that act for a pane now: those whose grant names it, and those whose
+  /// ancestry leads to one of its session roots.
+  public func controllers(actingFrom window: UInt64, pane: NodeID) -> Set<UInt64> {
+    var found = Set<UInt64>()
+
+    for id in sessions.keys {
+      guard let connection = findConnection(id), !connection.isClosed,
+        let caller = caller(for: connection), caller.window == window, caller.pane == pane
+      else { continue }
+
+      found.insert(id)
+    }
+
+    return found
+  }
+
+  /// Ends the control of each connection. Its calls are refused from now on, including calls it
+  /// sent that the host has not read or that wait in a directory check. Its grant ends, and it is
+  /// not asked about again. The window layer is told, so the groups it owns lose their owner.
+  public func revokeControllers(_ ids: Set<UInt64>) {
+    for id in ids {
+      revokedControllers.insert(id)
+      endGrants { $0.connection == id }
+      declined.insert(id)
+      authorityEnded(id)
+    }
+  }
+
+  /// What pane chrome calls a connection: its script's name and its program's PID. Nil for a
+  /// connection that is gone.
+  public func controllerName(_ id: UInt64) -> String? {
+    guard let connection = findConnection(id), !connection.isClosed else { return nil }
+
+    let name = sessions[id]?.name ?? "script"
+
+    return "\(name) (PID \(connection.peer.pid))"
   }
 
   private func requireWindows() throws -> any ScriptWindowAPI {
@@ -375,6 +486,7 @@ public final class ScriptHost {
     }
 
     connection.bind(to: root, generation: generation)
+    controllersChanged()
   }
 
   /// Checks the pane first, so a refused send writes nothing. A file the pane did not take is
@@ -382,22 +494,22 @@ public final class ScriptHost {
   ///
   /// The check and the send run with no suspension between them, so the pane cannot change in
   /// between. The pane's previous file is the pane's no more once it takes this one.
-  private func send(_ content: Data, named name: String, to pane: ScriptPaneReference) throws
-    -> ScriptValue
-  {
+  private func send(
+    _ content: Data, named name: String, to target: ScriptTarget, caller: ScriptCaller
+  ) throws -> ScriptValue {
     let windows = try requireWindows()
 
     guard let sentContent else { throw ScriptCallError.refused("uniterm cannot hold content") }
 
     try ScriptSentContent.checkName(name)
-    try windows.prepareSend(to: pane)
+    let pane = try windows.prepareSend(to: target, caller: caller)
 
     // At most 1 MiB, a known size, so ADR-08 lets this write run on the main actor.
     let file = try sentContent.write(content, named: name)
     let reply: ScriptValue
 
     do {
-      reply = try windows.send(to: pane, file: file)
+      reply = try windows.send(to: pane, file: file, caller: caller)
     } catch {
       sentContent.discard(file, size: content.count)
 
@@ -500,6 +612,10 @@ public final class ScriptHost {
   /// Removes a terminal session root when its session closes or is replaced. Every grant to that
   /// session ends.
   public func removeSessionRoot(_ identity: ProcessIdentity, window: UInt64, pane: NodeID) {
+    let acting = controllers(actingFrom: window, pane: pane).filter {
+      findConnection($0)?.binding?.root == identity && grants[$0] == nil
+    }
+
     sessionRoots.remove(identity)
 
     let key = PaneKey(window: window, pane: pane.rawValue)
@@ -509,6 +625,7 @@ public final class ScriptHost {
     if paneRoots[key]?.isEmpty == true { paneRoots[key] = nil }
 
     endGrants { $0.root == identity }
+    acting.forEach(authorityEnded)
   }
 
   /// Forgets every session root in a closed window, and ends every grant to one of its panes. The
@@ -588,6 +705,7 @@ public final class ScriptHost {
 
     pendingRequests.removeAll { $0.id == id }
     notifyPendingRequestsChanged()
+    controllersChanged()
 
     return .granted
   }
@@ -631,6 +749,7 @@ public final class ScriptHost {
     for grant in ended {
       grants[grant.connection] = nil
       findConnection(grant.connection)?.unbind()
+      authorityEnded(grant.connection)
     }
 
     notifyPendingRequestsChanged()

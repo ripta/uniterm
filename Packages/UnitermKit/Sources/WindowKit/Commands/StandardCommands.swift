@@ -85,6 +85,18 @@ enum StandardCommands {
           context.controller?.reopenClosed()
         }
       ),
+      control(
+        .enableRemoteControl, "Enable Remote Control",
+        isAvailable: { $0.controller?.canEnableRemoteControl($0.pane) == true },
+        run: { $0.controller?.enableRemoteControl($0.pane) }),
+      control(
+        .disconnectPane, "Disconnect Pane",
+        isAvailable: { $0.controller?.canDisconnect($0.pane) == true },
+        run: { $0.controller?.disconnect($0.pane) }),
+      control(
+        .revokeController, "Revoke Controller",
+        isAvailable: { $0.controller?.canRevokeController($0.pane) == true },
+        run: { $0.controller?.revokeController($0.pane) }),
       focus(.focusNextPane, "Focus Next Pane", KeyChord("]"), .next, 2),
       focus(.focusPreviousPane, "Focus Previous Pane", KeyChord("["), .previous, 2),
       focus(.focusPaneLeft, "Focus Pane Left", arrow(NSLeftArrowFunctionKey), .toward(.left), 3),
@@ -93,6 +105,17 @@ enum StandardCommands {
       focus(.focusPaneUp, "Focus Pane Up", arrow(NSUpArrowFunctionKey), .toward(.up), 3),
       focus(.focusPaneDown, "Focus Pane Down", arrow(NSDownArrowFunctionKey), .toward(.down), 3),
     ]
+  }
+
+  /// The control actions have no key, so no input an applet takes can trigger them. They stay
+  /// available while a sheet shows, since none of them changes the pane tree.
+  private static func control(
+    _ id: CommandID, _ title: String, isAvailable: @escaping @MainActor (CommandContext) -> Bool,
+    run: @escaping @MainActor (CommandContext) -> Void
+  ) -> Command {
+    Command(
+      id, title, scope: .pane, menu: MenuPlacement(.file, section: 3), isAvailable: isAvailable,
+      run: run)
   }
 
   private static func arrow(_ code: Int) -> KeyChord {

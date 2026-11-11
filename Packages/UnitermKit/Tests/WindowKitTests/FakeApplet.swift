@@ -9,7 +9,7 @@ import Theme
 /// until a test says otherwise.
 @MainActor
 class FakeApplet: Applet {
-  let typeID = "fake"
+  var typeID = "fake"
   let view = NSView()
   var title = "Fake"
   var segments: [AppletSegment] = []
@@ -187,6 +187,15 @@ class FakeApplet: Applet {
   func start(origin: StartOrigin) {
     started = true
     startOrigin = origin
+    controlAtStart = controls.last ?? .disconnected
+  }
+
+  /// Every control the host pushed, oldest first, and the one the applet had when it started.
+  var controls: [PaneControl] = []
+  var controlAtStart: PaneControl?
+
+  func controlDidChange(_ control: PaneControl) {
+    controls.append(control)
   }
 
   /// What the host said built the applet when it started it.

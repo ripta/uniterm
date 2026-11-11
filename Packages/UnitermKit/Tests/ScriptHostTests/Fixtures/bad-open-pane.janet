@@ -34,3 +34,7 @@
 (refuses "a directory with a NUL" "NUL" (fn [] (uniterm/open-pane :terminal pane :directory "/a\0b")))
 (refuses "a directory that is not UTF-8" "not UTF-8" (fn [] (uniterm/open-pane :terminal pane :directory "/\xFF")))
 (refuses "a long directory" "most is" (fn [] (uniterm/open-pane :terminal pane :directory (string "/" (string/repeat "d" 1024)))))
+(refuses "a bad control" "must be :disconnected or :remote-controlled" (fn [] (uniterm/open-pane :terminal pane :control :on)))
+(refuses "a repeated control" "twice" (fn [] (uniterm/open-pane :terminal pane :control :disconnected :control :disconnected)))
+(refuses "a nearest with a window" "names no :window" (fn [] (uniterm/open-pane :terminal {:nearest :browser :window 7})))
+(refuses "a string nearest" "must be a keyword" (fn [] (uniterm/open-pane :terminal {:nearest "browser"})))

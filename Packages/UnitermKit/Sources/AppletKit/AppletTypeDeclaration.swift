@@ -39,11 +39,34 @@ public struct AppletTypeDeclaration: Sendable, Equatable {
 
   public let opens: [OpenedType]
 
-  public init(typeID: String, displayName: String, symbolName: String, opens: [OpenedType]) {
+  /// The access-mode and driver combinations the type declares. A type that declares none
+  /// supports only disconnected access with no driver. Read `supportedControl` for the set that
+  /// applies.
+  public let controlSupport: Set<ControlCombination>
+
+  public init(
+    typeID: String, displayName: String, symbolName: String, opens: [OpenedType],
+    controlSupport: Set<ControlCombination> = []
+  ) {
     self.typeID = typeID
     self.displayName = displayName
     self.symbolName = symbolName
     self.opens = opens
+    self.controlSupport = controlSupport
+  }
+
+  /// The combinations a pane of this type may use. Disconnected with no driver is always among
+  /// them, since a pane must be able to refuse every program.
+  public var supportedControl: Set<ControlCombination> {
+    controlSupport.union([.disconnected])
+  }
+
+  /// The combinations a pane of `typeID` may use. A type with no declaration, such as the
+  /// launcher or a placeholder, gets the default.
+  public static func supportedControl(
+    forType typeID: String, in declarations: [AppletTypeDeclaration]
+  ) -> Set<ControlCombination> {
+    declarations.first { $0.typeID == typeID }?.supportedControl ?? [.disconnected]
   }
 }
 

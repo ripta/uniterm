@@ -236,7 +236,7 @@ final class ReopenClosedTests: XCTestCase {
 
     let saved = try XCTUnwrap(fixture.controller.savedWindow())
 
-    guard case .pane(id: _, applet: let description) = saved.tree else {
+    guard case .pane(id: _, applet: let description, control: _) = saved.tree else {
       return XCTFail("not a pane")
     }
 

@@ -100,17 +100,19 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     savedEnvironment = [:]
   }
 
-  private func startShell() throws -> any TerminalSession {
+  private func startShell(policy: TerminalClipboardPolicy = .interactive) throws
+    -> any TerminalSession
+  {
     let launch = TerminalLaunch.loginShell(
       workingDirectory: sandbox.appending(path: "work").path,
       environment: ["HOME": sandbox.appending(path: "home").path])
-    return host(try engine.makeSession(launch: launch))
+    return host(try engine.makeSession(launch: launch, clipboardPolicy: policy))
   }
 
   private func startProgram(_ words: [String]) throws -> any TerminalSession {
     let launch = TerminalLaunch.program(
       words, workingDirectory: sandbox.appending(path: "work").path)
-    return host(try engine.makeSession(launch: launch))
+    return host(try engine.makeSession(launch: launch, clipboardPolicy: .interactive))
   }
 
   private func host(_ session: any TerminalSession) -> any TerminalSession {
@@ -508,6 +510,178 @@ final class TerminalSessionIntegrationTests: XCTestCase {
 
     XCTAssertEqual(NSPasteboard.general.string(forType: .string), "WROTE-52")
     XCTAssertTrue(requests.isEmpty, "a clipboard write asked the user")
+  }
+
+  /// Catches a controlled session whose OSC 52 write lands without asking, a denial that still
+  /// writes, and a session permission that does not cover the next write. The writes arrive
+  /// through libghostty's own write callback, with its confirm flag set. A controlled read asks
+  /// too, and its session permission answers the next read without asking.
+  func testAControlledSessionAsksBeforeOSC52WritesAndReads() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("BEFORE", forType: .string)
+
+    let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    func write(_ text: String) throws {
+      try run("printf '\\033]52;c;\(Data(text.utf8).base64EncodedString())\\a'", in: session)
+    }
+
+    try write("W-DENIED")
+    try await waitUntil("the first write request") { requests.count == 1 }
+    XCTAssertEqual(requests[0].kind, .write)
+    XCTAssertTrue(requests[0].offersSession)
+    requests[0].resolve(.deny)
+
+    try await Task.sleep(for: .milliseconds(500))
+    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE", "a denied write landed")
+
+    try write("W-ONCE")
+    try await waitUntil("the second write request") { requests.count == 2 }
+    requests[1].resolve(.allowOnce)
+    try await waitUntil("the write allowed once") {
+      NSPasteboard.general.string(forType: .string) == "W-ONCE"
+    }
+
+    try write("W-SESSION")
+    try await waitUntil("a write after allow once to ask again") { requests.count == 3 }
+    requests[2].resolve(.allowForSession)
+    try await waitUntil("the write allowed for the session") {
+      NSPasteboard.general.string(forType: .string) == "W-SESSION"
+    }
+
+    try write("W-FREE")
+    try await waitUntil("a write the session covers") {
+      NSPasteboard.general.string(forType: .string) == "W-FREE"
+    }
+    XCTAssertEqual(requests.count, 3, "a write the session covers asked again")
+
+    let encoded = Data("W-FREE".utf8).base64EncodedString()
+    let ask =
+      "printf '\\033]52;c;?\\a'; IFS= read -rs -t 8 -d $'\\\\' reply; echo \"G:${reply#*;c;}:\""
+
+    try run(ask, in: session)
+    try await waitUntil("the read request") { requests.count == 4 }
+    XCTAssertEqual(requests[3].kind, .read)
+    XCTAssertTrue(requests[3].offersSession)
+    requests[3].resolve(.allowForSession)
+    try await waitUntil("the read allowed for the session") {
+      self.screen(session).contains("G:\(encoded)")
+    }
+
+    try run(ask.replacingOccurrences(of: "G:", with: "H:"), in: session)
+    try await waitUntil("a read the session covers") {
+      self.screen(session).contains("H:\(encoded)")
+    }
+    XCTAssertEqual(requests.count, 4, "a read the session covers asked again")
+  }
+
+  /// Catches a program that floods a controlled session with OSC 52 writes and queues one prompt
+  /// for each. While a write's prompt waits, every later write is denied at once, with no prompt,
+  /// and none of them reaches the clipboard. Once the prompt is answered, the next write asks.
+  func testAFloodOfControlledWritesAsksOnceAndChangesNothing() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("BEFORE-FLOOD", forType: .string)
+
+    let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    let flood = (1...20).map { "\\033]52;c;\(Data("FLOOD-\($0)".utf8).base64EncodedString())\\a" }
+
+    try run("printf '\(flood.joined())'; echo FLOOD-$((1 + 1))-DONE", in: session)
+    try await waitUntil("the flood to finish") { self.screen(session).contains("FLOOD-2-DONE") }
+    try await Task.sleep(for: .milliseconds(500))
+
+    XCTAssertEqual(requests.count, 1, "a flood of writes queued a prompt for each")
+    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE-FLOOD")
+
+    requests[0].resolve(.deny)
+    try await Task.sleep(for: .milliseconds(300))
+    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE-FLOOD")
+
+    try run("printf '\\033]52;c;\(Data("AFTER".utf8).base64EncodedString())\\a'", in: session)
+    try await waitUntil("a write after the answer to ask") { requests.count == 2 }
+    requests[1].resolve(.deny)
+  }
+
+  /// Catches an answer that releases data or writes after the session's policy changed under it,
+  /// or after the session closed. A pending write and a pending read are each answered allow once
+  /// after the change, and neither the clipboard nor the program gets anything.
+  func testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("SECRET-STALE", forType: .string)
+
+    let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    let encoded = Data("SECRET-STALE".utf8).base64EncodedString()
+    let ask =
+      "printf '\\033]52;c;?\\a'; IFS= read -rs -t 8 -d $'\\\\' reply; echo \"G:${reply#*;c;}:\""
+
+    try run(ask, in: session)
+    try await waitUntil("the read request") { requests.count == 1 }
+
+    session.setClipboardPolicy(TerminalClipboardPolicy(controlled: false, generation: 2))
+    requests[0].resolve(.allowOnce)
+
+    try await waitUntil("the read to finish after a stale answer") {
+      !session.isRunningSomething
+    }
+    XCTAssertFalse(screen(session).contains(encoded), "a stale read sent the clipboard")
+
+    let written = Data("W-STALE".utf8).base64EncodedString()
+
+    session.setClipboardPolicy(TerminalClipboardPolicy(controlled: true, generation: 3))
+    try run("printf '\\033]52;c;\(written)\\a'", in: session)
+    try await waitUntil("the write request") { requests.count == 2 }
+
+    session.setClipboardPolicy(TerminalClipboardPolicy(controlled: true, generation: 4))
+    requests[1].resolve(.allowOnce)
+
+    try await Task.sleep(for: .milliseconds(500))
+    XCTAssertEqual(
+      NSPasteboard.general.string(forType: .string), "SECRET-STALE", "a stale write landed")
+
+    try run("printf '\\033]52;c;\(written)\\a'", in: session)
+    try await waitUntil("the write request before the close") { requests.count == 3 }
+
+    session.close()
+    requests[2].resolve(.allowOnce)
+
+    try await Task.sleep(for: .milliseconds(500))
+    XCTAssertEqual(
+      NSPasteboard.general.string(forType: .string), "SECRET-STALE",
+      "an answer after the session closed wrote the clipboard")
   }
 
   /// Catches libghostty bindings that survive in the generated config. With them, Cmd-Z, Cmd-W,
