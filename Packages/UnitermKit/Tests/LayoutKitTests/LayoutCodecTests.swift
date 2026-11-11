@@ -20,7 +20,7 @@ final class LayoutCodecTests: XCTestCase {
     let text = try encoded(saved)
 
     let expected =
-      #"{"version":2,"windows":[{"frame":{"x":100.0,"y":200.0,"width":900.0,"height":600.0},"#
+      #"{"version":3,"windows":[{"frame":{"x":100.0,"y":200.0,"width":900.0,"height":600.0},"#
       + #""screen":{"x":0.0,"y":0.0,"width":1440.0,"height":900.0},"focusedPane":5,"highWaterMark":9,"#
       + #""tree":{"kind":"split","id":3,"axis":"row","children":["#
       + #"{"weight":0.25,"node":{"kind":"pane","id":1,"applet":{"type":"fake","version":1,"payload":"p1"}}},"#

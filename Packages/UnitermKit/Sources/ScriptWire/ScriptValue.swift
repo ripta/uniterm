@@ -6,12 +6,14 @@ import Foundation
 /// callback returns, since Swift cannot build a Janet value without risking a `longjmp` through its
 /// own frames. The shim and this type therefore share one format.
 ///
-/// Every integer is an exact integer in a Janet number, so below `ScriptProtocol.maxID`. A record's
-/// keys become keywords. A record is unordered, as a Janet struct is.
+/// Every integer is an exact integer in a Janet number, so below `ScriptProtocol.maxID`. A number
+/// that is negative or not whole travels as a double, which must be finite. A record's keys
+/// become keywords. A record is unordered, as a Janet struct is.
 public indirect enum ScriptValue: Equatable, Sendable {
   case null
   case bool(Bool)
   case integer(UInt64)
+  case number(Double)
   case string(String)
   case array([ScriptValue])
   case record([String: ScriptValue])
@@ -19,6 +21,7 @@ public indirect enum ScriptValue: Equatable, Sendable {
   /// Why a value cannot be sent.
   public enum EncodingError: Error, Equatable {
     case integerTooLarge(UInt64)
+    case numberNotFinite
     case tooManyElements(Int)
     case keyNotAllowed(String)
     case tooDeep
@@ -45,6 +48,7 @@ public indirect enum ScriptValue: Equatable, Sendable {
     case string = 4
     case array = 5
     case record = 6
+    case number = 7
   }
 
   /// Bytes for the reply. A string past the limit is cut at a character boundary, since a title
@@ -72,6 +76,13 @@ public indirect enum ScriptValue: Equatable, Sendable {
 
       writer.put(Tag.integer.rawValue)
       writer.put(id: value)
+
+    case .number(let value):
+      guard value.isFinite else { throw EncodingError.numberNotFinite }
+
+      writer.put(Tag.number.rawValue)
+      writer.put(UInt32(truncatingIfNeeded: value.bitPattern >> 32))
+      writer.put(UInt32(truncatingIfNeeded: value.bitPattern))
 
     case .string(let text):
       let bytes = Self.bounded(text, limit: Self.maxStringBytes)
@@ -153,6 +164,14 @@ public indirect enum ScriptValue: Equatable, Sendable {
     case .falseValue: return .bool(false)
     case .trueValue: return .bool(true)
     case .integer: return .integer(try reader.id())
+
+    case .number:
+      let bits = UInt64(try reader.u32()) << 32 | UInt64(try reader.u32())
+      let value = Double(bitPattern: bits)
+
+      guard value.isFinite else { throw WireError.badValue("a number is not finite") }
+
+      return .number(value)
 
     case .string:
       let count = Int(try reader.u32())

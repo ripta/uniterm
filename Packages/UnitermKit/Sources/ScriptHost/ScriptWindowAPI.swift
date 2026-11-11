@@ -29,6 +29,10 @@ public struct ScriptCallError: Error, Equatable, Sendable {
   public static func failed(_ text: String) -> ScriptCallError {
     ScriptCallError(.failed, text)
   }
+
+  public static func unsupported(_ text: String) -> ScriptCallError {
+    ScriptCallError(.unsupported, text)
+  }
 }
 
 /// Who makes a call: the connection, and the pane it acts for. The host derives both from the
@@ -97,4 +101,13 @@ public protocol ScriptWindowAPI: AnyObject {
   /// Hands a file the app wrote to the pane's applet, which reads it like any file it opens. The
   /// host calls it right after `prepareSend`, with nothing suspended between them.
   func send(to pane: ScriptPaneReference, file: URL, caller: ScriptCaller) throws -> ScriptValue
+
+  /// Sends one applet command to a pane through the window's shared dispatch, and returns the
+  /// applet's reply. The arguments are JSON text. The command waits its turn in the queue, and
+  /// `stillAllowed` runs again as it is delivered, so a grant that ends meanwhile leaves no effect.
+  /// An error leaves the applet unchanged.
+  func sendCommand(
+    to target: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
+  ) async throws -> ScriptValue
 }

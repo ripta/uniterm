@@ -225,8 +225,10 @@ private let callCallback:
       replyLength.pointee = payload.count
 
       return 0
-    } catch ScriptSessionError.failed(_, let message) {
+    } catch ScriptSessionError.failed(let kind, let message) {
       writeError(message, to: errorBuffer, capacity: capacity)
+
+      return Int32(UNITERM_JANET_APP_FAILURE_BASE) + Int32(kind.rawValue)
     } catch {
       writeError("the call failed: \(error)", to: errorBuffer, capacity: capacity)
     }

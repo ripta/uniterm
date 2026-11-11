@@ -2,26 +2,40 @@ import AppKit
 import PaneModel
 import ScriptHost
 
-/// The panel that lists programs asking for a pane, and the grants the user has made.
+/// The panel that lists programs asking for a pane, exec drivers asking to run, and the grants
+/// the user has made for either.
 ///
 /// A program outside every uniterm pane has no pane access. The user grants one connection one
 /// pane here, denies it, or revokes a grant. Nothing here lasts past the connection.
+///
+/// A driver launch shows every input it binds: its argv, its directory, its environment values,
+/// and its pane. Allow Once runs exactly those inputs once. Allow in This Pane also lets later
+/// runs of the same program, in the same directory and pane, with no environment key beyond
+/// these, start without asking, whatever their arguments and values. These buttons are the only
+/// way a launch is approved.
 @MainActor
 public final class PendingRequestsWindowController: NSWindowController {
   private enum Row {
     case request(ScriptHost.PendingRequest)
     case grant(ScriptHost.ExplicitGrant)
+    case launch(ExecLaunchAuthority.Request)
+    case launchGrant(ExecLaunchAuthority.Grant)
   }
 
-  private let scriptHost: ScriptHost
+  private let scriptHost: ScriptHost?
   private let windows: WindowSet
   private let tableView = NSTableView()
+  private let detail = NSTextField(wrappingLabelWithString: "")
   private let grantButton = NSButton(title: "Grant Access\u{2026}", target: nil, action: nil)
+  private let allowOnceButton = NSButton(title: "Allow Once", target: nil, action: nil)
+  private let allowInPaneButton = NSButton(title: "Allow in This Pane", target: nil, action: nil)
   private let denyButton = NSButton(title: "Deny", target: nil, action: nil)
   private let revokeButton = NSButton(title: "Revoke", target: nil, action: nil)
   private var rows: [Row] = []
 
-  public init(scriptHost: ScriptHost, windows: WindowSet) {
+  private var launches: ExecLaunchAuthority { windows.launchAuthority }
+
+  public init(scriptHost: ScriptHost?, windows: WindowSet) {
     self.scriptHost = scriptHost
     self.windows = windows
 
@@ -39,7 +53,8 @@ public final class PendingRequestsWindowController: NSWindowController {
     buildContent()
     refresh()
 
-    scriptHost.onPendingRequestsChanged = { [weak self] in self?.refresh() }
+    scriptHost?.onPendingRequestsChanged = { [weak self] in self?.refresh() }
+    windows.launchAuthority.onChange = { [weak self] in self?.refresh() }
   }
 
   @available(*, unavailable)
@@ -51,7 +66,9 @@ public final class PendingRequestsWindowController: NSWindowController {
     guard let contentView = window?.contentView else { return }
 
     let heading = NSTextField(
-      labelWithString: "Programs outside uniterm's panes that asked to act for a pane:")
+      labelWithString:
+        "Programs outside uniterm\u{2019}s panes that asked to act for a pane, and drivers that "
+        + "asked to run:")
 
     heading.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
 
@@ -75,18 +92,30 @@ public final class PendingRequestsWindowController: NSWindowController {
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
 
+    detail.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+    detail.isSelectable = true
+    detail.setAccessibilityIdentifier("pending-requests-detail")
+
     grantButton.target = self
     grantButton.action = #selector(grantPressed)
+    allowOnceButton.target = self
+    allowOnceButton.action = #selector(allowOncePressed)
+    allowOnceButton.setAccessibilityIdentifier("pending-requests-allow-once")
+    allowInPaneButton.target = self
+    allowInPaneButton.action = #selector(allowInPanePressed)
+    allowInPaneButton.setAccessibilityIdentifier("pending-requests-allow-in-pane")
     denyButton.target = self
     denyButton.action = #selector(denyPressed)
     revokeButton.target = self
     revokeButton.action = #selector(revokePressed)
 
-    let buttons = NSStackView(views: [grantButton, denyButton, NSView(), revokeButton])
+    let buttons = NSStackView(views: [
+      grantButton, allowOnceButton, allowInPaneButton, denyButton, NSView(), revokeButton,
+    ])
 
     buttons.orientation = .horizontal
 
-    for view in [heading, scrollView, buttons] {
+    for view in [heading, scrollView, detail, buttons] {
       view.translatesAutoresizingMaskIntoConstraints = false
       contentView.addSubview(view)
     }
@@ -100,7 +129,12 @@ public final class PendingRequestsWindowController: NSWindowController {
       scrollView.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 12),
       scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
       scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-      scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -16),
+      scrollView.bottomAnchor.constraint(equalTo: detail.topAnchor, constant: -12),
+
+      detail.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+      detail.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+      detail.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -12),
+      detail.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
 
       buttons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
       buttons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
@@ -108,10 +142,13 @@ public final class PendingRequestsWindowController: NSWindowController {
     ])
   }
 
-  /// Reads the requests and grants again. The script host calls it whenever either changes.
+  /// Reads the requests and grants again. The script host and the launch authority call it
+  /// whenever either changes.
   private func refresh() {
     rows =
-      scriptHost.allPendingRequests().map(Row.request) + scriptHost.allGrants().map(Row.grant)
+      (scriptHost?.allPendingRequests().map(Row.request) ?? [])
+      + launches.requests.map(Row.launch)
+      + (scriptHost?.allGrants().map(Row.grant) ?? []) + launches.grants.map(Row.launchGrant)
 
     tableView.reloadData()
     updateButtons()
@@ -124,22 +161,68 @@ public final class PendingRequestsWindowController: NSWindowController {
   }
 
   private func updateButtons() {
-    switch selectedRow {
+    let row = selectedRow
+
+    grantButton.isEnabled = false
+    allowOnceButton.isEnabled = false
+    allowInPaneButton.isEnabled = false
+    denyButton.isEnabled = false
+    revokeButton.isEnabled = false
+
+    switch row {
     case .request:
       grantButton.isEnabled = true
       denyButton.isEnabled = true
-      revokeButton.isEnabled = false
 
-    case .grant:
-      grantButton.isEnabled = false
-      denyButton.isEnabled = false
+    case .launch:
+      allowOnceButton.isEnabled = true
+      allowInPaneButton.isEnabled = true
+      denyButton.isEnabled = true
+
+    case .grant, .launchGrant:
       revokeButton.isEnabled = true
 
     case nil:
-      grantButton.isEnabled = false
-      denyButton.isEnabled = false
-      revokeButton.isEnabled = false
+      break
     }
+
+    detail.stringValue = row.map(describe) ?? ""
+  }
+
+  /// Every input a launch binds, or the scope a grant covers, in full.
+  private func describe(_ row: Row) -> String {
+    switch row {
+    case .launch(let request):
+      return LaunchApprovalText.request(
+        request.launch, pane: paneTitle(request.target, fallback: request.paneTitle))
+
+    case .launchGrant(let grant):
+      return LaunchApprovalText.grant(
+        grant, pane: paneTitle(grant.target, fallback: grant.paneTitle))
+
+    case .request, .grant:
+      return ""
+    }
+  }
+
+  private func paneTitle(_ target: ExecLaunchAuthority.Target, fallback: String) -> String {
+    guard let controller = windows.controller(forScriptWindow: target.window),
+      let applet = controller.paneArea.applet(for: target.pane)
+    else { return fallback }
+
+    return "\(controller.window?.title ?? "Window"): \(applet.title)"
+  }
+
+  @objc private func allowOncePressed() {
+    guard case .launch(let request) = selectedRow else { return }
+
+    launches.decide(request.id, .allowOnce)
+  }
+
+  @objc private func allowInPanePressed() {
+    guard case .launch(let request) = selectedRow else { return }
+
+    launches.decide(request.id, .allowInPane)
   }
 
   @objc private func grantPressed() {
@@ -149,20 +232,26 @@ public final class PendingRequestsWindowController: NSWindowController {
   }
 
   @objc private func denyPressed() {
-    guard case .request(let request) = selectedRow else { return }
-
-    scriptHost.denyRequest(connection: request.id)
+    switch selectedRow {
+    case .request(let request): scriptHost?.denyRequest(connection: request.id)
+    case .launch(let request): launches.decide(request.id, .deny)
+    default: break
+    }
   }
 
   @objc private func revokePressed() {
-    guard case .grant(let grant) = selectedRow else { return }
-
-    scriptHost.revokeGrant(connection: grant.connection)
+    switch selectedRow {
+    case .grant(let grant): scriptHost?.revokeGrant(connection: grant.connection)
+    case .launchGrant(let grant): launches.revokeGrant(grant.id)
+    default: break
+    }
   }
 
   /// The panes a grant can name: those that run a recorded session, in window order.
   private func grantablePanes() -> [(title: String, window: UInt64, pane: NodeID)] {
-    windows.controllers.flatMap { controller in
+    guard let scriptHost else { return [] }
+
+    return windows.controllers.flatMap { controller in
       controller.paneIDs.compactMap { pane in
         guard let applet = controller.paneArea.applet(for: pane),
           scriptHost.sessionRoot(window: controller.scriptWindowID, pane: pane) != nil
@@ -218,8 +307,10 @@ public final class PendingRequestsWindowController: NSWindowController {
 
       let pane = panes[popup.selectedTag()]
 
+      guard let scriptHost = self.scriptHost else { return }
+
       self.report(
-        self.scriptHost.grantAccess(connection: request.id, window: pane.window, pane: pane.pane))
+        scriptHost.grantAccess(connection: request.id, window: pane.window, pane: pane.pane))
     }
   }
 
@@ -264,6 +355,14 @@ extension PendingRequestsWindowController: NSTableViewDataSource, NSTableViewDel
     case (.grant(let grant), "program"): return grant.executablePath ?? "unknown"
     case (.grant(let grant), "pid"): return String(grant.pid)
     case (.grant(let grant), "status"): return "Granted \(paneTitle(grant))"
+    case (.launch(let request), "program"): return request.launch.declaration.executable
+    case (.launch, "pid"): return "\u{2014}"
+    case (.launch(let request), "status"):
+      return "Wants to run in \(paneTitle(request.target, fallback: request.paneTitle))"
+    case (.launchGrant(let grant), "program"): return grant.executable
+    case (.launchGrant, "pid"): return "\u{2014}"
+    case (.launchGrant(let grant), "status"):
+      return "Allowed in \(paneTitle(grant.target, fallback: grant.paneTitle))"
     default: return nil
     }
   }

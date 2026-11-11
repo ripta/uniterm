@@ -20,12 +20,15 @@ extension MainWindowController {
   }
 
   /// True when the user can enable remote control on the pane: it is disconnected now, and its
-  /// applet type supports remote control with no driver.
+  /// applet type supports remote control with the driver the pane has now.
   func canEnableRemoteControl(_ pane: NodeID?) -> Bool {
     guard let pane, contains(pane: pane) else { return false }
 
-    return control(of: pane).access == .disconnected
-      && supportedControl(of: pane).contains(.remoteControlled)
+    let control = control(of: pane)
+
+    return control.access == .disconnected
+      && supportedControl(of: pane).contains(
+        ControlCombination(access: .remoteControlled, driver: control.driver))
   }
 
   func canDisconnect(_ pane: NodeID?) -> Bool {
@@ -128,7 +131,7 @@ extension MainWindowController {
     refreshControlMarks()
   }
 
-  private func pushControl(_ control: PaneControl, to pane: NodeID) {
+  func pushControl(_ control: PaneControl, to pane: NodeID) {
     paneArea.applet(for: pane)?.controlDidChange(control)
   }
 
@@ -141,15 +144,16 @@ extension MainWindowController {
   }
 
   /// What a saved layout keeps of the pane's control: the mode it has now, or the intent it was
-  /// restored with while the user has left it disconnected.
+  /// restored with while the user has left it disconnected, and its exec declaration with no
+  /// environment value.
   func savedControl(of pane: NodeID) -> SavedPaneControl {
     let control = control(of: pane)
+    let access =
+      control.access == .disconnected
+      ? paneControls.intent(of: pane)?.access ?? .disconnected : control.access
 
-    guard control.access == .disconnected else {
-      return SavedPaneControl(access: control.access, driver: control.driver)
-    }
-
-    return paneControls.intent(of: pane) ?? .disconnected
+    return SavedPaneControl(
+      access: access, driver: .none, exec: execAttachments[pane]?.declaration)
   }
 
   private func savedIntent(of pane: NodeID) -> PaneAccessMode? {

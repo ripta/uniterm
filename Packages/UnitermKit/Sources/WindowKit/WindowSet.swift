@@ -365,6 +365,27 @@ public final class WindowSet {
     controllers.first { $0.scriptWindowID == id }
   }
 
+  /// Who may launch which exec driver, for every window. The Pending Requests panel lists its
+  /// requests and grants, and only the panel decides them.
+  public let launchAuthority = ExecLaunchAuthority()
+
+  /// How long the quit waits, in all, for drivers to end on SIGTERM before their groups get
+  /// SIGKILL. ADR-08 lets the main thread wait this long because the bound is fixed.
+  public static let driverQuitGrace: TimeInterval = 0.5
+
+  /// Ends every running exec driver as the app quits. Each group gets SIGTERM at once, then one
+  /// shared wait of at most `driverQuitGrace`, then SIGKILL for every group still there. The
+  /// delayed SIGKILL of an ordinary close would never run, since the app exits first.
+  public func endDriversForQuit() {
+    let channels = controllers.flatMap { $0.execAttachments.values.compactMap(\.channel) }
+
+    for channel in channels { channel.close() }
+
+    let deadline = Date().addingTimeInterval(Self.driverQuitGrace)
+
+    for channel in channels { channel.finishForQuit(by: deadline) }
+  }
+
   /// Which connections act for which pane. Every window gets it as it opens.
   public weak var controllerAuthority: (any ControllerAuthority)? {
     didSet {
@@ -394,6 +415,7 @@ public final class WindowSet {
   private func register(_ controller: MainWindowController) {
     controller.scriptWindowID = windowIDs.next()
     controller.controllerAuthority = controllerAuthority
+    controller.launchAuthority = launchAuthority
     controller.onClose = { [weak self] controller in
       self?.windowDidClose(controller)
     }
@@ -482,6 +504,7 @@ public final class WindowSet {
   private func windowDidClose(_ controller: MainWindowController) {
     controllers.removeAll { $0 === controller }
     onScriptWindowClosed?(controller.scriptWindowID)
+    launchAuthority.windowClosed(controller.scriptWindowID)
 
     keyOrder.removeAll { $0 === controller }
     closing.append(controller)

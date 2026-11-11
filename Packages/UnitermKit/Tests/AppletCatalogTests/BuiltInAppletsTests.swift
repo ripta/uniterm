@@ -1,7 +1,14 @@
 import AppKit
 import AppletCatalog
 import AppletKit
+import BrowserApplet
+import DataViewerApplet
 import FileRouting
+import ImageViewerApplet
+import MapViewerApplet
+import ReplApplet
+import TerminalApplet
+import TextViewerApplet
 import XCTest
 
 /// Proves the production catalog against the system's real type database. The Info.plist drift
@@ -77,6 +84,22 @@ final class BuiltInAppletsTests: XCTestCase {
       AppletTypeDeclaration.supportedControl(
         forType: "launcher", in: BuiltInApplets.declarations),
       [.disconnected])
+  }
+
+  /// Catches a shipped applet that takes applet commands before its own proposal designs them. The
+  /// terminal and the REPL may be remote-controlled, and still refuse every command, since only an
+  /// applet that adopts the command hook can take one.
+  func testNoShippedAppletAdoptsTheCommandHook() {
+    let types: [(String, any Applet.Type)] = [
+      ("terminal", TerminalApplet.self), ("repl", ReplApplet.self),
+      ("data-viewer", DataViewerApplet.self), ("map-viewer", MapViewerApplet.self),
+      ("browser", BrowserApplet.self), ("image-viewer", ImageViewerApplet.self),
+      ("text-viewer", TextViewerApplet.self),
+    ]
+
+    for (name, type) in types {
+      XCTAssertFalse(type is any AppletCommandHandling.Type, name)
+    }
   }
 
   /// Catches an image that routes anywhere but the image viewer, and a folder that stops routing to

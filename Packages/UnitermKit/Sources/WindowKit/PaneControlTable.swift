@@ -27,6 +27,7 @@ extension ScriptHost: ControllerAuthority {}
 /// generation never repeats within the window.
 struct PaneControlTable {
   private var access: [NodeID: PaneAccessMode] = [:]
+  private var drivers: [NodeID: PaneDriverKind] = [:]
   private var generations: [NodeID: UInt64] = [:]
   private var lastGeneration: UInt64 = 0
 
@@ -35,7 +36,8 @@ struct PaneControlTable {
 
   func control(of pane: NodeID) -> PaneControl {
     PaneControl(
-      access: access[pane] ?? .disconnected, driver: .none, generation: generations[pane] ?? 0)
+      access: access[pane] ?? .disconnected, driver: drivers[pane] ?? .none,
+      generation: generations[pane] ?? 0)
   }
 
   func intent(of pane: NodeID) -> SavedPaneControl? {
@@ -46,6 +48,13 @@ struct PaneControlTable {
   mutating func set(_ mode: PaneAccessMode, for pane: NodeID) -> PaneControl {
     access[pane] = mode == .disconnected ? nil : mode
     intents[pane] = nil
+
+    return bump(pane)
+  }
+
+  /// Sets the driver attached to the pane and issues it a new generation. Its mode stays.
+  mutating func set(driver: PaneDriverKind, for pane: NodeID) -> PaneControl {
+    drivers[pane] = driver == .none ? nil : driver
 
     return bump(pane)
   }
@@ -66,6 +75,7 @@ struct PaneControlTable {
   /// Drops a pane that left the tree. Its ID is retired, so nothing can name it again.
   mutating func forget(_ pane: NodeID) {
     access[pane] = nil
+    drivers[pane] = nil
     generations[pane] = nil
     intents[pane] = nil
   }

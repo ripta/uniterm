@@ -26,6 +26,15 @@
 #define UNITERM_JANET_MAX_DIRECTORY_BYTES 1024
 #define UNITERM_JANET_MAX_FILE_NAME_BYTES 255
 #define UNITERM_JANET_MAX_SEND_BYTES (1024 * 1024)
+#define UNITERM_JANET_MAX_COMMAND_NAME_BYTES 64
+#define UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES (32 * 1024)
+
+/*
+ * A call callback returns this plus a failure kind when the app answered with a failure, so a
+ * function that raises a structured error can name the kind. Any other nonzero status is a
+ * failure on the helper's side.
+ */
+#define UNITERM_JANET_APP_FAILURE_BASE 16
 
 /* Levels as scripts name them: :info, :warning, :error. */
 #define UNITERM_STATUS_INFO 0

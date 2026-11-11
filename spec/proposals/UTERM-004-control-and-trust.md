@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-10
+**Updated:** 2026-11-11
 
 ## Dependencies
 
@@ -361,8 +361,9 @@ Decision: save layout intent, never live authority.
 - The user may explicitly grant a new live connection the exact restored member set through pane chrome and enable
   the desired targets. The grant binds current identities, not historical process names or file claims. A new exec
   attachment alone grants no ownership of restored siblings. Reopened panes stay unowned until explicitly assigned.
-- The group and host-owned mode/driver metadata bump the envelope schema version. Old layouts migrate to no grants
-  and disconnected modes. Applet payloads keep their own versions and unreadable bytes, per ADR-06. A corrupt group
+- The group and host-owned mode/driver metadata bump the envelope schema version. M2's group and saved control took
+  it to version 2, and M3's exec declaration takes it to version 3. Old layouts migrate to no grants and disconnected
+  modes. Applet payloads keep their own versions and unreadable bytes, per ADR-06. A corrupt group
   or cross-window membership can never enlarge a grant.
 - Stored-data skew follows ADR-06: a new app upgrades an old envelope step by step. An old app keeps a newer file aside
   unchanged and starts a default layout. A downgrade then upgrade can lose the active newer arrangement; the kept
@@ -370,6 +371,7 @@ Decision: save layout intent, never live authority.
 
 Rationale: restoring geometry should not let a different process inherit a former program's authority. Dropping
 program-created layouts entirely loses the requested remembered arrangement. Inert intent keeps both properties.
+Amended 2026-11-11; see Decision Log.
 
 ### Controller trust and approval choices
 
@@ -419,6 +421,9 @@ requires a local review before effects. Undeclared effects fail even when the co
   directory scope. The approval explicitly says that arguments and environment values may vary within these bounds.
   Values remain runtime inputs and are not saved as approval secrets. Another executable/entry or broader scope needs
   approval. Arbitrary host-program execution is not implied by permission to launch a declared packaged entry.
+  Until M5 brings packaged entries, an entry is the declaration's absolute executable, its directory scope is the one
+  directory it runs in, and its target is the one pane where the user chose Run. Such a grant lasts for this launch
+  of uniterm, and M6 grows it into the startup review and remembered policies. Amended 2026-11-11; see Decision Log.
 - Allow once binds one identified pending effect and its immutable inputs. A session grant binds the authenticated
   live run. Version and identity policies can cover later freshly authenticated runs. A pathname, claimed digest,
   process name, or old pane ID cannot activate a remembered policy.
@@ -429,8 +434,7 @@ requires a local review before effects. Undeclared effects fail even when the co
 - Permission requests are bounded and coalesced into a host-owned pending indicator. The user opens the local panel;
   repeated protocol messages cannot spawn repeated modal dialogs. The indicator is the window's pending-permissions
   slot, a typed window state that sits before the focused applet's segments. Denial suppresses automatic re-prompting
-  until a local retry. Coalescing cannot widen Allow once into approval of multiple different operations. Amended
-  2026-11-06; see Decision Log.
+  until a local retry. Coalescing cannot widen Allow once into approval of multiple different operations.
 - A user's Run action supplies execution intent. A matching policy can supply permissions without a second dialog.
   Saved layout state alone never executes a controller. Remembered permission does not override an existing pane's
   disconnected mode or adopt restored group members. Source enablement and restored-member adoption remain local.
@@ -683,7 +687,7 @@ None.
 
 ### M3: Exec panes
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - An exec pane starts a program and sends applet events to its stdin
 - Hosted fixture applets receive validated commands and emit events through the applet contract's command and event
@@ -713,6 +717,70 @@ None.
 - Scripts cannot approve their own permission requests or activate Run
 - An exec child receives only the declared environment and documented base, in the declared or home directory
 - Restored Run waits for required values and valid execution authority; layouts contain no environment values
+
+**As built:**
+
+- The applet contract gained the command and event hook as an opt-in protocol. An applet that adopts it publishes one
+  command schema with its applet type and version, runs commands it receives already validated, and emits events
+  through an outlet it owns. Only shared dispatch can make a validated command. An applet that does not adopt the
+  hook refuses every command, and no shipped applet adopts it. The terminal and the REPL still declare remote control.
+- Each window has one dispatcher, which remote callers and exec drivers share. It checks the caller's authority, then
+  the applet type and schema version, then the command and its arguments against the schema. Only then does it queue
+  the command. It delivers in order, 32 per main-thread turn, with at most 256 waiting, and refuses past that as busy.
+  It checks authority again at delivery. A refused command is answered at once and changes nothing.
+- `uniterm/send-command` takes a pane, an applet type, a schema version, a command, and optional arguments. The shim
+  writes the arguments as JSON, at most 32 KiB, 16 levels, and 64 fields per object. A failure from the app raises a
+  struct of `:kind` and `:message` in the script. ScriptWire is at version 6. It adds the call, an `unsupported`
+  failure kind, a `reply-lost` kind, and a double value for numbers a Janet integer cannot hold. `reply-lost` means
+  the command ran and its reply could not reach the script. Both sides refuse any other version at the hello, so an
+  old `uniterm` command with a new app, or the reverse, runs no call. The remote path needs the target to be
+  remote-controlled and in the caller's scope. At delivery it checks both again, and that the pane's control
+  generation is the one the command was sent under, so a disconnect and a new enable drop queued commands.
+- The exec driver is a new module. It spawns the argv directly with three pipes, in a process group of its own, in the
+  declared directory or the home directory from the user database. The environment is HOME, USER, and LOGNAME from
+  the user database, TMPDIR from the session's temporary folder, and the fixed PATH, with the declared values over
+  them. It did not build on HelperProcess, whose spawn hands a helper one socket on a fixed descriptor and nothing on
+  its standard streams. Reads, writes, and the wait each run on their own thread. Each pipe end takes FD_CLOEXEC right
+  after its pipe is made. A channel whose applet has already closed spawns nothing and ends at once.
+- The wire bounds are those the decision names. A line past 1 MiB is refused before it ends. Nesting past 32 levels or
+  more than 65,536 values is refused before the JSON decoder sees the line. More than 4 MiB read and not yet handled,
+  or written and not yet taken, closes the channel with a typed warning. The main thread handles 64 messages per
+  turn. Events reach the driver only once both hellos are accepted. A hello mismatch in either direction tells the
+  driver why and ends the channel before any command runs.
+- Stderr goes through StatusKit's ingress to a producer named for the driver, as info in the history only. An exit or a
+  failure is a warning through `post(failure:)`. Closing the pane ends the driver's authority at once. The applet's
+  own close closes its outlet, which closes stdin, sends SIGTERM to the group, and sends SIGKILL two seconds later.
+  The driver stays an unreaped zombie until its group has had SIGKILL, so a program it started in its group ends with
+  it, however the driver ends. Nothing waits on the main thread, except at quit. There every group gets SIGTERM, one
+  shared wait of at most half a second, then SIGKILL, since a delayed SIGKILL would never run after the app exits.
+  The pane's strip shows the reason and Restart. Nothing restarts by itself.
+- Run is a button in a host-owned strip at the foot of the pane. No script call or driver command reaches it. A
+  driver with environment keys asks for their values in a sheet first, and keeps them only in memory. The launch then
+  waits in the Pending Requests panel, which shows its argv, directory, environment values, and pane. Each argument
+  and value is on its own line, with control characters and bidi controls escaped, so none can fake a line. Allow
+  Once runs
+  exactly those inputs once. Allow in This Pane makes the grant the Permission scopes decision describes for M3. The
+  panel's buttons are the only way to decide a launch. The pending-permissions slot shows while a launch waits.
+- The layout envelope is version 3. A pane's saved control holds its exec declaration: argv, directory, and key
+  names. A damaged declaration reads as none. A restored or reopened exec pane shows Run and runs nothing.
+- The slides, notes, and chart fixtures are a test-support target, with real schemas and events. A debug app links
+  and registers them behind `UNITERM_TEST_APPLETS`. The fixtures' sources and the app's registration both compile
+  only under DEBUG. That is verified at the object level: without DEBUG, the fixtures' object holds only Swift's
+  force-load stub, and with it the fixtures' symbols and type names. A full Release build of the app cannot be made
+  to check further, since the Swift compiler crashes on StatusKit in Release. StatusKit is unchanged since this run's
+  base, so M3 does not own that crash. No M3 path
+  lets a user declare a driver. A declaration comes from a saved layout, an undo, or the window's own call, which M4's
+  layout requests will use.
+- Driver tests run a perl fixture with one mode per behavior. `ExecPaneUITests` passed its two tests in the real app.
+  One restores an exec pane, answers the values sheet, approves once in the panel, and sees commands, an event, and
+  stderr. The other presses Cmd-D while a stalled driver is flooded with events. The new frame reader fuzzer is in
+  `make fuzz`. `make test-app` passes `-collect-test-diagnostics never`, so a failure attaches no screen recording.
+  The best guesses are in the 2026-11-11 Decision Log entries.
+- The UI tests failed 4 times in 76 iterations across the fix round. Three failures were a synthesized click with no
+  effect, on Run, on the Pending Requests menu item, or on Allow Once. Each of those was followed by a 5.4-second wait
+  for the app to go idle, where 576 passing clicks took at most 0.74 seconds. In the fourth, XCTest found another
+  app's windows above uniterm's. No cause in uniterm or the test was found, and the last 40 iterations passed. The test now records
+  the app's state and the time of every interaction, and a failure reports that trail and the history rows it read.
 
 ### M4: Layout requests
 
@@ -944,6 +1012,47 @@ None.
   permission to survive a revoke, the generation check would narrow to the mode. A session holds at most one waiting
   prompt per kind: a later read or write of that kind is denied at once, with no prompt, and its text dropped. That
   bounds the prompts "Permission scopes and approval flow" forbids flooding until M6's coalesced panel can replace it.
+
+- 2026-11-11: Bumped the layout envelope to version 3 for the exec declaration (work-queue best guess). "Saved layouts"
+  said the group and the mode and driver metadata bump the envelope, and M2's version 2 carried only the access mode
+  and driver kind. The declaration adds fields a version 2 reader drops on its next save, so ADR-06 bumps the
+  version. The step from version 2 keeps the windows list byte for byte. The bullet now names both bumps.
+- 2026-11-11: Gave M3 a session-only launch grant short of packaged entries (work-queue best guess). "Permission scopes
+  and approval flow" names packaged entry IDs, owned-group targets, and a directory scope, and M5 builds packaged
+  entries. Until then an entry is the absolute executable, the directory scope is the one directory, and the target is
+  the one pane. The grant lasts for this launch only. The bullet now says so, and the section's Amended marker moved to
+  it from the pending-indicator bullet, whose 2026-11-06 change is logged above. If the user wants a directory scope that
+  covers subfolders, or a grant for an owned group, the grant would take a folder prefix or a group.
+- 2026-11-11: Settled M3's exec details (work-queue best guess). The applet owns the driver's child through its event
+  outlet, so the applet's close shuts it down, as ADR-05 asks. The window owns the authority and ends it at once. An
+  event emitted before both hellos goes nowhere. A driver that writes faster than the pane handles past 4 MiB fails,
+  as the bounds say, and is not slowed down. A driver that never sends its hello has no timeout. It runs no command
+  and gets no event. A launch's values come from a sheet with secure fields and are shown in the Pending Requests
+  panel, since Allow once shows what it binds. If the user wants a hello timeout, the channel would take an injected
+  clock.
+- 2026-11-11: Gave remote command failures their own Janet form (work-queue best guess). The proposal says a script
+  gets the error as a Janet value. Every other host call raises a string. `uniterm/send-command` raises a struct of
+  `:kind` and `:message`, where the kind is one of the wire's failure kinds, with a new `unsupported` kind for a type
+  or schema version the pane does not take. Replies carry numbers that are negative or not whole as doubles. If the
+  user wants every call to raise structs, the other host functions would change for existing scripts.
+- 2026-11-11: Compiled the hosted fixtures out of release builds entirely (work-queue best guess). The plan said the
+  debug registration compiles out of Release. The app links the fixtures' target in every configuration, since Xcode
+  links a package product for all of them. The target's sources now sit under DEBUG too, so release code holds none of
+  them. If the user wants the target unlinked from Release instead, the Xcode project would need a per-configuration
+  link, which it does not support cleanly.
+- 2026-11-11: Ended a driver's whole process group when the driver ends, however it ends (work-queue best guess).
+  Review found that a program the driver started, which ignores SIGTERM and holds stdout open, outlived a close. The
+  driver now stays a zombie until its group has had SIGKILL. That also ends such a program when the driver exits by
+  itself. A program that should outlive its driver must leave the group. At quit, the shared wait for SIGTERM is half
+  a second before SIGKILL, a bound ADR-08 allows. If the user wants a driver's background programs to survive its own
+  exit, the kill would apply only on close and at quit.
+- 2026-11-11: Reported a reply that cannot reach a script as `reply-lost` (work-queue best guess). A command that ran
+  but whose reply could not be encoded reached the script as an ordinary failure, which reads as no effect. The new
+  failure kind says the command ran. If the user wants such replies cut down to fit, the window side would shorten
+  them in place of failing.
+- 2026-11-11: Added no user path to declare an exec driver in M3 (work-queue best guess). The plan named none, and no
+  shipped applet supports a driver. A declaration comes from a saved layout, an undo, or the window's own call. M4's
+  layout requests will call it. If the user wants a declaration sheet now, the pane chrome would gain one.
 
 ## References
 

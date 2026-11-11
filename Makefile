@@ -89,16 +89,20 @@ test-helper-sandbox: build ## Run each helper's sandbox probe and samples agains
 		swift test --scratch-path ../../$(SWIFTPM_SCRATCH) --filter HelperSandboxTests
 
 .PHONY: fuzz
-fuzz: ghostty ## Fuzz the table, GeoJSON, wire, and PDF readers under ASan. Slow, so make ci skips it
+fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, and PDF readers under ASan. Slow, so make ci skips it
 	cd $(PACKAGE_DIR) && UNITERM_FUZZ_ITERATIONS=$(FUZZ_ITERATIONS) \
 		swift test --sanitize=address --scratch-path ../../$(FUZZ_SCRATCH) \
 		--filter TableFuzzTests --filter GeoJSONFuzzTests --filter ImageWireFuzzTests \
-		--filter DocumentWireFuzzTests --filter PDFFuzzTests --filter ScriptWireFuzzTests
+		--filter DocumentWireFuzzTests --filter PDFFuzzTests --filter ScriptWireFuzzTests \
+		--filter ExecFrameFuzzTests
 
+# A failing UI test would otherwise attach a recording of the whole screen, with whatever else is
+# on it. The tests keep screenshots of uniterm's own elements instead.
 .PHONY: test-app
 test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission
 	scripts/run-ui-tests.sh $(XCODEBUILD) -test-timeouts-enabled YES \
-		-default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120 test
+		-default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120 \
+		-collect-test-diagnostics never test
 
 .PHONY: ghostty-offline-check
 ghostty-offline-check: ## Rebuild the pinned Ghostty with the network off, from the kept caches

@@ -44,7 +44,13 @@ public struct LayoutMigrations: Sendable {
   ///
   /// Version 2 adds the group node and a pane's saved control. A version 1 file holds neither, so
   /// its windows read as they are, and every pane comes back disconnected with no group.
-  public static let standard = LayoutMigrations(steps: [1: LayoutCodec.upgradeFromVersion1])
+  ///
+  /// Version 3 adds a pane's exec declaration to its saved control. A version 2 reader would drop
+  /// it on its next save, so the version moves. A version 2 file holds none, so its windows read
+  /// as they are.
+  public static let standard = LayoutMigrations(steps: [
+    1: LayoutCodec.upgradeFromVersion1, 2: LayoutCodec.upgradeFromVersion2,
+  ])
 
   /// Upgrades `document` from `version` to `target`, applying each step in turn. A missing step
   /// means the version is not upgradable. The result carries the target version.
@@ -65,7 +71,7 @@ public struct LayoutMigrations: Sendable {
 
 /// Reads and writes the layout file's JSON.
 ///
-/// The top level is `{"version": 2, "windows": [...]}`.
+/// The top level is `{"version": 3, "windows": [...]}`.
 ///
 /// A window holds its frame, its screen, its focused pane, the high-water mark of its node IDs,
 /// and a tree. A tree node is a pane with an applet description, a split with an axis and
@@ -79,7 +85,7 @@ public enum LayoutCodec {
   public static let maximumNodeID: UInt64 = 1 << 48
 
   /// The schema version this build writes.
-  public static let currentVersion = 2
+  public static let currentVersion = 3
 
   /// A version 1 document carries over unchanged under the version 2 number. Only the windows
   /// list is kept, byte for byte, so no applet description is rewritten.
@@ -90,6 +96,16 @@ public enum LayoutCodec {
     }
 
     return Data(#"{"version":2,"windows":"#.utf8) + windows.bytes + Data("}".utf8)
+  }
+
+  /// A version 2 document carries over unchanged under the version 3 number, the same way.
+  @Sendable
+  static func upgradeFromVersion2(_ document: Data) throws -> Data {
+    guard let windows = try RawJSON(document).member("windows") else {
+      throw LayoutReadError.unreadable("the windows list is missing")
+    }
+
+    return Data(#"{"version":3,"windows":"#.utf8) + windows.bytes + Data("}".utf8)
   }
 
   // MARK: Writing
@@ -144,14 +160,25 @@ public enum LayoutCodec {
       ]
 
       if control != .disconnected {
-        members.append(
-          (
-            "control",
-            .object([
-              ("access", .string(control.access.rawValue)),
-              ("driver", .string(control.driver.rawValue)),
-            ])
-          ))
+        var fields: [(String, JSONOut)] = [
+          ("access", .string(control.access.rawValue)),
+          ("driver", .string(control.driver.rawValue)),
+        ]
+
+        if let exec = control.exec {
+          var declaration: [(String, JSONOut)] = [
+            ("argv", .array(exec.arguments.map(JSONOut.string)))
+          ]
+
+          if let directory = exec.directory {
+            declaration.append(("directory", .string(directory)))
+          }
+
+          declaration.append(("environmentKeys", .array(exec.environmentKeys.map(JSONOut.string))))
+          fields.append(("exec", .object(declaration)))
+        }
+
+        members.append(("control", .object(fields)))
       }
 
       members.append(("applet", try encode(applet)))
@@ -380,10 +407,38 @@ public enum LayoutCodec {
     guard let raw, let members = try? Members(raw.members()) else { return .disconnected }
 
     let access = members["access"]?.text.flatMap(PaneAccessMode.init(rawValue:)) ?? .disconnected
+    let exec = members["exec"].flatMap(decodeExec)
     let driver =
-      members["driver"]?.text.flatMap(PaneDriverKind.init(rawValue:)) ?? PaneDriverKind.none
+      exec == nil
+      ? PaneDriverKind.none
+      : members["driver"]?.text.flatMap(PaneDriverKind.init(rawValue:)) ?? PaneDriverKind.none
 
-    return SavedPaneControl(access: access, driver: driver)
+    return SavedPaneControl(access: access, driver: driver, exec: exec)
+  }
+
+  /// A saved exec declaration. One that is damaged, or that the declaration's own checks refuse,
+  /// reads as none, so a damaged file can never name a program to run. Any field beyond these,
+  /// such as an environment value a hand edit added, is not read.
+  private static func decodeExec(_ raw: RawJSON) -> ExecDeclaration? {
+    guard let members = try? Members(raw.members()),
+      let argv = try? members["argv"]?.elements().map({ $0.text }),
+      let keys = try? (members["environmentKeys"]?.elements() ?? []).map({ $0.text })
+    else { return nil }
+
+    let arguments = argv.compactMap { $0 }
+    let names = keys.compactMap { $0 }
+
+    guard arguments.count == argv.count, names.count == keys.count else { return nil }
+
+    var directory: String?
+
+    if let value = members["directory"] {
+      guard let text = value.text else { return nil }
+
+      directory = text
+    }
+
+    return try? ExecDeclaration(arguments: arguments, directory: directory, environmentKeys: names)
   }
 
   /// The members of one object, scanned once. The last of a repeated key wins, as in JSON.

@@ -143,6 +143,25 @@ final class ScriptReplyReaderTests: XCTestCase {
     assertRejected([3, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF], "the largest 64-bit value")
   }
 
+  /// Catches a double that does not reach the script as the same number, or one that is not finite
+  /// reaching it at all. The bytes are IEEE 754 doubles, most significant first.
+  func testDoublesAreReadExactlyAndOnlyWhenFinite() {
+    let negative: [UInt8] = [7] + withUnsafeBytes(of: (-1.5).bitPattern.bigEndian, Array.init)
+    let script = """
+      (import uniterm)
+      (assert (= (uniterm/list-windows) -1.5) "the double changed")
+      """
+
+    let (status, message) = run(script, reply: negative)
+
+    XCTAssertEqual(status, UNITERM_SCRIPT_OK, message)
+
+    assertRejected(
+      [7] + withUnsafeBytes(of: Double.infinity.bitPattern.bigEndian, Array.init), "infinity")
+    assertRejected([7] + withUnsafeBytes(of: Double.nan.bitPattern.bigEndian, Array.init), "NaN")
+    assertRejected([7, 0, 0], "a short double")
+  }
+
   /// Catches a record with a key twice, which would let the later value hide the earlier one, and
   /// a key that is empty or not a name.
   func testRecordsWithRepeatedOrBadKeysAreRefused() {

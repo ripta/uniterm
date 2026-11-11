@@ -201,6 +201,43 @@ final class FakeWindowAPI: ScriptWindowAPI {
     return .null
   }
 
+  /// Stands in for shared dispatch. A chart type or schema version 2 is unsupported, and the
+  /// command `explode` is refused. Anything else echoes what arrived, with a negative and a
+  /// fractional number so the reply proves both reach the script.
+  func sendCommand(
+    to target: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
+  ) async throws -> ScriptValue {
+    calls.append(
+      .sendCommand(
+        pane: target, appletType: appletType, schemaVersion: schemaVersion, command: command,
+        arguments: arguments))
+    callers.append(caller)
+
+    try check(Self.reference(target))
+
+    guard appletType == "fixture-slides" else {
+      throw ScriptCallError.unsupported("the pane runs a fixture-slides applet, not \(appletType)")
+    }
+
+    guard schemaVersion == 1 else {
+      throw ScriptCallError.unsupported("the applet takes command schema version 1")
+    }
+
+    guard command != "explode" else { throw ScriptCallError.refused("the applet refused") }
+
+    // A reply past the reply frame's bound, as an applet that answered with too much would make.
+    if command == "huge-reply" {
+      return .array(Array(repeating: .string(String(repeating: "r", count: 4000)), count: 20))
+    }
+
+    try stillAllowed()
+
+    return .record([
+      "command": .string(command), "arguments": .string(arguments), "offset": .number(-1.5),
+    ])
+  }
+
   private func check(_ pane: ScriptPaneReference) throws {
     guard pane.window == 7 else { throw ScriptCallError.notFound("the window is not open") }
 

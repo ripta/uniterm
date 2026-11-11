@@ -18,6 +18,10 @@ import TerminalSurface
 import TextViewerApplet
 import WindowKit
 
+#if DEBUG
+  import AppletFixtures
+#endif
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private let logger = Logger(subsystem: "dev.uniterm.app", category: "app")
@@ -185,13 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       windows.wireControllers(to: host)
 
-      host.onPendingRequestsActiveChanged = { [weak windows] active in
-        if active {
-          windows?.setWindowState(.pendingPermissions, text: "Pending permission requests")
-        } else {
-          windows?.clearWindowState(.pendingPermissions)
-        }
-      }
+      host.onPendingRequestsActiveChanged = { [weak self] _ in self?.refreshPendingSlot() }
 
       windows.wireSessionReporting(
         onStarted: { [weak host] windowID, pane, _, pid, started, generation in
@@ -209,6 +207,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       logger.error("scripting did not start: \(String(describing: error), privacy: .public)")
       windows.post(level: .warning, text: "Scripts cannot connect to uniterm: \(error)")
     }
+  }
+
+  /// UI tests set `UNITERM_TEST_APPLETS` to 1 to register the hosted slide, notes, and chart
+  /// fixtures, so an exec pane can be driven in the real app. Only debug builds compile the
+  /// registration in, so no release applet gains exec support through it.
+  private var testAppletsEnabled: Bool {
+    #if DEBUG
+      return debugEnvironment["UNITERM_TEST_APPLETS"] == "1"
+    #else
+      return false
+    #endif
+  }
+
+  /// The applet types this build's windows know: the built-in ones, and the fixtures when a debug
+  /// build is asked for them.
+  private var appletDeclarations: [AppletTypeDeclaration] {
+    #if DEBUG
+      if testAppletsEnabled { return BuiltInApplets.declarations + AppletFixtures.declarations }
+    #endif
+
+    return BuiltInApplets.declarations
   }
 
   /// UI tests set `UNITERM_BROWSER_DIR` so the browser's own files stay out of the developer's
@@ -332,6 +351,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       },
       traceSigint: debugEnvironment["UNITERM_REPL_TRACE_SIGINT"] == "1")
 
+    #if DEBUG
+      let testApplets = testAppletsEnabled
+    #endif
+
+    let declarations = appletDeclarations
+
     let restoreApplet: AppletRestorer = { description in
       switch description.type {
       case TerminalDescription.typeID:
@@ -358,6 +383,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try ReplApplet(engine: engine, services: replServices, restoring: description)
 
       default:
+        #if DEBUG
+          if testApplets, AppletFixtures.typeIDs.contains(description.type) {
+            return try AppletFixtures.restore(description)
+          }
+        #endif
+
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
       }
     }
@@ -395,25 +426,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       makeRestoredController: { identifier, restored in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          commands: commands, appletTypes: BuiltInApplets.declarations, restoring: restored,
+          commands: commands, appletTypes: declarations, restoring: restored,
           restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       },
       makeRoutedController: { identifier, applet in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          commands: commands, appletTypes: BuiltInApplets.declarations, startingWith: applet,
+          commands: commands, appletTypes: declarations, startingWith: applet,
           restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       },
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          startingIn: directory, commands: commands, appletTypes: BuiltInApplets.declarations,
+          startingIn: directory, commands: commands, appletTypes: declarations,
           restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       })
     windowSet = windows
+    windows.launchAuthority.onActiveChanged = { [weak self] _ in self?.refreshPendingSlot() }
 
     // Scripting starts before any window, so a REPL that a window restores finds the listener.
     startScripting(windows: windows)
@@ -554,6 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    windowSet?.endDriversForQuit()
     scriptHost?.stop()
     layoutPersistence?.saveForQuit()
     terminalEngine?.removeConfigFile()
@@ -711,12 +744,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     controller.present()
   }
 
+  /// The pending-permissions slot shows while a program waits for a pane or a driver waits to run.
+  private func refreshPendingSlot() {
+    guard let windows = windowSet else { return }
+
+    let waiting =
+      scriptHost?.allPendingRequests().isEmpty == false
+      || !windows.launchAuthority.requests.isEmpty
+
+    if waiting {
+      windows.setWindowState(.pendingPermissions, text: "Pending permission requests")
+    } else {
+      windows.clearWindowState(.pendingPermissions)
+    }
+  }
+
   private func presentPendingRequests() {
-    guard let host = scriptHost, let windows = windowSet else { return }
+    guard let windows = windowSet else { return }
 
     let controller =
       pendingRequestsWindowController
-      ?? PendingRequestsWindowController(scriptHost: host, windows: windows)
+      ?? PendingRequestsWindowController(scriptHost: scriptHost, windows: windows)
     pendingRequestsWindowController = controller
     controller.showWindow(nil)
   }

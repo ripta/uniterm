@@ -66,6 +66,15 @@ struct PaneControlMark: Equatable {
   }
 }
 
+/// What the pane's exec strip shows: where its driver stands, and the action the user can take.
+/// The window builds it from the pane's exec attachment, never from the applet or the driver.
+struct PaneExecStatus: Equatable {
+  var text: String
+
+  /// Run or Restart, or nil while nothing can be started.
+  var action: String?
+}
+
 /// The control actions the badge's menu offers. The window runs each one for this pane.
 enum PaneControlAction {
   case enable
@@ -95,6 +104,22 @@ final class PaneFrameView: NSView {
       if controlMark != oldValue { refreshBadge() }
     }
   }
+
+  /// The host's strip at the pane's foot, for a pane that declares an exec driver. Its button is
+  /// the only way to start the driver, so a run is always the user's own action.
+  let execStrip = NSView()
+  private let execLabel = NSTextField(labelWithString: "")
+  private let execButton = NSButton(title: "Run", target: nil, action: nil)
+
+  static let execStripHeight: CGFloat = 28
+
+  var execStatus: PaneExecStatus? {
+    didSet {
+      if execStatus != oldValue { refreshExecStrip() }
+    }
+  }
+
+  var onExecAction: (() -> Void)?
 
   /// Runs a control action the user chose from the badge's menu.
   var onControlAction: ((PaneControlAction) -> Void)?
@@ -142,6 +167,23 @@ final class PaneFrameView: NSView {
     controlBadge.isHidden = true
     addSubview(controlBadge)
 
+    execStrip.wantsLayer = true
+    execStrip.isHidden = true
+    execStrip.setAccessibilityElement(true)
+    execStrip.setAccessibilityRole(.group)
+    execStrip.setAccessibilityIdentifier("pane-exec-\(paneID)")
+    execLabel.lineBreakMode = .byTruncatingTail
+    execLabel.font = .systemFont(ofSize: 11)
+    execLabel.setAccessibilityIdentifier("pane-exec-status-\(paneID)")
+    execButton.controlSize = .small
+    execButton.bezelStyle = .push
+    execButton.target = self
+    execButton.action = #selector(runExecAction)
+    execButton.setAccessibilityIdentifier("pane-exec-run-\(paneID)")
+    execStrip.addSubview(execLabel)
+    execStrip.addSubview(execButton)
+    addSubview(execStrip)
+
     setAccessibilityElement(true)
     setAccessibilityRole(.group)
     setAccessibilityIdentifier("pane-\(paneID)")
@@ -164,7 +206,13 @@ final class PaneFrameView: NSView {
   }
 
   private var innerFrame: NSRect {
-    Self.appletFrame(in: bounds)
+    var frame = Self.appletFrame(in: bounds)
+
+    if execStatus != nil {
+      frame.size.height = max(0, frame.height - Self.execStripHeight)
+    }
+
+    return frame
   }
 
   /// The applet's frame for a pane with these bounds: the bounds less the gutter on every side.
@@ -180,6 +228,43 @@ final class PaneFrameView: NSView {
   override func resizeSubviews(withOldSize oldSize: NSSize) {
     applet.view.frame = innerFrame
     controlBadge.frame = Self.badgeFrame(in: bounds)
+    layoutExecStrip()
+  }
+
+  private func layoutExecStrip() {
+    let inner = Self.appletFrame(in: bounds)
+
+    execStrip.frame = NSRect(
+      x: inner.minX, y: max(inner.minY, inner.maxY - Self.execStripHeight), width: inner.width,
+      height: min(inner.height, Self.execStripHeight))
+
+    let button = execButton.isHidden ? 0 : min(execStrip.bounds.width / 3, 90)
+
+    execButton.frame = NSRect(
+      x: execStrip.bounds.width - button - 6, y: 3, width: button, height: 22)
+    execLabel.frame = NSRect(
+      x: 8, y: 6, width: max(0, execStrip.bounds.width - button - 20), height: 16)
+  }
+
+  private func refreshExecStrip() {
+    guard let status = execStatus else {
+      execStrip.isHidden = true
+      applet.view.frame = innerFrame
+      return
+    }
+
+    execStrip.isHidden = false
+    execLabel.stringValue = status.text
+    execLabel.toolTip = status.text
+    execButton.isHidden = status.action == nil
+    execButton.title = status.action ?? ""
+    execStrip.layer?.backgroundColor = palette[.mantle].cgColor
+    applet.view.frame = innerFrame
+    layoutExecStrip()
+  }
+
+  @objc private func runExecAction() {
+    onExecAction?()
   }
 
   /// The badge sits in the pane's top right corner, inside the gutter.
@@ -256,6 +341,7 @@ final class PaneFrameView: NSView {
     applet.apply(palette)
     refresh()
     refreshBadge()
+    refreshExecStrip()
   }
 
   private func refresh() {

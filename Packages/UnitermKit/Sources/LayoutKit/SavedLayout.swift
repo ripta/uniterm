@@ -5,13 +5,19 @@ import PaneModel
 
 /// The control a pane had when the layout was saved. It is inert intent: a restored pane starts
 /// disconnected with no driver whatever this says, and the user enables it again by hand.
+///
+/// An exec declaration saves its argv, its directory, and the names of the environment keys it
+/// needs. It never saves an environment value, an approval, or a process, so a restored exec pane
+/// runs nothing until the user chooses Run.
 public struct SavedPaneControl: Sendable, Equatable {
   public var access: PaneAccessMode
   public var driver: PaneDriverKind
+  public var exec: ExecDeclaration?
 
-  public init(access: PaneAccessMode, driver: PaneDriverKind) {
+  public init(access: PaneAccessMode, driver: PaneDriverKind, exec: ExecDeclaration? = nil) {
     self.access = access
-    self.driver = driver
+    self.driver = exec == nil ? driver : .exec
+    self.exec = exec
   }
 
   public static let disconnected = SavedPaneControl(access: .disconnected, driver: .none)

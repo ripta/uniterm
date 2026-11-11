@@ -52,6 +52,9 @@ let package = Package(
     .library(name: "ScriptRuntime", targets: ["ScriptRuntime"]),
     .library(name: "ScriptHost", targets: ["ScriptHost"]),
     .library(name: "ReplApplet", targets: ["ReplApplet"]),
+    .library(name: "ExecDriver", targets: ["ExecDriver"]),
+    // Only a debug build of the app registers the fixtures, behind UNITERM_TEST_APPLETS.
+    .library(name: "AppletFixtures", targets: ["AppletFixtures"]),
   ],
   dependencies: [
     // The first third-party Swift package. Only TableData uses it. The version is exact, and
@@ -73,11 +76,14 @@ let package = Package(
     .target(name: "PaneModel"),
     .target(name: "LayoutKit", dependencies: ["AppletKit", "PaneModel"]),
     .target(name: "FileRouting", dependencies: ["AppletKit"]),
+    // An applet's exec driver: the JSON-lines wire, the bounded pipes, and the child process. It
+    // reads and writes on threads of its own and hops to the main thread with bounded batches.
+    .target(name: "ExecDriver", dependencies: ["AppletKit", "StatusKit"]),
     .target(
       name: "WindowKit",
       dependencies: [
         "Theme", "Preferences", "AppletKit", "StatusKit", "PaneModel", "LayoutKit", "FileRouting",
-        "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire",
+        "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ExecDriver",
       ]),
     .target(name: "SettingsKit", dependencies: ["Preferences"]),
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
@@ -219,7 +225,8 @@ let package = Package(
       name: "AppletCatalogTests",
       dependencies: [
         "AppletCatalog", "FileRouting", "AppletKit", "WindowKit", "BrowserApplet", "Preferences",
-        "BrowserTestSupport",
+        "BrowserTestSupport", "TerminalApplet", "ReplApplet", "DataViewerApplet", "MapViewerApplet",
+        "ImageViewerApplet", "TextViewerApplet",
       ]),
     // Test support. It builds ZIP archives for the tests of both targets that read workbooks, and
     // holds the seeded generator the table and map fuzzers share.
@@ -228,6 +235,13 @@ let package = Package(
     .target(
       name: "AppletTestSupport", dependencies: ["AppletKit", "StatusKit"],
       path: "Tests/AppletTestSupport"),
+    // Hosted slide, notes, and chart applets with real command and event schemas. The exec wire
+    // and shared dispatch are tested against them, and a debug app can register them.
+    .target(
+      name: "AppletFixtures", dependencies: ["AppletKit", "Theme"], path: "Tests/AppletFixtures"),
+    // The perl driver the exec tests run, with a mode for each way a driver behaves or misbehaves.
+    .target(
+      name: "ExecTestSupport", path: "Tests/ExecTestSupport", resources: [.copy("Fixtures")]),
     // The one place tests record the test process as a terminal session root, for the script
     // host's tests and the REPL applet's.
     .target(
@@ -313,7 +327,14 @@ let package = Package(
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "ProcessInspectionTests", dependencies: ["ProcessInspection"]),
-    .testTarget(name: "AppletKitTests", dependencies: ["AppletKit", "AppletTestSupport"]),
+    .testTarget(
+      name: "AppletKitTests", dependencies: ["AppletKit", "AppletTestSupport", "AppletFixtures"]),
+    .testTarget(
+      name: "ExecDriverTests",
+      dependencies: [
+        "ExecDriver", "AppletKit", "AppletFixtures", "StatusKit", "TableTestSupport",
+        "ExecTestSupport",
+      ]),
     .testTarget(name: "LayoutKitTests", dependencies: ["LayoutKit", "AppletKit", "PaneModel"]),
     .testTarget(
       name: "TerminalAppletTests",
@@ -330,6 +351,7 @@ let package = Package(
       dependencies: [
         "WindowKit", "Theme", "Preferences", "StatusKit", "AppletKit", "PaneModel", "LayoutKit",
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
+        "AppletFixtures", "ExecDriver", "ExecTestSupport",
       ]),
   ],
   swiftLanguageModes: [.v6],
