@@ -32,7 +32,7 @@ final class LayoutGroupCodecTests: XCTestCase {
       + #""applet":{"type":"fake","version":1,"payload":"p2"}}}]}}"#
 
     XCTAssertTrue(text.contains(expected), text)
-    XCTAssertTrue(text.hasPrefix(#"{"version":2,"#))
+    XCTAssertTrue(text.hasPrefix(#"{"version":3,"#))
 
     let decoded = try LayoutCodec.decode(Data(text.utf8))
 

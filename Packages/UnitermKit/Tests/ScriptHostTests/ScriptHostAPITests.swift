@@ -161,10 +161,48 @@ final class ScriptHostAPITests: XCTestCase {
     XCTAssertEqual(windows.sent.first?.content.count, ScriptProtocol.maxSendBytes)
   }
 
+  /// Catches a send-command that loses its target, applet type, schema version, or command, that
+  /// writes arguments the app reads as other JSON, or a refusal that reaches the script as plain
+  /// text in place of a struct naming its kind.
+  func testSendCommandCarriesItsCallAndRaisesStructuredErrors() async throws {
+    try await run("send-command")
+
+    let sent = windows.calls.compactMap { call -> (ScriptTarget, String, UInt32, String, String)? in
+      guard case .sendCommand(let pane, let type, let version, let command, let arguments) = call
+      else { return nil }
+
+      return (pane, type, version, command, arguments)
+    }
+
+    XCTAssertEqual(sent.count, 8)
+    XCTAssertEqual(sent.map(\.0).first, .pane(pane))
+    XCTAssertEqual(
+      sent.map(\.1),
+      [
+        "fixture-slides", "fixture-slides", "fixture-slides", "fixture-chart", "fixture-slides",
+        "fixture-slides", "fixture-slides", "fixture-slides",
+      ])
+    XCTAssertEqual(sent.map(\.2), [1, 1, 1, 1, 2, 1, 1, 1])
+    XCTAssertEqual(sent[1].0, .nearest(kind: "fixture-slides"))
+    XCTAssertEqual(sent[1].3, "status")
+    XCTAssertEqual(sent[1].4, "{}")
+    XCTAssertEqual(sent[2].4, "{}")
+
+    let arguments = try JSONSerialization.jsonObject(with: Data(sent[0].4.utf8)) as? NSDictionary
+    let expected: NSDictionary = [
+      "index": 2, "label": "two\n\"quoted\"", "ratio": 0.5, "below": -3,
+      "flags": [true, false, NSNull()], "nested": ["inner": [1, 2]], "mode": "row",
+    ]
+
+    XCTAssertEqual(arguments, expected)
+  }
+
   /// Catches a function that passes a bad argument on to the app. Each fixture holds the error
   /// cases of one function, and no call may reach the app.
   func testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem() async throws {
-    for fixture in ["bad-list-panes", "bad-open-pane", "bad-open-tab", "bad-send"] {
+    for fixture in [
+      "bad-list-panes", "bad-open-pane", "bad-open-tab", "bad-send", "bad-send-command",
+    ] {
       try await run(fixture)
     }
 

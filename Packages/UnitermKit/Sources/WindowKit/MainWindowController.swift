@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import ExecDriver
 import LayoutKit
 import PaneModel
 import PlaceSearch
@@ -78,6 +79,26 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Which connections act for which pane, and their names. The set of windows gives it to each
   /// window. Without one, no connection acts for any pane.
   weak var controllerAuthority: (any ControllerAuthority)?
+
+  /// Each pane's exec driver declaration and where it stands, keyed by pane.
+  var execAttachments: [NodeID: ExecAttachment] = [:]
+
+  /// The one dispatch every applet command in this window goes through, from a remote caller or
+  /// an exec driver. Tests replace it with one they step by hand.
+  var dispatcher = ControlDispatcher()
+
+  /// Who may launch which driver. The window set gives every window the same one, so the
+  /// Pending Requests panel lists them all.
+  var launchAuthority = ExecLaunchAuthority()
+
+  /// The base a driver's environment starts from. Tests replace it.
+  var execEnvironment = ExecEnvironment.current()
+
+  /// How long a driver has after SIGTERM before SIGKILL.
+  var execKillGrace: DispatchTimeInterval = .seconds(2)
+
+  /// Asks the user for a driver's environment values. Tests replace it.
+  var execValuesAsker: ExecValuesAsker = ExecValuesSheet.present
 
   /// Asks the user for a permission an applet requests. Tests replace it.
   var permissionAsker: PermissionAsker = PermissionDialog.present
@@ -191,7 +212,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     let panes = try restored.map { try PaneRestoration.restore($0, restorer: restoreApplet) }
 
     for (pane, intent) in panes?.intents ?? [:] {
-      paneControls.remember(intent, for: pane)
+      paneControls.remember(SavedPaneControl(access: intent.access, driver: .none), for: pane)
     }
 
     if let panes {
@@ -231,6 +252,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     refreshControlMarks()
+
+    for (pane, intent) in panes?.intents ?? [:] {
+      if let exec = intent.exec { try? declareExecDriver(exec, for: pane, restored: true) }
+    }
 
     for applet in paneArea.applets { adopt(applet) }
 
@@ -504,6 +529,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     paneArea.paneView(for: pane)?.currentControlMark = { [weak self] in
       self?.controlMark(for: pane)
     }
+    paneArea.paneView(for: pane)?.onExecAction = { [weak self] in
+      self?.runExecDriver(pane)
+    }
+    paneArea.paneView(for: pane)?.execStatus = execStatus(of: pane)
   }
 
   /// Makes the applet ready for the window. A launcher also learns how to open its choice, and gets
@@ -906,10 +935,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     let closed = ClosedPane(
       stamp: issueCloseStamp(), placement: removed.placement, description: applet.describe(),
-      title: applet.title)
+      title: applet.title, exec: execAttachments[pane]?.declaration)
 
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
+    execPaneClosed(pane)
     applet.close()
     paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)
@@ -928,6 +958,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
+    execPaneClosed(pane)
     applet.close()
     paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)
@@ -1014,6 +1045,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     ledger.remove(stamp: closed.stamp)
+
+    if let exec = closed.exec { try? declareExecDriver(exec, for: id, restored: true) }
+
     startPendingApplets()
     paneArea.focus(id)
 
@@ -1219,6 +1253,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     guard !panesClosed else { return }
 
     panesClosed = true
+
+    for pane in paneArea.tree.paneIDs { execPaneClosed(pane) }
 
     for applet in paneArea.applets { applet.close() }
 

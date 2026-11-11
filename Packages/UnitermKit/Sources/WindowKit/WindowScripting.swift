@@ -272,6 +272,121 @@ public final class WindowScripting: ScriptWindowAPI {
     return (controller, pane, applet, target)
   }
 
+  // MARK: Applet commands
+
+  /// Arguments that are not JSON are refused before anything else, since they say nothing about
+  /// any pane. Then the caller's authority over the target is checked, and the window's shared
+  /// dispatch checks the applet type, the schema version, the command, and its arguments.
+  /// Delivery checks the caller's authority again, that the target still names the same pane and
+  /// applet, and that the pane's control generation has not changed.
+  public func sendCommand(
+    to target: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
+  ) async throws -> ScriptValue {
+    let parsed: JSONValue
+
+    do {
+      parsed = try JSONDecoder().decode(JSONValue.self, from: Data(arguments.utf8))
+    } catch {
+      throw ScriptCallError.badArgument("the arguments are not a JSON object")
+    }
+
+    let (controller, pane, applet) = try resolve(target, for: caller)
+
+    // A disconnect followed by a new enable issues new generations, so work queued under the
+    // first grant of control never runs under the second.
+    let generation = controller.control(of: pane).generation
+
+    let submission = AppletCommandSubmission(
+      appletType: appletType, schemaVersion: Int(schemaVersion), name: command, arguments: parsed)
+
+    let result = await withCheckedContinuation { continuation in
+      controller.dispatcher.submit(
+        submission, to: applet,
+        authority: { [weak self] in
+          guard let self else { return AppletCommandError(.refused, "uniterm is quitting") }
+
+          do {
+            try stillAllowed()
+
+            let (now, nowPane, nowApplet) = try resolve(target, for: caller)
+
+            guard now === controller, nowPane == pane, nowApplet === applet else {
+              return AppletCommandError(.notFound, "the pane is not open in that window")
+            }
+
+            guard controller.control(of: pane).generation == generation else {
+              return AppletCommandError(
+                .refused, "the pane's control changed after the command was sent")
+            }
+
+            return nil
+          } catch let error as ScriptCallError {
+            return AppletCommandError(error.kind == .notFound ? .notFound : .refused, error.text)
+          } catch {
+            return AppletCommandError(.refused, "\(error)")
+          }
+        },
+        reply: { continuation.resume(returning: $0) })
+    }
+
+    switch result {
+    case .success(let value):
+      return try Self.scriptValue(value, depth: 0)
+
+    case .failure(let error):
+      throw ScriptCallError(Self.kind(of: error.code), error.message)
+    }
+  }
+
+  private static func kind(of code: AppletCommandError.Code) -> ScriptFailureKind {
+    switch code {
+    case .unsupportedApplet, .unsupportedVersion: return .unsupported
+    case .unknownCommand, .badArgument: return .badArgument
+    case .refused, .busy: return .refused
+    case .notFound: return .notFound
+    case .failed: return .failed
+    }
+  }
+
+  /// An applet's reply as a script value. A whole number that a Janet number holds exactly stays
+  /// an integer, and any other finite number is a double. The command has run by now, so a reply
+  /// a script cannot hold is reported as a lost reply, never as a refusal.
+  static func scriptValue(_ value: JSONValue, depth: Int) throws -> ScriptValue {
+    guard depth <= ScriptValue.maxDepth else {
+      throw ScriptCallError(
+        .replyLost, "the command ran, but its reply nests too deeply for a script")
+    }
+
+    switch value {
+    case .null: return .null
+    case .bool(let flag): return .bool(flag)
+    case .string(let text): return .string(text)
+
+    case .number(let number):
+      guard number.isFinite else {
+        throw ScriptCallError(.replyLost, "the command ran, but its reply holds a bad number")
+      }
+
+      if number >= 0, number == number.rounded(), number <= Double(ScriptProtocol.maxID) {
+        return .integer(UInt64(number))
+      }
+
+      return .number(number)
+
+    case .array(let values):
+      return .array(try values.map { try scriptValue($0, depth: depth + 1) })
+
+    case .object(let fields):
+      guard fields.count <= ScriptValue.maxRecordFields else {
+        throw ScriptCallError(
+          .replyLost, "the command ran, but its reply has too many fields for a script")
+      }
+
+      return .record(try fields.mapValues { try scriptValue($0, depth: depth + 1) })
+    }
+  }
+
   // MARK: Authority
 
   /// What a caller whose own pane is disconnected is told. It names the local action, so the user

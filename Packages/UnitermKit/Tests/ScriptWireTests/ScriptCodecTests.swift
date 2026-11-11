@@ -31,6 +31,12 @@ final class ScriptCodecTests: XCTestCase {
       .send(pane: pane, name: "report.csv", content: Data("a,b\n1,2\n".utf8)),
       .send(pane: tab, name: "empty.txt", content: Data()),
       .send(pane: nearest, name: "near.csv", content: Data("a\n".utf8)),
+      .sendCommand(
+        pane: pane, appletType: "fixture-slides", schemaVersion: 1, command: "show-slide",
+        arguments: #"{"index":2}"#),
+      .sendCommand(
+        pane: nearest, appletType: "fixture-chart", schemaVersion: UInt32(Int32.max),
+        command: "set-series", arguments: "{}"),
     ]
   }()
 
@@ -345,6 +351,9 @@ extension ScriptCodecTests {
       .bool(false),
       .integer(0),
       .integer(ScriptProtocol.maxID),
+      .number(-1.5),
+      .number(0.1),
+      .number(-Double.greatestFiniteMagnitude),
       .string(""),
       .string("caf\u{00E9} \u{1F600}"),
       .array([]),
@@ -361,12 +370,46 @@ extension ScriptCodecTests {
     }
   }
 
+  /// Catches a send-command whose arguments pass the bound, or whose schema version is past the
+  /// largest a script can name, being read as a call.
+  func testSendCommandBoundsAreRefusedWhenDecoded() {
+    var body = ByteWriter()
+
+    body.put(UInt16(7))
+    body.put(target: .nearest(kind: "fixture-slides"))
+    body.put(string: "fixture-slides", limit: ScriptProtocol.maxKindBytes)
+    body.put(UInt32(1))
+    body.put(string: "status", limit: ScriptProtocol.maxCommandNameBytes)
+    body.put(UInt32(ScriptProtocol.maxCommandArgumentBytes + 1))
+    body.put(raw: Data(repeating: 0x20, count: ScriptProtocol.maxCommandArgumentBytes + 1))
+
+    var reader = ByteReader(body.bytes)
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &reader))
+
+    var version = ByteWriter()
+
+    version.put(UInt16(7))
+    version.put(target: .nearest(kind: "fixture-slides"))
+    version.put(string: "fixture-slides", limit: ScriptProtocol.maxKindBytes)
+    version.put(UInt32(ScriptProtocol.maxSchemaVersion) + 1)
+    version.put(string: "status", limit: ScriptProtocol.maxCommandNameBytes)
+    version.put(UInt32(2))
+    version.put(raw: Data("{}".utf8))
+
+    var versionReader = ByteReader(version.bytes)
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &versionReader))
+  }
+
   /// Catches a value the shim could not read being sent anyway: an integer a Janet number cannot
   /// hold, a key that is not a name, and nesting past the depth the shim allows.
   func testValuesThatCannotBeSentAreRefusedWhenEncoded() {
     XCTAssertThrowsError(try ScriptValue.integer(ScriptProtocol.maxID + 1).encoded())
     XCTAssertThrowsError(try ScriptValue.record(["two words": .null]).encoded())
     XCTAssertThrowsError(try ScriptValue.record(["": .null]).encoded())
+    XCTAssertThrowsError(try ScriptValue.number(.infinity).encoded())
+    XCTAssertThrowsError(try ScriptValue.number(.nan).encoded())
 
     var deep = ScriptValue.null
 

@@ -37,6 +37,16 @@ public struct ControlCombination: Sendable, Hashable, CustomStringConvertible {
 
   public static let remoteControlled = ControlCombination(access: .remoteControlled, driver: .none)
 
+  public static let disconnectedExec = ControlCombination(access: .disconnected, driver: .exec)
+
+  public static let remoteControlledExec = ControlCombination(
+    access: .remoteControlled, driver: .exec)
+
+  /// Every combination, for a type that supports both access modes with and without a driver.
+  public static let all: Set<ControlCombination> = [
+    .disconnected, .remoteControlled, .disconnectedExec, .remoteControlledExec,
+  ]
+
   public var description: String {
     driver == .none ? access.rawValue : "\(access.rawValue) with an \(driver.rawValue) driver"
   }

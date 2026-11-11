@@ -7,7 +7,7 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 5
+  public static let version: UInt16 = 6
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -33,6 +33,16 @@ public enum ScriptProtocol {
 
   /// The longest applet kind a script may name, in UTF-8 bytes.
   public static let maxKindBytes = 32
+
+  /// The longest applet command name a script may send, in UTF-8 bytes.
+  public static let maxCommandNameBytes = 64
+
+  /// The most bytes of JSON one applet command's arguments may hold. It leaves room in the control
+  /// frame for the rest of the call.
+  public static let maxCommandArgumentBytes = 32 * 1024
+
+  /// The largest command schema version a script may name.
+  public static let maxSchemaVersion: UInt32 = 1 << 31 - 1
 
   /// The longest directory a script may name, in UTF-8 bytes. It matches the system's path limit.
   public static let maxDirectoryBytes = 1024
@@ -221,6 +231,13 @@ public enum ScriptCall: Equatable, Sendable {
   case openTab(pane: ScriptTarget, directory: String?)
   case send(pane: ScriptTarget, name: String, content: Data)
 
+  /// One applet command for a pane. It names the applet type and the command schema version the
+  /// script was written for, and the app refuses either when the pane does not support it. The
+  /// arguments are a JSON object as text, which the app checks against the applet's schema.
+  case sendCommand(
+    pane: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    arguments: String)
+
   var code: UInt16 {
     switch self {
     case .postStatus: return 1
@@ -229,6 +246,7 @@ public enum ScriptCall: Equatable, Sendable {
     case .openPane: return 4
     case .openTab: return 5
     case .send: return 6
+    case .sendCommand: return 7
     }
   }
 
@@ -264,6 +282,16 @@ public enum ScriptCall: Equatable, Sendable {
       body.put(target: pane)
       body.put(string: name, limit: ScriptProtocol.maxFileNameBytes)
       body.put(raw: content)
+
+    case .sendCommand(let pane, let type, let version, let command, let arguments):
+      body.put(target: pane)
+      body.put(string: type, limit: ScriptProtocol.maxKindBytes)
+      body.put(version)
+      body.put(string: command, limit: ScriptProtocol.maxCommandNameBytes)
+      let bytes = Data(arguments.utf8.prefix(ScriptProtocol.maxCommandArgumentBytes))
+
+      body.put(UInt32(bytes.count))
+      body.put(raw: bytes)
     }
   }
 
@@ -319,6 +347,36 @@ public enum ScriptCall: Equatable, Sendable {
 
       return .send(pane: pane, name: name, content: content)
 
+    case 7:
+      let pane = try reader.target()
+      let type = try reader.string(limit: ScriptProtocol.maxKindBytes)
+      let version = try reader.u32()
+
+      guard version <= ScriptProtocol.maxSchemaVersion else {
+        throw WireError.badValue("a schema version is too large")
+      }
+
+      let command = try reader.string(limit: ScriptProtocol.maxCommandNameBytes)
+      let count = Int(try reader.u32())
+
+      guard count <= ScriptProtocol.maxCommandArgumentBytes else {
+        throw WireError.tooLong(declared: count, limit: ScriptProtocol.maxCommandArgumentBytes)
+      }
+
+      guard reader.remaining >= count else { throw WireError.truncated }
+
+      var bytes = Data()
+
+      for _ in 0..<count { bytes.append(try reader.u8()) }
+
+      guard let arguments = String(data: bytes, encoding: .utf8) else {
+        throw WireError.badValue("the arguments are not UTF-8")
+      }
+
+      return .sendCommand(
+        pane: pane, appletType: type, schemaVersion: version, command: command,
+        arguments: arguments)
+
     default:
       throw WireError.badValue("an unknown host function")
     }
@@ -339,6 +397,14 @@ public enum ScriptFailureKind: UInt8, Sendable, Equatable {
   /// The window, pane, or tab the call names is not open in this launch. It may have closed, or
   /// the reference may come from an earlier launch. The text never names another pane.
   case notFound = 4
+
+  /// The pane runs another applet type than the call names, or does not support the command
+  /// schema version it names. Nothing ran.
+  case unsupported = 5
+
+  /// The applet command ran, and its reply could not be sent to the script. The command's effect
+  /// stands, so the script must not take this for a refusal.
+  case replyLost = 6
 }
 
 /// The app's answer to one call.
