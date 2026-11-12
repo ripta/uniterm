@@ -103,6 +103,7 @@
 				DocumentDecoder/DocumentDecoder.entitlements,
 				DocumentDecoder/main.swift,
 				ImageDecoder/ImageDecoder.entitlements,
+				UnitermCLI/UnitermCLI.entitlements,
 				UnitermCLI/main.swift,
 			);
 			target = 7A0000000000000000000055 /* ImageDecoder */;
@@ -113,6 +114,7 @@
 				DocumentDecoder/DocumentDecoder.entitlements,
 				ImageDecoder/ImageDecoder.entitlements,
 				ImageDecoder/main.swift,
+				UnitermCLI/UnitermCLI.entitlements,
 				UnitermCLI/main.swift,
 			);
 			target = 7A0000000000000000000069 /* DocumentDecoder */;
@@ -124,6 +126,7 @@
 				DocumentDecoder/main.swift,
 				ImageDecoder/ImageDecoder.entitlements,
 				ImageDecoder/main.swift,
+				UnitermCLI/UnitermCLI.entitlements,
 			);
 			target = 7A0000000000000000000077 /* UnitermCLI */;
 		};
@@ -740,6 +743,7 @@
 		7A000000000000000000007A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Helpers/UnitermCLI/UnitermCLI.entitlements;
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
@@ -758,6 +762,7 @@
 		7A000000000000000000007B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Helpers/UnitermCLI/UnitermCLI.entitlements;
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
