@@ -238,6 +238,39 @@ final class FakeWindowAPI: ScriptWindowAPI {
     ])
   }
 
+  /// Stands in for the window's layout. A layout with a `refuse` key is refused, and any other
+  /// answers with the anchor and two new panes, so the reply proves references reach the script.
+  func requestLayout(
+    anchor: ScriptTarget, layout: String, caller: ScriptCaller,
+    stillAllowed: @escaping @MainActor () throws -> Void
+  ) async throws -> ScriptValue {
+    calls.append(.requestLayout(pane: anchor, layout: layout))
+    callers.append(caller)
+
+    let pane = Self.reference(anchor)
+
+    try check(pane)
+
+    guard !layout.contains("\"refuse\"") else {
+      throw ScriptCallError.refused("the layout places a pane more than once")
+    }
+
+    guard !layout.contains("\"busy\"") else {
+      throw ScriptCallError.busy("another layout from this program is still being prepared")
+    }
+
+    try await directoryCheck(stillAllowed: stillAllowed)
+
+    func reference(_ id: UInt64) -> ScriptValue {
+      .record(["window": .integer(pane.window), "pane": .integer(id)])
+    }
+
+    return .record([
+      "window": .integer(pane.window),
+      "panes": .array([reference(pane.pane), reference(20), reference(21)]),
+    ])
+  }
+
   private func check(_ pane: ScriptPaneReference) throws {
     guard pane.window == 7 else { throw ScriptCallError.notFound("the window is not open") }
 

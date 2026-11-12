@@ -11,47 +11,6 @@ import XCTest
 /// grant reaching the program's next call. The package tests prove each way a grant ends.
 @MainActor
 final class PendingRequestsUITests: UnitermUITestCase {
-  private var testSocket: String { scriptDirectory + "/uniterm.sock" }
-
-  /// The app the tests drive sits beside the test runner in the build products folder.
-  /// `UNITERM_APP_PATH` names another build.
-  private func bundledCommand() throws -> String {
-    if let path = ProcessInfo.processInfo.environment["UNITERM_APP_PATH"], !path.isEmpty {
-      return path + "/Contents/Helpers/uniterm"
-    }
-
-    var folder = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
-
-    for _ in 0..<8 {
-      let app = folder.appendingPathComponent("uniterm.app")
-
-      if FileManager.default.fileExists(atPath: app.path) {
-        return app.path + "/Contents/Helpers/uniterm"
-      }
-
-      folder.deleteLastPathComponent()
-    }
-
-    throw XCTSkip("uniterm.app was not found beside the test runner")
-  }
-
-  private func write(_ text: String, to path: String) throws {
-    try Data(text.utf8).write(to: URL(fileURLWithPath: path))
-  }
-
-  /// Waits for a file the program writes, and returns what it holds.
-  private func waitForFile(_ path: String, timeout: TimeInterval = 60) -> String? {
-    let deadline = Date().addingTimeInterval(timeout)
-
-    while Date() < deadline {
-      if let text = try? String(contentsOfFile: path, encoding: .utf8) { return text }
-
-      Thread.sleep(forTimeInterval: 0.25)
-    }
-
-    return nil
-  }
-
   /// Starts the outside program from the terminal. It prints its outcome to `output`, and writes
   /// `status` once it has exited. The files are removed when the test ends.
   private func startOutsideProgram(_ name: String, in app: XCUIApplication) throws -> (

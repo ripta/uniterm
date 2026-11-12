@@ -36,16 +36,42 @@ public struct Split: Sendable, Equatable {
   }
 }
 
-/// The controller that owns a group: a live connection, named by the ID its listener gave it. An
-/// ID is never reused within a launch. A saved layout never holds one.
-public struct GroupOwner: Sendable, Hashable, CustomStringConvertible {
-  public let connection: UInt64
-
-  public init(connection: UInt64) {
-    self.connection = connection
+/// The controller that owns a group. It is a live connection, named by the ID its listener gave
+/// it, or a running exec driver, named by the ID its window gave that run. A connection's ID is
+/// never reused within a launch, and a driver's never within its window, which holds every group
+/// the driver owns. A saved layout never holds one.
+public struct GroupOwner: Sendable, Hashable, Comparable, CustomStringConvertible {
+  public enum Kind: Int, Sendable, Hashable {
+    case connection
+    case driver
   }
 
-  public var description: String { "connection \(connection)" }
+  public let kind: Kind
+  public let id: UInt64
+
+  public init(connection: UInt64) {
+    kind = .connection
+    id = connection
+  }
+
+  public init(driver: UInt64) {
+    kind = .driver
+    id = driver
+  }
+
+  /// The listener's ID for an owner that is a connection, or nil for a driver.
+  public var connection: UInt64? { kind == .connection ? id : nil }
+
+  public var description: String {
+    switch kind {
+    case .connection: return "connection \(id)"
+    case .driver: return "driver \(id)"
+    }
+  }
+
+  public static func < (lhs: GroupOwner, rhs: GroupOwner) -> Bool {
+    (lhs.kind.rawValue, lhs.id) < (rhs.kind.rawValue, rhs.id)
+  }
 }
 
 /// A node that marks the panes a controller created. It wraps one node, and never merges into its

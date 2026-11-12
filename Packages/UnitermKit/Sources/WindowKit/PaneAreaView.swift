@@ -49,21 +49,23 @@ final class PaneAreaView: NSView {
 
   override var mouseDownCanMoveWindow: Bool { false }
 
-  init(metrics: PaneMetrics = .standard, firstApplet: any Applet) {
+  /// `size` is the size the view starts at, before the window lays it out. Each pane's applet
+  /// takes its share of it, so no applet view joins the window at zero size.
+  init(metrics: PaneMetrics = .standard, firstApplet: any Applet, size: NSSize) {
     tree = PaneTree(metrics: metrics)
     focusedPane = tree.paneIDs[0]
-    super.init(frame: .zero)
+    super.init(frame: NSRect(origin: .zero, size: size))
 
     install(firstApplet, as: focusedPane)
     paneViews[focusedPane]?.isFocused = true
   }
 
   /// Makes the view for a restored tree. `applets` holds one applet for each pane of `tree`, and
-  /// `focus` is the pane that has focus. Nothing is started here.
-  init(restoring tree: PaneTree, applets: [NodeID: any Applet], focus: NodeID) {
+  /// `focus` is the pane that has focus. Nothing is started here. `size` is as for a new view.
+  init(restoring tree: PaneTree, applets: [NodeID: any Applet], focus: NodeID, size: NSSize) {
     self.tree = tree
     focusedPane = tree.paneIDs.contains(focus) ? focus : tree.paneIDs[0]
-    super.init(frame: .zero)
+    super.init(frame: NSRect(origin: .zero, size: size))
 
     for id in tree.paneIDs {
       guard let applet = applets[id] else {
@@ -158,6 +160,32 @@ final class PaneAreaView: NSView {
     tree.releaseOwner(owner)
   }
 
+  /// Gives a group with no owner to `owner`. Returns false when the group is not here or has one.
+  @discardableResult
+  func adopt(_ group: NodeID, by owner: GroupOwner) -> Bool {
+    guard tree.adopt(group, by: owner) else { return false }
+
+    changed()
+    return true
+  }
+
+  /// Lays out a controller's subtree as `plan` says, and puts each applet in the new pane of its
+  /// slot. Every pane already open keeps its view and its applet. Throws, and changes nothing,
+  /// when the tree refuses the layout. Focus stays where it was.
+  func layOut(
+    _ plan: PaneLayoutPlan, anchoredAt anchor: NodeID, for owner: GroupOwner,
+    adding applets: [any Applet]
+  ) throws -> PaneLayoutOutcome {
+    let outcome = try tree.layOut(
+      plan, anchoredAt: anchor, for: owner, slots: applets.count, in: bounds.size)
+
+    for (applet, pane) in zip(applets, outcome.created) { install(applet, as: pane) }
+
+    changed()
+    layoutSubtreeIfNeeded()
+    return outcome
+  }
+
   /// Opens a new pane where `placement` says and puts `applet` in it. The pane gets a fresh ID.
   /// Throws when the pane does not fit. Focus stays where it was, and the caller moves it.
   @discardableResult
@@ -213,8 +241,12 @@ final class PaneAreaView: NSView {
     return replaced
   }
 
+  /// The pane view takes the frame the tree gives the pane before it joins the view, so its
+  /// applet's view never enters a window at zero size. An applet's constraints cannot all hold at
+  /// zero width, and AppKit would break one on the layout pass before `layout()` sizes the pane.
   private func install(_ applet: any Applet, as pane: NodeID) {
-    let view = PaneFrameView(paneID: pane, applet: applet)
+    let frame = tree.layout(in: bounds.size).frames[pane].map(snapped) ?? .zero
+    let view = PaneFrameView(paneID: pane, applet: applet, frame: frame)
     view.apply(palette)
     paneViews[pane] = view
     addSubview(view)

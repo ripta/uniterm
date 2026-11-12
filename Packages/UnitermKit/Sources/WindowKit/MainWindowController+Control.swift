@@ -44,19 +44,22 @@ extension MainWindowController {
   }
 
   /// The controllers that have authority over the pane: the owners of the groups that hold it as
-  /// a member or as their source, and the connections that act for it.
-  func controllers(of pane: NodeID) -> Set<UInt64> {
-    var found = Set<UInt64>()
+  /// a member or as their source, and the connections that act for it. An owner is a connection
+  /// or a running driver.
+  func controllers(of pane: NodeID) -> Set<GroupOwner> {
+    var found = Set<GroupOwner>()
 
     for group in paneArea.tree.enclosingGroups(of: pane) {
       guard let owner = group.owner, group.members.contains(pane) || group.source == pane
       else { continue }
 
-      found.insert(owner.connection)
+      found.insert(owner)
     }
 
     if let controllerAuthority {
-      found.formUnion(controllerAuthority.controllers(actingFrom: scriptWindowID, pane: pane))
+      for id in controllerAuthority.controllers(actingFrom: scriptWindowID, pane: pane) {
+        found.insert(GroupOwner(connection: id))
+      }
     }
 
     return found
@@ -104,25 +107,39 @@ extension MainWindowController {
   /// Ends the authority of every controller over the pane: its live grant, its calls still
   /// waiting, and the groups it owns, in every window. The groups and their panes stay, with no
   /// owner. The pane's own mode stays as it is.
+  ///
+  /// A driver that owns a group loses it, and its run is marked revoked. It keeps the channel the
+  /// user attached to its own pane.
   func revokeController(_ pane: NodeID?) {
     guard let pane, contains(pane: pane) else { return }
 
-    let ids = controllers(of: pane)
+    let owners = controllers(of: pane)
 
-    guard !ids.isEmpty else { return }
+    guard !owners.isEmpty else { return }
 
-    controllerAuthority?.revokeControllers(ids)
+    let connections = Set(owners.compactMap(\.connection))
 
-    for id in ids { controllerEnded(id) }
+    controllerAuthority?.revokeControllers(connections)
+
+    for attachment in execAttachments.values {
+      if let owner = attachment.owner, owners.contains(owner) { attachment.revoked = true }
+    }
+
+    for owner in owners { ownerEnded(owner) }
 
     pushControl(paneControls.bump(pane), to: pane)
     refreshControlMarks()
   }
 
-  /// A controller's authority ended. Its groups in this window lose their owner, and each pane
-  /// that was a member gets a new generation, so a permission asked under the controller is stale.
+  /// A connection's authority ended. Its groups in this window lose their owner.
   func controllerEnded(_ id: UInt64) {
-    let released = paneArea.releaseOwner(GroupOwner(connection: id))
+    ownerEnded(GroupOwner(connection: id))
+  }
+
+  /// An owner's authority ended. Its groups in this window lose their owner, and each pane that
+  /// was a member gets a new generation, so a permission asked under the owner is stale.
+  func ownerEnded(_ owner: GroupOwner) {
+    let released = paneArea.releaseOwner(owner)
 
     for pane in released where contains(pane: pane) {
       pushControl(paneControls.bump(pane), to: pane)
@@ -140,6 +157,7 @@ extension MainWindowController {
     case .enable: enableRemoteControl(pane)
     case .disconnect: disconnect(pane)
     case .revoke: revokeController(pane)
+    case .adopt(let owner): adoptGroup(of: pane, by: owner)
     }
   }
 
@@ -184,14 +202,27 @@ extension MainWindowController {
       savedIntent: control.access == .disconnected ? savedIntent(of: pane) : nil,
       enableAvailable: canEnableRemoteControl(pane), revokeAvailable: canRevokeController(pane))
 
-    mark.controllers = controllers(of: pane).sorted().map {
-      controllerName(GroupOwner(connection: $0))
+    mark.controllers = controllers(of: pane).sorted().map(controllerName)
+
+    if unownedGroup(of: pane) != nil {
+      mark.adoptions = adoptionCandidates().map {
+        PaneControlMark.Adoption(owner: $0, name: controllerName($0))
+      }
     }
 
     return mark
   }
 
-  private func controllerName(_ owner: GroupOwner) -> String {
-    controllerAuthority?.controllerName(owner.connection) ?? "\(owner)"
+  /// What pane chrome calls an owner: a connection's script and PID, or a driver's program.
+  func controllerName(_ owner: GroupOwner) -> String {
+    switch owner.kind {
+    case .connection:
+      return controllerAuthority?.controllerName(owner.id) ?? "\(owner)"
+
+    case .driver:
+      let attachment = execAttachments.values.first { $0.owner == owner }
+
+      return attachment.map { "\($0.program) (driver)" } ?? "\(owner)"
+    }
   }
 }

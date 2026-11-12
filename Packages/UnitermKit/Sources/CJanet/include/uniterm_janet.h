@@ -28,6 +28,7 @@
 #define UNITERM_JANET_MAX_SEND_BYTES (1024 * 1024)
 #define UNITERM_JANET_MAX_COMMAND_NAME_BYTES 64
 #define UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES (32 * 1024)
+#define UNITERM_JANET_MAX_LAYOUT_BYTES (32 * 1024)
 
 /*
  * A call callback returns this plus a failure kind when the app answered with a failure, so a

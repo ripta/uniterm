@@ -351,7 +351,7 @@ let package = Package(
       dependencies: [
         "WindowKit", "Theme", "Preferences", "StatusKit", "AppletKit", "PaneModel", "LayoutKit",
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
-        "AppletFixtures", "ExecDriver", "ExecTestSupport",
+        "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper",
       ]),
   ],
   swiftLanguageModes: [.v6],

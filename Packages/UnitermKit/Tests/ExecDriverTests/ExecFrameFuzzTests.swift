@@ -23,11 +23,13 @@ final class ExecFrameFuzzTests: XCTestCase {
   }
 
   private static let corpus: [String] = [
-    #"{"type":"hello","protocol":1,"applet":"fixture-slides","schema":1}"#,
+    #"{"type":"hello","protocol":2,"applet":"fixture-slides","schema":1}"#,
     #"{"type":"command","id":1,"name":"set-deck","arguments":{"titles":["a","b\nc"]}}"#,
     #"{"type":"command","id":"x-2","name":"show-slide","arguments":{"index":1}}"#,
     #"{"type":"error","error":{"code":"unsupported-version","message":"synthetic"}}"#,
     #"{"type":"command","id":3,"name":"set-series","arguments":{"values":[1.5,-2,4e3,[[{}]]]}}"#,
+    #"{"type":"command","id":4,"pane":7,"applet":"fixture-notes","schema":1,"name":"clear"}"#,
+    #"{"type":"layout","id":5,"layout":{"split":"row","children":[{"pane":1},{"open":"x"}]}}"#,
   ]
 
   /// Catches a mutated stream that traps the reader or the decoder, or a reader that holds or

@@ -5,6 +5,7 @@ import LayoutKit
 import PaneModel
 import PlaceSearch
 import Preferences
+import ScriptHost
 import StatusKit
 import Theme
 
@@ -82,6 +83,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Each pane's exec driver declaration and where it stands, keyed by pane.
   var execAttachments: [NodeID: ExecAttachment] = [:]
+
+  /// The last owner ID given to a driver run in this window. Each run that starts takes the next.
+  var lastDriverOwner: UInt64 = 0
+
+  /// The owners whose layout is being prepared now. Each owner has at most one, so a controller
+  /// that sends layouts faster than they finish cannot hold more than one layout's applets.
+  var layoutsInPreparation = Set<GroupOwner>()
+
+  /// Decides whether a directory a driver's layout names is a folder here. Tests replace it.
+  var directoryExists: @Sendable (String) -> Bool = WindowScripting.isDirectory
 
   /// The one dispatch every applet command in this window goes through, from a remote caller or
   /// an exec driver. Tests replace it with one they step by hand.
@@ -215,13 +226,17 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       paneControls.remember(SavedPaneControl(access: intent.access, driver: .none), for: pane)
     }
 
+    let contentSize = NSSize(width: 960, height: 640)
+
     if let panes {
       launchRestored = Set(panes.applets.values.map { ObjectIdentifier($0) })
-      paneArea = PaneAreaView(restoring: panes.tree, applets: panes.applets, focus: panes.focus)
+      paneArea = PaneAreaView(
+        restoring: panes.tree, applets: panes.applets, focus: panes.focus, size: contentSize)
     } else if let routed {
-      paneArea = PaneAreaView(firstApplet: routed)
+      paneArea = PaneAreaView(firstApplet: routed, size: contentSize)
     } else {
-      paneArea = PaneAreaView(firstApplet: try makeApplet(.terminalShell, directory))
+      paneArea = PaneAreaView(
+        firstApplet: try makeApplet(.terminalShell, directory), size: contentSize)
     }
 
     contentController = MainContentViewController(
@@ -229,7 +244,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       palette: palettePlacement.value)
 
     let window = MainWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+      contentRect: NSRect(origin: .zero, size: contentSize),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false)
@@ -240,7 +255,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     window.isRestorable = false
     window.setAccessibilityIdentifier(identifier)
     window.contentViewController = contentController
-    window.setContentSize(NSSize(width: 960, height: 640))
+    window.setContentSize(contentSize)
     window.center()
 
     super.init(window: window)
@@ -751,6 +766,119 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     startPendingApplets()
     paneArea.focus(created)
     return created
+  }
+
+  // MARK: Layout requests
+
+  /// Checks the layout against the tree as it is now, then builds the applets it opens, one per
+  /// slot. A layout the tree refuses builds nothing. Nothing is placed or started, and the tree
+  /// does not change. Each applet must be of a type that supports the control asked of it, and
+  /// one that takes a driver must take commands.
+  ///
+  /// A new pane with no directory starts in the one the anchor reports. Any failure closes every
+  /// applet built and throws.
+  func stageLayout(_ request: LayoutRequest, anchor: NodeID, owner: GroupOwner)
+    throws(ScriptCallError) -> StagedLayout
+  {
+    contentController.view.layoutSubtreeIfNeeded()
+
+    var candidate = paneArea.tree
+
+    do {
+      _ = try candidate.layOut(
+        request.plan, anchoredAt: anchor, for: owner, slots: request.panes.count,
+        in: paneArea.bounds.size)
+    } catch {
+      throw Self.layoutFailure(error)
+    }
+
+    let staged = StagedLayout(request: request, anchor: anchor, owner: owner)
+    let start = directory(of: anchor)
+
+    for pane in request.panes {
+      let applet: any Applet
+
+      do {
+        applet = try makeApplet(pane.choice, pane.directory ?? start)
+      } catch {
+        staged.discard()
+        throw .refused("a \(pane.kind) pane did not open: \(error.localizedDescription)")
+      }
+
+      staged.applets.append(applet)
+
+      let supported = AppletTypeDeclaration.supportedControl(
+        forType: applet.typeID, in: appletTypes)
+
+      guard supported.contains(pane.combination),
+        pane.exec == nil || applet is any AppletCommandHandling
+      else {
+        staged.discard()
+        throw .refused("a \(pane.kind) pane does not support \(pane.combination) control")
+      }
+    }
+
+    return staged
+  }
+
+  /// Publishes a staged layout: the tree changes, each new pane takes its applet and its control,
+  /// a declared driver attaches inert, and the new applets start. The tree checks the layout
+  /// again against the tree as it is now, so a change while the layout was staged refuses it.
+  /// Returns the pane at each leaf of the layout, in order.
+  ///
+  /// The caller checks the controller's authority right before it calls this, with nothing
+  /// suspended between. A driver runs only once the user chooses Run, so no program starts here.
+  /// A refusal closes every staged applet and changes nothing.
+  func publish(_ staged: StagedLayout) throws(ScriptCallError) -> [NodeID] {
+    guard paneActionsEnabled else {
+      staged.discard()
+      throw .refused("the window is waiting for an answer to a question")
+    }
+
+    let request = staged.request
+
+    for applet in staged.applets { adopt(applet) }
+
+    contentController.view.layoutSubtreeIfNeeded()
+
+    let outcome: PaneLayoutOutcome
+
+    do {
+      outcome = try paneArea.layOut(
+        request.plan, anchoredAt: staged.anchor, for: staged.owner, adding: staged.applets)
+    } catch {
+      staged.discard()
+      throw Self.layoutFailure(error)
+    }
+
+    staged.published = true
+
+    for (pane, (applet, asked)) in zip(outcome.created, zip(staged.applets, request.panes)) {
+      if asked.access != .disconnected {
+        applet.controlDidChange(paneControls.set(asked.access, for: pane))
+      }
+
+      if let exec = asked.exec {
+        do {
+          try declareExecDriver(exec, for: pane)
+        } catch {
+          statusCenter.post(level: .warning, text: "A pane's driver could not attach: \(error).")
+        }
+      }
+    }
+
+    refreshControlMarks()
+    startPendingApplets()
+    return outcome.panes(of: request.plan)
+  }
+
+  private static func layoutFailure(_ error: any Error) -> ScriptCallError {
+    switch error {
+    case PaneLayoutError.refused(let reason): return .refused(reason)
+    case PaneLayoutError.noRoom: return .refused("the layout does not fit in the window")
+    case PaneTreeError.unknownPane: return .notFound("the pane is not open in that window")
+    default: return .failed("the layout failed: \(error)")
+    }
   }
 
   /// Runs the choice in the launcher's pane. The pane keeps its ID and its place, and the launcher

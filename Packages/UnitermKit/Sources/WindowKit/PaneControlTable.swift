@@ -10,6 +10,9 @@ public protocol ControllerAuthority: AnyObject {
   /// The connections that act for a pane now.
   func controllers(actingFrom window: UInt64, pane: NodeID) -> Set<UInt64>
 
+  /// The connections that act for any pane of a window now.
+  func controllers(actingIn window: UInt64) -> Set<UInt64>
+
   /// Ends the control of each connection, and refuses its calls from now on.
   func revokeControllers(_ ids: Set<UInt64>)
 

@@ -257,7 +257,8 @@ enum {
     CALL_OPEN_PANE = 4,
     CALL_OPEN_TAB = 5,
     CALL_SEND = 6,
-    CALL_SEND_COMMAND = 7
+    CALL_SEND_COMMAND = 7,
+    CALL_REQUEST_LAYOUT = 8
 };
 
 /* The largest ID a script may hold. Every integer below it is exact in a double. */
@@ -716,6 +717,7 @@ static const char *failure_kind_name(int32_t status) {
     case 4: return "not-found";
     case 5: return "unsupported";
     case 6: return "reply-lost";
+    case 7: return "busy";
     default: return "failed";
     }
 }
@@ -903,14 +905,15 @@ static Janet cfun_send(int32_t argc, Janet *argv) {
     return invoke(request);
 }
 
-/*
- * Writes a Janet value as JSON for an applet command's arguments. A struct or table becomes an
- * object whose keys are keywords or strings, an array or tuple becomes an array, and a keyword
- * value becomes a string. Anything else, a number that is not finite, text that is not UTF-8, a
- * repeated key, or a value past the bounds is the script's mistake, and nothing is sent.
- */
-static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length) {
-    if (!valid_utf8(text, length)) janet_panic("a string in the arguments is not UTF-8");
+/* Names what the JSON writer writes, such as "the arguments", in its errors, and holds its limit. */
+typedef struct json_context {
+    const char *what;
+    int32_t limit;
+} json_context;
+
+static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length,
+                      const json_context *context) {
+    if (!valid_utf8(text, length)) janet_panicf("a string in %s is not UTF-8", context->what);
 
     janet_buffer_push_u8(out, '"');
 
@@ -933,13 +936,20 @@ static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length) {
     janet_buffer_push_u8(out, '"');
 }
 
-static void json_value(JanetBuffer *out, Janet value, int depth) {
-    if (depth > MAX_JSON_DEPTH) janet_panic("the arguments nest too deeply");
+static void json_too_large(const json_context *context) {
+    janet_panicf("%s would be more than %d bytes as JSON", context->what, context->limit);
+}
 
-    if (out->count > UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES) {
-        janet_panicf("the arguments are more than %d bytes as JSON",
-                     UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES);
-    }
+/*
+ * Writes a Janet value as JSON, for an applet command's arguments or a layout. A struct or table
+ * becomes an object whose keys are keywords or strings, an array or tuple becomes an array, and a
+ * keyword value becomes a string. Anything else, a number that is not finite, text that is not
+ * UTF-8, a repeated key, or a value past the bounds is the script's mistake, and nothing is sent.
+ */
+static void json_value(JanetBuffer *out, Janet value, int depth, const json_context *context) {
+    if (depth > MAX_JSON_DEPTH) janet_panicf("too many levels of nesting in %s", context->what);
+
+    if (out->count > context->limit) json_too_large(context);
 
     switch (janet_type(value)) {
     case JANET_NIL:
@@ -954,7 +964,7 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
         double number = janet_unwrap_number(value);
         char text[40];
 
-        if (!isfinite(number)) janet_panic("a number in the arguments is not finite");
+        if (!isfinite(number)) janet_panicf("a number in %s is not finite", context->what);
 
         if (number == floor(number) && fabs(number) <= MAX_ID) {
             snprintf(text, sizeof(text), "%.0f", number);
@@ -971,14 +981,14 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
     case JANET_SYMBOL: {
         const uint8_t *text = janet_unwrap_string(value);
 
-        json_text(out, text, janet_string_length(text));
+        json_text(out, text, janet_string_length(text), context);
         return;
     }
 
     case JANET_BUFFER: {
         JanetBuffer *buffer = janet_unwrap_buffer(value);
 
-        json_text(out, buffer->data, buffer->count);
+        json_text(out, buffer->data, buffer->count, context);
         return;
     }
 
@@ -993,7 +1003,7 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
         for (int32_t index = 0; index < count; index++) {
             if (index > 0) janet_buffer_push_u8(out, ',');
 
-            json_value(out, items[index], depth + 1);
+            json_value(out, items[index], depth + 1, context);
         }
 
         janet_buffer_push_u8(out, ']');
@@ -1012,7 +1022,7 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
         janet_dictionary_view(value, &entries, &count, &capacity);
 
         if (count > MAX_JSON_FIELDS) {
-            janet_panicf("an object in the arguments has more than %d fields", MAX_JSON_FIELDS);
+            janet_panicf("an object in %s has more than %d fields", context->what, MAX_JSON_FIELDS);
         }
 
         janet_buffer_push_u8(out, '{');
@@ -1020,7 +1030,7 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
         for (const JanetKV *entry = janet_dictionary_next(entries, capacity, NULL); entry != NULL;
              entry = janet_dictionary_next(entries, capacity, entry)) {
             if (!janet_checktypes(entry->key, JANET_TFLAG_KEYWORD | JANET_TFLAG_STRING)) {
-                janet_panic("a key in the arguments must be a keyword or a string");
+                janet_panicf("a key in %s must be a keyword or a string", context->what);
             }
 
             const uint8_t *key = janet_unwrap_string(entry->key);
@@ -1028,7 +1038,7 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
 
             for (int32_t earlier = 0; earlier < written; earlier++) {
                 if (key_lengths[earlier] == length && memcmp(keys[earlier], key, (size_t)length) == 0) {
-                    janet_panic("a key in the arguments is given twice");
+                    janet_panicf("a key in %s is given twice", context->what);
                 }
             }
 
@@ -1038,9 +1048,9 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
             if (written > 0) janet_buffer_push_u8(out, ',');
 
             written++;
-            json_text(out, key, length);
+            json_text(out, key, length, context);
             janet_buffer_push_u8(out, ':');
-            json_value(out, entry->value, depth + 1);
+            json_value(out, entry->value, depth + 1, context);
         }
 
         janet_buffer_push_u8(out, '}');
@@ -1048,8 +1058,19 @@ static void json_value(JanetBuffer *out, Janet value, int depth) {
     }
 
     default:
-        janet_panicf("the arguments cannot hold a %T", value);
+        janet_panicf("%s cannot hold a %T", context->what, value);
     }
+}
+
+/* Writes a struct or table as one JSON object, within the context's limit. */
+static JanetBuffer *json_object(Janet value, const json_context *context) {
+    JanetBuffer *json = janet_buffer(64);
+
+    json_value(json, value, 0, context);
+
+    if (json->count > context->limit) json_too_large(context);
+
+    return json;
 }
 
 static Janet cfun_send_command(int32_t argc, Janet *argv) {
@@ -1081,19 +1102,16 @@ static Janet cfun_send_command(int32_t argc, Janet *argv) {
     check_text(command, "the command", UNITERM_JANET_MAX_COMMAND_NAME_BYTES, 1);
 
     Janet arguments = argc > 4 ? argv[4] : janet_wrap_nil();
-    JanetBuffer *json = janet_buffer(64);
+    json_context context = {"the arguments", UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES};
+    JanetBuffer *json;
 
     if (janet_checktype(arguments, JANET_NIL)) {
+        json = janet_buffer(4);
         janet_buffer_push_cstring(json, "{}");
     } else if (janet_checktypes(arguments, JANET_TFLAG_STRUCT | JANET_TFLAG_TABLE)) {
-        json_value(json, arguments, 0);
+        json = json_object(arguments, &context);
     } else {
         janet_panic("the arguments must be a struct or a table");
-    }
-
-    if (json->count > UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES) {
-        janet_panicf("the arguments are more than %d bytes as JSON",
-                     UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES);
     }
 
     JanetBuffer *request = janet_buffer(json->count + 128);
@@ -1103,6 +1121,30 @@ static Janet cfun_send_command(int32_t argc, Janet *argv) {
     put_text(request, type);
     put_u32(request, (uint32_t)version);
     put_text(request, command);
+    put_u32(request, (uint32_t)json->count);
+    janet_buffer_push_bytes(request, json->data, json->count);
+
+    return invoke_call(request, 1);
+}
+
+/*
+ * A layout is a struct or table the app reads as JSON: {:split :row :children [...]} for a split,
+ * {:pane id} for a pane already open, and {:open kind ...} for a new one. The shim checks only
+ * that it is data it can write. The app checks its meaning, since the app trusts no helper.
+ */
+static Janet cfun_request_layout(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 2);
+
+    if (!janet_checktypes(argv[1], JANET_TFLAG_STRUCT | JANET_TFLAG_TABLE)) {
+        janet_panic("the layout must be a struct or a table such as {:split :row :children [...]}");
+    }
+
+    json_context context = {"the layout", UNITERM_JANET_MAX_LAYOUT_BYTES};
+    JanetBuffer *json = json_object(argv[1], &context);
+    JanetBuffer *request = janet_buffer(json->count + 64);
+
+    put_u16(request, CALL_REQUEST_LAYOUT);
+    put_target(request, argv[0]);
     put_u32(request, (uint32_t)json->count);
     janet_buffer_push_bytes(request, json->data, json->count);
 
@@ -1149,6 +1191,17 @@ static const JanetReg uniterm_cfuns[] = {
      ":kind is :bad-argument, :refused, :not-found, :unsupported, or :failed, or :reply-lost "
      "when the command ran and its reply could not reach the script. The pane may be "
      "{:nearest kind}."},
+    {"request-layout", cfun_request_layout,
+     "(uniterm/request-layout pane layout)\n\nLays out the script's own subtree, starting from a "
+     "pane the script may control, and returns {:window id :panes [...]} with one reference for "
+     "each leaf of the layout, in order. A split is {:split :row or :column :children [...]}, an "
+     "open pane is {:pane id}, and a new pane is {:open kind} with :control, :directory, and :exec "
+     "{:argv [...] :directory path :environment-keys [...]} as options. Any node may take "
+     ":weight. The first layout holds the starting pane and new panes, and wraps them in a group "
+     "the script owns. A later one from the same pane places every pane of that group once. A "
+     "driver a layout declares runs only once the user chooses Run. A failure raises a struct of "
+     ":kind and :message, and nothing changes. The kind is :busy while another layout from the "
+     "script is still being prepared."},
     {NULL, NULL, NULL}};
 
 /*
