@@ -26,6 +26,17 @@ struct PaneControlMark: Equatable {
   var enableAvailable: Bool
   var revokeAvailable: Bool
 
+  /// A live controller the user may give the pane's group to, when the pane is a member of a group
+  /// with no owner.
+  struct Adoption: Equatable {
+    let owner: GroupOwner
+    let name: String
+  }
+
+  /// The controllers the badge offers the pane's unowned group to. It is empty when the pane is in
+  /// no such group, or no controller acts in the window.
+  var adoptions: [Adoption] = []
+
   /// The badge shows only on a pane that is not in the default state.
   var isShown: Bool {
     access != .disconnected || driver != .none || owner != nil || inUnownedGroup
@@ -76,10 +87,13 @@ struct PaneExecStatus: Equatable {
 }
 
 /// The control actions the badge's menu offers. The window runs each one for this pane.
-enum PaneControlAction {
+enum PaneControlAction: Equatable {
   case enable
   case disconnect
   case revoke
+
+  /// Gives the unowned group the pane is a member of to a live controller.
+  case adopt(GroupOwner)
 }
 
 /// Hosts one applet's view inside a pane. A gutter around the applet holds the focus marker.
@@ -143,10 +157,11 @@ final class PaneFrameView: NSView {
 
   override var mouseDownCanMoveWindow: Bool { false }
 
-  init(paneID: NodeID, applet: any Applet) {
+  /// `frame` is the pane's frame, so the applet's view starts at its size.
+  init(paneID: NodeID, applet: any Applet, frame: NSRect = .zero) {
     self.paneID = paneID
     self.applet = applet
-    super.init(frame: .zero)
+    super.init(frame: frame)
 
     wantsLayer = true
     applet.view.frame = innerFrame
@@ -318,6 +333,20 @@ final class PaneFrameView: NSView {
       item.target = self
       item.representedObject = action
       item.isEnabled = enabled
+      menu.addItem(item)
+    }
+
+    let adoptions = mark?.adoptions ?? []
+
+    if !adoptions.isEmpty { menu.addItem(.separator()) }
+
+    for (index, adoption) in adoptions.enumerated() {
+      let item = NSMenuItem(
+        title: "Give Group to \(adoption.name)", action: #selector(runControlAction(_:)),
+        keyEquivalent: "")
+      item.setAccessibilityIdentifier("pane-control-adopt-\(index)")
+      item.target = self
+      item.representedObject = PaneControlAction.adopt(adoption.owner)
       menu.addItem(item)
     }
 

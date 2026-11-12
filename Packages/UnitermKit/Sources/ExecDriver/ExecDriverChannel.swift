@@ -49,6 +49,19 @@ public final class ExecDriverChannel: AppletEventSink {
     }
   }
 
+  /// What a driver asks of its window beyond its own applet. The window answers each one, and
+  /// checks the driver's authority itself.
+  public enum HostRequest: Sendable, Equatable {
+    /// A layout for the driver's subtree, anchored at its own pane.
+    case layout(JSONValue)
+
+    /// A command for a member of a group the driver owns.
+    case command(pane: UInt64, AppletCommandSubmission)
+  }
+
+  /// Answers a host request with one reply. A window that offers none refuses every request.
+  public typealias HostHandler = @MainActor (HostRequest, @escaping ControlDispatcher.Reply) -> Void
+
   public enum Phase: Sendable, Equatable {
     /// The app sent its hello and waits for the driver's.
     case greeting
@@ -70,18 +83,20 @@ public final class ExecDriverChannel: AppletEventSink {
   private let producer: StatusProducer?
   private let onEnd: @MainActor (End) -> Void
   private let killGrace: DispatchTimeInterval
+  private let host: HostHandler?
 
   private var transport: ExecTransport?
   private var exitStatus: Int32?
   private var drainScheduled = false
 
   /// `authority` is the window's check that this driver still drives the pane. The channel adds
-  /// its own: a channel that has ended commands nothing.
+  /// its own: a channel that has ended commands nothing. `host` answers the driver's layout
+  /// requests and its commands to other panes, and nil refuses them.
   public init(
     launch: ExecLaunch, environment: ExecEnvironment, applet: any AppletCommandHandling,
     dispatcher: ControlDispatcher, authority: @escaping ControlDispatcher.Authority,
     producer: StatusProducer?, killGrace: DispatchTimeInterval = .seconds(2),
-    onEnd: @escaping @MainActor (End) -> Void
+    host: HostHandler? = nil, onEnd: @escaping @MainActor (End) -> Void
   ) {
     self.launch = launch
     self.environment = environment
@@ -91,6 +106,7 @@ public final class ExecDriverChannel: AppletEventSink {
     self.authority = authority
     self.producer = producer
     self.killGrace = killGrace
+    self.host = host
     self.onEnd = onEnd
   }
 
@@ -236,11 +252,22 @@ public final class ExecDriverChannel: AppletEventSink {
     case (.connected, .hello):
       end(.failed("it sent a second hello"))
 
-    case (.greeting, .command):
+    case (.greeting, .command), (.greeting, .paneCommand), (.greeting, .layout):
       end(.failed("it sent a command before its hello"))
 
     case (.connected, .command(let id, let name, let arguments)):
       run(id: id, name: name, arguments: arguments)
+
+    case (
+      .connected, .paneCommand(let id, let pane, let type, let version, let name, let arguments)
+    ):
+      let submission = AppletCommandSubmission(
+        appletType: type, schemaVersion: version, name: name, arguments: arguments)
+
+      ask(.command(pane: pane, submission), id: id)
+
+    case (.connected, .layout(let id, let layout)):
+      ask(.layout(layout), id: id)
 
     case (_, .refusal(let text)):
       end(.refused("The driver refused uniterm: \(StatusText.bounded(text, maximumBytes: 256))"))
@@ -304,18 +331,33 @@ public final class ExecDriverChannel: AppletEventSink {
 
         return authority()
       },
-      reply: { [weak self] result in
-        guard let self, isConnected else { return }
+      reply: { [weak self] in self?.answer(id: id, with: $0) })
+  }
 
-        switch result {
-        case .success(let value):
-          transport?.send(ExecWire.frame(.reply(id: id, result: value)))
+  /// Hands a request beyond the driver's own applet to the window. The window checks the
+  /// driver's authority, and the reply reaches the driver only while the channel is connected.
+  private func ask(_ request: HostRequest, id: JSONValue) {
+    guard let host else {
+      answer(
+        id: id,
+        with: .failure(AppletCommandError(.refused, "this pane's driver may act only on its pane")))
+      return
+    }
 
-        case .failure(let error):
-          transport?.send(
-            ExecWire.frame(.error(id: id, code: error.code.rawValue, message: error.message)))
-        }
-      })
+    host(request) { [weak self] in self?.answer(id: id, with: $0) }
+  }
+
+  private func answer(id: JSONValue, with result: Result<JSONValue, AppletCommandError>) {
+    guard isConnected else { return }
+
+    switch result {
+    case .success(let value):
+      transport?.send(ExecWire.frame(.reply(id: id, result: value)))
+
+    case .failure(let error):
+      transport?.send(
+        ExecWire.frame(.error(id: id, code: error.code.rawValue, message: error.message)))
+    }
   }
 
   private func recordStderr() {

@@ -10,11 +10,14 @@ import Theme
 @MainActor
 class FakeApplet: Applet {
   var typeID = "fake"
-  let view = NSView()
+  let view: NSView = WindowEntryView()
   var title = "Fake"
   var segments: [AppletSegment] = []
   var isRunningSomething = false
   weak var host: (any AppletHost)?
+
+  /// The size the applet's view had when it first joined a window, or nil before it has.
+  var sizeOnEntry: CGSize? { (view as? WindowEntryView)?.sizeOnEntry }
 
   /// What the applet reports as its current directory. Nil says nothing.
   var currentDirectory: String?
@@ -368,3 +371,15 @@ extension FakeApplet: TabOpening {
 /// would. It proves the refusal is the declared property and not a missing capability.
 @MainActor
 final class OwnedInputApplet: FakeApplet, InputOwning {}
+
+/// A view that records its size when it first joins a window. AppKit solves an applet's
+/// constraints from that moment, so a zero size there breaks any constraint that needs room.
+final class WindowEntryView: NSView {
+  private(set) var sizeOnEntry: CGSize?
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+
+    if window != nil, sizeOnEntry == nil { sizeOnEntry = frame.size }
+  }
+}

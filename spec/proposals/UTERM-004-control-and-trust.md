@@ -120,6 +120,20 @@ A program may control panes only in its own window.
 A trusted program may request a layout for its own subtree. For example, it may ask for three panes holding a slide, a
 set of notes, and a chart.
 
+- A script asks with `uniterm/request-layout`, and an exec driver with a `layout` message. Both send one JSON layout.
+  Its nodes are a split with two or more children, a pane already open, or a new pane. A new pane names its applet
+  kind, and may name its access mode, a directory, and an exec declaration. Any node may take a relative weight. A
+  layout holds at most 16 panes and 6 levels of splits. The reply names the pane at each leaf, in order.
+- The request is anchored at a pane the program may address. A driver's anchor is its own pane, which must be
+  remote-controlled. Every pane already open that the layout places must be remote-controlled too.
+- A program has at most one layout in preparation. Another one is refused as busy before anything is built.
+- The script call takes ScriptWire version 7. Both sides refuse any other version at the hello, so an old `uniterm`
+  command with a new app, or a new command with an old app, runs no call. The driver message, and a driver's commands to
+  the members it owns, take exec protocol version 2. Each side refuses any other version at the hello, so an old driver
+  with a new app, or a new driver with an old app, runs no command. No deploy order is needed.
+
+Amended 2026-11-11; see Decision Log.
+
 ### Group node kind
 
 This proposal defines a group node kind for UTERM-001's pane tree. A program's first pane request creates a group, and a
@@ -149,7 +163,9 @@ Decision: explicit ownership and membership anchored by a nonmerging group, neve
   group left with no member is removed and its ID retires. The source pane is placement metadata, not a member.
 - The first layout wraps only the source pane and newly created panes. It preserves the source pane and applet.
   Later requests rearrange only still-owned members and create new ones. They cannot import unrelated panes,
-  replace existing applets, or silently discard members.
+  replace existing applets, or silently discard members. A later request places every pane of its group once. It is
+  refused while the group holds a pane that is neither its source nor a member, such as one the user split off or
+  another controller's nested group.
 - Nested layouts create explicit nested groups. Authority intersects the live connection's grant, window, explicit
   membership, target access mode, and supported operation at dispatch. Children gain no authority over parents or
   siblings by being nested. An ancestor owner retains only its existing explicit scope.
@@ -169,7 +185,7 @@ Decision: explicit ownership and membership anchored by a nonmerging group, neve
 
 Rationale: per-pane marks alone do not delimit structural edits. The wrapper preserves the boundary through
 normalization. Explicit membership prevents unrelated user panes from gaining an owner by changing position. Amended
-2026-11-10; see Decision Log.
+2026-11-11; see Decision Log.
 
 ### Exec wire format
 
@@ -216,8 +232,13 @@ are escaped. Stdout carries protocol only; stderr carries diagnostic text.
   version is refused before any effect, as the exec hello refuses. Skew: an old script or controller against a new
   app, and a new one against an old app, are both refused when the app does not support the named version. No deploy
   order is needed.
+- A driver may lay out its own subtree, as "Layout requests" describes. It may also command a remote-controlled member
+  of a group its run owns. Such a command names the pane, the applet type, and the schema version, as a remote command
+  does. Its authority is checked again at delivery. A driver's group loses its owner when the run ends or the user
+  revokes it. Revoking leaves the driver its own attached channel. For the rest of that run, it lays out and commands
+  nothing beyond its own pane.
 
-Amended 2026-11-03; see the Decision Log.
+Amended 2026-11-11; see the Decision Log.
 
 Rationale: JSON already serves the applet boundary and is easy for external drivers. CBOR can be equally correct,
 but brings another serialization ecosystem without a stated need. Unversioned text leaves old commands liable to new
@@ -784,10 +805,10 @@ None.
 
 ### M4: Layout requests
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-- Layout requests build on the group node kind and layout envelope version 2 from M2. Amended 2026-11-10; see Decision
-  Log.
+- Layout requests build on the group node kind from M2 and the layout envelope, which M3 left at version 3. Amended
+  2026-11-11; see Decision Log.
 - A program can request a layout for its own subtree
 - A request for panes outside its subtree is refused
 - Publication rechecks grants after asynchronous preparation; revocation or source close leaves no partial layout
@@ -797,6 +818,53 @@ None.
 - Old layouts migrate without grants; older readers keep the newer envelope aside; unknown applet bytes round-trip
 - The presentation example works end to end through real control transport with hosted slide, notes, and chart
   fixtures in separate panes; the test does not require implementing the production applet proposals
+
+**As built:**
+
+- The tree gained one layout edit. It finds the innermost group the owner owns with the anchor as its source. With
+  one, the layout replaces that group's content and keeps its members. Without one, it wraps the anchor and the new
+  panes in a new group, nested inside any group the anchor is a member of. Each rule is checked before any ID is
+  used, and a layout that does not fit changes nothing. The tree also gained adoption of a group that has no owner.
+- A request is checked, then staged, then published. The window reads the layout and checks the anchor and every
+  placed pane. It then runs the layout against a copy of the tree, and only then builds each new applet, unstarted.
+  Next it checks each new pane's directory off the main actor. Then it checks the caller's authority again, and the
+  tree runs the layout once more against the tree as it is then. Only then do the panes appear and the applets start,
+  each with its control set first. Any refusal closes every staged applet. A grant revoked, a source disconnected, a
+  source closed, a driver's run ended, or a driver's pane closed during the directory check publishes nothing. Focus
+  stays where it was.
+- A controller has at most one layout in preparation. A second one is refused before anything is built, with a new
+  `busy` failure kind on the script wire and the exec wire's existing `busy` error code. Both say the call may be
+  sent again once the first is answered.
+- A layout's exec declaration attaches inert. The pane shows Run, and no launch waits for approval until the user
+  chooses it. So no program starts before the tree commits.
+- `uniterm/request-layout` writes the layout through the shim's JSON writer, at most 32 KiB, and raises a struct of
+  `:kind` and `:message` on failure. ScriptWire is at version 7. The writer now names what it writes in each error.
+- The exec protocol is at version 2. A driver's run gets its own owner, and its groups lose that owner when the run
+  ends, the pane closes, or the user revokes it. Revoke Controller on any member reaches a driver owner too. A revoke
+  holds for the rest of the run: the run lays out and commands nothing beyond its own pane again, and a layout in
+  preparation at the revoke publishes nothing. The run keeps its own pane, and a new run starts clear. The perl
+  driver fixture speaks version 2. Its `layout` mode sends a layout, then commands for the panes in the reply.
+- A layout may open an applet type the window declares beyond the built-in kinds. That is how the hosted fixtures
+  open. The app's factory makes them only in a debug build with `UNITERM_TEST_APPLETS`, and refuses the type
+  otherwise. `open-pane` still takes only the built-in kinds.
+- The badge of a member of a group with no owner offers Give Group to each connection that acts for a pane of the
+  window and is not revoked. The group keeps the members it holds, and each keeps its mode, so the user enables the
+  ones the controller should drive. A connection of another window is never offered.
+- Restore needed no codec change. M2's and M3's tests already prove that groups, geometry, member IDs, saved modes, and
+  exec declarations save as inert intent. They also prove a restore comes back disconnected with no owner and runs
+  nothing, that a version 1 or 2 file upgrades, and that a damaged member list only shrinks a group. UTERM-001's tests
+  prove that a newer file is kept aside and that unknown applet bytes round-trip. M4 added the window-level checks: undo
+  inside a group gives a new pane that is no member, a file with repeated, outside, and other-window members gives a
+  controller only the member the group holds, and the badge is the only way a restored group gains an owner.
+- A package test runs a real Janet script in the real helper, over the real listener, against a real window. It lays
+  out the slides, notes, and chart fixtures beside its own pane and drives each one. It then saves and restores the
+  window. A UI test runs the same script from the app's terminal with the bundled command. Its capture holds the whole
+  window. By then the shell has cleared its screen and shows only a synthetic prompt, and the test checks that before
+  it keeps the capture. The best guesses are in the 2026-11-11 Decision Log
+  entries about layout requests.
+- Every pane's applet view now joins the window at its pane's size. A new pane takes its frame before it joins the
+  pane area, and the pane area starts at the window's content size, so a new window's first pane and a restored
+  window's panes have room too. An applet view that entered at zero width broke its own inset constraints.
 
 ### M5: Verified controller artifacts and run binding
 
@@ -1053,6 +1121,64 @@ None.
 - 2026-11-11: Added no user path to declare an exec driver in M3 (work-queue best guess). The plan named none, and no
   shipped applet supports a driver. A declaration comes from a saved layout, an undo, or the window's own call. M4's
   layout requests will call it. If the user wants a declaration sheet now, the pane chrome would gain one.
+- 2026-11-11: Settled the form of a layout request (work-queue best guess). "Layout requests" said only that a trusted
+  program may request a layout for its own subtree, and named no call, shape, or wire. It now names
+  `uniterm/request-layout` and a driver's `layout` message, one JSON layout of splits, open panes, and new panes, and
+  the bounds of 16 panes and 6 levels of splits. The request is anchored at a pane the program may address, and the
+  reply names the pane at each leaf. A first layout from a member of a group makes a nested group, as "What anchors
+  trust" asks. Focus stays where it was. If the user wants another shape, such as a list of panes with placements, only
+  the reader in the window and the shim's docstring would change.
+- 2026-11-11: Refused a later layout while its group holds a pane it does not own (work-queue best guess). "What
+  anchors trust" said: "Later requests rearrange only still-owned members and create new ones. They cannot import
+  unrelated panes, replace existing applets, or silently discard members." It did not say what happens to a pane the
+  user split off inside the group, or to another controller's nested group. Rearranging the group would either take
+  such a pane in or drop it, so the request is refused, and the bullet now says so. The section's Amended marker moved
+  here from the 2026-11-10 entry, which is above. If the user wants such a pane to move with the member beside it, the
+  tree would place each foreign block with its member.
+- 2026-11-11: Moved the script wire to version 7 for `uniterm/request-layout` (work-queue best guess). The call takes a
+  new call code and carries the layout as JSON text, at most 32 KiB. The hello is one 16-bit version in every version,
+  and each side refuses any version but its own before a call runs. An old `uniterm` command with a new app, and a new
+  command with an old app, are both refused at the hello. No deploy order is needed. A failure raises a struct of
+  `:kind` and `:message`, as `uniterm/send-command` does, since a layout's refusals have kinds a script can act on.
+- 2026-11-11: Let an exec driver lay out its subtree and command the members it owns, in exec protocol version 2
+  (work-queue best guess, addition: drivers commanding panes beyond their own). The plan named an exec command for layouts. A layout a driver cannot command would be inert,
+  and "Trust follows the pane tree" lets a program address the panes of groups it owns. A command to another pane names
+  the pane, the applet type, and the schema version. Both need the driver's own pane to be remote-controlled, since the
+  user's enable is what lets a program in a pane act beyond it. Each run owns its own groups, and loses them when it
+  ends, its pane closes, or the user revokes it. Revoking leaves the attached channel, as "What anchors trust" says. Each
+  side refuses any other exec version at the hello, so neither skew direction runs a command. "Exec wire format" now
+  says so, and its Amended marker moved here from the 2026-11-03 entry, which is above. If the user wants drivers kept
+  to their own applet, the `layout` message would stay and the pane field would go.
+- 2026-11-11: Attached a layout's exec declarations inert (work-queue best guess). "What anchors trust" says approved
+  programs start only after the tree commits, and M3 settled that no script reaches Run. A layout's driver therefore
+  shows Run in its pane, and no launch waits in Pending Requests until the user chooses Run. If the user wants a layout to
+  file its launches for approval at once, the commit would file them, still with no automatic start.
+- 2026-11-11: Gave restored groups to a controller from the badge (work-queue best guess). "Saved layouts" says the user
+  may grant a new live connection the exact restored member set through pane chrome. The badge of a member of a group
+  with no owner lists Give Group to each connection that acts for a pane of the window and is not revoked. The group
+  keeps the members it holds, and each keeps its mode, so the user enables the targets separately. A driver is not
+  offered, since a new exec attachment gains no restored siblings. If the user wants a picker of members, the action
+  would take a subset and the group would split.
+- 2026-11-11: Opened applet types the window declares beyond the built-in kinds, in layouts only (work-queue best guess).
+  The hosted fixtures have no launcher entry, so a layout names them by type and the app's factory decides. Only a debug
+  build with `UNITERM_TEST_APPLETS` declares and makes them. Release builds refuse such a type. `open-pane` keeps the
+  built-in kinds. If the user wants `open-pane` to take them too, it would share the layout's kind lookup.
+- 2026-11-11: Amended M4's first bullet. It said layout requests build on "layout envelope version 2 from M2". M3 moved
+  the envelope to version 3 for the exec declaration. M4 changes no saved data, so the envelope stays at version 3.
+- 2026-11-11: Made a revoke hold for the rest of a driver's run (work-queue best guess). Review found that a revoked
+  driver kept laying out from its own pane, and that a layout it had in preparation published after the revoke. "What
+  anchors trust" says revocation removes the owner's authority and leaves the driver its own channel, and "How control
+  is enabled" says a revoke ends the live grant. "Exec wire format" said only: "Revoking leaves the driver its own
+  attached channel." A connection's revoke holds until it reconnects. A run's revoke now holds until the run ends, so
+  the run acts on its own pane only, and the bullet says so. If the user wants a revoked driver to lay out again
+  without a new run, the revoke would end only the groups it owned at the time.
+- 2026-11-11: Allowed one layout in preparation per controller (work-queue best guess). Review found that a controller
+  could send layouts faster than they finish, and each one built its applets. "Exec wire format" bounds work and
+  queued bytes, and says a driver past a bound fails visibly. "Layout requests" bounded each layout's panes and depth,
+  and named no bound on layouts in flight. A second layout from the same connection or run is now refused as `busy`
+  before anything is built, and that section now says so. The tree check also runs before any applet is built. The script wire's
+  new `busy` kind lands in ScriptWire 7 with the layout call, and the exec wire already had a `busy` code. If the user
+  wants layouts queued instead, the window would hold a bounded queue per controller.
 
 ## References
 

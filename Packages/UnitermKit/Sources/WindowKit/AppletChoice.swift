@@ -27,4 +27,9 @@ public enum AppletChoice: Sendable, Equatable {
 
   /// A browser with no page loaded. It has no directory, so the pane's directory goes unused.
   case browser
+
+  /// An applet type the window declares beyond the built-in choices, such as a hosted fixture in
+  /// a debug build. The app's factory decides whether it can make one, and throws when it cannot.
+  /// No launcher entry offers it.
+  case hosted(typeID: String)
 }

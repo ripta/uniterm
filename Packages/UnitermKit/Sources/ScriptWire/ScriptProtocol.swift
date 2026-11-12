@@ -7,7 +7,7 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 6
+  public static let version: UInt16 = 7
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -40,6 +40,10 @@ public enum ScriptProtocol {
   /// The most bytes of JSON one applet command's arguments may hold. It leaves room in the control
   /// frame for the rest of the call.
   public static let maxCommandArgumentBytes = 32 * 1024
+
+  /// The most bytes of JSON one layout request may hold. It leaves room in the control frame for
+  /// the rest of the call.
+  public static let maxLayoutBytes = 32 * 1024
 
   /// The largest command schema version a script may name.
   public static let maxSchemaVersion: UInt32 = 1 << 31 - 1
@@ -203,6 +207,26 @@ extension ByteReader {
     }
   }
 
+  /// JSON text with a 32-bit length before it. The length is checked against `limit` before any
+  /// byte is read. `what` names the text in the error, such as "the layout is".
+  mutating func json(limit: Int, what: String) throws -> String {
+    let count = Int(try u32())
+
+    guard count <= limit else { throw WireError.tooLong(declared: count, limit: limit) }
+
+    guard remaining >= count else { throw WireError.truncated }
+
+    var bytes = Data()
+
+    for _ in 0..<count { bytes.append(try u8()) }
+
+    guard let text = String(data: bytes, encoding: .utf8) else {
+      throw WireError.badValue("\(what) not UTF-8")
+    }
+
+    return text
+  }
+
   mutating func optionalString(limit: Int) throws -> String? {
     switch try u8() {
     case 0: return nil
@@ -238,6 +262,10 @@ public enum ScriptCall: Equatable, Sendable {
     pane: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
     arguments: String)
 
+  /// A layout for the caller's subtree, anchored at a pane it may control. The layout is a JSON
+  /// object as text, which the app parses and checks.
+  case requestLayout(pane: ScriptTarget, layout: String)
+
   var code: UInt16 {
     switch self {
     case .postStatus: return 1
@@ -247,6 +275,7 @@ public enum ScriptCall: Equatable, Sendable {
     case .openTab: return 5
     case .send: return 6
     case .sendCommand: return 7
+    case .requestLayout: return 8
     }
   }
 
@@ -289,6 +318,14 @@ public enum ScriptCall: Equatable, Sendable {
       body.put(version)
       body.put(string: command, limit: ScriptProtocol.maxCommandNameBytes)
       let bytes = Data(arguments.utf8.prefix(ScriptProtocol.maxCommandArgumentBytes))
+
+      body.put(UInt32(bytes.count))
+      body.put(raw: bytes)
+
+    case .requestLayout(let pane, let layout):
+      body.put(target: pane)
+
+      let bytes = Data(layout.utf8.prefix(ScriptProtocol.maxLayoutBytes))
 
       body.put(UInt32(bytes.count))
       body.put(raw: bytes)
@@ -357,25 +394,18 @@ public enum ScriptCall: Equatable, Sendable {
       }
 
       let command = try reader.string(limit: ScriptProtocol.maxCommandNameBytes)
-      let count = Int(try reader.u32())
-
-      guard count <= ScriptProtocol.maxCommandArgumentBytes else {
-        throw WireError.tooLong(declared: count, limit: ScriptProtocol.maxCommandArgumentBytes)
-      }
-
-      guard reader.remaining >= count else { throw WireError.truncated }
-
-      var bytes = Data()
-
-      for _ in 0..<count { bytes.append(try reader.u8()) }
-
-      guard let arguments = String(data: bytes, encoding: .utf8) else {
-        throw WireError.badValue("the arguments are not UTF-8")
-      }
+      let arguments = try reader.json(
+        limit: ScriptProtocol.maxCommandArgumentBytes, what: "the arguments are")
 
       return .sendCommand(
         pane: pane, appletType: type, schemaVersion: version, command: command,
         arguments: arguments)
+
+    case 8:
+      let pane = try reader.target()
+      let layout = try reader.json(limit: ScriptProtocol.maxLayoutBytes, what: "the layout is")
+
+      return .requestLayout(pane: pane, layout: layout)
 
     default:
       throw WireError.badValue("an unknown host function")
@@ -405,6 +435,10 @@ public enum ScriptFailureKind: UInt8, Sendable, Equatable {
   /// The applet command ran, and its reply could not be sent to the script. The command's effect
   /// stands, so the script must not take this for a refusal.
   case replyLost = 6
+
+  /// The app is still working on another call of the same kind from this caller, such as a layout
+  /// it is preparing. Nothing ran, and the call may be sent again once the other one is answered.
+  case busy = 7
 }
 
 /// The app's answer to one call.

@@ -33,12 +33,19 @@ final class ExecWireTests: XCTestCase {
   }
 
   /// Catches a decoder that takes a message with the wrong shape, or that lets nesting or a value
-  /// count past their bounds reach the JSON decoder.
+  /// count past their bounds reach the JSON decoder. A command to another pane must name the
+  /// pane, the applet type, and the schema version, and a layout must be an object.
   func testTheDecoderRefusesBadShapesAndPassesNoBoundOn() throws {
     let refused = [
       "not json", "[1]", #"{"type":"hello"}"#, #"{"type":"unheard"}"#,
       #"{"type":"command","id":1.5,"name":"x"}"#, #"{"type":"command","id":1,"name":""}"#,
       #"{"type":"command","id":1,"name":"x","arguments":[1]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3}"#,
+      #"{"type":"command","id":1,"name":"x","pane":0,"applet":"a","schema":1}"#,
+      #"{"type":"command","id":1,"name":"x","pane":2.5,"applet":"a","schema":1}"#,
+      #"{"type":"command","id":1,"name":"x","pane":"3","applet":"a","schema":1}"#,
+      #"{"type":"layout","id":1}"#, #"{"type":"layout","id":1,"layout":[1]}"#,
+      #"{"type":"layout","layout":{}}"#,
       String(repeating: "[", count: ExecProtocol.maxDepth + 1),
       "[" + Array(repeating: "1", count: ExecProtocol.maxValues + 1).joined(separator: ","),
     ]
@@ -50,6 +57,19 @@ final class ExecWireTests: XCTestCase {
     XCTAssertEqual(
       try ExecWire.decode(Data(#"{"type":"command","id":"r1","name":"status"}"#.utf8)),
       .command(id: .string("r1"), name: "status", arguments: .object([:])))
+
+    XCTAssertEqual(
+      try ExecWire.decode(
+        Data(
+          #"{"type":"command","id":2,"name":"clear","pane":9,"applet":"fixture-notes","schema":1}"#
+            .utf8)),
+      .paneCommand(
+        id: .number(2), pane: 9, appletType: "fixture-notes", schemaVersion: 1, name: "clear",
+        arguments: .object([:])))
+
+    XCTAssertEqual(
+      try ExecWire.decode(Data(#"{"type":"layout","id":3,"layout":{"pane":1}}"#.utf8)),
+      .layout(id: .number(3), layout: .object(["pane": .number(1)])))
   }
 
   /// Catches a frame for the driver that holds a raw newline, which would split one message into

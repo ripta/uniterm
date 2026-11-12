@@ -6,8 +6,12 @@ import Foundation
 /// The wire is UTF-8 JSON, one object per LF-terminated line, on the driver's stdin and stdout.
 /// Both sides start with a hello that names the protocol version, the applet type, and its command
 /// schema version. No command or event flows until both sides accept the other's hello.
+///
+/// Version 2 adds a driver's layout request and its commands to the members of a group it owns.
+/// Each side refuses any version but its own at the hello, so an old driver with a new app, or
+/// the reverse, runs no command.
 public enum ExecProtocol {
-  public static let version = 1
+  public static let version = 2
 
   /// The longest frame, newline excluded. The reader refuses a longer line before it has
   /// buffered the whole of it.
@@ -70,6 +74,15 @@ public enum ExecDriverMessage: Sendable, Equatable {
 
   /// A command for the applet. The ID is the driver's own, and the reply carries it back.
   case command(id: JSONValue, name: String, arguments: JSONValue)
+
+  /// A command for another pane: a member of a group the driver owns. It names the applet type
+  /// and schema version it was written for, as a remote command does.
+  case paneCommand(
+    id: JSONValue, pane: UInt64, appletType: String, schemaVersion: Int, name: String,
+    arguments: JSONValue)
+
+  /// A layout for the driver's own subtree, anchored at its pane. The window reads the layout.
+  case layout(id: JSONValue, layout: JSONValue)
 
   /// The driver refuses the app, such as for an app hello it does not support. The text is shown.
   case refusal(String)
@@ -148,9 +161,24 @@ public enum ExecWire {
 
       guard case .object = arguments else { throw .malformed("its arguments are not an object") }
 
-      return .command(
-        id: try requestID(fields["id"]), name: try name(fields["name"], "name"),
+      let id = try requestID(fields["id"])
+      let command = try name(fields["name"], "name")
+
+      guard let target = fields["pane"] else {
+        return .command(id: id, name: command, arguments: arguments)
+      }
+
+      return .paneCommand(
+        id: id, pane: try paneID(target), appletType: try name(fields["applet"], "applet"),
+        schemaVersion: try integer(fields["schema"], "schema"), name: command,
         arguments: arguments)
+
+    case "layout":
+      guard let layout = fields["layout"], case .object = layout else {
+        throw .malformed("its layout is not an object")
+      }
+
+      return .layout(id: try requestID(fields["id"]), layout: layout)
 
     case "error":
       var text = "the driver gave no reason"
@@ -183,6 +211,15 @@ public enum ExecWire {
     else { throw .malformed("its \(field) is not a name") }
 
     return text
+  }
+
+  /// A pane ID is a whole number above 0 that a double holds exactly.
+  private static func paneID(_ value: JSONValue) throws(ExecWireError) -> UInt64 {
+    guard case .number(let number) = value, number.isFinite, number == number.rounded(),
+      number >= 1, number <= 9_007_199_254_740_991
+    else { throw .malformed("its pane is not a pane ID") }
+
+    return UInt64(number)
   }
 
   /// A request ID is a whole number or a short string, as the driver chose it.

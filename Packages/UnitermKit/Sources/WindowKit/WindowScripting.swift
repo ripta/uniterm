@@ -18,7 +18,7 @@ import StatusKit
 @MainActor
 public final class WindowScripting: ScriptWindowAPI {
   /// The applets a script may start, by the kind name it passes.
-  static let kinds: [(name: String, choice: AppletChoice)] = [
+  nonisolated static let kinds: [(name: String, choice: AppletChoice)] = [
     ("terminal", .terminalShell),
     ("data-viewer", .dataViewer),
     ("map-viewer", .mapViewer(region: nil)),
@@ -337,6 +337,47 @@ public final class WindowScripting: ScriptWindowAPI {
     case .failure(let error):
       throw ScriptCallError(Self.kind(of: error.code), error.message)
     }
+  }
+
+  // MARK: Layout requests
+
+  /// Runs the window's layout request for a script. `MainWindowController.requestLayout` holds the
+  /// staging and publication rules.
+  ///
+  /// The anchor and every placed pane must be ones the caller may address. Each authority check
+  /// runs the host's `stillAllowed` and resolves them again. The group is the caller connection's,
+  /// and the reply has one reference for each leaf of the layout, in order.
+  public func requestLayout(
+    anchor target: ScriptTarget, layout: String, caller: ScriptCaller,
+    stillAllowed: @escaping @MainActor () throws -> Void
+  ) async throws -> ScriptValue {
+    let controller = try window(of: caller)
+    let request = try LayoutRequest.parse(
+      layout, window: caller.window, declarations: controller.appletTypes)
+    let (_, anchor, _) = try resolve(target, for: caller)
+
+    let panes = try await controller.requestLayout(
+      request, anchor: anchor, owner: GroupOwner(connection: caller.connection),
+      authorize: { [self] in
+        try stillAllowed()
+
+        let (now, nowAnchor, _) = try resolve(target, for: caller)
+
+        guard now === controller, nowAnchor == anchor else { throw Self.outOfScope }
+
+        try controller.checkPlacedPanes(of: request) { pane in
+          pane == caller.pane || owns(pane, caller, in: controller)
+        }
+      },
+      directoryExists: directoryExists)
+
+    return .record([
+      "window": .integer(controller.scriptWindowID),
+      "panes": .array(
+        panes.map {
+          .record(["window": .integer(controller.scriptWindowID), "pane": .integer($0.rawValue)])
+        }),
+    ])
   }
 
   private static func kind(of code: AppletCommandError.Code) -> ScriptFailureKind {

@@ -16,6 +16,9 @@ my ($mode, $type, $schema, @rest) = @ARGV;
 my $json = JSON::PP->new->canonical->allow_nonref;
 my $next_id = 1;
 
+# The exec protocol version this driver speaks.
+my $protocol = 2;
+
 sub send_message { print $json->encode($_[0]), "\n"; }
 
 sub hello {
@@ -30,11 +33,34 @@ sub command {
                   arguments => $arguments // {}});
 }
 
+# Sends a message a test wrote out whole, such as a layout or a command to another pane. It gets
+# the next request ID.
+sub request {
+    my ($message) = @_;
+    send_message({%$message, id => $next_id++});
+}
+
 # Reads the app's hello first, the way a real driver checks it before it sends anything.
 sub read_app_hello {
     my $line = <STDIN>;
     return undef unless defined $line;
     return $json->decode($line);
+}
+
+# Messages held for the user's Next, oldest first. Each press sends the next one.
+my @on_advance;
+
+# Replaces each {"pane": "leafN"} under a layout with the pane at leaf N of an earlier reply.
+sub resolve_leaves {
+    my ($node, $panes) = @_;
+    if (ref $node eq "HASH") {
+        if (defined $node->{pane} && $node->{pane} =~ /^leaf(\d+)$/) {
+            $node->{pane} = $panes->[$1];
+        }
+        resolve_leaves($_, $panes) for values %$node;
+    } elsif (ref $node eq "ARRAY") {
+        resolve_leaves($_, $panes) for @$node;
+    }
 }
 
 # Answers events and logs every line from the app to stderr, until stdin ends.
@@ -44,23 +70,72 @@ sub serve {
         my $message = $json->decode($line);
         print STDERR "got $message->{type}", (defined $message->{name} ? " $message->{name}" : ""),
             (defined $message->{error} ? " $message->{error}{code}" : ""), "\n";
+        print STDERR "error message: $message->{error}{message}\n" if defined $message->{error};
 
         if ($message->{type} eq "event" && $message->{name} eq "advance-requested") {
             command("show-slide", {index => $message->{data}{from} + 1});
+            request(shift @on_advance) if @on_advance;
         }
     }
 }
 
 if ($mode eq "script") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     print STDERR "driver ready\n";
-    command($_->{name}, $_->{arguments}) for map { $json->decode($_) } @rest;
+    for my $message (map { $json->decode($_) } @rest) {
+        if (defined $message->{type}) {
+            request($message);
+        } else {
+            command($message->{name}, $message->{arguments});
+        }
+    }
+    serve();
+} elsif ($mode eq "layout") {
+    # Sends the layout in its first argument and waits for the answer. Each later argument is a
+    # command for the pane at its "leaf" index in the reply, sent once the layout is published. A
+    # message marked "later" waits for the user's Next instead, one per press. A later message with
+    # a type is sent as it is, such as a second layout, with "leafN" panes resolved.
+    my ($layout, @commands) = @rest;
+    read_app_hello();
+    hello($protocol, $schema);
+    my $id = $next_id;
+    request({type => "layout", layout => $json->decode($layout)});
+    my $panes;
+    while (my $line = <STDIN>) {
+        my $message = $json->decode($line);
+        next unless defined $message->{id} && $message->{id} == $id;
+        if ($message->{type} eq "reply") {
+            $panes = $message->{result}{panes};
+            print STDERR "layout published\n";
+        } else {
+            print STDERR "layout refused: $message->{error}{message}\n";
+        }
+        last;
+    }
+    if ($panes) {
+        for my $command (map { $json->decode($_) } @commands) {
+            my $leaf = delete $command->{leaf};
+            my $later = delete $command->{later};
+            my $message;
+            if (defined $command->{type}) {
+                resolve_leaves($command, $panes);
+                $message = $command;
+            } else {
+                $message = {%$command, type => "command", pane => $panes->[$leaf]};
+            }
+            if ($later) {
+                push @on_advance, $message;
+            } else {
+                request($message);
+            }
+        }
+    }
     serve();
 } elsif ($mode eq "env") {
     my ($file) = @rest;
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     open(my $out, ">", $file) or die "cannot write $file: $!";
     print $out "cwd=", `/bin/pwd`;
     print $out "$_=$ENV{$_}\n" for sort keys %ENV;
@@ -73,12 +148,12 @@ if ($mode eq "script") {
     serve();
 } elsif ($mode eq "hello-schema") {
     read_app_hello();
-    hello(1, $rest[0]);
+    hello($protocol, $rest[0]);
     command("set-deck", {titles => ["skew"]});
     serve();
 } elsif ($mode eq "command-first") {
     command("set-deck", {titles => ["early"]});
-    hello(1, $schema);
+    hello($protocol, $schema);
     serve();
 } elsif ($mode eq "refuse") {
     my $app = read_app_hello();
@@ -89,31 +164,31 @@ if ($mode eq "script") {
     exit 3;
 } elsif ($mode eq "malformed") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     print "this is not json\n";
     serve();
 } elsif ($mode eq "partial") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     print '{"type":"command","id":1,"name":"set-de';
     exit 0;
 } elsif ($mode eq "long-line") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     print "x" x (2 * 1024 * 1024);
     sleep 60;
 } elsif ($mode eq "flood") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     while (1) { command("status", {}); }
 } elsif ($mode eq "stall") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     print STDERR "stalling\n";
     sleep 600;
 } elsif ($mode eq "stderr-flood") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     print STDERR "flood line $_\n" for 1 .. 100000;
     # The pause lets the app drain the bounded ingress, so the last line is not one of the dropped.
     select(undef, undef, undef, 0.5);
@@ -122,7 +197,7 @@ if ($mode eq "script") {
 } elsif ($mode eq "ignore-term") {
     $SIG{TERM} = "IGNORE";
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     sleep 600 while 1;
 } elsif ($mode eq "grandchild") {
     # A background child in the driver's group that ignores SIGTERM and holds stdout open.
@@ -137,11 +212,11 @@ if ($mode eq "script") {
     open(my $out, ">", $file) or die "cannot write $file: $!";
     print $out "$child\n";
     close($out);
-    hello(1, $schema);
+    hello($protocol, $schema);
     serve();
 } elsif ($mode eq "exit") {
     read_app_hello();
-    hello(1, $schema);
+    hello($protocol, $schema);
     exit($rest[0] // 0);
 } elsif ($mode eq "silent") {
     1 while <STDIN>;

@@ -147,7 +147,7 @@ final class ExecDriverChannelTests: XCTestCase {
   /// before its hello. Each driver sends a set-deck that must never land.
   func testEveryHelloMismatchEndsTheChannelWithNoCommandRun() async throws {
     let cases: [(String, Int, [String], String)] = [
-      ("hello-protocol", 1, ["2"], "exec protocol 2"),
+      ("hello-protocol", 1, ["1"], "exec protocol 1"),
       ("hello-schema", 1, ["2"], "schema version 2"),
       ("refuse", 1, [], "needs exec protocol 9"),
       ("command-first", 1, [], "before its hello"),

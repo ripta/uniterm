@@ -73,8 +73,13 @@ final class ExecPaneFixture {
 
     scripting = WindowScripting(windows: windows)
 
-    factory = { [unowned self] _, _ in
-      nextIsFake ? FakeApplet() as any Applet : SlidesFixture()
+    // A hosted choice, as a layout makes, gets its own fixture. Any other gets a slides fixture.
+    factory = { [unowned self] choice, _ in
+      if case .hosted(let typeID) = choice, let applet = AppletFixtures.make(typeID: typeID) {
+        return applet
+      }
+
+      return nextIsFake ? FakeApplet() as any Applet : SlidesFixture()
     }
   }
 

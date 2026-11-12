@@ -449,6 +449,112 @@ public struct PaneTree: Sendable, Equatable {
     return released
   }
 
+  /// Gives a group that has no owner to `owner`. Its members are the ones it holds now, and the
+  /// group gains none. Returns false, and changes nothing, when the group is not here or still
+  /// has an owner.
+  @discardableResult
+  public mutating func adopt(_ group: NodeID, by owner: GroupOwner) -> Bool {
+    guard case .group(let found)? = root.find(group), found.owner == nil else { return false }
+
+    root = root.updatingGroup(group) { $0.owner = owner }
+    return true
+  }
+
+  // MARK: Layout requests
+
+  /// Lays out a controller's subtree as `plan` says, with `slots` new panes, and returns the group
+  /// and the new panes' IDs by slot.
+  ///
+  /// The subtree is the innermost group around `anchor` that `owner` owns with `anchor` as its
+  /// source. A later layout rearranges that group's content: it must place every pane the content
+  /// holds exactly once, and the content may hold only the group's source and members. Without
+  /// such a group, this is a first layout. It places `anchor` once and no other open pane, opens
+  /// at least one, and wraps them in a new group with `anchor` as its source. A group the anchor
+  /// is already a member of then holds the new one nested inside it.
+  ///
+  /// The new panes are members of the group, and so are the members it had. The split IDs inside
+  /// a rearranged group are new. A refusal changes nothing and uses no ID.
+  public mutating func layOut(
+    _ plan: PaneLayoutPlan, anchoredAt anchor: NodeID, for owner: GroupOwner, slots: Int,
+    in size: CGSize
+  ) throws -> PaneLayoutOutcome {
+    guard root.paneIDs.contains(anchor) else { throw PaneTreeError.unknownPane(anchor) }
+
+    guard plan.isWellFormed else {
+      throw PaneLayoutError.refused("a split needs two or more children with positive weights")
+    }
+
+    guard plan.slots == Array(0..<slots) else {
+      throw PaneLayoutError.refused("the layout's new panes are not numbered in order")
+    }
+
+    let placed = plan.existingPanes
+
+    guard Set(placed).count == placed.count else {
+      throw PaneLayoutError.refused("the layout places a pane more than once")
+    }
+
+    var allocator = self.allocator
+    let base: Node
+    let groupID: NodeID
+    var created: [NodeID] = []
+
+    if let group = enclosingGroups(of: anchor).last(where: {
+      $0.owner == owner && $0.source == anchor
+    }) {
+      let content = group.content.paneIDs
+      let own = group.members.union([anchor])
+
+      guard group.content.groups.isEmpty, Set(content).isSubset(of: own) else {
+        throw PaneLayoutError.refused(
+          "the group holds a pane this program does not own, such as one the user split off, so "
+            + "its layout cannot change")
+      }
+
+      guard Set(placed) == Set(content) else {
+        throw PaneLayoutError.refused(
+          "a later layout places every pane of its group once, and no other pane")
+      }
+
+      let built = plan.built(allocator: &allocator, created: &created)
+
+      base = root.updatingGroup(group.id) {
+        $0.content = built
+        $0.members.formUnion(created)
+      }
+      groupID = group.id
+    } else {
+      guard placed == [anchor] else {
+        throw PaneLayoutError.refused(
+          "a first layout places the pane it starts from once, and no other open pane")
+      }
+
+      guard slots > 0 else {
+        throw PaneLayoutError.refused("a first layout opens at least one pane")
+      }
+
+      let id = allocator.next()
+      let built = plan.built(allocator: &allocator, created: &created)
+      let wrapper = Group(
+        id: id, owner: owner, source: anchor, members: Set(created), content: built)
+
+      base = root.wrapping(anchor, in: wrapper)
+      groupID = id
+    }
+
+    let candidate = base.normalizedRoot()
+
+    guard fits(candidate, in: size) else { throw PaneLayoutError.noRoom }
+
+    guard candidate.find(groupID) != nil else {
+      preconditionFailure("a layout's group always keeps a member")
+    }
+
+    root = candidate
+    self.allocator = allocator
+    return PaneLayoutOutcome(group: groupID, created: created)
+  }
+
   // MARK: Distance
 
   /// How many split edges lie between `source` and each pane, in the tree as it is now. A group is
@@ -532,6 +638,30 @@ extension Node {
       }
 
       return .group(found)
+    }
+  }
+
+  /// This node with `change` applied to the group `id`. Nothing is normalized.
+  func updatingGroup(_ id: NodeID, _ change: (inout Group) -> Void) -> Node {
+    switch self {
+    case .pane:
+      return self
+
+    case .split(var split):
+      for index in split.children.indices {
+        split.children[index].node = split.children[index].node.updatingGroup(id, change)
+      }
+
+      return .split(split)
+
+    case .group(var group):
+      if group.id == id {
+        change(&group)
+      } else {
+        group.content = group.content.updatingGroup(id, change)
+      }
+
+      return .group(group)
     }
   }
 
@@ -806,6 +936,32 @@ extension Node {
     }
 
     return .split(split)
+  }
+}
+
+extension PaneLayoutPlan {
+  /// The plan as nodes, with fresh IDs for its splits and new panes. Each new pane's ID is
+  /// appended to `created` as it is reached, so in slot order. Nothing is normalized.
+  func built(allocator: inout NodeIDAllocator, created: inout [NodeID]) -> Node {
+    switch self {
+    case .existing(let pane):
+      return .pane(Pane(id: pane))
+
+    case .new:
+      let id = allocator.next()
+
+      created.append(id)
+      return .pane(Pane(id: id))
+
+    case .split(let axis, let children):
+      let id = allocator.next()
+      let nodes = children.map {
+        PaneModel.Child(
+          node: $0.plan.built(allocator: &allocator, created: &created), weight: $0.weight)
+      }
+
+      return .split(Split(id: id, axis: axis, children: nodes))
+    }
   }
 }
 

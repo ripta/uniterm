@@ -2,6 +2,7 @@ import AppKit
 import AppletKit
 import ExecDriver
 import PaneModel
+import ScriptHost
 import StatusKit
 
 /// Asks the user for the values of a driver's environment keys before a run. Nil means the user
@@ -35,6 +36,15 @@ final class ExecAttachment {
 
   /// Counts runs, so the end of an earlier run never changes a later one.
   var run: UInt64 = 0
+
+  /// The owner the running driver's groups have. Each run gets its own, and loses it when it ends,
+  /// so a later run never inherits an earlier run's groups.
+  var owner: GroupOwner?
+
+  /// True once the user revoked this run's control of other panes. It holds for the rest of the
+  /// run, as a revoke holds for a connection, so the run lays out and commands nothing beyond its
+  /// own pane again, layouts still in preparation included. A new run starts clear.
+  var revoked = false
 
   init(declaration: ExecDeclaration, note: String) {
     self.declaration = declaration
@@ -187,22 +197,52 @@ extension MainWindowController {
     }
 
     attachment.run += 1
+    lastDriverOwner += 1
 
     let run = attachment.run
+    let owner = GroupOwner(driver: lastDriverOwner)
 
+    attachment.owner = owner
+    attachment.revoked = false
     pushControl(paneControls.set(driver: .exec, for: pane), to: pane)
+
+    let drives: @MainActor () -> Bool = { [weak self, weak attachment] in
+      guard let self, let attachment else { return false }
+
+      return execAttachments[pane] === attachment && attachment.run == run
+        && contains(pane: pane)
+    }
+
+    let beyond: @MainActor () -> ScriptCallError? = { [weak self, weak attachment] in
+      guard let self, let attachment, drives(), attachment.owner == owner else {
+        return .refused("the driver no longer drives this pane")
+      }
+
+      guard !attachment.revoked else {
+        return .refused(
+          "You revoked this driver's control of other panes. It keeps its own pane, and needs a "
+            + "new run to act beyond it.")
+      }
+
+      return sourceRefusal(pane)
+    }
 
     let channel = ExecDriverChannel(
       launch: launch, environment: environment, applet: applet, dispatcher: dispatcher,
-      authority: { [weak self, weak attachment] in
-        guard let self, let attachment, execAttachments[pane] === attachment,
-          attachment.run == run, contains(pane: pane)
-        else { return AppletCommandError(.refused, "the driver no longer drives this pane") }
-
-        return nil
+      authority: {
+        drives() ? nil : AppletCommandError(.refused, "the driver no longer drives this pane")
       },
       producer: statusCenter.issueProducer(kind: .applet, name: "\(attachment.program) (driver)"),
       killGrace: execKillGrace,
+      host: { [weak self] request, reply in
+        guard let self else {
+          return reply(.failure(AppletCommandError(.refused, "uniterm is quitting")))
+        }
+
+        if let refusal = beyond() { return reply(.failure(Self.driverFailure(refusal))) }
+
+        driverAsked(request, from: pane, as: owner, beyond: beyond, reply: reply)
+      },
       onEnd: { [weak self, weak attachment] end in
         guard let self, let attachment else { return }
 
@@ -215,6 +255,7 @@ extension MainWindowController {
       try channel.start()
     } catch {
       attachment.state = .ended("The driver did not start: \(error).")
+      attachment.owner = nil
       pushControl(paneControls.set(driver: .none, for: pane), to: pane)
       statusCenter.post(level: .warning, text: "The driver did not start: \(error).")
     }
@@ -231,16 +272,150 @@ extension MainWindowController {
     }
 
     attachment.state = .ended(end.description)
+    releaseDriverOwner(of: attachment)
     pushControl(paneControls.set(driver: .none, for: pane), to: pane)
     refreshExecStatus(of: pane)
     refreshControlMarks()
   }
 
+  /// A run's groups lose their owner when the run ends, however it ends.
+  private func releaseDriverOwner(of attachment: ExecAttachment) {
+    guard let owner = attachment.owner else { return }
+
+    attachment.owner = nil
+    ownerEnded(owner)
+  }
+
   /// A pane left the window. Its driver's authority ends at once, since nothing names the
-  /// attachment any more. The applet's own close shuts the child down.
+  /// attachment any more, and so does its authority over the groups it owns. The applet's own
+  /// close shuts the child down.
   func execPaneClosed(_ pane: NodeID) {
-    execAttachments[pane] = nil
+    if let attachment = execAttachments.removeValue(forKey: pane) {
+      releaseDriverOwner(of: attachment)
+    }
+
     launchAuthority.paneClosed(ExecLaunchAuthority.Target(window: scriptWindowID, pane: pane))
+  }
+
+  // MARK: What a driver asks of the window
+
+  /// Answers a driver's layout request or its command to another pane. `beyond` says why the run
+  /// may not act beyond its own pane now, and is asked again at every authority check. A command
+  /// reaches only a remote-controlled member of a group this run owns, and its authority is
+  /// checked again when it is delivered.
+  private func driverAsked(
+    _ request: ExecDriverChannel.HostRequest, from pane: NodeID, as owner: GroupOwner,
+    beyond: @escaping @MainActor () -> ScriptCallError?, reply: @escaping ControlDispatcher.Reply
+  ) {
+    switch request {
+    case .layout(let layout):
+      Task { @MainActor [weak self] in
+        guard let self else { return }
+
+        do {
+          let parsed = try LayoutRequest.parse(
+            layout, window: scriptWindowID, declarations: appletTypes)
+
+          let panes = try await requestLayout(
+            parsed, anchor: pane, owner: owner,
+            authorize: { [self] in
+              if let refusal = beyond() { throw refusal }
+
+              try checkPlacedPanes(of: parsed) { $0 == pane || owns($0, owner) }
+            },
+            directoryExists: directoryExists)
+
+          reply(
+            .success(
+              .object([
+                "window": .number(Double(scriptWindowID)),
+                "panes": .array(panes.map { .number(Double($0.rawValue)) }),
+              ])))
+        } catch {
+          reply(.failure(Self.driverFailure(error)))
+        }
+      }
+
+    case .command(let target, let submission):
+      let member = NodeID(rawValue: target)
+
+      let authority: ControlDispatcher.Authority = { [weak self] in
+        guard let self else { return AppletCommandError(.refused, "uniterm is quitting") }
+
+        if let refusal = beyond() { return Self.driverFailure(refusal) }
+
+        guard contains(pane: member), owns(member, owner) else {
+          return AppletCommandError(.notFound, "the pane is not open in that window")
+        }
+
+        guard control(of: member).access == .remoteControlled else {
+          return AppletCommandError(
+            .refused, "The pane is disconnected. The user must enable remote control on it.")
+        }
+
+        return nil
+      }
+
+      guard authority() == nil, let applet = paneArea.applet(for: member) else {
+        return reply(
+          .failure(
+            authority() ?? AppletCommandError(.notFound, "the pane is not open in that window")))
+      }
+
+      let generation = control(of: member).generation
+
+      dispatcher.submit(
+        submission, to: applet,
+        authority: { [weak self, weak applet] in
+          if let refusal = authority() { return refusal }
+
+          guard let self, let applet, paneArea.applet(for: member) === applet,
+            control(of: member).generation == generation
+          else {
+            return AppletCommandError(
+              .refused, "the pane's control changed after the command was sent")
+          }
+
+          return nil
+        },
+        reply: reply)
+    }
+  }
+
+  /// A driver acts beyond its own pane only while the user has that pane remote-controlled.
+  private func sourceRefusal(_ pane: NodeID) -> ScriptCallError? {
+    guard contains(pane: pane) else { return .notFound("the driver's pane is closed") }
+
+    guard control(of: pane).access == .remoteControlled else {
+      return .refused(
+        "This driver's pane is disconnected, so it cannot lay out or command other panes. To "
+          + "allow it, choose Enable Remote Control from the pane's control badge or the File "
+          + "menu.")
+    }
+
+    return nil
+  }
+
+  /// True when the pane is a member of a group `owner` owns. Nesting grants nothing.
+  private func owns(_ pane: NodeID, _ owner: GroupOwner) -> Bool {
+    paneArea.tree.enclosingGroups(of: pane).contains {
+      $0.owner == owner && $0.members.contains(pane)
+    }
+  }
+
+  private static func driverFailure(_ error: any Error) -> AppletCommandError {
+    guard let error = error as? ScriptCallError else {
+      return AppletCommandError(.failed, "\(error)")
+    }
+
+    switch error.kind {
+    case .badArgument: return AppletCommandError(.badArgument, error.text)
+    case .notFound: return AppletCommandError(.notFound, error.text)
+    case .unsupported: return AppletCommandError(.unsupportedApplet, error.text)
+    case .refused: return AppletCommandError(.refused, error.text)
+    case .busy: return AppletCommandError(.busy, error.text)
+    case .failed, .replyLost: return AppletCommandError(.failed, error.text)
+    }
   }
 
   /// What the pane's exec strip shows now.

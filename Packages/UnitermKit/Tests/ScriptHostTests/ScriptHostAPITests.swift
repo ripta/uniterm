@@ -197,11 +197,52 @@ final class ScriptHostAPITests: XCTestCase {
     XCTAssertEqual(arguments, expected)
   }
 
+  /// Catches a request-layout that loses its anchor or a nearest anchor's kind, that writes a
+  /// layout the app reads as other JSON, or a refusal that reaches the script as plain text.
+  func testRequestLayoutCarriesItsLayoutAndRaisesStructuredErrors() async throws {
+    try await run("request-layout")
+
+    let sent = windows.calls.compactMap { call -> (ScriptTarget, String)? in
+      guard case .requestLayout(let pane, let layout) = call else { return nil }
+
+      return (pane, layout)
+    }
+
+    XCTAssertEqual(
+      sent.map(\.0),
+      [
+        .pane(pane), .nearest(kind: "fixture-slides"), .pane(pane), .pane(pane),
+        .pane(ScriptPaneReference(window: 7, pane: 404)),
+      ])
+    XCTAssertEqual(sent[1].1, #"{"pane":2}"#)
+
+    let layout = try JSONSerialization.jsonObject(with: Data(sent[0].1.utf8)) as? NSDictionary
+    let expected: NSDictionary = [
+      "split": "row",
+      "children": [
+        ["pane": 1, "weight": 2],
+        [
+          "split": "column",
+          "children": [
+            ["open": "fixture-notes", "control": "remote-controlled"],
+            [
+              "open": "fixture-chart", "directory": "/synthetic/charts",
+              "exec": ["argv": ["/usr/bin/perl", "chart.pl"], "environment-keys": ["TOKEN"]],
+            ],
+          ],
+        ],
+      ],
+    ]
+
+    XCTAssertEqual(layout, expected)
+  }
+
   /// Catches a function that passes a bad argument on to the app. Each fixture holds the error
   /// cases of one function, and no call may reach the app.
   func testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem() async throws {
     for fixture in [
       "bad-list-panes", "bad-open-pane", "bad-open-tab", "bad-send", "bad-send-command",
+      "bad-request-layout",
     ] {
       try await run(fixture)
     }
