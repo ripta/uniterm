@@ -80,7 +80,8 @@ single automation permission would hand input and cookies to any controller that
 
 ### Capabilities
 
-Decision: a capabilities command returns the set of capabilities this build supports, as symbols.
+Decision: a capabilities command returns the set of capabilities this build supports, as a record keyed by
+capability, per "Capability names and the unavailable error". Amended 2026-11-11; see Decision Log.
 
 - Public-API capabilities always report as available.
 - The answer comes from state uniterm computes once at startup. It never waits on WebKit or on a script, per ADR-08.
@@ -658,7 +659,7 @@ text form. Janet callers get Janet data notation, and exec drivers get JSON. (au
 - A handle reads in the form of the caller kind that made it. The byte size, the cap, and the offsets count that form.
 - Skew: ScriptWire moves to version 9. App and helper ship in one bundle, and a mismatch is refused at the hello in
   either direction. On the exec wire, base64 appears only in replies to new commands, so the exec protocol version
-  stays at 2.
+  does not move.
 
 Rationale: a byte type carries images, PDFs, and UTERM-020's 16 KiB body chunks at full size. Each caller reads with
 a parser it already has and trusts: Janet's core `parse`, or the driver's own JSON library. The only new code that
@@ -690,10 +691,9 @@ None.
   and renaming one breaks them. Mitigation: names are append-only and never change meaning, per "Capability names and
   the unavailable error". A dropped feature leaves the set, and a script that checks membership falls back.
 - **Descriptor format 2 is a one-way door** — likelihood: medium, impact: high. Signed format 2 packages must load in
-  every later build. If M8 builds format 2 from text no accepted document holds, a later change strands those
-  packages. Mitigation: format 2 is written into UTERM-004, and M6 builds it with versions before it ships, per "Who
-  builds descriptor format 2". An
-  unknown kind or version refuses the whole descriptor, so a later format can only add.
+  every later build. If format 2 ships from text no accepted document holds, a later change strands those packages.
+  Mitigation: UTERM-004 M6 writes format 2 into UTERM-004 and builds it with versions before it ships, per "Who builds
+  descriptor format 2". An unknown kind or version refuses the whole descriptor, so a later format can only add.
 - **A controller's code can outlive its run through site storage** — likelihood: low, impact: high. The rebuild ends
   every document, and new service workers are removed. Changes to other storage stay, and a page that reads them can
   act on them. A worker added on one host of a site that already had one survives. Accepted: removing site storage
@@ -744,13 +744,10 @@ Starts after UTERM-005 M8.
 - A controller holding only browser read and browser navigation at version 1 gets a structured error from every
   command in this proposal except capabilities
 - An approval stored before these permissions existed covers none of them
-- A format 2 descriptor carries a version on every permission. An unknown version, or the same kind listed twice,
-  refuses the whole descriptor at load. Format 1 descriptors still load with their two kinds
+- This proposal's kinds and versions join format 2 as UTERM-004 M6 builds it. An unknown version of them refuses the
+  whole descriptor at load
 - Each command is gated on its own permission alone. Browser script with browser read at version 1 still runs
   run-script
-- The descriptor's documentation says that each (kind, version) has one meaning
-- An approval stored under format 1 covers the same kind at version 1 in format 2, and no higher version. A signed
-  update that changes only the format does not ask again
 
 ### M2: Page events
 
@@ -1001,6 +998,15 @@ Starts after UTERM-005 M8.
   meaning. Waits on UTERM-004 M6 landing format 2 with per-permission versions.
 - 2026-11-11: Accepted by the user after the review gate. UTERM-005 "Control" gets its "Superseded in part by
   UTERM-019" marker now.
+- 2026-11-11: Risk review: nine risks added from the coherence review. Format 2 as a one-way door, unselected tabs,
+  the frame and snapshot spikes, input attribution, the exec base64 contract, and UTERM-020's staleness are mitigated.
+  Code outliving the run through site storage, trusted input's activation powers, and the 64-name ceiling are
+  accepted, each for the reason in its entry. None is high likelihood and high impact. (autonomous)
+- 2026-11-11: The UTERM-004 edit the user asked for at the gate went to UTERM-004 M6's run instead. That session owns
+  the file and has uncommitted edits in "Verified artifact and run binding". It agreed to define format 2 with the
+  rules in "Permission descriptor format". M1's format checks moved to M6.
+- 2026-11-11: Correction: "Result encoding" said the exec protocol stays at version 2. It is at version 3 today, and
+  the change does not move it.
 ## References
 
 - Findings note: `spec/reports/20261111-wkwebview-automation-vs-cdp.md`
