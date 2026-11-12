@@ -153,6 +153,34 @@ uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *na
                                         size_t argument_count, uniterm_script_failure *failure);
 
 /*
+ * The files of a verified controller package, by their packaged paths. The caller keeps the
+ * memory alive for the run.
+ */
+typedef struct uniterm_package {
+    const char *const *names;
+    const uint8_t *const *sources;
+    const size_t *lengths;
+    size_t count;
+} uniterm_package;
+
+/*
+ * Runs a controller package's Janet entry, `entry`, as uniterm_janet_run runs a script, with a
+ * fixed module loader in place of Janet's own.
+ *
+ * Before any of the package's code runs, the loader replaces every module path and every module
+ * loader. An import then finds only the bundled uniterm module and the package's own files, held
+ * in memory, never a file on disk. A relative import resolves against the importing file's place
+ * in the package. Native modules and images have no loader at all, so neither loads from anywhere.
+ * The sandbox is applied after the loader is in place and before the entry runs.
+ */
+uniterm_script_status uniterm_janet_run_package(const uniterm_host *host, const char *entry,
+                                                const uniterm_package *package,
+                                                uint32_t sandbox_flags,
+                                                const char *const *arguments,
+                                                size_t argument_count,
+                                                uniterm_script_failure *failure);
+
+/*
  * What the REPL reports to its host. Both callbacks run on the thread that runs the REPL, and must
  * not unwind or trap. `line` gets each non-blank line the user enters, without its newline, before
  * the line is evaluated. `running` gets 1 when a form starts to evaluate and 0 when it ends.

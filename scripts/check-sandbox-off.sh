@@ -18,8 +18,12 @@
 # can pass only a directory, an environment, and a program, so it connects by path too. Janet's own
 # sandbox, the memory cap, and process isolation bound it instead. The check still insists that the
 # built command exists, is signed, and holds no sandbox or other entitlement, so it can never be
-# mistaken for a sandboxed decoder. Its build settings must turn the hardened runtime on. A local
-# build is signed ad hoc, which carries no runtime flag, so the built file cannot show it.
+# mistaken for a sandboxed decoder. Its build settings must turn the hardened runtime on, and must
+# ask codesign for it by flag too, since Xcode drops the hardened runtime from an ad hoc signature.
+# They must also keep Xcode from adding get-task-allow to a debug build, since dyld honors its
+# variables for a process that holds it. The built command must carry the runtime flag. Otherwise
+# dyld would load whatever DYLD_INSERT_LIBRARIES names into the command before any of its own code
+# ran, and the app could not tell that command from a clean one.
 
 set -euo pipefail
 
@@ -129,6 +133,12 @@ for block in blocks:
     if "ENABLE_HARDENED_RUNTIME = YES;" not in block:
         print("a uniterm command build configuration does not enable the hardened runtime.")
 
+    if 'OTHER_CODE_SIGN_FLAGS = "--options=runtime";' not in block:
+        print("a uniterm command build configuration does not sign with --options=runtime.")
+
+    if "CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;" not in block:
+        print("a uniterm command build configuration lets Xcode add get-task-allow.")
+
     if "ENABLE_APP_SANDBOX = YES;" in block:
         print("a uniterm command build configuration enables the App Sandbox.")
 
@@ -151,6 +161,13 @@ if [ "$#" -ge 1 ]; then
         fail "the built $command_name is unsigned or its signature does not verify."
       fi
 
+      # The output is read whole first. A grep -q that stops early would end codesign with SIGPIPE,
+      # and pipefail would count that as a missing flag.
+      details="$(codesign -dv "$command_path" 2>&1 || true)"
+      if ! printf '%s\n' "$details" | grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\([^)]*runtime'; then
+        fail "the built $command_name does not carry the hardened runtime."
+      fi
+
       signed="$(codesign -d --entitlements - "$command_path" 2>/dev/null || true)"
       if printf '%s\n' "$signed" | grep -q 'com.apple.security.app-sandbox'; then
         fail "the built $command_name carries the App Sandbox entitlement. It must stay unsandboxed."
@@ -158,6 +175,10 @@ if [ "$#" -ge 1 ]; then
 
       if printf '%s\n' "$signed" | grep -Eq "$helper_forbidden"; then
         fail "the built $command_name carries an entitlement it must not hold."
+      fi
+
+      if printf '%s\n' "$signed" | grep -q 'com.apple.security.get-task-allow'; then
+        fail "the built $command_name carries get-task-allow, which lets dyld variables inject code."
       fi
     fi
   done

@@ -7,7 +7,7 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 7
+  public static let version: UInt16 = 8
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -16,6 +16,9 @@ public enum ScriptProtocol {
 
   /// The largest body any message may declare. The reader checks it before it allocates.
   public static let maxControlBody = 64 * 1024
+
+  /// The size of a controller's version digest, a SHA-256.
+  public static let versionDigestBytes = 32
 
   /// The longest script name a peer may announce, in UTF-8 bytes.
   public static let maxNameBytes = 128
@@ -450,6 +453,38 @@ public enum ScriptResult: Equatable, Sendable {
   case failure(ScriptFailureKind, String)
 }
 
+/// A run of a controller package, which the bundle's own command asks the app to admit. It names
+/// the package by path and nothing else. The app reads, verifies, and copies the package itself, so
+/// a digest or a name the peer could claim never reaches it.
+public struct ControllerBegin: Equatable, Sendable {
+  public enum Entry: UInt8, Sendable, Equatable, CaseIterable {
+    /// The command runs the package's Janet entry in its own VM, once the app admits it.
+    case janet = 1
+
+    /// The command execs the package's native entry from the app's snapshot.
+    case native = 2
+  }
+
+  /// The most capabilities one run may ask for, and the longest name of one.
+  public static let maxCapabilities = 32
+  public static let maxCapabilityBytes = 32
+
+  public let entry: Entry
+
+  /// The package folder's absolute path, with every link resolved by the command.
+  public let package: String
+
+  /// The Janet capabilities the user granted the run with `--allow`. Each must be one the
+  /// descriptor declares.
+  public let capabilities: [String]
+
+  public init(entry: Entry, package: String, capabilities: [String] = []) {
+    self.entry = entry
+    self.package = package
+    self.capabilities = capabilities
+  }
+}
+
 /// A message from a script helper. The app validates each one and trusts none of them.
 public enum ScriptHelperMessage: Equatable, Sendable {
   case hello(version: UInt16)
@@ -480,6 +515,10 @@ public enum ScriptHelperMessage: Equatable, Sendable {
   /// writes this frame itself, in one write, before it exits.
   case memoryLimit
 
+  /// Declares the connection a controller run, in place of `begin`. The app answers with
+  /// `controllerAdmitted` or `controllerRefused`, and no call is answered before that.
+  case controllerBegin(ControllerBegin)
+
   /// The frame type of the one call that carries content.
   static let sendType: UInt8 = 4
 
@@ -496,6 +535,7 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .replEvaluating: return 7
     case .pong: return 8
     case .memoryLimit: return 9
+    case .controllerBegin: return 10
     }
   }
 
@@ -510,6 +550,15 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .pong(let nonce): body.put(nonce)
 
     case .memoryLimit: break
+
+    case .controllerBegin(let begin):
+      body.put(begin.entry.rawValue)
+      body.put(string: begin.package, limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(UInt8(min(begin.capabilities.count, ControllerBegin.maxCapabilities)))
+
+      for name in begin.capabilities.prefix(ControllerBegin.maxCapabilities) {
+        body.put(string: name, limit: ControllerBegin.maxCapabilityBytes)
+      }
 
     case .attach(let token): body.put(raw: token)
 
@@ -576,6 +625,27 @@ public enum ScriptHelperMessage: Equatable, Sendable {
 
     case 9: message = .memoryLimit
 
+    case 10:
+      guard let entry = ControllerBegin.Entry(rawValue: try reader.u8()) else {
+        throw WireError.badValue("an unknown controller entry kind")
+      }
+
+      let package = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
+      let count = Int(try reader.u8())
+
+      guard count <= ControllerBegin.maxCapabilities else {
+        throw WireError.tooLong(declared: count, limit: ControllerBegin.maxCapabilities)
+      }
+
+      var capabilities: [String] = []
+
+      for _ in 0..<count {
+        capabilities.append(try reader.string(limit: ControllerBegin.maxCapabilityBytes))
+      }
+
+      message = .controllerBegin(
+        ControllerBegin(entry: entry, package: package, capabilities: capabilities))
+
     default: throw WireError.unknownType(type)
     }
 
@@ -619,6 +689,14 @@ public enum ScriptAppMessage: Equatable, Sendable {
   /// when no form is running.
   case stop
 
+  /// The app verified the controller and admitted the run. `snapshot` is the folder of the run's
+  /// private copy, and `version` the SHA-256 of its descriptor. The command loads only what that
+  /// folder holds, and only when its descriptor has that digest.
+  case controllerAdmitted(snapshot: String, version: Data)
+
+  /// The app refused the run. The text says why, and the command shows it and runs nothing.
+  case controllerRefused(String)
+
   var wireType: UInt8 {
     switch self {
     case .hello: return 1
@@ -627,6 +705,8 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .history: return 4
     case .ping: return 5
     case .stop: return 6
+    case .controllerAdmitted: return 7
+    case .controllerRefused: return 8
     }
   }
 
@@ -655,6 +735,13 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .ping(let nonce): body.put(nonce)
 
     case .stop: break
+
+    case .controllerAdmitted(let snapshot, let version):
+      body.put(string: snapshot, limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(raw: version.prefix(ScriptProtocol.versionDigestBytes))
+
+    case .controllerRefused(let text):
+      body.put(string: text, limit: ScriptProtocol.maxFailureBytes)
 
     case .history(let lines, let final):
       body.put(final ? UInt8(1) : UInt8(0))
@@ -740,6 +827,23 @@ public enum ScriptAppMessage: Equatable, Sendable {
       try reader.finished()
 
       return .stop
+
+    case 7:
+      let snapshot = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
+      let version = reader.rest()
+
+      guard version.count == ScriptProtocol.versionDigestBytes else {
+        throw WireError.badValue(
+          "a controller version is not \(ScriptProtocol.versionDigestBytes) bytes")
+      }
+
+      return .controllerAdmitted(snapshot: snapshot, version: version)
+
+    case 8:
+      let text = try reader.string(limit: ScriptProtocol.maxFailureBytes)
+      try reader.finished()
+
+      return .controllerRefused(text)
 
     default:
       throw WireError.unknownType(type)

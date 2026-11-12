@@ -3,7 +3,10 @@
 #
 # Each input line is a command. "send HEX" writes the bytes. "read" reads one frame and prints
 # "frame HEX", or "closed". "orphan" forks, the connecting process exits, and the child keeps the
-# socket and prints "orphaned PID" once the parent is gone.
+# socket and prints "orphaned PID" once the parent is gone. "exec" starts perl again in the same
+# process, keeping the socket open across the exec, and the new program prints "execed PID".
+# "forksend HEX" forks, and the child writes the bytes while the parent stays, then prints
+# "childsent PID" and waits.
 #
 # With "nested" after the socket path, the first process prints "root PID" and stays, a middle
 # process stays under it, and the middle's child connects. "unparent" then ends the middle, so the
@@ -12,6 +15,7 @@
 use strict;
 use warnings;
 use IO::Handle;
+use Fcntl;
 use Socket;
 
 STDOUT->autoflush(1);
@@ -30,9 +34,16 @@ if (@ARGV > 1 && $ARGV[1] eq 'nested') {
     }
 }
 
-socket(my $socket, PF_UNIX, SOCK_STREAM, 0) or die "socket: $!";
-connect($socket, pack_sockaddr_un($ARGV[0])) or die "connect: $!";
-print "connected $$\n";
+my $socket;
+
+if ($ARGV[0] eq '--fd') {
+    open($socket, '+<&=', $ARGV[1]) or die "fd: $!";
+    print "execed $$\n";
+} else {
+    socket($socket, PF_UNIX, SOCK_STREAM, 0) or die "socket: $!";
+    connect($socket, pack_sockaddr_un($ARGV[0])) or die "connect: $!";
+    print "connected $$\n";
+}
 
 sub read_exactly {
     my ($count) = @_;
@@ -75,6 +86,20 @@ while (my $line = <STDIN>) {
         kill 'TERM', $parent;
         select(undef, undef, undef, 0.01) while getppid() == $parent;
         print "unparented $$\n";
+    } elsif ($command eq 'exec') {
+        my $flags = fcntl($socket, F_GETFD, 0) or die "fcntl: $!";
+        fcntl($socket, F_SETFD, $flags & ~FD_CLOEXEC) or die "fcntl: $!";
+        exec($^X, $0, '--fd', fileno($socket)) or die "exec: $!";
+    } elsif ($command eq 'forksend') {
+        my $child = fork();
+        die "fork: $!" unless defined $child;
+
+        if ($child == 0) {
+            syswrite($socket, pack('H*', $argument)) or die "send: $!";
+            print "childsent $$\n";
+            sleep 60;
+            exit 0;
+        }
     } elsif ($command eq 'orphan') {
         my $parent = $$;
         my $child = fork();

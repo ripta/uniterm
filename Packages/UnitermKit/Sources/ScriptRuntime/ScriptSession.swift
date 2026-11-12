@@ -80,6 +80,35 @@ final class ScriptSession: @unchecked Sendable {
     return session
   }
 
+  /// Connects and asks the app to admit a controller run. The app authenticates this process,
+  /// verifies the package itself, and answers with the run's snapshot and the version it verified,
+  /// or with a refusal, which throws `ScriptSessionError.failed`. Nothing of the package is read
+  /// before that answer.
+  static func openController(path: String, begin: ControllerBegin) throws -> (
+    session: ScriptSession, snapshot: String, version: Data
+  ) {
+    let session = try connect(path: path)
+
+    do {
+      try session.socket.send(ScriptHelperMessage.controllerBegin(begin).frame())
+
+      switch try session.readMessage() {
+      case .controllerAdmitted(let snapshot, let version):
+        return (session, snapshot, version)
+
+      case .controllerRefused(let text):
+        throw ScriptSessionError.failed(.refused, text)
+
+      default:
+        throw WireError.badValue("the app answered a controller run with something else")
+      }
+    } catch {
+      session.close()
+
+      throw error
+    }
+  }
+
   /// Connects as a REPL's helper does. After the version, it presents the token and waits for the
   /// app to accept it. The app answers with the history to recall, oldest first, or with a refusal
   /// that says why. A refusal throws `ScriptSessionError.failed`.
