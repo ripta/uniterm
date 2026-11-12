@@ -960,3 +960,64 @@ Changed test classes, each run alone:
 | ControllerDescriptorTests | 0.55 s |
 | CommandHelperSandboxTests | 0.54 s |
 | MachOLoadCheckTests | 0.54 s |
+
+## REPL restart fix
+
+`ReplCapabilityUITests.testARestartWithFsReadStartsAFreshReplThatCanReadAFile` fails about 1 run in 4, at M4's
+commit and at M5's. Its usual symptom is that the fresh REPL never prints what it may use, and its pane shows only the
+login banner. Once, the pane read "uniterm did not accept this REPL. Its token was not issued by this uniterm, or was
+already used." The restart feature and the test come from M1. A fresh implementer fixes it before M6, as its own
+commit, with a reproduction that does not depend on UI timing.
+
+### Cause
+
+libghostty decides which surface a queued event belongs to by the surface's memory address alone. A capability
+restart frees the old surface and creates the new one at once, and the allocator often reuses the address. The old
+session's queued exit then reaches the new surface:
+
+1. uniterm sees the fresh session exit before it starts.
+2. The REPL applet treats the helper as gone and withdraws its token.
+3. The fresh helper presents that token, and its attach is refused.
+4. libghostty also marks the new surface exited, so a later key press closes it.
+
+A pointer trace showed a free and a new surface at the same address, then the stale exit, every time. A traced UI run
+on the unfixed build failed 5 of 20, each with that sequence. Every passing restart went straight to its start.
+
+The briefed candidate, an event lost before `onEvent` is set, was refuted. Every Ghostty callback reaches Swift
+through the main queue, and the launch runs on main without yielding.
+
+### Fix
+
+A second Ghostty patch tags each queued surface event with the surface's random 64-bit ID. Delivery requires both the
+address and the ID to match. No uniterm Swift source changed. A real-engine integration test frees a session whose exit
+is already queued, creates one at the same address, and checks that the new one sees only its own start. It failed 3
+of 3 without the patch and passes with it.
+
+The implementer's best guess is to fix it in libghostty, not to drain events after each free. The drain relies on
+libghostty joining every queuing thread before free returns. It would also run other surfaces' events in the middle of
+a close. If the user prefers no second patch, the drain replaces it and the test stays.
+
+### Results
+
+| Run | Result |
+|---|---|
+| `ReplCapabilityUITests`, 20 iterations, with the patch | 18 of 20 passed; no failure at the restart |
+| The same, traced, without the patch | 12 of 20 passed; 5 failed at the restart, all with the stale exit |
+| `caffeinate -dimsu make test-package` | 2398 tests, 8 skipped, 0 failures, 219 seconds |
+| `make fmt-check`, `make lint`, `make check`, `make build`, `make test-helper-sandbox`, `scripts/check-sandbox-off.sh` | pass |
+
+The 2 failures left, and 3 more in the unfixed run, come before the restart. They are "Return left the launcher" and
+an XCUITest hit-point exception on a menu click. Both happen with and without the patch. They match the synthesized
+clicks that did nothing in M3's UI runs. Their cause is unresolved. An earlier "the REPL never showed its prompt", also
+before any restart, is unresolved too.
+
+Another session was editing `spec/proposals/UTERM-019-browser-automation.md` in the working tree during this fix.
+`proposals.py check` reports a status mismatch in it. It is not this run's file and is left alone.
+
+### Review
+
+A reviewer applied both patches to the pinned Ghostty source and found no defect. Only two places build a surface
+event, and both now carry the ID. The ID is set before any thread can queue. A freed surface is never read, and Swift
+sees no layout change. The patch does not conflict with the first patch. The cache keys pick up the new patch without
+a script change. Three small findings, an Amended marker, an As built bullet that carried the cause, and a dense test
+comment, were fixed. `make ghostty-offline-check` passed in 137 seconds with the new patch.

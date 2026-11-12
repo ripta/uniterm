@@ -1065,6 +1065,94 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     try await assertReportsLogin(try startProgram(["/bin/sleep", "30"]))
   }
 
+  /// Catches a closed session's queued exit reaching the session that reuses its address.
+  ///
+  /// libghostty queues each surface's messages for the main thread. The allocator often gives a
+  /// freed surface's address to the next surface, as when a REPL restarts. A stale exit would end
+  /// the new session's REPL, and libghostty would close it on the next key press.
+  ///
+  /// The main thread does not yield until the second session exists, so libghostty cannot drain
+  /// the first session's exit before then. That exit is queued ahead of the second session's
+  /// start, so it has had its turn once the start arrives.
+  ///
+  /// A pair whose second surface lands at another address proves nothing. The test makes another
+  /// pair, and skips only when none of five pairs reuses an address.
+  func testAClosedSessionsQueuedExitNeverReachesTheSessionThatReusesItsAddress() async throws {
+    var reused: (any TerminalSession)?
+
+    for _ in 0..<5 {
+      let second = try startSecondAfterAQueuedExit()
+
+      if second.reusedAddress {
+        reused = second.session
+
+        break
+      }
+
+      second.session.close()
+    }
+
+    guard let second = reused else {
+      throw XCTSkip("no second surface reused the first's address, so nothing was proved")
+    }
+
+    var events: [String] = []
+
+    second.onEvent = { event in
+      switch event {
+      case .exited: events.append("exited")
+      case .processStarted: events.append("started")
+      default: break
+      }
+    }
+
+    try await waitUntil("the second session's start") { events.contains("started") }
+
+    XCTAssertEqual(events, ["started"], "the second session got the first session's exit")
+  }
+
+  /// Starts a session whose program ends at once, waits on this thread until libghostty has reaped
+  /// its child, closes it, and starts a second session. Nothing yields the main thread meanwhile.
+  private func startSecondAfterAQueuedExit() throws -> (
+    session: any TerminalSession, reusedAddress: Bool
+  ) {
+    let before = Set(children(of: getpid()))
+    let first = try startProgram(["/usr/bin/true"])
+    let deadline = ContinuousClock.now + .seconds(10)
+    var login: pid_t?
+
+    // libghostty reaps its child on its IO thread and queues the exit right after. Once the child
+    // is gone, freeing the surface joins that thread, so the exit is in the queue on return.
+    while ContinuousClock.now < deadline {
+      let current = Set(children(of: getpid())).subtracting(before)
+
+      if login == nil { login = current.first }
+
+      if let login, !current.contains(login) { break }
+
+      sched_yield()
+    }
+
+    let reaped = try XCTUnwrap(login, "the first session never started a child")
+
+    XCTAssertFalse(children(of: getpid()).contains(reaped), "the first session's child never ended")
+
+    let freed = try XCTUnwrap(Self.address(of: first), "the first session has no surface")
+
+    first.close()
+
+    let second = try startProgram(["/bin/sleep", "30"])
+
+    return (second, Self.address(of: second) == freed)
+  }
+
+  /// The libghostty surface a session draws, read by reflection, so the view exports nothing for
+  /// the test.
+  private static func address(of session: any TerminalSession) -> UnsafeMutableRawPointer? {
+    Mirror(reflecting: session).children.first { $0.label == "surface" }
+      .flatMap { $0.value as? UnsafeMutableRawPointer }
+  }
+
   /// Waits for the session's identity event, then checks the PID it names: a direct child of
   /// this process, running `login`, and started at the second the event reports.
   private func assertReportsLogin(
