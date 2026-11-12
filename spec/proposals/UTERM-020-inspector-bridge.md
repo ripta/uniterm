@@ -413,8 +413,9 @@ None.
   says so, and "Effective target scope" refuses methods whose effects or teardown are not established.
 - **Both connection proofs fail** — likelihood: medium, impact: high. Most of this proposal would then be undone.
   Mitigation: connection proofs come first, and "Fallback order" preserves a user decision before any deferral.
-- **The capability names become a published contract** — likelihood: high, impact: medium. Mitigation: the names follow
-  `uniterm/api-version`, as UTERM-019 settles.
+- **The capability names become a published contract** — likelihood: high, impact: medium. Mitigation: names are
+  append-only and never change meaning, as UTERM-019 "Capability names and the unavailable error" settles. Amended
+  2026-11-11; see Decision Log.
 
 ## Milestones
 
@@ -606,7 +607,9 @@ whether to drop it. No drop is authorized by this review.
 - 2026-11-11: Review gate: kept all decisions. The user kept the compatibility-record addition, approved narrowed
   raw/worker coverage, and approved the bounded native-call exception and its residual app-crash risk. Nothing reopened.
 - 2026-11-11: The user accepted the proposal and declined an ADR. Acceptance does not schedule any milestone.
-
+- 2026-11-11: Risks amended: the capability-name mitigation said the names follow `uniterm/api-version`. UTERM-019
+  settled append-only names instead, with no schema bump. UTERM-019 "Result encoding" also settled the byte type that
+  carries this proposal's 16 KiB body chunks, which a 4096-byte script string could not.
 ## References
 
 - [WebKit InspectorBackend](https://github.com/WebKit/WebKit/blob/main/Source/WebInspectorUI/UserInterface/Protocol/InspectorBackend.js):
