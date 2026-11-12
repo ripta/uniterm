@@ -21,7 +21,7 @@
 | [UTERM-017](UTERM-017-status-bar-placement.md) | Where notices go, their levels, window status slots, and the shared queue | implemented |
 | [UTERM-018](UTERM-018-open-in-nearest-capable-pane.md) | Every open walks to the nearest pane that can handle it | accepted |
 | [UTERM-019](UTERM-019-browser-automation.md) | Controller scripts run JavaScript, follow page events, and send input in their own browser tabs | draft |
-| [UTERM-020](UTERM-020-inspector-bridge.md) | Console, network, interception, and debugging for controller tabs through a hidden Web Inspector | draft |
+| [UTERM-020](UTERM-020-inspector-bridge.md) | Console, network, interception, and debugging for controller tabs through a hidden Web Inspector | accepted |
 
 ## Dependency Graph
 
