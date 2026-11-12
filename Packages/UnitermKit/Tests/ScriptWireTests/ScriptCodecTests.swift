@@ -37,6 +37,9 @@ final class ScriptCodecTests: XCTestCase {
       .sendCommand(
         pane: nearest, appletType: "fixture-chart", schemaVersion: UInt32(Int32.max),
         command: "set-series", arguments: "{}"),
+      .requestLayout(
+        pane: pane, layout: #"{"split":"row","children":[{"pane":3},{"open":"fixture-notes"}]}"#),
+      .requestLayout(pane: nearest, layout: "{}"),
     ]
   }()
 
@@ -400,6 +403,35 @@ extension ScriptCodecTests {
     var versionReader = ByteReader(version.bytes)
 
     XCTAssertThrowsError(try ScriptCall.decode(from: &versionReader))
+  }
+
+  /// Catches a layout past its bound, or one whose length runs past the body, being read as a
+  /// call. A layout exactly at the bound is read.
+  func testRequestLayoutBoundsAreRefusedWhenDecoded() throws {
+    func body(declared: Int, actual: Int) -> Data {
+      var body = ByteWriter()
+
+      body.put(UInt16(8))
+      body.put(target: .nearest(kind: "terminal"))
+      body.put(UInt32(declared))
+      body.put(raw: Data(repeating: 0x20, count: actual))
+
+      return body.bytes
+    }
+
+    let limit = ScriptProtocol.maxLayoutBytes
+    var over = ByteReader(body(declared: limit + 1, actual: limit + 1))
+    var short = ByteReader(body(declared: 10, actual: 9))
+    var exact = ByteReader(body(declared: limit, actual: limit))
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &over))
+    XCTAssertThrowsError(try ScriptCall.decode(from: &short))
+
+    guard case .requestLayout(_, let layout) = try ScriptCall.decode(from: &exact) else {
+      return XCTFail("a layout at the bound was not read")
+    }
+
+    XCTAssertEqual(layout.utf8.count, limit)
   }
 
   /// Catches a value the shim could not read being sent anyway: an integer a Janet number cannot

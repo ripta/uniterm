@@ -14,53 +14,6 @@ import XCTest
 /// windows, which the package tests replace with a stand-in.
 @MainActor
 final class ScriptRunUITests: UnitermUITestCase {
-  private var testSocket: String { scriptDirectory + "/uniterm.sock" }
-
-  /// The app the tests drive sits beside the test runner in the build products folder.
-  /// `UNITERM_APP_PATH` names another build.
-  private func bundledCommand() throws -> String {
-    if let path = ProcessInfo.processInfo.environment["UNITERM_APP_PATH"], !path.isEmpty {
-      return path + "/Contents/Helpers/uniterm"
-    }
-
-    var folder = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
-
-    for _ in 0..<8 {
-      let app = folder.appendingPathComponent("uniterm.app")
-
-      if FileManager.default.fileExists(atPath: app.path) {
-        return app.path + "/Contents/Helpers/uniterm"
-      }
-
-      folder.deleteLastPathComponent()
-    }
-
-    throw XCTSkip("uniterm.app was not found beside the test runner")
-  }
-
-  private func write(_ text: String, to path: String) throws {
-    try Data(text.utf8).write(to: URL(fileURLWithPath: path))
-  }
-
-  /// Types the path of a shell script into the terminal and runs it.
-  private func runInTerminal(_ script: String, in app: XCUIApplication) {
-    app.typeText("sh \(script)\n")
-  }
-
-  /// Waits for a file the shell writes, and returns what it holds. A file that has not appeared in
-  /// 60 seconds fails the test, so a script that never ran cannot hang it.
-  private func waitForFile(_ path: String, timeout: TimeInterval = 60) -> String? {
-    let deadline = Date().addingTimeInterval(timeout)
-
-    while Date() < deadline {
-      if let text = try? String(contentsOfFile: path, encoding: .utf8) { return text }
-
-      Thread.sleep(forTimeInterval: 0.25)
-    }
-
-    return nil
-  }
-
   /// Catches a scripting host that is not wired to the real windows. The user enables remote
   /// control on the terminal's pane first. One script posts a status message, lists the windows and
   /// panes, and opens a pane. The status bar shows the message, a

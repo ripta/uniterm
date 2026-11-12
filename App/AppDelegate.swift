@@ -419,6 +419,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case .repl:
         return ReplApplet(engine: engine, services: replServices)
+
+      case .hosted(let typeID):
+        #if DEBUG
+          if testApplets, let applet = AppletFixtures.make(typeID: typeID) { return applet }
+        #endif
+
+        throw AppletRestoreError.unsupported("uniterm cannot open a \(typeID) pane here")
       }
     }
 

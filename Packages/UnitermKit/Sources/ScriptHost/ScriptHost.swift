@@ -234,7 +234,7 @@ public final class ScriptHost {
       releaseFilesOfClosedPanes()
 
       switch call {
-      case .openPane, .openTab, .sendCommand:
+      case .openPane, .openTab, .sendCommand, .requestLayout:
         Task { @MainActor [weak self] in
           let result =
             await self?.runAsync(call, connection: connection)
@@ -283,7 +283,7 @@ public final class ScriptHost {
         try requireWindows().listPanes(window: window, caller: try requireCaller(connection))
       }
 
-    case .openPane, .openTab, .sendCommand:
+    case .openPane, .openTab, .sendCommand, .requestLayout:
       return .failure(.failed, "the call needs to wait, and was run as if it did not")
 
     case .send(let target, let name, let content):
@@ -327,6 +327,12 @@ public final class ScriptHost {
           of: try await requireWindows().sendCommand(
             to: pane, appletType: type, schemaVersion: version, command: command,
             arguments: arguments, caller: caller, stillAllowed: stillAllowed),
+          commandRan: true)
+
+      case .requestLayout(let pane, let layout):
+        return Self.result(
+          of: try await requireWindows().requestLayout(
+            anchor: pane, layout: layout, caller: caller, stillAllowed: stillAllowed),
           commandRan: true)
 
       default:
@@ -435,11 +441,21 @@ public final class ScriptHost {
   /// The connections that act for a pane now: those whose grant names it, and those whose
   /// ancestry leads to one of its session roots.
   public func controllers(actingFrom window: UInt64, pane: NodeID) -> Set<UInt64> {
+    controllers { $0.window == window && $0.pane == pane }
+  }
+
+  /// The connections that act for any pane of a window now, leaving out the ones the user
+  /// revoked, since their calls are refused.
+  public func controllers(actingIn window: UInt64) -> Set<UInt64> {
+    controllers { $0.window == window }.subtracting(revokedControllers)
+  }
+
+  private func controllers(where matches: (ScriptCaller) -> Bool) -> Set<UInt64> {
     var found = Set<UInt64>()
 
     for id in sessions.keys {
       guard let connection = findConnection(id), !connection.isClosed,
-        let caller = caller(for: connection), caller.window == window, caller.pane == pane
+        let caller = caller(for: connection), matches(caller)
       else { continue }
 
       found.insert(id)

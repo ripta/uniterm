@@ -19,7 +19,7 @@ line. Nothing is held, blocked, or skipped, and no work is stashed.
 | UTERM-004 M1: Caller identity | DONE | "Bind script callers to their pane through process ancestry" |
 | UTERM-004 M2: Remote-controlled and disconnected panes | DONE | "Keep panes disconnected until the user enables remote control" |
 | UTERM-004 M3: Exec panes | DONE | "Let a local program drive an applet through an exec pane" |
-| UTERM-004 M4: Layout requests | IN PROGRESS | |
+| UTERM-004 M4: Layout requests | DONE | "Let a program lay out panes for its own subtree" |
 | UTERM-004 M5: Verified controller artifacts and run binding | QUEUED | |
 | UTERM-004 M6: Consent, remembered trust, and permission management | QUEUED | |
 
@@ -697,3 +697,141 @@ The coordinator ran these after the fix round:
 
 The `.cg.yaml` change, which allows `swift format`, came from a user approval during the run. It goes into this commit,
 per the project memory on committing `.cg.yaml`.
+
+## UTERM-004 M4: Layout requests
+
+### First round
+
+The opus implementer reported every local check passing, with 2341 package tests and 0 failures. It ran no UI test.
+The coordinator reran `caffeinate -dimsu make test-package`: 2341 tests, 7 skipped, 0 failures, 250 seconds. The
+coordinator then ran the UI classes that M4 touched: `PresentationUITests` (new), `PendingRequestsUITests`,
+`ScriptRunUITests`, `ExecPaneUITests`, and `PaneControlUITests`. All 8 tests passed.
+
+The implementer's best guesses:
+1. A layout is a JSON tree of splits, open panes, and new panes. It is bounded at 16 leaves and 6 levels of splits.
+2. A later layout is refused while its group holds a foreign pane.
+3. ScriptWire moves to 7, with structured layout errors.
+4. The exec protocol moves to 2. A driver may lay out its subtree and command the members of its run's groups.
+5. A layout's exec declaration attaches inert.
+6. Adoption is offered only to live, unrevoked connections in the window.
+7. Hosted fixture types open through layouts only in Debug builds with `UNITERM_TEST_APPLETS`.
+
+### Visual check
+
+The presentation screenshot shows the terminal source pane beside the slides, notes, and chart fixtures. Each pane is
+in its own split and wears the control badge. The capture also showed the real shell: the login banner, the username
+and hostname in the prompt, and a container path. Captures must hold synthetic content, so this goes to the fix round.
+The run logged 8 "Conflicting constraints detected" issues: a 16-point-inset `NSStackView` inside a view of width 0.
+That goes to the fix round too. The exported attachments were deleted.
+
+### ADR check
+
+No conflicts and no supersessions. ADR-02, 03, 05, 06, 08, and 09 are consistent. Neither of the implementer's
+candidates clears the bar, because ADR-03 and ADR-09 already cover both.
+
+### Review
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | A revoked exec driver keeps laying out, and a driver layout in preparation publishes after a revoke | fix |
+| 2 | Driver layout requests have no in-flight bound and build applets before the tree check | fix |
+| 3 | The duplicate-pane guard is untested on later layouts | fix |
+| 4 | The 6-level bound, a driver pane closing, and a run ending mid-layout are untested | fix |
+| 5 | A mid-preparation test loop has no deadline | fix |
+| 6-8 | Comment placement and duplication | fix |
+| 9 | As built names test symbols | fix |
+| 10 | Driver member commands may be a scope addition | tagged `addition`, kept as a best guess, raised in the final report |
+
+The coordinator kept finding 10 rather than narrowing it. The presentation example has one controller driving the
+notes and chart panes. When that controller is an exec driver, it needs member commands.
+
+### Resume
+
+The run stopped on 2026-11-11 during the M4 fix round, and resumed the same day in a new session. A fix-round
+implementer edited about 20 files after the review table above was written, and no record of that round survived. A
+fresh opus implementer takes the fix round over. It checks each finding against the tree first, then finishes what is
+left. The proposal already said M4 `DONE` before review. That stays only if the fix round's checks pass.
+
+Run-level guess 14 is out of date. After M4, ScriptWire is at version 7 and the exec protocol at version 2.
+
+### Fix round
+
+The stopped implementer had already fixed findings 1 and 2, and added the guard behind finding 3. The new implementer
+could not run those tests on the original code. Instead it reverted each fix in place, watched the test fail for the
+reason the finding gives, and put the fix back:
+
+- Finding 1: with the revoke flag reverted, a layout waiting at the revoke was not refused, and a fresh layout
+  published 4 panes in an owned group.
+- Finding 2: with the bound reverted, the busy tests failed. With the tree check reverted, a refused layout made 7
+  applets instead of 5.
+- Finding 3: the old test refused its repeated layout for a different reason. It now places every pane of the group
+  and repeats one. With the guard reverted, the tree holds one pane twice.
+
+The rest:
+
+- Finding 4: the 6-level and run-ending tests already existed. A new test covers a driver pane closing mid-layout.
+  It was not run on reverted code.
+- Finding 5: a shared directory gate gives each wait a 10-second deadline and replaces sleep polling.
+- Findings 6 to 8: five doc comments were trimmed or moved, and the `GroupOwner` doc now says driver IDs count per
+  window.
+- Finding 9: As built no longer names test symbols. It also now names the staging order, the busy bound, and that a
+  revoke holds for the rest of the run.
+- Finding 10: the Decision Log entry carries the `addition` tag. The behavior stays.
+- The synthetic capture: the UI test gives the shell a `%` prompt, clears the screen and scrollback, and asserts the
+  terminal text is exactly `%` before it keeps the capture. The coordinator viewed it. It holds the `%` prompt, the
+  three fixtures, and `~` in the status bar, with no user, host, or path.
+- The constraint warnings: a new pane's view joined the pane area at width 0. The pane now gets its frame first, and
+  a package test fails without that. The coordinator's UI run still logged 2 of the original 8 warnings, both in
+  `ExecPaneUITests.testWindowShortcutsWorkWhileTheDriverStalls`. They went back to the implementer.
+
+The implementer's best guesses, now in the Decision Log:
+
+1. A revoke holds for the rest of a driver's run. If wrong, a revoke would end only the groups the run owned then.
+2. One layout per controller may be in preparation. The next is refused as `busy`, with no queue. If wrong, the
+   window would hold a bounded queue per controller.
+
+One unowned failure stays unresolved. `testADriverHasOneLayoutInPreparationAtATime` timed out once, in the first run
+straight after a build, waiting for the second layout's `busy` refusal. It then passed alone, in class order 31 times,
+with the three layout classes 6 times, and 24 times at parallelism 8. No shared state between fixtures was found. The
+wait now prints the window history on timeout, so the next failure shows what the driver heard.
+
+`proposals.py freeze` reports a hunk with origin `other` in UTERM-003: ADR-07 and ADR-08 marked accepted, and an
+ADR-10 line added. It is not in the working tree, and this run did not make it. It is left for the user.
+
+Checks after the first fix pass:
+
+| Command | Result |
+|---|---|
+| `caffeinate -dimsu make test-package`, coordinator | 2349 tests, 7 skipped, 0 failures, 210 seconds |
+| UI classes `PresentationUITests`, `PendingRequestsUITests`, `ScriptRunUITests`, `ExecPaneUITests`, `PaneControlUITests` | 8 of 8 passed, 123 seconds |
+| Crash reports newer than the UI run | none |
+| `make fmt-check`, `make lint`, `make check`, `make build`, `make test-helper-sandbox`, `scripts/check-sandbox-off.sh` | pass, implementer |
+| `make fuzz`, `make swiftpm-offline-check` | pass, implementer |
+| `proposals.py check` | `[]` |
+
+Changed test files, each run alone:
+
+| Test file | Tests | Wall time |
+|---|---|---|
+| ExecLayoutTests | 9 | 1.18 s |
+| LayoutRequestTests | 11 | 0.76 s |
+| PaneLayoutRequestTests | 7 | 0.002 s |
+| ScriptHostAPITests | 13 | 3.71 s |
+
+The last 2 constraint warnings came from the pane area itself. The window built it at zero size before the window
+existed, for a restored window and for a new window's first pane. Every pane area now starts at the window's content
+size, and the window, its content rect, and the pane area share one size constant. A package test now checks the
+size at which each applet view joins the window, for a first pane, a split, a layout's new panes, and a restored
+window. Before the fix, the first pane joined at 0 by 0 and both restored panes at width 196 and height 0.
+
+Final checks:
+
+| Command | Result |
+|---|---|
+| `caffeinate -dimsu make test-package` | 2349 tests, 7 skipped, 0 failures, 216 seconds |
+| The same 5 UI classes | 8 of 8 passed, 111 seconds, no constraint warnings |
+| Crash reports newer than the UI runs | none |
+| `make fmt-check`, `make lint`, `make build`, `proposals.py check` | pass, implementer |
+
+The coordinator viewed the presentation capture and the restored exec pane capture. Both hold only uniterm's own
+window and synthetic content. The exported copies were deleted.

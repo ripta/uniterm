@@ -33,6 +33,10 @@ public struct ScriptCallError: Error, Equatable, Sendable {
   public static func unsupported(_ text: String) -> ScriptCallError {
     ScriptCallError(.unsupported, text)
   }
+
+  public static func busy(_ text: String) -> ScriptCallError {
+    ScriptCallError(.busy, text)
+  }
 }
 
 /// Who makes a call: the connection, and the pane it acts for. The host derives both from the
@@ -109,5 +113,13 @@ public protocol ScriptWindowAPI: AnyObject {
   func sendCommand(
     to target: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
     arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
+  ) async throws -> ScriptValue
+
+  /// Lays out the caller's subtree, anchored at a pane the caller may control. The layout is JSON
+  /// text. `stillAllowed` runs again before the layout publishes, and a refusal at any step
+  /// publishes nothing.
+  func requestLayout(
+    anchor: ScriptTarget, layout: String, caller: ScriptCaller,
+    stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue
 }
