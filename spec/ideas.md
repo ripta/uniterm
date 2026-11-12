@@ -1,7 +1,8 @@
 # Ideas
 
-Future improvements worth keeping that are not proposals yet. An idea leaves
-this file when a numbered proposal covers it.
+Future improvements worth keeping that are not proposals yet, plus unsettled
+refinements to revisit through use. An idea leaves this file when a numbered
+proposal covers it.
 
 ## OAuth2 support: access and refresh tokens
 
@@ -68,6 +69,51 @@ including whether ordinary web pages can link to it.
 
 When a terminal rings its bell, call out its pane and its tab. A highlight is one
 option, and the form is still open.
+
+## Scripting: type text into a terminal pane or tab
+
+Let a Janet script send literal text to a named terminal pane or tab as input to
+the running program. This is separate from sending keystrokes: text supplies
+characters, while a key can represent an action such as Enter or an arrow.
+Still open: whether text uses paste semantics, including bracketed paste.
+
+This would change UTERM-003's explicit decision that no host function writes to
+terminal input. That change is welcome; the existing decision is not a reason
+to rule the idea out. UTERM-004 preserves the restriction today, so a proposal
+would revisit it there too and settle the required control and trust grants.
+
+## Scripting: send keystrokes to a terminal pane or tab
+
+Let a Janet script send keys and modifier combinations to a named terminal pane
+or tab, including Enter, arrows, Escape, and Ctrl-C. This complements literal
+text input for interacting with shells and terminal programs. Still open: how
+keys are represented and translated for the terminal's current input mode.
+
+This also changes UTERM-003's explicit decision against terminal input
+injection, which is fine. A proposal would revisit UTERM-004's matching
+restriction and settle authorization alongside text input.
+
+## Scripting: read a terminal pane or tab's screen
+
+Let a Janet script read the current terminal screen of a named pane or tab,
+including a full-screen program's display. This means terminal contents rather
+than a screenshot. Still open: plain text versus cells with attributes and
+cursor position, and how the active screen differs from a viewport scrolled
+back into history.
+
+This extends UTERM-003's host API with terminal content access it does not
+provide today. A proposal would settle the control and trust grants for reading.
+
+## Scripting: read a terminal pane or tab's scrollback
+
+Let a Janet script read retained scrollback from a named terminal pane or tab,
+including output no longer on the current screen. This is separate from reading
+the screen: history can be much larger and full-screen programs may use an
+alternate screen without adding their display to scrollback. Still open: ranges,
+size limits, and how callers handle history changing or being cleared.
+
+This also extends UTERM-003's host API. A proposal would settle authorization
+and the distinction between access to the current screen and retained history.
 
 ## Terminal: Kitty clipboard protocol
 
@@ -155,3 +201,114 @@ after uniterm has proper scripting support.
 
 The sidebars in the map viewer and the text viewer plans are a different thing:
 each belongs to one applet and lives inside its pane.
+
+## Automations scriptable from Bash
+
+Let Bash scripts invoke automation operations and consume their results without
+writing a Janet adapter. Launching an existing Janet file with arguments is
+already possible, but does not provide a uniform command interface. Explore
+direct CLI operations and explicit callable operations exposed by running Janet
+scripts, controllers, or exec drivers. These are possible interfaces, not a
+settled design. Structured input, output, errors, and exit statuses should make
+the interface useful in shell workflows.
+
+A design must assess compatibility with UTERM-004's security model rather than
+assume a shell command inherits the automation's authority. Identify which parts
+can use existing grants, which need new mechanisms, and which would require
+explicit changes to settled decisions. The refinements below capture the open
+questions.
+
+## Refinements
+
+Unsettled details to resolve as we gain user experience, try different use cases,
+and iterate on future proposals. These are questions, not decisions or promises
+of support. Record concrete examples and observations here as they arise. Move
+a refinement into a proposal when it is ready for a decision, and link that
+proposal from any related ideas that remain.
+
+### Terminal scripting: permissions and target scope
+
+The four terminal scripting ideas above need refinements to UTERM-004's control
+and trust model. Its existing caller identity, explicit ownership, target access
+mode, same-window scope, and revocation rules provide a starting point. Current
+pane-control permission does not already authorize terminal input or content
+access. Input support would explicitly revise UTERM-003's prohibition, which is
+an acceptable change.
+
+Questions to test against real workflows:
+
+- Should typing text, sending keystrokes, reading the screen, and reading
+  scrollback each require a separate declared power and approval?
+- Should access to the caller's own terminal session differ from access to
+  another session? How should this work for different tabs in the same pane?
+- Are existing source-pane and owned-group scopes sufficient for useful
+  automation? Which use cases need an explicit grant to an existing unrelated
+  pane or tab, and how should the user select and revoke that grant?
+- How should ordinary scripts, interactive REPL evaluations, and packaged
+  controllers request these powers? Which approvals should last for an
+  operation, a connection or run, a verified version, or a signing identity?
+- What should pane chrome show when a program can read terminal contents or
+  supply input? Is the current remote-control marker enough for users to
+  understand the granted access?
+
+### Terminal scripting: input and read behavior
+
+The API behavior also needs experience from shell automation, interactive
+programs, and full-screen applications:
+
+- Should literal text use paste semantics, including bracketed paste? How does
+  a caller deliberately submit a command or send a control key?
+- How are keys and modifiers represented and translated for the terminal's
+  current input mode?
+- Does a screen read return plain text, cells and attributes, cursor position,
+  or several representations? Does it read the active terminal screen or the
+  user's currently scrolled viewport?
+- How are scrollback ranges and size limits expressed? What happens when output
+  arrives, history is trimmed, or the user clears history during a read?
+- What ordering or snapshot guarantees let a script send input and then inspect
+  the result? Which workflows need to wait for output or a screen change?
+
+### Bash automation: caller identity and authority
+
+The current model authenticates a live process and binds it to a source session.
+A shell-facing interface introduces another caller when it invokes a running
+automation. Design needs to establish whose authority each resulting operation
+uses and prevent an approved controller from unintentionally lending its powers
+to an unauthorized caller.
+
+- How is a Bash caller authenticated and bound to its source pane or tab? How
+  do calls from outside uniterm obtain an explicit source grant?
+- Does an invocation use the caller's grants, the automation's grants, an
+  intersection, or an explicit delegation? Which use cases require delegation,
+  and how would its scope, lifetime, approval, and revocation work?
+- What operations can an automation expose? How are arguments, target panes,
+  and returned information constrained so a callable operation does not bypass
+  pane ownership, disconnected mode, same-window scope, or separate powers?
+- How do discovery and results avoid revealing unauthorized panes, terminal
+  contents, or other private state? Permission to invoke an action may need to
+  differ from permission to receive its output.
+- How do remembered controller approvals apply to operations triggered by
+  external callers? Trust in a verified controller must not silently become
+  trust in arbitrary Bash code or mutable request contents.
+- What happens to queued and in-flight requests when a caller disconnects, an
+  automation restarts, a source session closes, or a grant is revoked?
+
+Existing pane provenance and target checks may cover direct CLI operations.
+Calling an already-running automation may need additional invocation or
+delegation rules. Whether the current model is sufficient remains unsettled;
+a proposal should name any gaps and proposed changes explicitly.
+
+### Bash automation: interface and lifecycle
+
+- Which workflows need direct pane commands, one-shot automation invocations,
+  or calls into a long-running automation? Which need inline Janet or Janet
+  source from stdin as a separate convenience?
+- How does a caller identify a live automation and discover its supported,
+  versioned operations without relying on focus or stale process identifiers?
+- How are requests and replies encoded for pipelines? Settle stdout versus
+  diagnostics, exit statuses, streaming, timeouts, and cancellation.
+- Can callers retry safely after losing a reply? Which operations need request
+  IDs or another way to avoid repeating an effect?
+- How would external invocations coexist with an exec driver's app-owned
+  stdin/stdout protocol? Attaching a driver alone does not provide an external
+  command endpoint.
