@@ -31,8 +31,7 @@ it.
 - A helper's entitlements file lives outside `App/`. The app target never points `CODE_SIGN_ENTITLEMENTS` at a
   sandboxed file.
 - `scripts/check-sandbox-off.sh` checks both halves. The app must not be sandboxed, and each such helper must be, in its
-  source entitlements and in the copy signed into a built app. A helper under the last bullet is listed there too, and
-  the check confirms that it holds no entitlement, so it cannot pass for a sandboxed one.
+  source entitlements and in the copy signed into a built app.
 - A helper that does need file or network access of its own states why, and what bounds it instead.
 
 ## Rationale
