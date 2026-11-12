@@ -69,6 +69,10 @@ recorded terminal session root. A pane token is not authority.
   expose the child. ThirdParty/ghostty-patches/001-child-started-action.patch adds a `child_started` action that
   carries the child's PID. libghostty's public API does expose `ghostty_surface_foreground_pid`, but that is the
   pty's foreground process group, not the spawned child. No other module reaches through the terminal boundary.
+  libghostty queues each surface's events for the main thread by the surface's address, and the allocator gives a
+  freed surface's address to the next surface. ThirdParty/ghostty-patches/002-surface-message-identity.patch tags
+  each queued event with the surface's unique ID, so a closed session's queued exit never reaches the session that
+  replaced it. Amended 2026-11-11; see Decision Log.
 - The spawned child is setuid-root `/usr/bin/login`, which becomes the session root. `proc_pidinfo` refuses a root
   process for a non-root caller, so ProcessInspection reads start times and parents with sysctl(KERN_PROC_PID). The
   listener reads the peer's uid with LOCAL_PEERCRED and its PID with LOCAL_PEERPID.
@@ -670,6 +674,9 @@ None.
   and offers every capability `--allow` can grant, none selected. The fresh helper gets a new channel and token and
   only the chosen `--allow` flags. It prints the capabilities it may use. An unknown name ends the helper before it
   connects. The capabilities are not saved, and a later restart or a restored pane starts with none.
+- A second Ghostty patch tags each queued surface event with the surface's unique ID. An integration test closes a
+  session with its exit queued and checks the session that reuses its surface address. See the 2026-11-11 Decision
+  Log entry on stale surface events.
 - Package tests record the test process as a session root only through the ScriptTestSupport target, which the
   script host's tests and the REPL applet's tests share. Grant tests use a `sleep` process as the granted pane's
   session. The forked-and-exited and lost-ancestry cases use a small perl relay fixture, since a Swift test cannot
@@ -1340,6 +1347,17 @@ None.
   Sandbox carries the hardened runtime and no get-task-allow, and the app trusts it only by its code hash. It would
   amend ADR-10, whose Consequences bound the command by Janet's sandbox, a memory cap, and process isolation only.
   Undecided. Found in M5.
+- 2026-11-11: Fixed stale surface events in libghostty, not in uniterm (work-queue best guess). M1's capability
+  restart failed about 1 run in 4 at M4 and M5. libghostty checks a queued surface event only by the surface's
+  address. A restart frees the old surface and makes the new one at once, and the allocator often gives the new one
+  the same address. The old session's queued exit then reached the new session. The REPL took it as the fresh
+  helper's end and withdrew the token, so the helper's attach was refused. libghostty also marked the new surface
+  exited, so a later key press would close it. A new patch, `002-surface-message-identity.patch`, carries each
+  surface's unique ID with its queued events, and the app thread drops an event whose ID does not match the live
+  surface at that address. The design text now names the patch. The other option was to drain libghostty's queue in
+  uniterm right after each free, before a new surface can take the address. That rests on libghostty joining every
+  thread that queues events before the free returns, and it runs other surfaces' events in the middle of a close. If
+  the user would rather carry no second patch, the drain would replace it, and the regression test stays as it is.
 
 ## References
 
