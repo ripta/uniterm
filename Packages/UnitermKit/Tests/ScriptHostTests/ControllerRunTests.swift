@@ -754,46 +754,45 @@ final class LineCollector: @unchecked Sendable {
   }
 }
 
-/// Copies of the SwiftPM helper signed as the bundle's command is, with the hardened runtime and no
-/// entitlement, which the tests treat as the bundle's command. Each is made once per test run. The
-/// debuggable one holds get-task-allow, as a debug build would without the project's setting.
+/// Copies of the SwiftPM helper signed as the bundle's command is, with the hardened runtime and the
+/// one entitlement for unsigned executable memory, which the tests treat as the bundle's command.
+/// Each is made once per test run. The debuggable one also holds get-task-allow, as a debug build
+/// would without the project's setting.
 enum HardenedHelper {
-  private static let made = Result { try sign(entitlements: nil) }
+  private static let made = Result { try sign(entitlements: jitMemory) }
 
   private static let debuggable = Result {
-    try sign(
-      entitlements: """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
-        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0"><dict>
-        <key>com.apple.security.get-task-allow</key><true/>
-        </dict></plist>
-        """)
+    try sign(entitlements: jitMemory + "<key>com.apple.security.get-task-allow</key><true/>")
   }
+
+  private static let jitMemory =
+    "<key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>"
 
   static func url(debuggable wantsDebuggable: Bool = false) throws -> URL {
     try (wantsDebuggable ? debuggable : made).get()
   }
 
-  private static func sign(entitlements: String?) throws -> URL {
+  /// Signs a copy of the helper with `entitlements`, the keys and values of a plist's dictionary.
+  private static func sign(entitlements: String) throws -> URL {
     let folder = try ControllerFixtures.temporaryFolder()
     let copy = folder.appendingPathComponent("uniterm")
-    var arguments = ["--force", "--sign", "-", "--options", "runtime"]
+    let plist = folder.appendingPathComponent("entitlements.plist")
+    let document = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+      "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0"><dict>\(entitlements)</dict></plist>
+      """
 
     try FileManager.default.copyItem(at: ScriptFixtures.helper(), to: copy)
-
-    if let entitlements {
-      let plist = folder.appendingPathComponent("entitlements.plist")
-
-      try Data(entitlements.utf8).write(to: plist)
-      arguments += ["--entitlements", plist.path]
-    }
+    try Data(document.utf8).write(to: plist)
 
     let sign = Process()
 
     sign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-    sign.arguments = arguments + [copy.path]
+    sign.arguments = [
+      "--force", "--sign", "-", "--options", "runtime", "--entitlements", plist.path, copy.path,
+    ]
     sign.standardOutput = FileHandle.nullDevice
     sign.standardError = FileHandle.nullDevice
     try sign.run()

@@ -17,9 +17,9 @@
 - UTERM-003 — "Sandboxing", "Host API", and "REPL features": this proposal supplies fresh-helper capability grants,
   scoped discovery, authenticated pane binding, and the `uniterm/send-command` host function. Its M1-M2 replace broad
   same-user control when they land. "Verified artifact and run binding" signs the `uniterm` command with the hardened
-  runtime and no entitlement, per ADR-10. Under it, `--allow ffi-jit` ends the helper with SIGKILL when its JIT code
-  runs, and a debug build's command can no longer take a debugger. `--allow modules` loads no native module before or
-  after, since the vendored Janet is built without dynamic modules. Amended 2026-11-11; see Decision Log.
+  runtime and one entitlement, for unsigned executable memory, so `--allow ffi-jit` still runs JIT code. A debug
+  build's command can no longer take a debugger. `--allow modules` loads no native module before or after, since the
+  vendored Janet is built without dynamic modules. Amended 2026-11-11; see Decision Log.
 - UTERM-005 through UTERM-010 — exec schemas and supported combinations stay with each applet's design; this
   proposal supplies the shared transport and tests it with presentation fixtures
 
@@ -524,10 +524,10 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   run time with `dlopen` is not checked and can come from anywhere its privileges reach. An entry whose dependency
   boundary cannot be established is refused persistent admission; there is no silent downgrade of its guarantee.
   Amended 2026-11-11; see Decision Log.
-- The bundle's command is signed with the hardened runtime and holds no entitlement, as ADR-10 requires, so it holds
-  no get-task-allow. On that command, dyld removes every `DYLD_` variable before any of its code runs,
-  with no message, so neither the command nor the native entry it execs sees one. The app refuses a bundle command
-  built otherwise. A command built without the hardened runtime, such as the package tests' helper, still sees a
+- The bundle's command is signed with the hardened runtime and holds no get-task-allow. Its one entitlement is for
+  unsigned executable memory, which `--allow ffi-jit` needs. On that command, dyld removes every `DYLD_` variable
+  before any of its code runs, with no message, so neither the command nor the native entry it execs sees one. The
+  app refuses a bundle command built otherwise. A command built without the hardened runtime, such as the package tests' helper, still sees a
   `DYLD_` variable, and refuses to start a run with an error that names it. `__XPC_DYLD_` variables are no loader
   variables: dyld never reads them, and a run proceeds with them set. Amended 2026-11-11; see Decision Log.
 - Native entries start from the verified snapshot. Record the actual spawned executable's execution generation and
@@ -966,10 +966,12 @@ None.
   checked, and the test failed before the fix.
 - The app knows its bundle's command by its code directory hash, and the command is signed so that dyld variables
   cannot reach it. The 2026-11-11 Decision Log entries on the hardened command say why and what it costs.
-  `check-sandbox-off.sh` checks the built command's runtime flag and that it holds no entitlement.
-  `make test-helper-sandbox` checks that an injected library does not load into it. `--allow ffi-jit` code no longer
-  runs in it. Package tests stand in a copy of the SwiftPM helper, signed the same way, for the bundle's command. The unsigned helper then plays
-  another interpreter, which gets no controller run.
+  `check-sandbox-off.sh` checks the built command's runtime flag. It also checks that the command's entitlements
+  file holds only the entitlement for unsigned executable memory, and that the built command carries it and no
+  sandbox, file, network, exception, or other `cs.` entitlement. `make test-helper-sandbox` checks that an injected
+  library does not load into it, and that a `--allow ffi-jit` sample runs JIT code in it. The sample was killed by
+  the kernel before the entitlement was added. Package tests stand in a copy of the SwiftPM helper, signed the same
+  way, for the bundle's command. The unsigned helper then plays another interpreter, which gets no controller run.
 - The first UI run refused a package run over `__XPC_DYLD_FRAMEWORK_PATH`, which Xcode sets for an app under test and
   its terminals inherit. dyld never reads `__XPC_DYLD_` variables, so they no longer count as loader variables. The
   test of the variable list failed before the fix.
@@ -1309,18 +1311,27 @@ None.
   showed Xcode setting them for an app under test, which refused every package run from its terminal. If the user wants
   an explicit error even on the hardened command, the app would have to pass the user's environment to it by another
   route.
-- 2026-11-11: Signed the bundle's command with the hardened runtime and without get-task-allow (work-queue best guess,
-  honoring ADR-10). Its settings already enabled the hardened runtime, but Xcode drops it from an ad hoc signature
-  and adds get-task-allow to a debug build. A `DYLD_INSERT_LIBRARIES` probe loaded a library into the built command
-  under either, which the app's hash check cannot see. The command is now signed with `--options=runtime` and without
-  get-task-allow, and holds no entitlement. Under the hardened command, `uniterm run --allow ffi-jit` ends the helper
-  with SIGKILL when its JIT code runs, since Janet maps that code with plain `mmap` and `mprotect`, not `MAP_JIT`.
-  `com.apple.security.cs.allow-unsigned-executable-memory` would restore it, and a test in the review fix round showed
-  dyld still dropping `DYLD_` variables with that entitlement. ADR-10 says the command holds no entitlement, so
-  restoring JIT needs an ADR-10 amendment, which is the user's call. `--allow modules` loads no native module in any
-  build, since the vendored Janet is built with `JANET_NO_DYNAMIC_MODULES`. A probe of a native module said "dynamic
-  modules not supported", so library validation never comes into play and nothing is lost there. A debug build's
-  command can no longer take a debugger. UTERM-003 is named here, and in Impacts, since this run does not edit it.
+- 2026-11-11: Signed the bundle's command with the hardened runtime and without get-task-allow (work-queue best
+  guess). Its settings already enabled the hardened runtime, but Xcode drops it from an ad hoc signature and adds
+  get-task-allow to a debug build. A `DYLD_INSERT_LIBRARIES` probe loaded a library into the built command under
+  either, which the app's hash check cannot see. The command is now signed with `--options=runtime` and without
+  get-task-allow. Its one entitlement is `com.apple.security.cs.allow-unsigned-executable-memory`. Without it,
+  `uniterm run --allow ffi-jit` ends the helper with SIGKILL when its JIT code runs, since Janet maps that code with
+  plain `mmap` and `mprotect`, not `MAP_JIT`. With it, a `--allow ffi-jit` sample runs in the built command, and an
+  injection probe shows dyld still dropping `DYLD_` variables. `--allow modules` loads no native module in any build,
+  since the vendored Janet is built with `JANET_NO_DYNAMIC_MODULES`. A probe of a native module said "dynamic modules
+  not supported", so library validation never comes into play and nothing is lost there. A debug build's command can
+  no longer take a debugger. UTERM-003 is named here, and in Impacts, since this run does not edit it. Amended
+  2026-11-11: this entry first said the command holds no entitlement, as ADR-10 then required, and that
+  `--allow ffi-jit` was lost under the bundle's command. The next entry records why that changed.
+- 2026-11-11 (user decision): Removed ADR-10's sentence requiring that `check-sandbox-off.sh` confirm the unsandboxed
+  command holds no entitlement. Its only stated reason was "so it cannot pass for a sandboxed one". The check meets
+  that by rejecting the App Sandbox entitlement itself. The command now holds the one entitlement for unsigned
+  executable memory, and `--allow ffi-jit` works under it again. The check requires that entitlements file to hold
+  that key and no other. It still rejects the sandbox, file, network, and exception entitlements and every other `cs.`
+  entitlement on the built command. Before this, the Impacts line for UTERM-003, the loader-variable bullet of
+  "Verified artifact and run binding", and M5's As built said the command holds no entitlement and that
+  `--allow ffi-jit` code no longer runs in it. Each now says what is above.
 - 2026-11-11: Applied the exec generation check to every connection (work-queue best guess). "How uniterm knows which
   pane a program runs in" said a reused PID is a different instance. A process after a successful exec is one too,
   and M5's check bullet asks for it. The check reads the process ID version from the peer's audit token at each call,

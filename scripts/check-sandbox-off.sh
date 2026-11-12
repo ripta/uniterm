@@ -17,8 +17,15 @@
 # socket by path, and may be granted `--allow fs-read`. A REPL helper starts from a terminal, which
 # can pass only a directory, an environment, and a program, so it connects by path too. Janet's own
 # sandbox, the memory cap, and process isolation bound it instead. The check still insists that the
-# built command exists, is signed, and holds no sandbox or other entitlement, so it can never be
-# mistaken for a sandboxed decoder. Its build settings must turn the hardened runtime on, and must
+# built command exists, is signed, and holds no sandbox entitlement, so it can never be mistaken for
+# a sandboxed decoder.
+#
+# The command holds exactly one entitlement, for unsigned executable memory, so that
+# `--allow ffi-jit` code can run under the hardened runtime. Its entitlements file must hold that
+# key and no other. The built copy must carry it, and no file, network, exception, or other `cs.`
+# entitlement.
+#
+# The command's build settings must turn the hardened runtime on, and must
 # ask codesign for it by flag too, since Xcode drops the hardened runtime from an ad hoc signature.
 # They must also keep Xcode from adding get-task-allow to a debug build, since dyld honors its
 # variables for a process that holds it. The built command must carry the runtime flag. Otherwise
@@ -33,6 +40,8 @@ status=0
 
 HELPERS="ImageDecoder DocumentDecoder"
 COMMANDS="uniterm"
+COMMAND_ENTITLEMENTS="Helpers/UnitermCLI/UnitermCLI.entitlements"
+COMMAND_ALLOWED="com.apple.security.cs.allow-unsigned-executable-memory"
 
 fail() {
   echo "error: $*" >&2
@@ -49,29 +58,31 @@ if grep -rq 'com.apple.security.app-sandbox' "$ROOT/App" 2>/dev/null; then
   fail "an entitlements file under App/ turns the App Sandbox on."
 fi
 
-# Only a helper's build configurations may name an entitlements file, and each may name only its
-# own. None may name a file that turns the App Sandbox on unless it belongs to its helper.
+# Only a helper's or the command's build configurations may name an entitlements file, and each
+# may name only its own. None may name a file that turns the App Sandbox on unless it belongs to its
+# helper.
 while IFS= read -r problem; do
   fail "$problem"
 done < <(
-  python3 -I - "$PROJECT" $HELPERS <<'PY'
+  python3 -I - "$PROJECT" "$COMMAND_ENTITLEMENTS" $HELPERS <<'PY'
 import re
 import sys
 
 project = sys.argv[1]
-helpers = sys.argv[2:]
+owners = {name: f"Helpers/{name}/{name}.entitlements" for name in sys.argv[3:]}
+owners["uniterm"] = sys.argv[2]
 text = open(project).read()
 blocks = re.split(r"(?=\n\t\t[0-9A-F]{24} /\* [A-Za-z]+ \*/ = \{\n\t\t\tisa = XCBuildConfiguration;)", text)
 
 for block in blocks:
     if "isa = XCBuildConfiguration;" not in block:
         continue
-    owner = next((name for name in helpers if f"PRODUCT_NAME = {name};" in block), None)
+    owner = next((name for name in owners if f"PRODUCT_NAME = {name};" in block), None)
     for value in re.findall(r"CODE_SIGN_ENTITLEMENTS = ([^;]+);", block):
         value = value.strip().strip('"')
         if owner is None:
-            print(f"a build configuration outside the sandboxed helpers names {value} as its entitlements.")
-        elif value != f"Helpers/{owner}/{owner}.entitlements":
+            print(f"a build configuration outside the helpers names {value} as its entitlements.")
+        elif value != owners[owner]:
             print(f"the {owner} helper names {value} as its entitlements.")
 PY
 )
@@ -116,11 +127,12 @@ fi
 while IFS= read -r problem; do
   fail "$problem"
 done < <(
-  python3 -I - "$PROJECT" <<'PY'
+  python3 -I - "$PROJECT" "$COMMAND_ENTITLEMENTS" <<'PY'
 import re
 import sys
 
 text = open(sys.argv[1]).read()
+entitlements = sys.argv[2]
 blocks = re.split(r"(?=\n\t\t[0-9A-F]{24} /\* [A-Za-z]+ \*/ = \{\n\t\t\tisa = XCBuildConfiguration;)", text)
 seen = 0
 
@@ -139,6 +151,9 @@ for block in blocks:
     if "CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;" not in block:
         print("a uniterm command build configuration lets Xcode add get-task-allow.")
 
+    if f"CODE_SIGN_ENTITLEMENTS = {entitlements};" not in block:
+        print(f"a uniterm command build configuration does not sign with {entitlements}.")
+
     if "ENABLE_APP_SANDBOX = YES;" in block:
         print("a uniterm command build configuration enables the App Sandbox.")
 
@@ -147,9 +162,33 @@ if seen == 0:
 PY
 )
 
-if [ -e "$ROOT/Helpers/UnitermCLI/UnitermCLI.entitlements" ]; then
-  fail "the uniterm command has an entitlements file. It must hold none."
-fi
+while IFS= read -r problem; do
+  fail "$problem"
+done < <(
+  python3 -I - "$ROOT/$COMMAND_ENTITLEMENTS" "$COMMAND_ALLOWED" <<'PY'
+import plistlib
+import sys
+
+path, allowed = sys.argv[1], sys.argv[2]
+
+try:
+    with open(path, "rb") as source:
+        entitlements = plistlib.load(source)
+except (OSError, plistlib.InvalidFileException, ValueError) as error:
+    print(f"{path} cannot be read as a property list: {error}")
+    sys.exit(0)
+
+if not isinstance(entitlements, dict):
+    print(f"{path} is not a dictionary of entitlements.")
+    sys.exit(0)
+
+for key in sorted(set(entitlements) - {allowed}):
+    print(f"the uniterm command entitlements hold {key}. They may hold only {allowed}.")
+
+if entitlements.get(allowed) is not True:
+    print(f"the uniterm command entitlements do not set {allowed} to true.")
+PY
+)
 
 if [ "$#" -ge 1 ]; then
   for command_name in $COMMANDS; do
@@ -173,7 +212,10 @@ if [ "$#" -ge 1 ]; then
         fail "the built $command_name carries the App Sandbox entitlement. It must stay unsandboxed."
       fi
 
-      if printf '%s\n' "$signed" | grep -Eq "$helper_forbidden"; then
+      printf '%s\n' "$signed" | grep -A2 -F "$COMMAND_ALLOWED" | grep -q 'Bool\] true' ||
+        fail "the built $command_name does not carry $COMMAND_ALLOWED set to true."
+
+      if printf '%s\n' "$signed" | grep -vF "$COMMAND_ALLOWED" | grep -Eq "$helper_forbidden"; then
         fail "the built $command_name carries an entitlement it must not hold."
       fi
 

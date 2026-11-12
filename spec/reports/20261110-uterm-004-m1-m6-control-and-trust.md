@@ -1021,3 +1021,32 @@ event, and both now carry the ID. The ID is set before any thread can queue. A f
 sees no layout change. The patch does not conflict with the first patch. The cache keys pick up the new patch without
 a script change. Three small findings, an Amended marker, an As built bullet that carried the cause, and a dense test
 comment, were fixed. `make ghostty-offline-check` passed in 137 seconds with the new patch.
+
+## ADR-10 and ffi-jit, by the user's decision
+
+The user asked what reason backed ADR-10's rule that the check confirm the `uniterm` command "holds no entitlement".
+Its only stated reason was "so it cannot pass for a sandboxed one". Rejecting the sandbox entitlement itself meets
+that. The rest of ADR-10, the unsandboxed app with sandboxed decoder helpers, has a sound rationale. The user ruled
+that the one sentence be dropped from ADR-10 in place, with no superseding or retracted ADR. Nothing here needs a paid
+certificate or developer account, since the command is ad-hoc signed.
+
+The command again holds `com.apple.security.cs.allow-unsigned-executable-memory`, and nothing else. The check requires
+that key and rejects any other key in the source file. On the built copy it rejects the sandbox, file, network,
+exception, and every other `cs.` entitlement, and it still requires the hardened runtime and no get-task-allow. A new
+helper sandbox test runs a `--allow ffi-jit` sample in the shipped command, which prints 42. Before the entitlement,
+the kernel killed it with signal 9. The injection probe still shows dyld dropping `DYLD_INSERT_LIBRARIES`. With an
+explicit entitlements file, Xcode no longer adds `com.apple.application-identifier`, so the built command holds exactly
+one key.
+
+The sample also grants `ffi-use`, because calling the mapped code needs it.
+
+| Command | Result |
+|---|---|
+| `make test-helper-sandbox`, before the entitlement | the new test failed: signal 9, empty output |
+| `make test-helper-sandbox` | 8 tests, 0 failures |
+| `caffeinate -dimsu make test-package` | 2399 tests, 9 skipped, 0 failures, 214 seconds |
+| `make fmt-check`, `make lint`, `make check`, `make build`, `scripts/check-sandbox-off.sh` | pass |
+| The check with an extra key, a false key, or no key, on the source and a re-signed copy | each exits 1 with a named error |
+
+UTERM-003's "Sandboxing" section still says the command holds no entitlements. UTERM-003 is frozen, and that text was
+true when written. UTERM-004's Impacts line records the change.

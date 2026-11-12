@@ -69,10 +69,12 @@ enum ScriptFixtures {
   /// `memoryCap` is the allocator's cap in bytes, which only a debug helper accepts. A test that
   /// leaves a helper running is ended by SIGTERM after 60 seconds and by SIGKILL after 70, since a
   /// helper that handles SIGINT is not always ended by the first.
+  ///
+  /// `executable` is the command to start, and nil means `helper()`.
   static func start(
     socket: String?, script: URL, allow: [String] = [], arguments: [String] = [],
     environment: [String: String] = [:], memoryCap: UInt64? = nil, input: Pipe? = nil,
-    onExit: (@Sendable () -> Void)? = nil
+    executable: URL? = nil, onExit: (@Sendable () -> Void)? = nil
   ) throws -> Process {
     let process = Process()
 
@@ -85,7 +87,7 @@ enum ScriptFixtures {
     inherited["UNITERM_SOCKET"] = nil
 
     process.environment = inherited.merging(environment) { _, new in new }
-    process.executableURL = helper()
+    process.executableURL = executable ?? helper()
     process.arguments =
       ["run"] + (memoryCap.map { ["--memory-cap", String($0)] } ?? [])
       + allow.flatMap { ["--allow", $0] } + (socket.map { ["--socket", $0] } ?? [])
@@ -133,12 +135,12 @@ enum ScriptFixtures {
 
   static func run(
     socket: String?, script: URL, allow: [String] = [], arguments: [String] = [],
-    environment: [String: String] = [:], memoryCap: UInt64? = nil
+    environment: [String: String] = [:], memoryCap: UInt64? = nil, executable: URL? = nil
   ) async throws -> HelperRun {
     await finish(
       try start(
         socket: socket, script: script, allow: allow, arguments: arguments,
-        environment: environment, memoryCap: memoryCap))
+        environment: environment, memoryCap: memoryCap, executable: executable))
   }
 
   /// The footprint of a process in bytes, or nil when it cannot be read.
