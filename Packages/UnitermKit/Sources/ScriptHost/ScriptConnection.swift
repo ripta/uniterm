@@ -88,10 +88,27 @@ public final class ScriptConnection: @unchecked Sendable, Identifiable {
   public func validateBinding(registry: SessionRootRegistry) -> Bool {
     guard let binding else { return false }
     guard ProcessInspection.isRunning(pid: peer.pid, started: peerStartTime) else { return false }
+    guard peerGenerationHolds else { return false }
     guard let recordedGeneration = registry.sessionGeneration(for: binding.root) else {
       return false
     }
     return recordedGeneration == binding.generation
+  }
+
+  /// True while the process on the other end is the one the connection admitted, running the
+  /// executable it ran then. The kernel gives a process a new ID version when it starts another
+  /// executable, and a reused process ID comes with a new version too. A forked child that took
+  /// over the socket has another process ID. Any of these, a closed connection, or a token that
+  /// cannot be read, makes it false.
+  ///
+  /// The token is read from the socket when asked, so a call that arrives after an exec is refused
+  /// though the peer sent it before.
+  public var peerGenerationHolds: Bool {
+    guard let admitted = peer.token, !isClosed,
+      let live = ScriptPeer.liveToken(descriptor: socket.rawDescriptor)
+    else { return false }
+
+    return live.pid == admitted.pid && live.pidVersion == admitted.pidVersion
   }
 
   /// What waits for the writer now, for the tests.

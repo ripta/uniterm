@@ -1,4 +1,5 @@
 import Darwin
+import FileRouting
 import Foundation
 import PaneModel
 import ProcessInspection
@@ -74,10 +75,14 @@ final class ScriptBindingTests: XCTestCase {
 
     child.waitUntilExit()
 
-    let peer = ScriptPeer(uid: getuid(), pid: child.processIdentifier, token: nil)
-    let (app, _) = try FramedSocket.pair()
+    let (app, peerEnd) = try FramedSocket.pair()
+    let peer = ScriptPeer(
+      uid: getuid(), pid: child.processIdentifier,
+      token: ScriptPeer.liveToken(descriptor: app.rawDescriptor))
     let connection = ScriptConnection(
       id: 1, peer: peer, peerStartTime: started, socket: app, onOverflow: { _ in })
+
+    defer { withExtendedLifetime(peerEnd) {} }
 
     connection.bind(to: TestSessionRoot.identity, generation: 1)
 
@@ -92,12 +97,15 @@ final class ScriptBindingTests: XCTestCase {
 
     host.recordSessionRoot(testRoot, sessionGeneration: 1, window: 1, pane: NodeID(rawValue: 1))
 
-    let peer = ScriptPeer(uid: getuid(), pid: currentPid, token: nil)
     let currentStartTime = ProcessInspection.startTime(of: currentPid) ?? 0
-    let (app, _) = try FramedSocket.pair()
+    let (app, peerEnd) = try FramedSocket.pair()
+    let peer = ScriptPeer(
+      uid: getuid(), pid: currentPid, token: ScriptPeer.liveToken(descriptor: app.rawDescriptor))
     let connection = ScriptConnection(
       id: 1, peer: peer, peerStartTime: currentStartTime, socket: app,
       onOverflow: { _ in })
+
+    defer { withExtendedLifetime(peerEnd) {} }
 
     connection.bind(to: testRoot, generation: 1)
 
@@ -112,11 +120,14 @@ final class ScriptBindingTests: XCTestCase {
   func testClosedSourceTabRemovesSessionRoot() throws {
     let testRoot = TestSessionRoot.identity
 
-    let peer = ScriptPeer(uid: getuid(), pid: getpid(), token: nil)
-    let (app, _) = try FramedSocket.pair()
+    let (app, peerEnd) = try FramedSocket.pair()
+    let peer = ScriptPeer(
+      uid: getuid(), pid: getpid(), token: ScriptPeer.liveToken(descriptor: app.rawDescriptor))
     let connection = ScriptConnection(
       id: 1, peer: peer, peerStartTime: testRoot.started, socket: app,
       onOverflow: { _ in })
+
+    defer { withExtendedLifetime(peerEnd) {} }
 
     connection.bind(to: testRoot, generation: 1)
 
@@ -133,11 +144,14 @@ final class ScriptBindingTests: XCTestCase {
   func testHelperReplacementInvalidatesOldGeneration() throws {
     let testRoot = TestSessionRoot.identity
 
-    let peer = ScriptPeer(uid: getuid(), pid: getpid(), token: nil)
-    let (app, _) = try FramedSocket.pair()
+    let (app, peerEnd) = try FramedSocket.pair()
+    let peer = ScriptPeer(
+      uid: getuid(), pid: getpid(), token: ScriptPeer.liveToken(descriptor: app.rawDescriptor))
     let connection = ScriptConnection(
       id: 1, peer: peer, peerStartTime: testRoot.started, socket: app,
       onOverflow: { _ in })
+
+    defer { withExtendedLifetime(peerEnd) {} }
 
     connection.bind(to: testRoot, generation: 1)
 
@@ -150,5 +164,112 @@ final class ScriptBindingTests: XCTestCase {
     XCTAssertFalse(
       connection.validateBinding(registry: host.sessionRoots),
       "old generation still valid after replacement")
+  }
+
+  /// Catches a binding that survives a new process instance with the same PID and start second,
+  /// which a start time cannot tell apart. The admitted token carries another process ID version,
+  /// as a reused PID or a later exec gives.
+  func testAnotherProcessIDVersionFailsTheBinding() throws {
+    let (app, peerEnd) = try FramedSocket.pair()
+
+    defer { withExtendedLifetime(peerEnd) {} }
+
+    let live = try XCTUnwrap(ScriptPeer.liveToken(descriptor: app.rawDescriptor))
+    var bytes = live.bytes
+
+    bytes.withUnsafeMutableBytes {
+      $0.storeBytes(of: UInt32(bitPattern: live.pidVersion &+ 1), toByteOffset: 28, as: UInt32.self)
+    }
+
+    let peer = ScriptPeer(uid: getuid(), pid: getpid(), token: AuditToken(data: bytes))
+    let connection = ScriptConnection(
+      id: 1, peer: peer, peerStartTime: TestSessionRoot.identity.started, socket: app,
+      onOverflow: { _ in })
+
+    connection.bind(to: TestSessionRoot.identity, generation: 1)
+
+    XCTAssertFalse(connection.peerGenerationHolds)
+    XCTAssertFalse(
+      connection.validateBinding(registry: host.sessionRoots), "another instance passed")
+  }
+
+  /// Catches a binding that survives a successful exec, and a call read before the exec that runs
+  /// after it. The relay connects from the test's own session, so its first call is answered. It
+  /// then starts perl again in the same process with the socket open. The kernel gives it a new
+  /// process ID version. The host ends the connection's authority without waiting for a call, and
+  /// a call dispatched after the exec is refused and reaches the window layer not at all.
+  func testASuccessfulExecEndsTheBindingAndItsQueuedCalls() async throws {
+    let relay = try SocketRelay(path: host.instanceAddress)
+
+    defer { relay.stop() }
+
+    let pid = try await relay.connected()
+
+    try await relay.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
+    _ = try await relay.read()
+    try await relay.send(ScriptHelperMessage.begin(name: "relay").frame())
+    try await relay.send(ScriptHelperMessage.request(id: 1, call: .listWindows).frame())
+
+    guard case .reply(1, .ok) = try await relay.read() else {
+      return XCTFail("the bound relay's first call was not answered")
+    }
+
+    let pane = NodeID(rawValue: 1)
+    let id = try XCTUnwrap(host.controllers(actingFrom: 1, pane: pane).first)
+    let connection = try XCTUnwrap(host.listener.findConnection(id))
+    var ended: [UInt64] = []
+
+    host.onControllerEnded = { ended.append($0) }
+
+    XCTAssertTrue(connection.peerGenerationHolds)
+    let execed = try await relay.exec()
+
+    XCTAssertEqual(execed, pid)
+    XCTAssertFalse(connection.peerGenerationHolds, "the exec kept the process ID version")
+
+    let answered = windows.calls.count
+
+    expect(
+      await waitUntil { ended.contains(id) }, "the exec did not end the connection's authority")
+    XCTAssertTrue(host.controllers(actingFrom: 1, pane: pane).isEmpty)
+
+    host.handle(.request(connection, id: 2, call: .listWindows))
+
+    guard case .reply(2, .failure(.refused, let text)) = try await relay.read() else {
+      return XCTFail("a call read before the exec was not refused")
+    }
+
+    XCTAssertTrue(text.contains("started another executable"), text)
+    XCTAssertEqual(windows.calls.count, answered, "a call ran after the exec")
+  }
+
+  /// Catches a socket handed to a forked child while the process that connected still runs. The
+  /// child's call, written on the inherited socket, is refused, and the connection's authority
+  /// ends.
+  func testAForkedChildWritingOnTheInheritedSocketIsRefused() async throws {
+    let relay = try SocketRelay(path: host.instanceAddress)
+
+    defer { relay.stop() }
+
+    let parent = try await relay.connected()
+
+    try await relay.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
+    _ = try await relay.read()
+    try await relay.send(ScriptHelperMessage.begin(name: "relay").frame())
+
+    let answered = windows.calls.count
+    let child = try await relay.forkSend(
+      ScriptHelperMessage.request(id: 1, call: .listWindows).frame())
+
+    defer { kill(child, SIGKILL) }
+
+    XCTAssertNotEqual(child, parent)
+
+    guard case .reply(1, .failure(.refused, let text)) = try await relay.read() else {
+      return XCTFail("the child's call was not refused")
+    }
+
+    XCTAssertTrue(text.contains("handed the connection on"), text)
+    XCTAssertEqual(windows.calls.count, answered, "the child's call ran")
   }
 }

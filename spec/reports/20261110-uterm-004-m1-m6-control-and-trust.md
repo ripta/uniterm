@@ -20,7 +20,7 @@ line. Nothing is held, blocked, or skipped, and no work is stashed.
 | UTERM-004 M2: Remote-controlled and disconnected panes | DONE | "Keep panes disconnected until the user enables remote control" |
 | UTERM-004 M3: Exec panes | DONE | "Let a local program drive an applet through an exec pane" |
 | UTERM-004 M4: Layout requests | DONE | "Let a program lay out panes for its own subtree" |
-| UTERM-004 M5: Verified controller artifacts and run binding | QUEUED | |
+| UTERM-004 M5: Verified controller artifacts and run binding | DONE | "Run controller packages only from a verified snapshot" |
 | UTERM-004 M6: Consent, remembered trust, and permission management | QUEUED | |
 
 ## Commands that leave the sandbox
@@ -835,3 +835,128 @@ Final checks:
 
 The coordinator viewed the presentation capture and the restored exec pane capture. Both hold only uniterm's own
 window and synthetic content. The exported copies were deleted.
+
+## UTERM-004 M5: Verified controller artifacts and run binding
+
+### First round
+
+The opus implementer built the descriptor, the signature, the snapshot, the Janet loader, the native load check, and
+the run binding. It reported 2395 package tests with 0 failures. The coordinator reran `caffeinate -dimsu make
+test-package`: 2395 tests, 8 skipped, 0 failures, 207 seconds.
+
+The approved plan said the CLI scrubs loader variables. That cannot work for the command the app authenticates,
+because dyld loads an injected library before `main`. The implementer signed the bundled command with the hardened
+runtime and without get-task-allow, so dyld drops `DYLD_*` itself. The reviewer judged this the right mechanism.
+
+The implementer's best guesses, all in the proposal's Decision Log:
+
+1. The descriptor is strict JSON format 1, with two permission kinds: `pane-control` and a Janet `capability`. Paths
+   are ASCII with no leading dot, and case aliases are refused. The signature is Ed25519 over a domain line plus the
+   exact descriptor bytes.
+2. Janet native modules and images are refused even inside the snapshot. The `modules` and `ffi*` capabilities cannot
+   be declared.
+3. `post-status` is not gated. Every other call needs a declared `pane-control`.
+4. The execution-generation check applies to every connection, and the listener refuses tokenless peers. That changes
+   M1's admission.
+5. Snapshots are kept per instance under Caches. Signing keys stay in a file until M6.
+6. Persistent admission adds identity and scopes only. Pane authority still comes from M1's ancestry or a grant.
+7. ScriptWire moves to version 8. Both skew directions are refused at the hello.
+
+### ADR check
+
+The first check found no conflicts. It named one candidate that passes the bar: a bundle helper that runs user-chosen
+code unsandboxed must carry the hardened runtime and no get-task-allow, and the app trusts it only by its code hash.
+It is security posture other work depends on, and it is costly to reverse. It goes into the Decision Log as
+`Undecided`. The exec-generation check is already required by ADR-09, so it is not a separate candidate.
+
+### Review
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | The hardened command kills UTERM-003's `--allow ffi-jit`; a narrower entitlement could keep it | fix, then reversed for ADR-10, below |
+| 2 | M5 bullet 4 holds for Janet only; a native entry's run-time `dlopen` is unchecked | fix: bullet narrowed and amended |
+| 3 | Edited decision text lacked Amended markers; a sentence about loader variables misled | fix |
+| 4 | As built restated the divergence reasoning | fix: moved to the Decision Log |
+| 5 | A C doc comment sat on the forward declaration | fix |
+| 6 | A comment claimed a forked child on an inherited socket is detected | traced: confirmed by a new test, claim kept |
+| 7 | An `@rpath` packaged candidate after a system candidate was never checked | traced: confirmed, fixed, test failed first |
+| 8 | A stray `.DS_Store` is refused | dismissed: the proposal makes unlisted files fail closed |
+| 9 | The UTERM-003 freeze hunk | left for the user |
+
+`--allow modules` never loaded a native module, hardened or not. The vendored Janet is built with
+`JANET_NO_DYNAMIC_MODULES`.
+
+### UI runs
+
+The coordinator ran 8 UI classes: 17 tests, 2 failures.
+
+- `ControllerRunUITests` failed with exit 64. The command refused `__XPC_DYLD_FRAMEWORK_PATH`, which Xcode sets for an
+  app under test. dyld never reads it. The command no longer treats `__XPC_DYLD_*` as a loader variable, and a package
+  test failed first on the old list.
+- `ReplCapabilityUITests` failed: "the fresh REPL never said what it may use".
+
+That first UI run overlapped the implementer's package tests and probes, so the coordinator reran the REPL class
+alone on a quiet machine, 20 iterations, no retries. It failed 4 of 20. One iteration lost the app's accessibility
+connection. No crash report was written. The pane read only the login banner.
+
+The same 20-iteration run at the M4 commit, in a detached worktree, failed 6 of 20, all with "the fresh REPL never
+said what it may use". The defect predates M5. Both the test and the restart feature come from this row's M1, so it is
+not unowned. It gets its own fix and commit before M6, which builds on the same attach path. The worktree was removed.
+
+### ADR-10
+
+The fix for finding 1 gave the command `com.apple.security.cs.allow-unsigned-executable-memory`. That kept
+`--allow ffi-jit` working, and a probe on the entitled build showed dyld still dropping `DYLD_INSERT_LIBRARIES`. A
+second ADR check then found a confirmed conflict with ADR-10's literal rule: the check "confirms that it holds no
+entitlement". ADR-10 is accepted and on main. The run honors it, so the entitlement comes out, and `--allow ffi-jit`
+under the bundled command is lost. Restoring it needs an ADR-10 amendment, which is the user's decision.
+
+### Other commits on the branch
+
+Another session committed two spec-only commits on this branch during M5: "Record what WebKit offers for scripting
+the browser" and "Draft browser automation for controllers". They touch no file of this run. They are left alone and
+kept out of this run's reviews.
+
+The entitlement file is deleted, and `scripts/check-sandbox-off.sh` again requires that the command hold no
+entitlement of the families it checks. The hardened runtime and the absent get-task-allow stay, and the injection probe
+still shows dyld dropping `DYLD_INSERT_LIBRARIES`. The ffi-jit test is removed. Nothing pins the SIGKILL.
+
+The built command still carries `com.apple.application-identifier`, which Xcode adds. It carried it before M5 too. The
+check forbids the sandbox, file, network, exception, and `cs.` families, as it did before M5, and does not reject every
+key. ADR-10's literal "no entitlement" is therefore not met by any build since UTERM-003. This run did not cause that
+and does not change it. It is raised in the final report.
+
+### Final checks
+
+| Command | Result |
+|---|---|
+| `caffeinate -dimsu make test-package` | 2397 tests, 8 skipped, 0 failures, 214 seconds |
+| 8 UI classes: Controller run, script run, REPL, REPL capability, pending requests, presentation, pane control, exec pane | 17 of 17 passed, 240 seconds |
+| Crash reports newer than the UI run | none |
+| `make fmt-check`, `make lint`, `make check`, `make build`, `make test-helper-sandbox`, `scripts/check-sandbox-off.sh` | pass |
+| `make fuzz` | 18 tests, 0 failures, after the first fix round |
+| `proposals.py check` | `[]` |
+
+`ReplCapabilityUITests` passed in this run. It still fails about 1 run in 4, at this commit and at M4's.
+
+One unowned failure, from the implementer's full suite in the first fix round:
+`FileWatcherTests.testChangesToOtherFilesInTheFolderDeliverNothing` failed with 2 events where 1 was expected. It
+passed alone and in the full-suite rerun. M5 does not touch file watching. Its cause is unresolved. An FSEvents timing
+race under load is a guess.
+
+Changed test classes, each run alone:
+
+| Test class | Wall time |
+|---|---|
+| ControllerRunTests | 3.2 s |
+| ScriptGrantTests | 1.6 s |
+| ScriptHelperIntegrationTests | 1.4 s |
+| ScriptBindingTests | 1.1 s |
+| ControllerSignerTests | 0.58 s |
+| ScriptWireFuzzTests | 0.57 s |
+| ControllerFormatFuzzTests | 0.57 s |
+| ScriptCodecTests | 0.56 s |
+| ControllerSnapshotTests | 0.56 s |
+| ControllerDescriptorTests | 0.55 s |
+| CommandHelperSandboxTests | 0.54 s |
+| MachOLoadCheckTests | 0.54 s |

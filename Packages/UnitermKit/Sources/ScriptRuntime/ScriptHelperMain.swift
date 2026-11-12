@@ -54,8 +54,12 @@ public enum ScriptHelperMain {
 
     return """
       usage: uniterm run [--allow CAPABILITY]... [--socket PATH] file.janet [argument...]
+             uniterm run [--allow CAPABILITY]... [--socket PATH] package [argument...]
+             uniterm controller --help
 
-      Runs a Janet script against the running uniterm.
+      Runs a Janet script against the running uniterm. Given a controller package's folder, it
+      runs the package's Janet entry from uniterm's verified copy of the package, and each
+      --allow must name a capability the package's controller.json declares.
 
         --allow CAPABILITY  let the script use a capability. Repeat it to allow more. The
                             names are Janet's own, and each is denied by default.
@@ -85,6 +89,11 @@ public enum ScriptHelperMain {
 
     if arguments.dropFirst().first == "repl" {
       return ScriptReplMain.run(arguments: Array(arguments.dropFirst(2)))
+    }
+
+    if arguments.dropFirst().first == "controller" {
+      return ControllerCommands.run(
+        arguments: Array(arguments.dropFirst(2)), environment: environment)
     }
 
     #if DEBUG
@@ -126,6 +135,12 @@ public enum ScriptHelperMain {
       return fail("\(error)", status: Exit.unavailable)
     }
 
+    if ControllerCommands.isPackage(invocation.script) {
+      return ControllerCommands.runJanet(
+        package: invocation.script, allowed: invocation.allowed, denied: denied,
+        arguments: invocation.arguments, address: address, environment: environment)
+    }
+
     let source: Data
 
     do {
@@ -140,22 +155,8 @@ public enum ScriptHelperMain {
 
     do {
       session = try ScriptSession.open(path: address.path, name: name)
-    } catch WireError.versionMismatch {
-      return fail(ScriptProtocol.mismatchText, status: Exit.protocolMismatch)
-    } catch WireError.io(let code) where Address.meansNobodyListens(code) {
-      return fail(Address.unreachableText(address), status: Exit.unavailable)
-    } catch WireError.io(let code) {
-      return fail(
-        "cannot reach uniterm at \(address.path): \(String(cString: strerror(code)))",
-        status: Exit.unavailable)
-    } catch WireError.closed {
-      return fail(
-        "uniterm at \(address.path) closed the connection before the script began",
-        status: Exit.unavailable)
-    } catch ScriptSessionError.failed(_, let text) {
-      return fail(text, status: Exit.unavailable)
     } catch {
-      return fail("cannot talk to uniterm at \(address.path): \(error)", status: Exit.unavailable)
+      return connectionFailure(error, address: address)
     }
 
     uniterm_janet_block_sigint()
@@ -202,7 +203,34 @@ public enum ScriptHelperMain {
     }
   #endif
 
-  private static func fail(_ message: String, status: Int32) -> Int32 {
+  /// The message and exit status for a connection that did not open, or a run the app refused.
+  static func connectionFailure(_ error: any Error, address: Address) -> Int32 {
+    switch error {
+    case WireError.versionMismatch:
+      return fail(ScriptProtocol.mismatchText, status: Exit.protocolMismatch)
+
+    case WireError.io(let code) where Address.meansNobodyListens(code):
+      return fail(Address.unreachableText(address), status: Exit.unavailable)
+
+    case WireError.io(let code):
+      return fail(
+        "cannot reach uniterm at \(address.path): \(String(cString: strerror(code)))",
+        status: Exit.unavailable)
+
+    case WireError.closed:
+      return fail(
+        "uniterm at \(address.path) closed the connection before the script began",
+        status: Exit.unavailable)
+
+    case ScriptSessionError.failed(_, let text):
+      return fail(text, status: Exit.unavailable)
+
+    default:
+      return fail("cannot talk to uniterm at \(address.path): \(error)", status: Exit.unavailable)
+    }
+  }
+
+  static func fail(_ message: String, status: Int32) -> Int32 {
     FileHandle.standardError.write(Data((message + "\n").utf8))
 
     return status
