@@ -27,7 +27,8 @@ An applet reply may be deferred only for a command with no effect. A command wit
 - A command with an effect whose result comes later replies at once with a handle. Its result is kept under that
   handle and read by a separate command. A completion event names the handle.
 - Revocation, run end, and pane close fail pending replies and free handles. They never report an effect as undone.
-- An error from any command, deferred or not, still means nothing ran.
+- An error an applet returns, from a deferred reply or an immediate one, still means nothing ran. A reply lost in
+  transport after the command ran is separate: the wire's reply-lost kind already says the effect stands.
 
 ## Rationale
 
@@ -50,8 +51,8 @@ true without a new error kind that every caller must learn.
 
 - **Defer every slow command.** A run-script would wait on its promise. A page dialog would deadlock it, and a failure
   after the effect would report nothing ran.
-- **Defer, and report a failure after an effect with a new "effect stands" error.** Every caller must learn the new
-  kind, and the result is still lost.
+- **Defer, and let the applet report a failure after an effect as "effect stands".** Every caller must handle that
+  from every deferred command, and the result is still lost.
 - **No deferred replies at all, with polling.** Polling needs a timer in the script. The REPL does not run Janet's event
   loop, so a polling helper would never resume there.
 
