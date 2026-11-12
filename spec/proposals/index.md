@@ -20,6 +20,7 @@
 | [UTERM-016](UTERM-016-map-pin-editing.md) | Add, edit, and remove map pins by hand, and save them to GeoJSON | accepted |
 | [UTERM-017](UTERM-017-status-bar-placement.md) | Where notices go, their levels, window status slots, and the shared queue | implemented |
 | [UTERM-018](UTERM-018-open-in-nearest-capable-pane.md) | Every open walks to the nearest pane that can handle it | accepted |
+| [UTERM-019](UTERM-019-browser-automation.md) | Controller scripts run JavaScript, follow page events, and send input in their own browser tabs | draft |
 
 ## Dependency Graph
 
@@ -42,6 +43,7 @@ UTERM-015 ← UTERM-001, UTERM-002, UTERM-003, UTERM-004, UTERM-013
 UTERM-016 ← UTERM-004, UTERM-008, UTERM-013, UTERM-015
 UTERM-017 ← UTERM-001
 UTERM-018 ← UTERM-003, UTERM-004, UTERM-005, UTERM-007, UTERM-013, UTERM-015
+UTERM-019 ← UTERM-003, UTERM-004, UTERM-005
 ```
 
 ## Not Yet Filed
