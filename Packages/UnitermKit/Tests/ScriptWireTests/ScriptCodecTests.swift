@@ -64,7 +64,7 @@ final class ScriptCodecTests: XCTestCase {
   /// Catches a field that is encoded but decoded into a different value.
   func testEveryHelperMessageRoundTrips() throws {
     var messages: [ScriptHelperMessage] = [
-      .hello(version: 7),
+      .hello(version: ScriptProtocol.version),
       .begin(name: "tidy-up.janet"),
       .begin(name: ""),
       .attach(token: Data((0..<UInt8(ScriptProtocol.tokenBytes)).map { $0 })),
@@ -75,6 +75,10 @@ final class ScriptCodecTests: XCTestCase {
       .pong(0),
       .pong(UInt32.max),
       .memoryLimit,
+      .controllerBegin(ControllerBegin(entry: .janet, package: "/Users/synthetic/slides")),
+      .controllerBegin(
+        ControllerBegin(
+          entry: .native, package: "/tmp/caf\u{00E9}", capabilities: ["fs-read", "net-connect"])),
     ]
 
     for level in ScriptStatusLevel.allCases {
@@ -91,7 +95,7 @@ final class ScriptCodecTests: XCTestCase {
   /// Catches a reply whose request ID, failure kind, or payload is lost on the wire.
   func testEveryAppMessageRoundTrips() throws {
     let messages: [ScriptAppMessage] = [
-      .hello(version: 7),
+      .hello(version: ScriptProtocol.version),
       .reply(id: 41, result: .ok(Data())),
       .reply(id: 42, result: .ok(Data([1, 2, 3]))),
       .reply(id: 43, result: .failure(.badArgument, "the level is not known")),
@@ -104,6 +108,9 @@ final class ScriptCodecTests: XCTestCase {
       .ping(0),
       .ping(UInt32.max),
       .stop,
+      .controllerAdmitted(
+        snapshot: "/tmp/run.synthetic", version: Data(repeating: 0xA5, count: 32)),
+      .controllerRefused("synthetic refusal"),
     ]
 
     for message in messages {

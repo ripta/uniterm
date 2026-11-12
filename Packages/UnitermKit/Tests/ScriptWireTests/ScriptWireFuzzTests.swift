@@ -32,6 +32,9 @@ final class ScriptWireFuzzTests: XCTestCase {
       ScriptHelperMessage.replEvaluating(true).frame(),
       ScriptHelperMessage.pong(7).frame(),
       ScriptHelperMessage.memoryLimit.frame(),
+      ScriptHelperMessage.controllerBegin(
+        ControllerBegin(entry: .janet, package: "/synthetic/package", capabilities: ["fs-read"])
+      ).frame(),
       ScriptHelperMessage.request(id: 3, call: .postStatus(level: .warning, text: "synthetic"))
         .frame(),
     ]
@@ -46,6 +49,10 @@ final class ScriptWireFuzzTests: XCTestCase {
         ScriptAppMessage.history(lines: [], final: true).frame(),
         ScriptAppMessage.ping(7).frame(),
         ScriptAppMessage.stop.frame(),
+        ScriptAppMessage.controllerAdmitted(
+          snapshot: "/synthetic/run", version: Data(repeating: 0x3C, count: 32)
+        ).frame(),
+        ScriptAppMessage.controllerRefused("synthetic refusal").frame(),
       ]
   }
 

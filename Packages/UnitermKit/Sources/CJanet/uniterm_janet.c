@@ -1463,15 +1463,301 @@ static uniterm_script_status evaluate(JanetTable *env, const char *name, const u
     return result;
 }
 
+static uniterm_script_status run_entry(const uniterm_host *host, const char *name,
+                                       const uint8_t *source, size_t length,
+                                       const uniterm_package *package, uint32_t sandbox_flags,
+                                       const char *const *arguments, size_t argument_count,
+                                       uniterm_script_failure *failure);
+
+/* A plain script keeps Janet's own module paths and loaders. */
+uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *name,
+                                        const uint8_t *source, size_t length,
+                                        uint32_t sandbox_flags, const char *const *arguments,
+                                        size_t argument_count, uniterm_script_failure *failure) {
+    return run_entry(host, name, source, length, NULL, sandbox_flags, arguments, argument_count,
+                     failure);
+}
+
+/*
+ * The package loader.
+ *
+ * One package runs per VM, on the VM's thread, so its files are kept in statics for the run. The
+ * resolver and the loader are host functions with names no script would choose, reached through
+ * the one module path and the one loader this file installs. A script that calls them directly
+ * gets nothing the import could not give it.
+ */
+static const uniterm_package *active_package;
+static JanetTable *package_env;
+
+static int package_index(const char *name) {
+    if (active_package == NULL) return -1;
+
+    for (size_t index = 0; index < active_package->count; index++) {
+        if (strcmp(active_package->names[index], name) == 0) return (int)index;
+    }
+
+    return -1;
+}
+
+/*
+ * Joins `base`, the importing file's folder, with a relative import path, folding `.` and `..`.
+ * Returns 0 and leaves `out` empty when the path climbs out of the package or does not fit.
+ */
+static int package_join(const char *base, const char *relative, char *out, size_t capacity) {
+    char joined[1024];
+    int written = snprintf(joined, sizeof(joined), "%s%s%s", base, base[0] ? "/" : "", relative);
+
+    out[0] = '\0';
+
+    if (written < 0 || (size_t)written >= sizeof(joined)) return 0;
+
+    const char *parts[64];
+    size_t lengths[64];
+    size_t depth = 0;
+    const char *cursor = joined;
+
+    while (*cursor) {
+        const char *end = strchr(cursor, '/');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+
+        if (length == 0 || (length == 1 && cursor[0] == '.')) {
+        } else if (length == 2 && cursor[0] == '.' && cursor[1] == '.') {
+            if (depth == 0) return 0;
+
+            depth--;
+        } else {
+            if (depth == 64) return 0;
+
+            parts[depth] = cursor;
+            lengths[depth] = length;
+            depth++;
+        }
+
+        if (!end) break;
+
+        cursor = end + 1;
+    }
+
+    size_t used = 0;
+
+    for (size_t index = 0; index < depth; index++) {
+        if (used + lengths[index] + 2 > capacity) return 0;
+
+        if (index > 0) out[used++] = '/';
+
+        memcpy(out + used, parts[index], lengths[index]);
+        used += lengths[index];
+    }
+
+    out[used] = '\0';
+
+    return used > 0;
+}
+
+/*
+ * The one module path. `uniterm` is the bundled module. A path that starts with ./ or ../ is a
+ * file of the package, as `<path>.janet` or `<path>/init.janet`. Anything else, such as a bare
+ * name Janet would look for on its system path or an absolute path, finds nothing.
+ */
+static Janet cfun_package_resolve(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    const char *path = (const char *)janet_getstring(argv, 0);
+
+    if (strcmp(path, "uniterm") == 0) return janet_cstringv("uniterm");
+
+    if (strncmp(path, "./", 2) != 0 && strncmp(path, "../", 3) != 0) return janet_wrap_nil();
+
+    char base[1024] = "";
+    Janet current = janet_dyn("current-file");
+
+    if (janet_checktype(current, JANET_STRING)) {
+        const char *file = (const char *)janet_unwrap_string(current);
+        const char *slash = strrchr(file, '/');
+
+        if (slash != NULL && (size_t)(slash - file) < sizeof(base)) {
+            memcpy(base, file, (size_t)(slash - file));
+            base[slash - file] = '\0';
+        }
+    }
+
+    char joined[1024];
+
+    if (!package_join(base, path, joined, sizeof(joined) - 16)) return janet_wrap_nil();
+
+    static const char *const suffixes[] = {".janet", "/init.janet"};
+    char candidate[1040];
+
+    for (size_t index = 0; index < 2; index++) {
+        snprintf(candidate, sizeof(candidate), "%s%s", joined, suffixes[index]);
+
+        if (package_index(candidate) >= 0) return janet_cstringv(candidate);
+    }
+
+    return janet_wrap_nil();
+}
+
+/*
+ * The one module loader. It runs a package file in a fresh environment whose current file is the
+ * file's packaged path, as Janet's own source loader does, and returns that environment. A failure
+ * in the module raises in the importing code.
+ */
+static Janet cfun_package_load(int32_t argc, Janet *argv) {
+    janet_arity(argc, 1, -1);
+
+    const char *name = (const char *)janet_getstring(argv, 0);
+    int index = package_index(name);
+
+    if (index < 0 || package_env == NULL) janet_panicf("%s is not a file of the package", name);
+
+    JanetTable *env = janet_table(0);
+
+    env->proto = package_env;
+    janet_table_put(env, janet_ckeywordv("current-file"), janet_cstringv(name));
+    janet_table_put(env, janet_ckeywordv("source"), janet_cstringv(name));
+
+    Janet rooted = janet_wrap_table(env);
+
+    janet_gcroot(rooted);
+
+    const uint8_t *source = active_package->sources[index];
+    size_t length = active_package->lengths[index];
+    JanetParser *parser = janet_abstract(&janet_parser_type, sizeof(JanetParser));
+    Janet parser_value = janet_wrap_abstract(parser);
+    JanetString where = janet_cstring(name);
+    Janet where_value = janet_wrap_string(where);
+    size_t offset = 0;
+    JanetSignal failed = JANET_SIGNAL_OK;
+    Janet failure = janet_wrap_nil();
+
+    janet_gcroot(parser_value);
+    janet_gcroot(where_value);
+    janet_parser_init(parser);
+
+    while (failed == JANET_SIGNAL_OK) {
+        while (failed == JANET_SIGNAL_OK && janet_parser_has_more(parser)) {
+            Janet form = janet_parser_produce(parser);
+            JanetCompileResult compiled = janet_compile(form, env, where);
+
+            if (compiled.status != JANET_COMPILE_OK) {
+                failure = janet_wrap_string(janet_formatc("%s:%d:%d: compile error: %S", name,
+                                                          compiled.error_mapping.line,
+                                                          compiled.error_mapping.column,
+                                                          compiled.error));
+                failed = JANET_SIGNAL_ERROR;
+
+                break;
+            }
+
+            JanetFiber *fiber = janet_fiber(janet_thunk(compiled.funcdef), 64, 0, NULL);
+            Janet value = janet_wrap_nil();
+
+            fiber->env = env;
+
+            JanetSignal signal = janet_continue(fiber, janet_wrap_nil(), &value);
+
+            if (signal != JANET_SIGNAL_OK && signal != JANET_SIGNAL_EVENT) {
+                failed = signal == JANET_SIGNAL_INTERRUPT ? JANET_SIGNAL_INTERRUPT
+                                                          : JANET_SIGNAL_ERROR;
+                failure = value;
+            }
+        }
+
+        if (failed != JANET_SIGNAL_OK) break;
+
+        enum JanetParserStatus status = janet_parser_status(parser);
+
+        if (status == JANET_PARSE_DEAD) break;
+
+        if (status == JANET_PARSE_ERROR) {
+            failure = janet_wrap_string(janet_formatc("%s:%d:%d: parse error: %s", name,
+                                                      (int32_t)parser->line,
+                                                      (int32_t)parser->column,
+                                                      janet_parser_error(parser)));
+            failed = JANET_SIGNAL_ERROR;
+
+            break;
+        }
+
+        if (offset >= length) {
+            janet_parser_eof(parser);
+        } else {
+            janet_parser_consume(parser, source[offset++]);
+        }
+    }
+
+    janet_gcunroot(parser_value);
+    janet_gcunroot(where_value);
+    janet_gcunroot(rooted);
+
+    if (failed != JANET_SIGNAL_OK) janet_signalv(failed, failure);
+
+    return janet_wrap_table(env);
+}
+
+static const JanetReg package_cfuns[] = {
+    {"_uniterm/package-resolve", cfun_package_resolve, NULL},
+    {"_uniterm/package-load", cfun_package_load, NULL},
+    {NULL, NULL, NULL}};
+
+/*
+ * Replaces Janet's module paths and loaders with the package's, in the arrays every import reads.
+ * Janet's source, native, and image loaders are removed, not only bypassed.
+ */
+static void install_package_loader(JanetTable *env) {
+    janet_cfuns(env, NULL, package_cfuns);
+
+    static const char setup[] =
+        "(array/clear module/paths)\n"
+        "(array/push module/paths [(fn [path] (_uniterm/package-resolve path)) :uniterm-package])\n"
+        "(each loader (keys module/loaders) (put module/loaders loader nil))\n"
+        "(put module/loaders :uniterm-package (fn [path & _] (_uniterm/package-load path)))\n";
+    Janet ignored;
+
+    if (janet_dostring(env, setup, "uniterm-package-loader", &ignored) != 0) {
+        janet_panic("the package loader did not install");
+    }
+}
+
+uniterm_script_status uniterm_janet_run_package(const uniterm_host *host, const char *entry,
+                                                const uniterm_package *package,
+                                                uint32_t sandbox_flags,
+                                                const char *const *arguments,
+                                                size_t argument_count,
+                                                uniterm_script_failure *failure) {
+    memset(failure, 0, sizeof(*failure));
+
+    active_package = package;
+
+    int index = package_index(entry);
+
+    if (index < 0) {
+        active_package = NULL;
+        fill_failure(failure, 0, 0, "the entry is not a file of the package");
+
+        return UNITERM_SCRIPT_START_FAILED;
+    }
+
+    uniterm_script_status status =
+        run_entry(host, entry, package->sources[index], package->lengths[index], package,
+                  sandbox_flags, arguments, argument_count, failure);
+
+    active_package = NULL;
+    package_env = NULL;
+
+    return status;
+}
+
 /*
  * Every entry into Janet happens under one boundary. A panic in the core environment, the module
  * registration, or the evaluation lands here and comes back as a failure, so a longjmp never
  * leaves this function.
  */
-uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *name,
-                                        const uint8_t *source, size_t length,
-                                        uint32_t sandbox_flags, const char *const *arguments,
-                                        size_t argument_count, uniterm_script_failure *failure) {
+static uniterm_script_status run_entry(const uniterm_host *host, const char *name,
+                                       const uint8_t *source, size_t length,
+                                       const uniterm_package *package, uint32_t sandbox_flags,
+                                       const char *const *arguments, size_t argument_count,
+                                       uniterm_script_failure *failure) {
     memset(failure, 0, sizeof(*failure));
 
     if (janet_init() != 0) {
@@ -1498,6 +1784,13 @@ uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *na
         }
 
         janet_table_put(env, janet_ckeywordv("args"), janet_wrap_array(args));
+
+        if (package != NULL) {
+            package_env = env;
+            janet_table_put(env, janet_ckeywordv("current-file"), janet_cstringv(name));
+            install_package_loader(env);
+        }
+
         janet_sandbox(sandbox_flags);
 
         if (run_sigint_requested) {

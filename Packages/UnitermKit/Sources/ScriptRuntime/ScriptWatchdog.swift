@@ -83,7 +83,7 @@ final class ScriptWatchdog: @unchecked Sendable {
             ScriptSession.endHelper("the app sent a reply nobody asked for", flushingOutput: false)
           }
 
-        case .hello, .attachRefused, .history:
+        case .hello, .attachRefused, .history, .controllerAdmitted, .controllerRefused:
           ScriptSession.endHelper(
             "the app sent a message the helper does not expect now", flushingOutput: false)
         }

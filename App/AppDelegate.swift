@@ -166,6 +166,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// UI tests set `UNITERM_CONTROLLER_RUNS_DIR` so the snapshots of controller runs stay out of the
+  /// developer's caches folder. Only debug builds honor it, for the same reason as the layout
+  /// folder.
+  private func controllerRunsDirectory() throws -> URL {
+    #if DEBUG
+      if let path = debugEnvironment["UNITERM_CONTROLLER_RUNS_DIR"] {
+        return URL(fileURLWithPath: path, isDirectory: true)
+      }
+    #endif
+
+    return try ControllerSettings.defaultRunsRoot()
+  }
+
+  /// Where controller runs keep their snapshots, and the bundle command that may ask for one. The
+  /// snapshots that ended instances left are removed first. A failure leaves scripting running
+  /// without controller packages, and says so in the log.
+  private func makeControllerSettings() -> ControllerSettings? {
+    do {
+      return try ControllerSettings.atLaunch(root: try controllerRunsDirectory())
+    } catch {
+      logger.error("controller runs are off: \(String(describing: error), privacy: .public)")
+      return nil
+    }
+  }
+
   /// Starts the listener that script helpers connect to. A failure leaves the app running without
   /// scripting, and says so.
   private func startScripting(windows: WindowSet) {
@@ -182,7 +207,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onRefusal: { [weak self] refusal in
           self?.logger.error("a script connection was refused: \(refusal.text, privacy: .public)")
           self?.windowSet?.post(level: .warning, text: refusal.text)
-        })
+        },
+        controllers: makeControllerSettings())
 
       host.start()
       scriptHost = host

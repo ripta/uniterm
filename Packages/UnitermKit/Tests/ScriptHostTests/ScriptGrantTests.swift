@@ -676,6 +676,22 @@ final class SocketRelay: @unchecked Sendable {
     return try ScriptAppMessage.decode(type: bytes[0], body: Data(bytes[5...]))
   }
 
+  /// Starts perl again in the connecting process, with the socket kept open across the exec.
+  /// Returns the PID the new program reports, which is the same process's.
+  func exec() async throws -> pid_t {
+    try command("exec")
+
+    return try await pid(after: "execed ")
+  }
+
+  /// Forks the relay. The child writes `frame` on the inherited socket while the connecting
+  /// process stays. Returns the child's PID.
+  func forkSend(_ frame: Data) async throws -> pid_t {
+    try command("forksend " + frame.map { String(format: "%02x", $0) }.joined())
+
+    return try await pid(after: "childsent ")
+  }
+
   /// Forks the relay. The connecting process exits, and the PID of the child that keeps the
   /// socket comes back.
   func orphan() async throws -> pid_t {

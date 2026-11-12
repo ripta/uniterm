@@ -15,7 +15,11 @@
   access-mode and driver combinations it supports
 - UTERM-001 — "What layout persistence restores": saved layouts record inactive control intent, never grants
 - UTERM-003 — "Sandboxing", "Host API", and "REPL features": this proposal supplies fresh-helper capability grants,
-  scoped discovery, authenticated pane binding, and the `uniterm/send-command` host function. Its M1-M2 replace broad same-user control when they land
+  scoped discovery, authenticated pane binding, and the `uniterm/send-command` host function. Its M1-M2 replace broad
+  same-user control when they land. "Verified artifact and run binding" signs the `uniterm` command with the hardened
+  runtime and no entitlement, per ADR-10. Under it, `--allow ffi-jit` ends the helper with SIGKILL when its JIT code
+  runs, and a debug build's command can no longer take a debugger. `--allow modules` loads no native module before or
+  after, since the vendored Janet is built without dynamic modules. Amended 2026-11-11; see Decision Log.
 - UTERM-005 through UTERM-010 — exec schemas and supported combinations stay with each applet's design; this
   proposal supplies the shared transport and tests it with presentation fixtures
 
@@ -69,8 +73,11 @@ recorded terminal session root. A pane token is not authority.
   process for a non-root caller, so ProcessInspection reads start times and parents with sysctl(KERN_PROC_PID). The
   listener reads the peer's uid with LOCAL_PEERCRED and its PID with LOCAL_PEERPID.
 - Each connection is bound to the authenticated peer process instance, the source tab/session, and UTERM-003's
-  launch-scoped window and pane references. A reused PID is a different instance. Check the live identity and ancestry
-  before granting automatic authority and before dispatch. An unavailable, changed, or ambiguous chain fails closed.
+  launch-scoped window and pane references. A reused PID is a different instance, and so is a process after a
+  successful exec. The instance is the PID with the process ID version from the peer's audit token, which the kernel
+  changes on exec and on PID reuse. A peer whose token cannot be read is refused at the listener. Check the live
+  identity and ancestry before granting automatic authority and before dispatch. An unavailable, changed, or ambiguous
+  chain fails closed. Amended 2026-11-11; see Decision Log.
 - App-created REPL and exec processes bind through the same recorded spawn identity. UTERM-003's REPL environment
   token may correlate a pending connection, but never grants authority without the process check.
 - An unbound caller has no pane access. The user can explicitly grant that connection a named source pane in one
@@ -78,7 +85,7 @@ recorded terminal session root. A pane token is not authority.
   several tabs runs several sessions, and the grant binds to the newest one still running. A grant ends on disconnect,
   process exit, source session close, revocation, or window close. A denied or revoked connection is not asked about
   again. A reconnect needs fresh admission; verified controller policies may supply its permissions. An ordinary
-  unbound caller asks again. An outside caller never receives every window. Amended 2026-11-10; see Decision Log.
+  unbound caller asks again. An outside caller never receives every window.
 - Ordinary descendants of a terminal session may act for that source pane. A daemon that loses its ancestry needs an
   explicit grant. Focus, a claimed PID, environment state, and a tty name never establish authority.
 - This is application authorization, not an OS sandbox against malicious processes of the same user. Deliberate
@@ -464,8 +471,9 @@ requires a local review before effects. Undeclared effects fail even when the co
   clipboard powers, and pane control remain separate dimensions.
 - Durable policies live in a separate versioned private file, written atomically. Corrupt files and unknown policy
   semantics authorize nothing and are kept for recovery. Layout files contain no policy or signing key. Optional
-  local signing keys use Keychain. Controllers & Permissions shows trusted selector/fingerprint, approved scopes, and
-  active runs. Revocation removes remembered policy and current authority, including queued work. It cannot undo
+  local signing keys use Keychain. Until M6 moves them there, the signer reads a key file that only its owner can
+  read, behind an interface the Keychain store will take over. Amended 2026-11-11; see Decision Log. Controllers &
+  Permissions shows trusted selector/fingerprint, approved scopes, and active runs. Revocation removes remembered policy and current authority, including queued work. It cannot undo
   external effects already performed by an approved program.
 - Admission and typed clipboard contracts are versioned. Old controller/new app and new controller/old app refuse
   unsupported semantics before effects. Permission scopes refer to current roles and owned groups, not persisted
@@ -487,6 +495,16 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   permissions. Version trust covers descriptor and packaged code/dependencies. An optional signature covers the
   descriptor and its file digests; identity trust pins the signing public key plus controller ID. Signing and loading
   share one interpretation of the exact descriptor bytes. Unverified display metadata conveys no authority.
+- The descriptor is `controller.json`, format 1, read as strict JSON. A repeated key, an unknown field, a value of
+  another type, and anything after the document are refused. A packaged path is ASCII letters, digits, `.`, `_`, and
+  `-`, in components that start with a letter or a digit, so no path has a second spelling. Two paths that differ only
+  by case are refused. Format 1 knows two permission kinds: `pane-control`, and a Janet `capability` by the name
+  `--allow` takes. Any other kind is refused, so a meaning a later format adds authorizes nothing here. A controller
+  cannot declare a capability that loads native code. A run's `--allow` names only declared capabilities. A run that
+  does not declare pane control may post status and nothing else.
+- The signature is `controller.sig`: an Ed25519 signature, through CryptoKit, over a fixed domain line and the
+  descriptor's exact bytes. The version is the SHA-256 of those bytes, and the key's fingerprint is the SHA-256 of the
+  public key. A signature file that does not verify refuses the package. It never falls back to an unsigned version.
 - Copy to a fresh private snapshot, then verify its completed contents against the descriptor. Reject missing or
   unlisted code, escapes, symlinks, special files, and ambiguous paths or fields. Retain the read-only snapshot for
   the run. Ordinary edits or updates to the source cannot change later normal loading. User-owned read-only files
@@ -494,8 +512,20 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
 - Managed script modules and native packaged libraries resolve only inside the snapshot. Uniterm's bundled runtime
   and standard library, and OS system libraries, are explicit platform exceptions. Runtime contract versions are part
   of approval semantics. Cwd searches, ambient module paths, startup hooks, and loader injection cannot select
-  substitute dependencies. Reject conflicting explicit environment keys with an error. An entry whose dependency
+  substitute dependencies. A Janet package loads only `.janet` source. Native modules and images have no loader, even
+  inside the snapshot. For a native entry, what is checked is its load commands and those of every packaged library
+  they reach: each library they name, and each search path, must be a packaged file or under `/usr/lib/` or
+  `/System/Library/`, and none may carry an embedded dyld environment. Every packaged candidate an `@rpath` library
+  could resolve to is checked, since dyld falls back past a system path that does not exist. Code the entry loads at
+  run time with `dlopen` is not checked and can come from anywhere its privileges reach. An entry whose dependency
   boundary cannot be established is refused persistent admission; there is no silent downgrade of its guarantee.
+  Amended 2026-11-11; see Decision Log.
+- The bundle's command is signed with the hardened runtime and holds no entitlement, as ADR-10 requires, so it holds
+  no get-task-allow. On that command, dyld removes every `DYLD_` variable before any of its code runs,
+  with no message, so neither the command nor the native entry it execs sees one. The app refuses a bundle command
+  built otherwise. A command built without the hardened runtime, such as the package tests' helper, still sees a
+  `DYLD_` variable, and refuses to start a run with an error that names it. `__XPC_DYLD_` variables are no loader
+  variables: dyld never reads them, and a run proceeds with them set. Amended 2026-11-11; see Decision Log.
 - Native entries start from the verified snapshot. Record the actual spawned executable's execution generation and
   code binding before granting authority. Janet's CLI remains the VM process: it owns stdin, stdout, stderr, working
   directory, arguments, signals, and exit status. Before user code runs, the app authenticates the bundle helper,
@@ -509,6 +539,10 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   and current window/group. Execution generation includes successful exec, not merely PID and start time. Exit,
   executable replacement, disconnect, or revocation invalidates the live binding. It does not delete durable trust.
   Revalidate generation and revocation at dispatch, with exec/exit notifications for prompt invalidation.
+- The run request is a `controller-begin` message on ScriptWire version 8. It names the entry kind, the package path,
+  and the requested capabilities, and no digest. The app answers with the snapshot's folder and the version it verified,
+  or with a refusal. Both sides refuse any other version at the hello, so an old `uniterm` command with a new app, and a
+  new command with an old app, run nothing. No deploy order is needed. The descriptor and signature formats start at 1.
 - Unix-stream peer lookup is not immutable per-message sender attestation. Generation checks and notifications do
   not make check-and-effect atomic against exec or deliberately transferred sockets. Such races and injection remain
   within the stated same-user limitation. No atomic per-message or OS-sandbox guarantee is claimed.
@@ -868,12 +902,14 @@ None.
 
 ### M5: Verified controller artifacts and run binding
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Binary and Janet controller fixtures verify descriptor, packaged entry, and dependencies before persistent admission
 - Ordinary source replacement before, during, or after snapshot creation cannot substitute unverified packaged code
 - Duplicate descriptor fields, path aliases, escapes, symlinks, missing files, and unlisted code fail closed
-- Real native and Janet loaders reject ambient dependencies, delayed external imports, and startup injection paths
+- The real Janet loader rejects ambient dependencies, delayed external imports, and startup injection paths. The real
+  native load check rejects load commands and search paths that reach outside the package and the system. Amended
+  2026-11-11; see Decision Log.
 - Loader variables cannot execute substitute code before helper admission or silently override the declared boundary
 - The bundle helper evaluates no user code before verified admission and sandbox selection
 - The CLI retains its own stdin/stdout/stderr, signals, directory, and exit status without an app-side I/O relay
@@ -883,6 +919,69 @@ None.
   trust
 - App, signer, and loader share deterministic descriptor interpretation and signature verification fixtures
 - Original-path updates cannot alter the retained snapshot used by an admitted run
+
+**As built:**
+
+- A new module reads the descriptor, the signature, and a native entry's load commands, and makes and loads snapshots.
+  The app, the signer, and the helper's loader all read through it. Its strict JSON reader replaces Foundation's,
+  which keeps the last of two equal keys. The shared fixtures are one signed Janet package and 18 bad descriptors.
+  Their expected digests came from `shasum`, and their signature and key fingerprint from a separate CryptoKit
+  program. The app's, the signer's, and the loader's tests each hold them. Both readers and the load check are in
+  `make fuzz`.
+- The app copies a package from bytes it reads once, through descriptors that never follow a link, and checks each
+  digest on the copied bytes. It then walks the finished copy and reads it again before it locks the copy read-only.
+  A package holding a link, a FIFO, a missing file, or a file the descriptor does not list is refused, and so is a file
+  that changes during the copy. The test that changes the source mid-copy uses a hook between files, not a race. The
+  first draft listed a folder through a duplicated descriptor. That shared the folder's read offset, so the second
+  listing of the copy saw nothing and its folders stayed writable. The read-only test caught it.
+- Each instance keeps its snapshots in a folder of its own under the user's caches, named for its process, and a
+  launch removes only the folders of instances that have ended. A Janet run's snapshot goes when its connection
+  closes, also after a revoke. A native run's goes when its process exits or execs again. Review of the first draft
+  found that a revoke stranded a Janet run's snapshot, and that a launch removed every instance's runs. Each test
+  failed with its fix reverted.
+- `uniterm run` takes a package folder. The command sends `controller-begin` and reads nothing of the package before
+  the app answers. It then loads the snapshot and checks its descriptor against the version the app verified. Janet's
+  module paths and loaders are replaced with one resolver and one loader that serve the package's files from memory.
+  The test grants fs-read, so the loader and not the sandbox refuses imports from the working folder, JANET_PATH, an
+  absolute path, a native module, an image, and an import a function makes after startup. An ordinary script in the
+  same folder does load the ambient module. SIGINT stops a package in its entry and inside a module load. The loader
+  lives in Janet's own module tables, which a script can change. A package granted fs-read can therefore put a file
+  loader back and import from disk. That is the accepted case of a trusted program interpreting external input.
+- `uniterm controller run` asks the app to admit a native package, then execs the snapshot's entry in its own process.
+  The entry keeps the command's terminal, folder, and arguments, and its exit status and signals are the process's
+  own. The entry's connection gets the run only when it comes from that process with the same start time, after an
+  exec, running code whose hash matches the snapshot's entry. That check asks for the running code's dynamic signing
+  information only, and runs on the main actor. Whether Security reads the file to answer it was not measured. A
+  second exec ends the run and its snapshot while the process still runs. The native fixture is a SwiftPM executable.
+  A copy whose load commands name a library outside the system is refused before it runs. The load check reads load
+  commands only, so the check bullet on native loaders is narrowed to them. Review found that an `@rpath` library
+  whose first candidate was a system path left its packaged candidate unchecked. Every packaged candidate is now
+  checked, and the test failed before the fix.
+- The app knows its bundle's command by its code directory hash, and the command is signed so that dyld variables
+  cannot reach it. The 2026-11-11 Decision Log entries on the hardened command say why and what it costs.
+  `check-sandbox-off.sh` checks the built command's runtime flag and that it holds no entitlement.
+  `make test-helper-sandbox` checks that an injected library does not load into it. `--allow ffi-jit` code no longer
+  runs in it. Package tests stand in a copy of the SwiftPM helper, signed the same way, for the bundle's command. The unsigned helper then plays
+  another interpreter, which gets no controller run.
+- The first UI run refused a package run over `__XPC_DYLD_FRAMEWORK_PATH`, which Xcode sets for an app under test and
+  its terminals inherit. dyld never reads `__XPC_DYLD_` variables, so they no longer count as loader variables. The
+  test of the variable list failed before the fix.
+- Every connection is checked against the process ID version in its peer's audit token, read from the socket at each
+  call. A process watch ends a connection's authority as soon as its peer execs. A call read before the exec and
+  dispatched after it is refused. The exec test failed with the check removed. A forked child that writes on the
+  inherited socket while the process that connected still runs is refused too, since the audit token names the
+  process that last wrote. A first draft also closed a
+  connection whose peer exited, which broke M1's test of a socket left to a forked child. A peer that exits now fails
+  at its next call, as in M1.
+- Signing is `uniterm controller keygen` and `uniterm controller sign`, with a key file. A bad signature refuses the
+  run, and a package signed with a new key has a new identity.
+- Persistent admission has no remembered trust yet. A run's authority over panes still comes from its ancestry or an
+  explicit grant from M1, and M6 adds the startup review and remembered policies. The first check bullet's "before
+  persistent admission" and the tenth's "changed keys do not reuse trust" are exercised as identity changes: a
+  refused run, and a new key fingerprint for a new key. M6's trust store will hold the trust they speak of.
+- A UI test runs a package from the app's terminal with the bundled command, then runs it again after an edit and
+  sees it refused. It compiles and is run by the coordinator. The best guesses are in the 2026-11-11 Decision Log
+  entries about controller packages, the hardened command, and the generation check.
 
 ### M6: Consent, remembered trust, and permission management
 
@@ -1179,6 +1278,68 @@ None.
   before anything is built, and that section now says so. The tree check also runs before any applet is built. The script wire's
   new `busy` kind lands in ScriptWire 7 with the layout call, and the exec wire already had a `busy` code. If the user
   wants layouts queued instead, the window would hold a bounded queue per controller.
+- 2026-11-11: Settled the controller descriptor and signature formats (work-queue best guess). "Verified artifact and
+  run binding" named their contents and not their form. The descriptor is `controller.json` in strict JSON, format 1,
+  with two permission kinds, `pane-control` and a Janet `capability`. Paths are plain ASCII with no second spelling,
+  and case-only differences are refused. The signature is Ed25519 over a domain line and the exact descriptor bytes.
+  The section now says so. If the user wants Unicode paths, the reader would compare paths after normalization and
+  case folding instead of refusing them.
+- 2026-11-11: Refused Janet native modules and images even inside the snapshot (work-queue best guess). The section
+  said managed modules and native packaged libraries resolve only inside the snapshot. A Janet package now loads only
+  `.janet` source, and a controller cannot declare `modules` or an `ffi` capability. Neither kind can be checked the
+  way a native entry's load commands are. The bullet now says so. If the user wants packaged native modules, the loader
+  would run the native load check on each before it opens one.
+- 2026-11-11: Gated pane calls on a declared `pane-control` (work-queue best guess). "Controller trust and approval
+  choices" says undeclared effects are refused, and named no permission for status messages. A controller run that
+  does not declare pane control may post status, labelled with its name, and nothing else. If the user wants status
+  gated too, format 1 would gain a `status` kind.
+- 2026-11-11: Replaced "Reject conflicting explicit environment keys with an error" (work-queue best guess). The
+  approved plan had the native command scrub loader variables and reject explicit ones. On the bundle's command, dyld
+  removes every `DYLD_` variable before its code runs, with no message, so neither the command nor its native entry
+  sees one, and none can be rejected there. A command without the hardened runtime, such as the package tests' helper,
+  refuses a run while a `DYLD_` variable is set, with an error that names it. The app refuses a bundle command that
+  dyld variables could reach. `__XPC_DYLD_` variables are not counted: dyld never reads them, and the first UI run
+  showed Xcode setting them for an app under test, which refused every package run from its terminal. If the user wants
+  an explicit error even on the hardened command, the app would have to pass the user's environment to it by another
+  route.
+- 2026-11-11: Signed the bundle's command with the hardened runtime and without get-task-allow (work-queue best guess,
+  honoring ADR-10). Its settings already enabled the hardened runtime, but Xcode drops it from an ad hoc signature
+  and adds get-task-allow to a debug build. A `DYLD_INSERT_LIBRARIES` probe loaded a library into the built command
+  under either, which the app's hash check cannot see. The command is now signed with `--options=runtime` and without
+  get-task-allow, and holds no entitlement. Under the hardened command, `uniterm run --allow ffi-jit` ends the helper
+  with SIGKILL when its JIT code runs, since Janet maps that code with plain `mmap` and `mprotect`, not `MAP_JIT`.
+  `com.apple.security.cs.allow-unsigned-executable-memory` would restore it, and a test in the review fix round showed
+  dyld still dropping `DYLD_` variables with that entitlement. ADR-10 says the command holds no entitlement, so
+  restoring JIT needs an ADR-10 amendment, which is the user's call. `--allow modules` loads no native module in any
+  build, since the vendored Janet is built with `JANET_NO_DYNAMIC_MODULES`. A probe of a native module said "dynamic
+  modules not supported", so library validation never comes into play and nothing is lost there. A debug build's
+  command can no longer take a debugger. UTERM-003 is named here, and in Impacts, since this run does not edit it.
+- 2026-11-11: Applied the exec generation check to every connection (work-queue best guess). "How uniterm knows which
+  pane a program runs in" said a reused PID is a different instance. A process after a successful exec is one too,
+  and M5's check bullet asks for it. The check reads the process ID version from the peer's audit token at each call,
+  and a peer whose token cannot be read is refused at the listener, which changes M1's admission for scripts and REPLs.
+  A peer that has exited fails as before. The bullet now says so, and the section's Amended marker moved to it from
+  the grant bullet, whose 2026-11-10 change is logged above. If the user wants the check on controller runs only,
+  ordinary bindings would keep M1's PID and start time.
+- 2026-11-11: Kept snapshots per instance under the user's caches (work-queue best guess). The section said the run
+  keeps a private snapshot and named no place. Each instance has its own folder, and a launch removes only ended
+  instances' folders, as sent content does. If the user wants snapshots elsewhere, only the default folder changes.
+- 2026-11-11: Moved the script wire to version 8 for `controller-begin` (work-queue best guess). The hello is one 16-bit
+  version in every version, and each side refuses any version but its own before a call runs. An old `uniterm` command
+  with a new app, and a new command with an old app, are both refused at the hello. No deploy order is needed.
+- 2026-11-11: Kept signing keys in a key file until M6 (work-queue best guess). "Permission scopes and approval flow"
+  says local signing keys use Keychain, and M6 builds that. M5's signer reads a file only its owner can read, behind an
+  interface the Keychain store takes over. The bullet now says so, with an Amended marker.
+- 2026-11-11: Narrowed M5's native loader check bullet to load commands (work-queue best guess). The bullet said real
+  native and Janet loaders reject ambient dependencies, delayed external imports, and startup injection. That holds
+  for the Janet loader. For a native entry, the check reads load commands and search paths, and code the entry loads
+  at run time with `dlopen` can come from anywhere its privileges reach, as "Verified artifact and run binding" already
+  accepts. The bullet and the section's native-library sentence now say what is enforced. If the user wants run-time
+  loading bounded too, native entries would need a process sandbox, which the design does not claim.
+- 2026-11-11: ADR candidate (cuts across the system): a bundle helper that runs user-chosen code outside the App
+  Sandbox carries the hardened runtime and no get-task-allow, and the app trusts it only by its code hash. It would
+  amend ADR-10, whose Consequences bound the command by Janet's sandbox, a memory cap, and process isolation only.
+  Undecided. Found in M5.
 
 ## References
 

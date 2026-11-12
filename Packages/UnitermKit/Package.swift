@@ -194,8 +194,12 @@ let package = Package(
     // makes, and their replies. It has no AppKit and no Janet, so the app and the helper share one
     // codec and the fuzzers can reach it alone.
     .target(name: "ScriptWire", dependencies: ["HelperWire"]),
+    // A controller package's descriptor, signature, snapshot, and native load check. The app,
+    // the signer, and the helper's loader all read packages through it, so they read one meaning
+    // from the same bytes. It has no AppKit and no Janet.
+    .target(name: "ControllerPackage", dependencies: ["ScriptWire"]),
     // The helper side of scripting. It owns the one Janet VM of its process, on its main thread.
-    .target(name: "ScriptRuntime", dependencies: ["CJanet", "ScriptWire"]),
+    .target(name: "ScriptRuntime", dependencies: ["CJanet", "ControllerPackage", "ScriptWire"]),
     // A thin main over ScriptRuntime, so tests can run a helper without the hardened runtime. The
     // shipped command is the Xcode target UnitermCLI.
     .executableTarget(name: "ScriptHelper", dependencies: ["ScriptRuntime"]),
@@ -204,7 +208,8 @@ let package = Package(
     .target(
       name: "ScriptHost",
       dependencies: [
-        "FileRouting", "HelperHost", "PaneModel", "ProcessInspection", "ScriptWire", "StatusKit",
+        "ControllerPackage", "FileRouting", "HelperHost", "PaneModel", "ProcessInspection",
+        "ScriptWire", "StatusKit",
       ]),
     // The REPL applet. It hosts a terminal session whose child is the REPL helper, and binds the
     // helper's control channel to its pane through the script host. It never imports Janet.
@@ -250,6 +255,22 @@ let package = Package(
     // A local HTTP server for the browser's tests, so a web view loads real pages from a real
     // socket and no test reaches the network.
     .target(name: "BrowserTestSupport", path: "Tests/BrowserTestSupport"),
+    // The controller packages, keys, and descriptors that the app's, the signer's, and the
+    // loader's tests share, so all three are held to one reading of the same bytes.
+    .target(
+      name: "ControllerTestSupport", dependencies: ["ControllerPackage"],
+      path: "Tests/ControllerTestSupport", resources: [.copy("Fixtures")]),
+    // A native controller for the tests: it connects to the app and makes one call. It speaks the
+    // wire through ScriptWire, so it links no Janet.
+    .executableTarget(
+      name: "ControllerNativeFixture", dependencies: ["ScriptWire"],
+      path: "Tests/ControllerNativeFixture"),
+    .testTarget(
+      name: "ControllerPackageTests",
+      dependencies: [
+        "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "ScriptWire",
+        "TableTestSupport",
+      ]),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
       name: "DataViewerAppletTests",
@@ -314,10 +335,16 @@ let package = Package(
     .testTarget(name: "ScriptWireTests", dependencies: ["ScriptWire", "TableTestSupport"]),
     // Holds the shim's reply reader against crafted bytes, so it reaches the Janet C target.
     .testTarget(
-      name: "ScriptRuntimeTests", dependencies: ["ScriptRuntime", "ScriptWire", "CJanet"]),
+      name: "ScriptRuntimeTests",
+      dependencies: [
+        "ScriptRuntime", "ScriptWire", "CJanet", "ControllerPackage", "ControllerTestSupport",
+      ]),
     .testTarget(
       name: "ScriptHostTests",
-      dependencies: ["ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport", "StatusKit"],
+      dependencies: [
+        "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "FileRouting",
+        "ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport", "StatusKit",
+      ],
       resources: [.copy("Fixtures")]),
     .testTarget(
       name: "ReplAppletTests",

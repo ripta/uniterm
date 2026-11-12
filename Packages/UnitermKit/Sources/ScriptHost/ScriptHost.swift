@@ -1,3 +1,4 @@
+import ControllerPackage
 import Foundation
 import PaneModel
 import ProcessInspection
@@ -94,6 +95,28 @@ public final class ScriptHost {
   /// stay connected, even when they still run in a remote-controlled pane.
   private var revokedControllers: Set<UInt64> = []
 
+  /// A watch on each connection's peer process, by connection. It reports an exec or an exit as
+  /// it happens, so a connection whose peer started another executable loses its authority at
+  /// once, and not only at its next call.
+  private var peerWatches: [UInt64: any DispatchSourceProcess] = [:]
+
+  /// Where controller snapshots live and how the bundle's command is known. Without it, every
+  /// controller run is refused.
+  let controllerSettings: ControllerSettings?
+
+  /// The admitted controller runs, by the connection each is bound to.
+  var controllerRuns: [UInt64: ControllerRun] = [:]
+
+  /// The snapshot of each Janet run, by connection. It outlives the run's authority, which a revoke
+  /// ends, and goes when the connection closes, since the helper may still load from it until then.
+  var controllerSnapshots: [UInt64: URL] = [:]
+
+  /// Connections that asked for a controller run the host has not answered yet.
+  var controllerAdmissions: Set<UInt64> = []
+
+  /// Native controller launches, by the process that runs them.
+  var nativeLaunches: [pid_t: NativeLaunch] = [:]
+
   /// Runs with a connection's ID when its authority to control panes ends: it closed, the user
   /// revoked it, or its binding to a pane ended. The window layer takes away every group it owns.
   /// It may run more than once for one connection.
@@ -149,8 +172,9 @@ public final class ScriptHost {
     windows: (any ScriptWindowAPI)? = nil, sentContent: ScriptSentContent? = nil,
     onRefusal: @escaping @MainActor (ScriptRefusal) -> Void = { _ in },
     reaper: ProcessReaper = .live, replLimits: ReplLimits = .live,
-    replProbes: ReplProbes = .live
+    replProbes: ReplProbes = .live, controllers: ControllerSettings? = nil
   ) {
+    self.controllerSettings = controllers
     self.reaper = reaper
     self.replLimits = replLimits
     self.replProbes = replProbes
@@ -191,6 +215,11 @@ public final class ScriptHost {
     }
 
     sessions = [:]
+    stopControllers()
+
+    for watch in peerWatches.values { watch.cancel() }
+
+    peerWatches = [:]
     pendingRepls = [:]
     boundRepls = [:]
     awaitingRoot = [:]
@@ -205,9 +234,19 @@ public final class ScriptHost {
     case .begun(let connection, let name):
       sessions[connection.id, default: Session()].name = Self.label(for: name)
 
+      watchPeer(of: connection)
       bindConnection(connection)
+      adoptNativeRun(connection)
+
+    case .controllerBegun(let connection, let request):
+      sessions[connection.id, default: Session()].name = "controller"
+
+      watchPeer(of: connection)
+      bindConnection(connection)
+      beginController(connection, request)
 
     case .attached(let connection, let token):
+      watchPeer(of: connection)
       attach(connection, token: token)
 
     case .replLine(let connection, let text):
@@ -248,6 +287,8 @@ public final class ScriptHost {
       }
 
     case .closed(let connection):
+      peerWatches.removeValue(forKey: connection.id)?.cancel()
+      controllerConnectionClosed(connection.id)
       sessions[connection.id]?.producer?.retire()
       sessions[connection.id] = nil
       boundRepls.removeValue(forKey: connection.id)?.connectionClosed()
@@ -264,6 +305,8 @@ public final class ScriptHost {
 
   private func run(_ call: ScriptCall, on connection: ScriptConnection) -> ScriptResult {
     if let refusal = authorize(connection) { return refusal }
+
+    if let refusal = controllerRefusal(for: call, on: connection) { return refusal }
 
     switch call {
     case .postStatus(let level, let text):
@@ -297,6 +340,8 @@ public final class ScriptHost {
   private func runAsync(_ call: ScriptCall, connection: ScriptConnection) async -> ScriptResult {
     if let refusal = authorize(connection) { return refusal }
 
+    if let refusal = controllerRefusal(for: call, on: connection) { return refusal }
+
     do {
       let caller = try requireCaller(connection)
 
@@ -304,6 +349,10 @@ public final class ScriptHost {
       // another pane meanwhile is refused, so the call never runs with authority it no longer has.
       let stillAllowed: @MainActor () throws -> Void = {
         try self.requireAuthority(connection)
+
+        if case .failure(let kind, let text)? = self.controllerRefusal(for: call, on: connection) {
+          throw ScriptCallError(kind, text)
+        }
 
         guard try self.requireCaller(connection) == caller else {
           throw ScriptCallError.refused("This program no longer acts for the pane it called from.")
@@ -347,6 +396,15 @@ public final class ScriptHost {
   /// is asked about once. A binding is checked again on every call, so a peer that exited, or a
   /// session that closed, takes its authority with it.
   private func authorize(_ connection: ScriptConnection) -> ScriptResult? {
+    if peerWasReplaced(connection) {
+      peerReplaced(connection)
+
+      return .failure(
+        .refused,
+        "The program that opened this connection has since started another executable, or handed "
+          + "the connection on, so the connection has no authority. It must reconnect.")
+    }
+
     if revokedControllers.contains(connection.id) {
       return .failure(
         .refused,
@@ -396,6 +454,54 @@ public final class ScriptHost {
     return nil
   }
 
+  /// Watches the connection's peer for an exec or an exit. The watch only hurries the end along.
+  /// Every call checks the peer's generation itself, so an event that arrives late changes nothing.
+  private func watchPeer(of connection: ScriptConnection) {
+    guard peerWatches[connection.id] == nil else { return }
+
+    let watch = DispatchSource.makeProcessSource(
+      identifier: connection.peer.pid, eventMask: [.exec, .exit], queue: .main)
+
+    watch.setEventHandler { [weak self, weak connection] in
+      MainActor.assumeIsolated {
+        guard let self, let connection, !connection.isClosed, self.peerWasReplaced(connection)
+        else { return }
+
+        self.peerReplaced(connection)
+      }
+    }
+
+    peerWatches[connection.id] = watch
+    watch.activate()
+
+    // An exec that came before the watch started raised no event, so the generation is read once
+    // the watch is in place.
+    if peerWasReplaced(connection) { peerReplaced(connection) }
+  }
+
+  /// True when the process the connection admitted still runs but is no longer what speaks on it:
+  /// it started another executable, or a process it forked has taken the socket over. A peer that
+  /// exited is not counted here. Its binding fails on its own, as a closed session's does.
+  private func peerWasReplaced(_ connection: ScriptConnection) -> Bool {
+    !connection.peerGenerationHolds
+      && ProcessInspection.isRunning(pid: connection.peer.pid, started: connection.peerStartTime)
+  }
+
+  /// Ends everything a connection could do once its peer is no longer the process it admitted.
+  /// Its binding, grant, request, controller run, and owned groups go at once. A Janet run's
+  /// snapshot stays until the connection closes. Every call it makes after that is
+  /// refused, including one it sent before the exec, since each call reads the generation again.
+  private func peerReplaced(_ connection: ScriptConnection) {
+    endGrants { $0.connection == connection.id }
+    forget(connection: connection.id)
+
+    if connection.isBound { connection.unbind() }
+
+    declined.insert(connection.id)
+    controllerRuns[connection.id] = nil
+    authorityEnded(connection.id)
+  }
+
   /// Throws the refusal `authorize` gives. A call that waits checks again after the wait, since
   /// a grant, a session, or the peer itself can end while it waits.
   private func requireAuthority(_ connection: ScriptConnection) throws {
@@ -425,6 +531,10 @@ public final class ScriptHost {
     }
 
     return caller
+  }
+
+  func isRevoked(_ id: UInt64) -> Bool {
+    revokedControllers.contains(id)
   }
 
   func authorityEnded(_ id: UInt64) {
@@ -468,6 +578,8 @@ public final class ScriptHost {
   /// sent that the host has not read or that wait in a directory check. Its grant ends, and it is
   /// not asked about again. The window layer is told, so the groups it owns lose their owner.
   public func revokeControllers(_ ids: Set<UInt64>) {
+    controllerRunsRevoked(ids)
+
     for id in ids {
       revokedControllers.insert(id)
       endGrants { $0.connection == id }
@@ -482,6 +594,10 @@ public final class ScriptHost {
     guard let connection = findConnection(id), !connection.isClosed else { return nil }
 
     let name = sessions[id]?.name ?? "script"
+
+    if let run = controllerRuns[id] {
+      return "\(name), controller \(run.identity.controllerID) (PID \(connection.peer.pid))"
+    }
 
     return "\(name) (PID \(connection.peer.pid))"
   }

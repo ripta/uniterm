@@ -240,7 +240,9 @@ public final class ScriptListener: @unchecked Sendable {
   private func serve(descriptor: Int32, id: UInt64) {
     let socket = FramedSocket(descriptor: descriptor)
 
-    guard let peer = try? readPeer(descriptor) else {
+    // The audit token carries the process ID version that every call is checked against, so a
+    // peer without one has no generation to keep and is turned away.
+    guard let peer = try? readPeer(descriptor), peer.token != nil else {
       continuation.yield(
         .refused(nil, .protocolViolation("the peer's credentials were unreadable")))
       socket.shutdownAndClose()
@@ -343,6 +345,13 @@ public final class ScriptListener: @unchecked Sendable {
           role = .script
           setReadTimeout(0, on: descriptor)
           continuation.yield(.begun(connection, name: name))
+
+        case .controllerBegin(let begin):
+          guard role == .undeclared else { throw WireError.badValue("a second begin") }
+
+          role = .script
+          setReadTimeout(0, on: descriptor)
+          continuation.yield(.controllerBegun(connection, begin))
 
         case .attach(let token):
           guard role == .undeclared else {

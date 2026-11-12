@@ -81,6 +81,69 @@ enum ScriptVM {
 }
 
 extension ScriptVM {
+  /// Runs a controller package's Janet entry. `files` holds every packaged file by its path, as
+  /// read from the verified snapshot. Imports resolve only among them and the bundled uniterm
+  /// module, and nothing is read from disk.
+  static func runPackage(
+    name: String, entry: String, files: [String: Data], session: ScriptSession, sandbox: UInt32,
+    arguments: [String]
+  ) -> ScriptFailure? {
+    var failure = uniterm_script_failure()
+    let paths = files.keys.sorted()
+    let sources = paths.map { files[$0]! }
+
+    let status = withExtendedLifetime(session) {
+      let userdata = Unmanaged.passUnretained(session).toOpaque()
+      var host = uniterm_host(
+        userdata: userdata, post_status: postStatusCallback, call: callCallback)
+
+      return withCStrings(paths) { names in
+        withByteBuffers(sources) { buffers, lengths in
+          names.withUnsafeBufferPointer { namePointers in
+            buffers.withUnsafeBufferPointer { bufferPointers in
+              lengths.withUnsafeBufferPointer { lengthPointers in
+                var package = uniterm_package(
+                  names: namePointers.baseAddress, sources: bufferPointers.baseAddress,
+                  lengths: lengthPointers.baseAddress, count: paths.count)
+
+                return withCStrings(arguments) { pointers in
+                  uniterm_janet_run_package(
+                    &host, entry, &package, sandbox, pointers, pointers.count, &failure)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return scriptFailure(status: status, failure: failure, name: name)
+  }
+
+  private static func scriptFailure(
+    status: uniterm_script_status, failure: uniterm_script_failure, name: String
+  ) -> ScriptFailure? {
+    let kind: ScriptFailure.Kind
+
+    switch status {
+    case UNITERM_SCRIPT_OK: return nil
+    case UNITERM_SCRIPT_PARSE_ERROR: kind = .parse
+    case UNITERM_SCRIPT_COMPILE_ERROR: kind = .compile
+    case UNITERM_SCRIPT_RUNTIME_ERROR: kind = .runtime
+    case UNITERM_SCRIPT_INTERRUPTED: kind = .interrupted
+    default: kind = .start
+    }
+
+    let text = failure.message
+    let message = withUnsafeBytes(of: text) {
+      String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self)
+    }
+
+    return ScriptFailure(
+      name: name, line: Int(failure.line), column: Int(failure.column), kind: kind,
+      message: message)
+  }
+
   /// Runs the REPL in this process's Janet VM, on the calling thread, until its input ends. Each
   /// line the user enters and each change in whether a form is running reaches the app through
   /// `session`. Returns nil when the REPL ends cleanly.
@@ -130,6 +193,23 @@ private let replRunningCallback: @convention(c) (UnsafeMutableRawPointer?, Int32
   let session = Unmanaged<ScriptSession>.fromOpaque(userdata).takeUnretainedValue()
 
   session.reportEvaluating(running != 0)
+}
+
+/// Calls `body` with a copy of each buffer and its length. The pointers last for the call.
+private func withByteBuffers<Result>(
+  _ buffers: [Data], _ body: ([UnsafePointer<UInt8>?], [Int]) -> Result
+) -> Result {
+  let copies: [UnsafeMutablePointer<UInt8>] = buffers.map { data in
+    let memory = UnsafeMutablePointer<UInt8>.allocate(capacity: max(data.count, 1))
+
+    data.copyBytes(to: memory, count: data.count)
+
+    return memory
+  }
+
+  defer { for copy in copies { copy.deallocate() } }
+
+  return body(copies.map { UnsafePointer($0) }, buffers.map(\.count))
 }
 
 /// Calls `body` with each string as a C string. The pointers last for the call.

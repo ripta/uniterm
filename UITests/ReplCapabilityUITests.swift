@@ -80,14 +80,14 @@ final class ReplCapabilityUITests: UnitermUITestCase {
 
     XCTAssertTrue(
       waitFor(fresh, timeout: 40) { $0.contains("This REPL may use: fs-read") },
-      "the fresh REPL never said what it may use")
+      "the fresh REPL never said what it may use. The pane showed: \(fresh.value as? String ?? "")")
     XCTAssertTrue(
       waitFor(fresh, timeout: 40) { $0.contains("repl:1:> ") }, "the fresh REPL never prompted")
 
     app.typeText("(length (slurp \"\(file)\"))\n")
     XCTAssertTrue(
       waitFor(fresh, timeout: 20) { self.hasLine("12", in: $0) },
-      "the fresh REPL could not read the file")
+      "the fresh REPL could not read the file. The pane showed: \(fresh.value as? String ?? "")")
 
     app.typeText("kept\n")
     XCTAssertTrue(
