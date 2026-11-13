@@ -111,10 +111,6 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Asks the user for a driver's environment values. Tests replace it.
   var execValuesAsker: ExecValuesAsker = ExecValuesSheet.present
 
-  /// Asks the user for a permission an applet requests. Nil puts the question in the Pending
-  /// Requests panel, which is the only way the app asks. Tests may replace it.
-  var permissionAsker: PermissionAsker?
-
   /// The permission questions every window and the script host share. The window set gives every
   /// window the same one.
   var permissionRequests = PermissionRequests()
@@ -1458,8 +1454,6 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     var named = request
     named.detail = "Pane \u{201C}\(name)\u{201D}. \(request.detail)"
-
-    if let permissionAsker { return await permissionAsker(named, window) }
 
     guard let pane = paneArea.paneID(for: applet) else { return .deny }
 

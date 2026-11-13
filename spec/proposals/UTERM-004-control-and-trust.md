@@ -218,7 +218,12 @@ are escaped. Stdout carries protocol only; stderr carries diagnostic text.
 - A frame is at most 1 MiB. Retained queued bytes are at most 4 MiB per driver in each direction. Parsing also bounds
   nesting, decoded memory, and work per UI turn. A driver exceeding a bound fails visibly; commands are never silently
   dropped. A malformed frame or partial frame at EOF closes the channel. A stalled reader cannot block the UI or
-  grow an unbounded queue. Limits apply before a complete line has been buffered.
+  grow an unbounded queue. Limits apply before a complete line has been buffered. A typed clipboard read or write
+  carries at most 128 KiB of text. JSON escapes a control character to six bytes. The bound is an eighth of a frame,
+  so a text at the bound always fits one frame. A longer text is never cut. A read of a longer clipboard is refused
+  as that one call. So is a longer write whose line fits a frame, and the channel stays up. A line past the frame
+  still ends the driver, since the reader refuses it before it learns the request ID. The script wire's bound is 32
+  KiB, half of its largest message body. It sends text unescaped in a binary frame.
 - The applet owns a separate direct-argv child and its streams. Terminal program mode's pty cannot supply this
   protocol. Lifecycle events remain ADR-05's: the applet starts and cleans up its work. Close ends authority at once
   and shuts the child down asynchronously. Exit or protocol failure leaves the pane with a reason and an explicit
@@ -235,9 +240,9 @@ are escaped. Stdout carries protocol only; stderr carries diagnostic text.
   supports disconnected access with no exec driver. The terminal and REPL applets declare disconnected and
   remote-controlled access with no exec driver and no commands, as "Clipboard access from controlled panes" and M2
   assume.
-- A remote host call carries one applet command to a target pane, with its reply or structured error. It uses UTERM-003's
-  handshake and the same authorization, validation, and serialized dispatch as an exec driver's commands. Its authority
-  is the caller's own grant, never an attached driver's channel. In UTERM-003's Janet module it is
+- A remote host call carries one applet command to a target pane, with its reply or structured error. It uses
+  UTERM-003's handshake and the same authorization, validation, and serialized dispatch as an exec driver's commands.
+  Its authority is the caller's own grant, never an attached driver's channel. In UTERM-003's Janet module it is
   `uniterm/send-command`, following that module's verb-noun naming. Remote callers receive no applet events.
 - Each remote command names the applet type and the command schema version it was written for. An unsupported type or
   version is refused before any effect, as the exec hello refuses. Skew: an old script or controller against a new
@@ -249,7 +254,7 @@ are escaped. Stdout carries protocol only; stderr carries diagnostic text.
   revokes it. Revoking leaves the driver its own attached channel. For the rest of that run, it lays out and commands
   nothing beyond its own pane.
 
-Amended 2026-11-11; see the Decision Log.
+Amended 2026-11-12; see the Decision Log.
 
 Rationale: JSON already serves the applet boundary and is easy for external drivers. CBOR can be equally correct,
 but brings another serialization ecosystem without a stated need. Unversioned text leaves old commands liable to new
@@ -477,8 +482,8 @@ requires a local review before effects. Undeclared effects fail even when the co
   most 16 rows, and the panel at most 64. A request past a bound is refused as busy. A row shows its oldest waiting
   operation in full, which is the one Allow once releases. A denial outlives a reconnect: a controller run's covers
   its verified version, and an ordinary script's covers the scripts acting for its pane until the pane closes. A
-  terminal tab's or a REPL's covers its kind of request under one control generation. Amended 2026-11-12; see
-  Decision Log.
+  terminal tab's or a REPL's covers its kind of request under one control generation. Denials have no count bound.
+  Each one is a user's Deny, and none is dropped to make room for another. Amended 2026-11-12; see Decision Log.
 - A user's Run action supplies execution intent. A matching policy can supply permissions without a second dialog.
   Saved layout state alone never executes a controller. Remembered permission does not override an existing pane's
   disconnected mode or adopt restored group members. Source enablement and restored-member adoption remain local.
@@ -554,11 +559,11 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   boundary cannot be established is refused persistent admission; there is no silent downgrade of its guarantee.
   Amended 2026-11-11; see Decision Log.
 - The bundle's command is signed with the hardened runtime and holds no get-task-allow. Its one entitlement is for
-  unsigned executable memory, which `--allow ffi-jit` needs. On that command, dyld removes every `DYLD_` variable
-  before any of its code runs, with no message, so neither the command nor the native entry it execs sees one. The
-  app refuses a bundle command built otherwise. A command built without the hardened runtime, such as the package tests' helper, still sees a
-  `DYLD_` variable, and refuses to start a run with an error that names it. `__XPC_DYLD_` variables are no loader
-  variables: dyld never reads them, and a run proceeds with them set. Amended 2026-11-11; see Decision Log.
+  unsigned executable memory, which `--allow ffi-jit` needs. On that command, dyld removes every `DYLD_` variable before
+  any of its code runs, with no message, so neither the command nor the native entry it execs sees one. The app refuses
+  a bundle command built otherwise. A command built without the hardened runtime, such as the package tests' helper,
+  still sees a `DYLD_` variable. It refuses to start a run with an error that names it. `__XPC_DYLD_` variables are no
+  loader variables: dyld never reads them, and a run proceeds with them set. Amended 2026-11-11; see Decision Log.
 - Native entries start from the verified snapshot. Record the actual spawned executable's execution generation and
   code binding before granting authority. Janet's CLI remains the VM process: it owns stdin, stdout, stderr, working
   directory, arguments, signals, and exit status. Before user code runs, the app authenticates the bundle helper,
@@ -679,21 +684,22 @@ None.
 - Applets report each session's start and end to the window, the window set, and the script host. The script host
   alone keeps which pane each session root runs in. A closed window also tells the host, which forgets that window's
   roots and ends grants to its panes even when an applet never reported its end.
-- Admission binds a connection to a recorded root through its peer's ancestry. Each call checks the peer's identity,
-  the root's generation, and, for a binding found through ancestry, that the ancestry still leads to that root. A
-  process whose parent exited loses its pane and asks like an outside program. A call that waits on a directory
-  check is checked again after the wait and before the layout changes. An unbound call is refused, and the
-  connection's request appears in the Pending Requests panel. A connection holds one request however many calls it makes. Requests are held per connection, and
-  the listener holds at most 32 connections, so the list holds at most 32. A process that has exited cannot ask.
+- Admission binds a connection to a recorded root through its peer's ancestry. Each call checks the peer's identity, the
+  root's generation, and, for a binding found through ancestry, that the ancestry still leads to that root. A process
+  whose parent exited loses its pane and asks like an outside program. A call that waits on a directory check is checked
+  again after the wait and before the layout changes. An unbound call is refused, and the connection's request appears
+  in the Pending Requests panel. A connection holds one request however many calls it makes. Requests are held per
+  connection, and the listener holds at most 32 connections, so the list holds at most 32. A process that has exited
+  cannot ask.
 - The panel opens from Window > Pending Requests… and from the palette. It lists waiting requests and live grants. Its
   grant sheet names the program and its PID, offers only panes with a running session, and names each way the grant
   ends.
   The pending-permissions slot shows in every window while any request waits. An outside caller has no window, so the
   slot is not per window.
-- A grant ends on disconnect, process exit, the source session's end, revocation, and window close. A program that
-  forks and exits does not pass its grant to the child that keeps its socket. A grant needs a waiting request and an
-  unbound connection, so a bound connection cannot be moved to another pane. Grant scope for panes with tabs, and the end of asking after a
-  denial or revocation, are best guesses; see the 2026-11-10 Decision Log entry.
+- A grant ends on disconnect, process exit, the source session's end, revocation, and window close. A program that forks
+  and exits does not pass its grant to the child that keeps its socket. A grant needs a waiting request and an unbound
+  connection, so a bound connection cannot be moved to another pane. Grant scope for panes with tabs, and the end of
+  asking after a denial or revocation, are best guesses; see the 2026-11-10 Decision Log entry.
 - A REPL helper that attaches before the terminal reports its session root waits for the root, and is then checked
   against it. A token presented from outside the channel's session is refused before or after the root arrives. The
   earlier draft refused every attach that arrived first, which would fail a REPL whose helper outran the report. A
@@ -708,11 +714,11 @@ None.
 - A second Ghostty patch tags each queued surface event with the surface's unique ID. An integration test closes a
   session with its exit queued and checks the session that reuses its surface address. See the 2026-11-11 Decision
   Log entry on stale surface events.
-- Package tests record the test process as a session root only through the ScriptTestSupport target, which the
-  script host's tests and the REPL applet's tests share. Grant tests use a `sleep` process as the granted pane's
-  session. The forked-and-exited and lost-ancestry cases use a small perl relay fixture, since a Swift test cannot
-  fork. The process readers' tests sit in their own target beside the module. Two UI tests, for the panel and for the capability restart, compile and are run by the
-  coordinator.
+- Package tests record the test process as a session root only through the ScriptTestSupport target, which the script
+  host's tests and the REPL applet's tests share. Grant tests use a `sleep` process as the granted pane's session. The
+  forked-and-exited and lost-ancestry cases use a small perl relay fixture, since a Swift test cannot fork. The process
+  readers' tests sit in their own target beside the module. Two UI tests, for the panel and for the capability restart,
+  compile and are run by the coordinator.
 
 ### M2: Remote-controlled and disconnected panes
 
@@ -774,9 +780,10 @@ None.
   flood test saw 20 prompts for 20 writes before the bound, and 1 after. Both
   prompts now name the tab that asked, not the selected one. The window's and the terminal's naming tests failed with
   the fix reverted.
-- Two new real-backend tests drive OSC 52 through libghostty's callbacks. With the policy check removed, the stale-answer
-  test failed on both its read and its write. `PaneControlUITests` and the updated `ScriptRunUITests` and `ReplUITests`
-  compile and are run by the coordinator. No layout codec fuzz target exists, so the codec changes have no fuzz run.
+- Two new real-backend tests drive OSC 52 through libghostty's callbacks. With the policy check removed, the
+  stale-answer test failed on both its read and its write. `PaneControlUITests` and the updated `ScriptRunUITests` and
+  `ReplUITests` compile and are run by the coordinator. No layout codec fuzz target exists, so the codec changes have no
+  fuzz run.
 
 ### M3: Exec panes
 
@@ -871,9 +878,10 @@ None.
   The best guesses are in the 2026-11-11 Decision Log entries.
 - The UI tests failed 4 times in 76 iterations across the fix round. Three failures were a synthesized click with no
   effect, on Run, on the Pending Requests menu item, or on Allow Once. Each of those was followed by a 5.4-second wait
-  for the app to go idle, where 576 passing clicks took at most 0.74 seconds. In the fourth, XCTest found another
-  app's windows above uniterm's. No cause in uniterm or the test was found, and the last 40 iterations passed. The test now records
-  the app's state and the time of every interaction, and a failure reports that trail and the history rows it read.
+  for the app to go idle, where 576 passing clicks took at most 0.74 seconds. In the fourth, XCTest found another app's
+  windows above uniterm's. No cause in uniterm or the test was found. The last 40 iterations passed. The test now
+  records the app's state and the time of every interaction, and a failure reports that trail and the history rows it
+  read.
 
 ### M4: Layout requests
 
@@ -1045,10 +1053,11 @@ None.
 - A controller run that asks for any power waits for a startup review in the Pending Requests panel. Review opens a
   sheet that lists every requested power, what is new beside an earlier approval, the version, and the key. Deny is the
   default button. Trust This Identity shows only for a signed package, and neither trust choice shows when the policy
-  file cannot take one. The sheet's help describes only the choices it shows. The command says once that it waits, and waits with no timeout. A run that asks for no power
-  starts at once. Allow once starts the run with its capabilities, and each later use of another power asks again.
-  Runs of one version that ask for the same powers share one review, and Allow once or Allow for this session starts
-  the oldest alone. See the 2026-11-12 Decision Log entries on Allow once and on runs that ask for nothing.
+  file cannot take one. The sheet's help describes only the choices it shows. The command says once that it waits. It
+  then waits with no timeout. A run that asks for no power starts at once. Allow once starts the run with its
+  capabilities, and each later use of another power asks again. Runs of one version that ask for the same powers share
+  one review, and Allow once or Allow for this session starts the oldest alone. See the 2026-11-12 Decision Log entries
+  on Allow once and on runs that ask for nothing.
 - Remembered policies live in a new module with no AppKit, beside a shared atomic writer that the layout store now
   uses too. Every read and change of the policy file takes a lock on its folder, so two running instances keep each
   other's changes. The store refuses a link in place of its folder and anything but a regular file in place of the
@@ -1058,7 +1067,10 @@ None.
   actor; see the 2026-11-12 Decision Log entry on clipboard reads. Questions wait in the panel
   within the bounds the coalescing bullet names. A revoke, a closed connection, a lost binding, an ended session, an
   ended driver run, and a closed pane withdraw their waiting requests: the program is refused, and no denial is
-  recorded. A Janet read gets its text by the route the 2026-11-12 entry on Janet clipboard replies describes.
+  recorded. A Janet read gets its text by the route the 2026-11-12 entry on Janet clipboard replies describes. A
+  driver's clipboard text is bounded so that it always fits one exec frame; see the 2026-11-12 entry on the exec
+  clipboard bound. Denials are kept until Ask Again however many there are; see the 2026-11-12 entry on dropping
+  the denial bound.
 - A controlled terminal's OSC 52 question, and a controlled REPL's, waits in the panel like any other, labelled as
   covering the programs in the tab or the REPL, with no controller named.
 - Controllers & Permissions is in the Window menu and the palette. It lists remembered approvals by selector, with the
@@ -1263,8 +1275,8 @@ None.
   and approval flow" names packaged entry IDs, owned-group targets, and a directory scope, and M5 builds packaged
   entries. Until then an entry is the absolute executable, the directory scope is the one directory, and the target is
   the one pane. The grant lasts for this launch only. The bullet now says so, and the section's Amended marker moved to
-  it from the pending-indicator bullet, whose 2026-11-06 change is logged above. If the user wants a directory scope that
-  covers subfolders, or a grant for an owned group, the grant would take a folder prefix or a group.
+  it from the pending-indicator bullet, whose 2026-11-06 change is logged above. If the user wants a directory scope
+  that covers subfolders, or a grant for an owned group, the grant would take a folder prefix or a group.
 - 2026-11-11: Settled M3's exec details (work-queue best guess). The applet owns the driver's child through its event
   outlet, so the applet's close shuts it down, as ADR-05 asks. The window owns the authority and ends it at once. An
   event emitted before both hellos goes nowhere. A driver that writes faster than the pane handles past 4 MiB fails,
@@ -1315,28 +1327,29 @@ None.
   command with an old app, are both refused at the hello. No deploy order is needed. A failure raises a struct of
   `:kind` and `:message`, as `uniterm/send-command` does, since a layout's refusals have kinds a script can act on.
 - 2026-11-11: Let an exec driver lay out its subtree and command the members it owns, in exec protocol version 2
-  (work-queue best guess, addition: drivers commanding panes beyond their own). The plan named an exec command for layouts. A layout a driver cannot command would be inert,
-  and "Trust follows the pane tree" lets a program address the panes of groups it owns. A command to another pane names
-  the pane, the applet type, and the schema version. Both need the driver's own pane to be remote-controlled, since the
-  user's enable is what lets a program in a pane act beyond it. Each run owns its own groups, and loses them when it
-  ends, its pane closes, or the user revokes it. Revoking leaves the attached channel, as "What anchors trust" says. Each
-  side refuses any other exec version at the hello, so neither skew direction runs a command. "Exec wire format" now
-  says so, and its Amended marker moved here from the 2026-11-03 entry, which is above. If the user wants drivers kept
-  to their own applet, the `layout` message would stay and the pane field would go.
+  (work-queue best guess, addition: drivers commanding panes beyond their own). The plan named an exec command for
+  layouts. A layout a driver cannot command would be inert. "Trust follows the pane tree" lets a program address the
+  panes of groups it owns. A command to another pane names the pane, the applet type, and the schema version. Both need
+  the driver's own pane to be remote-controlled, since the user's enable is what lets a program in a pane act beyond it.
+  Each run owns its own groups, and loses them when it ends, its pane closes, or the user revokes it. Revoking leaves
+  the attached channel, as "What anchors trust" says. Each side refuses any other exec version at the hello, so neither
+  skew direction runs a command. "Exec wire format" now says so, and its Amended marker moved here from the 2026-11-03
+  entry, which is above. If the user wants drivers kept to their own applet, the `layout` message would stay and the
+  pane field would go.
 - 2026-11-11: Attached a layout's exec declarations inert (work-queue best guess). "What anchors trust" says approved
   programs start only after the tree commits, and M3 settled that no script reaches Run. A layout's driver therefore
-  shows Run in its pane, and no launch waits in Pending Requests until the user chooses Run. If the user wants a layout to
-  file its launches for approval at once, the commit would file them, still with no automatic start.
+  shows Run in its pane, and no launch waits in Pending Requests until the user chooses Run. If the user wants a layout
+  to file its launches for approval at once, the commit would file them, still with no automatic start.
 - 2026-11-11: Gave restored groups to a controller from the badge (work-queue best guess). "Saved layouts" says the user
   may grant a new live connection the exact restored member set through pane chrome. The badge of a member of a group
   with no owner lists Give Group to each connection that acts for a pane of the window and is not revoked. The group
   keeps the members it holds, and each keeps its mode, so the user enables the targets separately. A driver is not
   offered, since a new exec attachment gains no restored siblings. If the user wants a picker of members, the action
   would take a subset and the group would split.
-- 2026-11-11: Opened applet types the window declares beyond the built-in kinds, in layouts only (work-queue best guess).
-  The hosted fixtures have no launcher entry, so a layout names them by type and the app's factory decides. Only a debug
-  build with `UNITERM_TEST_APPLETS` declares and makes them. Release builds refuse such a type. `open-pane` keeps the
-  built-in kinds. If the user wants `open-pane` to take them too, it would share the layout's kind lookup.
+- 2026-11-11: Opened applet types the window declares beyond the built-in kinds, in layouts only (work-queue best
+  guess). The hosted fixtures have no launcher entry, so a layout names them by type and the app's factory decides. Only
+  a debug build with `UNITERM_TEST_APPLETS` declares and makes them. Release builds refuse such a type. `open-pane`
+  keeps the built-in kinds. If the user wants `open-pane` to take them too, it would share the layout's kind lookup.
 - 2026-11-11: Amended M4's first bullet. It said layout requests build on "layout envelope version 2 from M2". M3 moved
   the envelope to version 3 for the exec declaration. M4 changes no saved data, so the envelope stays at version 3.
 - 2026-11-11: Made a revoke hold for the rest of a driver's run (work-queue best guess). Review found that a revoked
@@ -1347,12 +1360,12 @@ None.
   the run acts on its own pane only, and the bullet says so. If the user wants a revoked driver to lay out again
   without a new run, the revoke would end only the groups it owned at the time.
 - 2026-11-11: Allowed one layout in preparation per controller (work-queue best guess). Review found that a controller
-  could send layouts faster than they finish, and each one built its applets. "Exec wire format" bounds work and
-  queued bytes, and says a driver past a bound fails visibly. "Layout requests" bounded each layout's panes and depth,
-  and named no bound on layouts in flight. A second layout from the same connection or run is now refused as `busy`
-  before anything is built, and that section now says so. The tree check also runs before any applet is built. The script wire's
-  new `busy` kind lands in ScriptWire 7 with the layout call, and the exec wire already had a `busy` code. If the user
-  wants layouts queued instead, the window would hold a bounded queue per controller.
+  could send layouts faster than they finish, and each one built its applets. "Exec wire format" bounds work and queued
+  bytes, and says a driver past a bound fails visibly. "Layout requests" bounded each layout's panes and depth, and
+  named no bound on layouts in flight. A second layout from the same connection or run is now refused as `busy` before
+  anything is built, and that section now says so. The tree check also runs before any applet is built. The script
+  wire's new `busy` kind lands in ScriptWire 7 with the layout call, and the exec wire already had a `busy` code. If the
+  user wants layouts queued instead, the window would hold a bounded queue per controller.
 - 2026-11-11: Settled the controller descriptor and signature formats (work-queue best guess). "Verified artifact and
   run binding" named their contents and not their form. The descriptor is `controller.json` in strict JSON, format 1,
   with two permission kinds, `pane-control` and a Janet `capability`. Paths are plain ASCII with no second spelling,
@@ -1543,13 +1556,13 @@ None.
   user reviews it. A run whose review chose a trust choice while a removal ran starts for its session, under no
   policy. A removal of any policy sends an overlapping run to review, which can ask once more than needed. The
   durable policies bullet now says so.
-- 2026-11-12: Resolved links in a host launch's folder (work-queue best guess). A launch's folder was compared with
-  the approved folder as text. A link inside the approved folder could then lead a covered driver anywhere. Both
-  folders are now compared with every link resolved, and a covered driver starts in the resolved folder, so a link
-  changed after the check cannot move it. A folder that does not exist is not covered. The links are resolved off
-  the main actor, as ADR-08 asks of disk work with no bound, so a covered launch starts a moment after Run. The
-  other option was to cover only the approved folder itself, which needs no disk work but drops the folders inside
-  it. Policy containment at admission still compares the declared text, since no driver runs there. The host-launch bullet now says so.
+- 2026-11-12: Resolved links in a host launch's folder (work-queue best guess). A launch's folder was compared with the
+  approved folder as text. A link inside the approved folder could then lead a covered driver anywhere. Both folders are
+  now compared with every link resolved, and a covered driver starts in the resolved folder, so a link changed after the
+  check cannot move it. A folder that does not exist is not covered. The links are resolved off the main actor, as
+  ADR-08 asks of disk work with no bound, so a covered launch starts a moment after Run. The other option was to cover
+  only the approved folder itself, which needs no disk work but drops the folders inside it. Policy containment at
+  admission still compares the declared text, since no driver runs there. The host-launch bullet now says so.
 - 2026-11-12: Read the clipboard off the main actor for typed requests (work-queue best guess). A script's or a
   driver's typed read asked the general pasteboard on the main actor. An app can supply its text only when asked, so
   the read could wait on another process, which ADR-08 forbids. The read now runs off the main actor, and the grant
@@ -1571,6 +1584,28 @@ None.
   started it exits, and the consent tests bound every wait, so a wait that runs out fails and stops its test. A
   cancelled hung run was checked with and without the guard: without it the process stayed, and with it nothing was
   left.
+- 2026-11-12: Bounded a driver's clipboard text by its escaped frame (work-queue best guess). M6 bounded a typed exec
+  clipboard read or write at 256 KiB of UTF-8 text, and the frame at 1 MiB. JSON escapes a control character to six
+  bytes. A 256 KiB text could then need 1.5 MiB. A read's reply could pass the frame bound. A driver's write of such
+  text was a line the app's reader refused, which ended the driver. A write past 256 KiB was a malformed message, which
+  ended the driver too. The bound is now 128 KiB, an eighth of a frame. A text at the bound fits one frame however it is
+  escaped. A longer write whose line fits a frame is refused as `bad-argument`, as that one call, and the channel stays
+  up. A line past the frame still ends the driver. The reader refuses it before it learns the request ID, so no reply
+  can name the call. A longer clipboard on a read is refused as `failed`, as before. The script wire keeps 32 KiB, half
+  of its largest message body. It sends text unescaped in a binary frame. The exec protocol stays at version 3. M6
+  introduced the clipboard messages, and none shipped with the old bound. "Exec wire format" now states the bound. It
+  named none before. Its Amended marker moved here from the 2026-11-11 entry on drivers that lay out their subtree,
+  which is above. The other option was to raise the frame to 2 MiB. That would double the memory a reader may hold for
+  one line. If the user wants larger clipboards, the frame would grow with them.
+- 2026-11-12: Dropped the bound on kept denials (work-queue best guess). The entry on keeping denials until Ask Again
+  said "At most 64 are kept, oldest dropped first." A denial past the 64 newest was then dropped. Its requester was
+  asked again with no retry, which "Denial suppresses automatic re-prompting until a local retry" forbids. Each denial
+  is a user's Deny on a panel row or a startup review. No program can record one. The user's own pace therefore bounds
+  the list. Denials now have no count bound, and none is dropped. A requester's denials still go when it ends. The
+  coalescing bullet now says so. The other option refused every new question as busy once 64 denials were kept. Startup
+  reviews wait apart from the panel's rows, so that needed one reservation across both. The panel's row bound is also
+  64. That option would then refuse ordinary questions as denials built up. If the user wants a bound back, it would be
+  that busy refusal, not dropping the oldest.
 
 ## References
 
