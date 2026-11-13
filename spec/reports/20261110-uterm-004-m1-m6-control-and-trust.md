@@ -12,7 +12,7 @@ Step 0 fetched `upstream/main`. The branch already held it, so no rebase ran. Th
 both the commit "8< --- snip ---".
 
 The row depends on UTERM-003, which is implemented, so the dependency is met. No milestone carries a `Live after`
-line. Nothing is held, blocked, or skipped, and no work is stashed.
+line. Nothing is held, blocked, or skipped, and no work is stashed. The row is finished.
 
 | Milestone | Run status | Commit |
 |---|---|---|
@@ -1273,3 +1273,8 @@ pending-request rows still feed the same panel as M6's rows, so they are not dea
 | `scripts/check-sandbox-off.sh` | sandbox off |
 | `make fuzz` | 19 tests, 0 failures |
 | `proposals.py check` and `freeze` | only the expected findings and the UTERM-003 hunk, origin `other` |
+
+## Row finished
+
+UTERM-004 is `implemented`, and the proposal index says so. The row moved from `queue.md` to the end of `history.md`.
+`proposals.py check` returned `[]`.
