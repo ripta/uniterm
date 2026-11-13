@@ -1,4 +1,6 @@
 import AppKit
+import ControllerPackage
+import ControllerTrust
 import PaneModel
 import ScriptHost
 
@@ -13,6 +15,11 @@ import ScriptHost
 /// runs of the same program, in the same directory and pane, with no environment key beyond
 /// these, start without asking, whatever their arguments and values. These buttons are the only
 /// way a launch is approved.
+///
+/// A controller's startup review lists the powers it asks for once, and Review opens the sheet
+/// that answers it. A permission question from a script, a driver, or a terminal waits here as one
+/// row however many times it is asked. A denial stays listed, and Ask Again is the only way to be
+/// asked again.
 @MainActor
 public final class PendingRequestsWindowController: NSWindowController {
   private enum Row {
@@ -20,6 +27,32 @@ public final class PendingRequestsWindowController: NSWindowController {
     case grant(ScriptHost.ExplicitGrant)
     case launch(ExecLaunchAuthority.Request)
     case launchGrant(ExecLaunchAuthority.Grant)
+    case review(ControllerReview)
+    case question(PermissionRequests.Row)
+    case denial(PermissionRequests.Denial)
+
+    /// What the row is about, which stays the same while its contents change.
+    var identity: RowIdentity {
+      switch self {
+      case .request(let request): return .request(request.id)
+      case .grant(let grant): return .grant(grant.connection)
+      case .launch(let request): return .launch(request.id)
+      case .launchGrant(let grant): return .launchGrant(grant.id)
+      case .review(let review): return .review(review.id)
+      case .question(let question): return .question(question.id)
+      case .denial(let denial): return .denial(denial.id)
+      }
+    }
+  }
+
+  private enum RowIdentity: Equatable {
+    case request(UInt64)
+    case grant(UInt64)
+    case launch(UInt64)
+    case launchGrant(UInt64)
+    case review(UInt64)
+    case question(UInt64)
+    case denial(UInt64)
   }
 
   private let scriptHost: ScriptHost?
@@ -31,7 +64,13 @@ public final class PendingRequestsWindowController: NSWindowController {
   private let allowInPaneButton = NSButton(title: "Allow in This Pane", target: nil, action: nil)
   private let denyButton = NSButton(title: "Deny", target: nil, action: nil)
   private let revokeButton = NSButton(title: "Revoke", target: nil, action: nil)
+  private let reviewButton = NSButton(title: "Review\u{2026}", target: nil, action: nil)
+  private let sessionButton = NSButton(title: "Allow for This Run", target: nil, action: nil)
+  private let askAgainButton = NSButton(title: "Ask Again", target: nil, action: nil)
   private var rows: [Row] = []
+  private var observers: [ChangeObservers.Token] = []
+
+  private var permissions: PermissionRequests { windows.permissionRequests }
 
   private var launches: ExecLaunchAuthority { windows.launchAuthority }
 
@@ -53,7 +92,11 @@ public final class PendingRequestsWindowController: NSWindowController {
     buildContent()
     refresh()
 
-    scriptHost?.onPendingRequestsChanged = { [weak self] in self?.refresh() }
+    if let scriptHost {
+      observers.append(scriptHost.changes.add { [weak self] in self?.refresh() })
+    }
+
+    observers.append(windows.permissionRequests.changes.add { [weak self] in self?.refresh() })
     windows.launchAuthority.onChange = { [weak self] in self?.refresh() }
   }
 
@@ -67,8 +110,8 @@ public final class PendingRequestsWindowController: NSWindowController {
 
     let heading = NSTextField(
       labelWithString:
-        "Programs outside uniterm\u{2019}s panes that asked to act for a pane, and drivers that "
-        + "asked to run:")
+        "Programs that asked to act for a pane, controllers and drivers that asked to run, and "
+        + "permissions programs asked for:")
 
     heading.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
 
@@ -108,9 +151,19 @@ public final class PendingRequestsWindowController: NSWindowController {
     denyButton.action = #selector(denyPressed)
     revokeButton.target = self
     revokeButton.action = #selector(revokePressed)
+    reviewButton.target = self
+    reviewButton.action = #selector(reviewPressed)
+    reviewButton.setAccessibilityIdentifier("pending-requests-review")
+    sessionButton.target = self
+    sessionButton.action = #selector(sessionPressed)
+    sessionButton.setAccessibilityIdentifier("pending-requests-allow-session")
+    askAgainButton.target = self
+    askAgainButton.action = #selector(askAgainPressed)
+    askAgainButton.setAccessibilityIdentifier("pending-requests-ask-again")
 
     let buttons = NSStackView(views: [
-      grantButton, allowOnceButton, allowInPaneButton, denyButton, NSView(), revokeButton,
+      grantButton, reviewButton, allowOnceButton, allowInPaneButton, sessionButton, denyButton,
+      NSView(), askAgainButton, revokeButton,
     ])
 
     buttons.orientation = .horizontal
@@ -144,13 +197,28 @@ public final class PendingRequestsWindowController: NSWindowController {
 
   /// Reads the requests and grants again. The script host and the launch authority call it
   /// whenever either changes.
+  ///
+  /// The selection follows the row the user chose, not its position, since rows above it come
+  /// and go. When that row is gone, nothing is selected, so no button acts on a row the user did
+  /// not choose.
   private func refresh() {
+    let chosen = selectedRow?.identity
+
     rows =
-      (scriptHost?.allPendingRequests().map(Row.request) ?? [])
-      + launches.requests.map(Row.launch)
+      (scriptHost?.controllerReviews.map(Row.review) ?? [])
+      + (scriptHost?.allPendingRequests().map(Row.request) ?? [])
+      + launches.requests.map(Row.launch) + permissions.rows.map(Row.question)
       + (scriptHost?.allGrants().map(Row.grant) ?? []) + launches.grants.map(Row.launchGrant)
+      + permissions.denials.map(Row.denial)
 
     tableView.reloadData()
+
+    if let chosen, let index = rows.firstIndex(where: { $0.identity == chosen }) {
+      tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+    } else {
+      tableView.deselectAll(nil)
+    }
+
     updateButtons()
   }
 
@@ -163,11 +231,15 @@ public final class PendingRequestsWindowController: NSWindowController {
   private func updateButtons() {
     let row = selectedRow
 
-    grantButton.isEnabled = false
-    allowOnceButton.isEnabled = false
-    allowInPaneButton.isEnabled = false
-    denyButton.isEnabled = false
-    revokeButton.isEnabled = false
+    for button in [
+      grantButton, allowOnceButton, allowInPaneButton, denyButton, revokeButton, reviewButton,
+      sessionButton, askAgainButton,
+    ] {
+      button.isEnabled = false
+    }
+
+    sessionButton.isHidden = true
+    allowInPaneButton.isHidden = false
 
     switch row {
     case .request:
@@ -181,6 +253,20 @@ public final class PendingRequestsWindowController: NSWindowController {
 
     case .grant, .launchGrant:
       revokeButton.isEnabled = true
+
+    case .review:
+      reviewButton.isEnabled = true
+
+    case .question(let question):
+      allowOnceButton.isEnabled = true
+      allowInPaneButton.isHidden = true
+      sessionButton.isHidden = false
+      sessionButton.isEnabled = true
+      sessionButton.title = question.sessionTitle
+      denyButton.isEnabled = true
+
+    case .denial:
+      askAgainButton.isEnabled = true
 
     case nil:
       break
@@ -200,6 +286,19 @@ public final class PendingRequestsWindowController: NSWindowController {
       return LaunchApprovalText.grant(
         grant, pane: paneTitle(grant.target, fallback: grant.paneTitle))
 
+    case .review(let review):
+      return ControllerReviewText.summary(review)
+
+    case .question(let question):
+      return question.waiting > 1
+        ? "\(question.detail)\n\(question.waiting) requests wait. Allow Once allows the oldest alone."
+        : question.detail
+
+    case .denial(let denial):
+      return
+        "You denied \(denial.subject): \(denial.title). Later requests are refused without "
+        + "asking until you choose Ask Again."
+
     case .request, .grant:
       return ""
     }
@@ -214,9 +313,45 @@ public final class PendingRequestsWindowController: NSWindowController {
   }
 
   @objc private func allowOncePressed() {
-    guard case .launch(let request) = selectedRow else { return }
+    switch selectedRow {
+    case .launch(let request): launches.decide(request.id, .allowOnce)
+    case .question(let question): permissions.decide(question.id, .allowOnce)
+    default: break
+    }
+  }
 
-    launches.decide(request.id, .allowOnce)
+  @objc private func sessionPressed() {
+    guard case .question(let question) = selectedRow else { return }
+
+    permissions.decide(question.id, .allowForSession)
+  }
+
+  @objc private func askAgainPressed() {
+    guard case .denial(let denial) = selectedRow else { return }
+
+    permissions.askAgain(denial.id)
+  }
+
+  @objc private func reviewPressed() {
+    guard case .review(let review) = selectedRow else { return }
+
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+
+      guard let choice = await ControllerReviewSheet.present(review, on: window),
+        let scriptHost
+      else { return }
+
+      if let failure = await scriptHost.decideReview(review.id, choice), let window {
+        let alert = NSAlert()
+
+        alert.alertStyle = .warning
+        alert.messageText = "The review was not answered"
+        alert.informativeText = failure
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window) { _ in }
+      }
+    }
   }
 
   @objc private func allowInPanePressed() {
@@ -235,6 +370,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     switch selectedRow {
     case .request(let request): scriptHost?.denyRequest(connection: request.id)
     case .launch(let request): launches.decide(request.id, .deny)
+    case .question(let question): permissions.decide(question.id, .deny)
     default: break
     }
   }
@@ -363,6 +499,20 @@ extension PendingRequestsWindowController: NSTableViewDataSource, NSTableViewDel
     case (.launchGrant, "pid"): return "\u{2014}"
     case (.launchGrant(let grant), "status"):
       return "Allowed in \(paneTitle(grant.target, fallback: grant.paneTitle))"
+    case (.review(let review), "program"): return "\(review.name) (\(review.identity.controllerID))"
+    case (.review(let review), "pid"):
+      return review.waiting.map { String($0.pid) }.joined(separator: ", ")
+    case (.review(let review), "status"):
+      return review.waiting.count > 1
+        ? "Waits for review, \(review.waiting.count) runs" : "Waits for review"
+    case (.question(let question), "program"): return question.subject
+    case (.question, "pid"): return "\u{2014}"
+    case (.question(let question), "status"):
+      return question.waiting > 1
+        ? "\(question.title), \(question.waiting) waiting" : question.title
+    case (.denial(let denial), "program"): return denial.subject
+    case (.denial, "pid"): return "\u{2014}"
+    case (.denial(let denial), "status"): return "Denied: \(denial.title)"
     default: return nil
     }
   }

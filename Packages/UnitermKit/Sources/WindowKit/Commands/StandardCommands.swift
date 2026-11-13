@@ -152,6 +152,10 @@ enum StandardCommands {
         menu: MenuPlacement(.window, section: 0, title: "Pending Requests\u{2026}")
       ) { _ in app.showPendingRequests() },
       Command(
+        .showControllers, "Controllers & Permissions", scope: .app,
+        menu: MenuPlacement(.window, section: 0, title: "Controllers & Permissions\u{2026}")
+      ) { _ in app.showControllers() },
+      Command(
         .showCommandPalette, "Show Command Palette", scope: .window,
         key: KeyChord("k"), menu: MenuPlacement(.view, section: 1),
         listedInPalette: false,

@@ -7,6 +7,7 @@ public struct AppCommandHooks {
   public var newWindow: @MainActor () -> Void
   public var showSettings: @MainActor () -> Void
   public var showPendingRequests: @MainActor () -> Void
+  public var showControllers: @MainActor () -> Void
 
   /// Asks where to put the `uniterm` command, then links it into the app bundle.
   public var installCommandLineTool: @MainActor () -> Void
@@ -28,6 +29,7 @@ public struct AppCommandHooks {
     newWindow: @escaping @MainActor () -> Void = {},
     showSettings: @escaping @MainActor () -> Void = {},
     showPendingRequests: @escaping @MainActor () -> Void = {},
+    showControllers: @escaping @MainActor () -> Void = {},
     installCommandLineTool: @escaping @MainActor () -> Void = {},
     openFile: @escaping @MainActor (RouteAnchor?) -> Void = { _ in },
     openFileWith: @escaping @MainActor (RouteAnchor?) -> Void = { _ in },
@@ -37,6 +39,7 @@ public struct AppCommandHooks {
     self.newWindow = newWindow
     self.showSettings = showSettings
     self.showPendingRequests = showPendingRequests
+    self.showControllers = showControllers
     self.installCommandLineTool = installCommandLineTool
     self.openFile = openFile
     self.openFileWith = openFileWith

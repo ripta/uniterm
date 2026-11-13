@@ -21,7 +21,7 @@ line. Nothing is held, blocked, or skipped, and no work is stashed.
 | UTERM-004 M3: Exec panes | DONE | "Let a local program drive an applet through an exec pane" |
 | UTERM-004 M4: Layout requests | DONE | "Let a program lay out panes for its own subtree" |
 | UTERM-004 M5: Verified controller artifacts and run binding | DONE | "Run controller packages only from a verified snapshot" |
-| UTERM-004 M6: Consent, remembered trust, and permission management | QUEUED | |
+| UTERM-004 M6: Consent, remembered trust, and permission management | DONE | "Let the user approve, remember, and revoke controller powers" |
 
 ## Commands that leave the sandbox
 
@@ -1050,3 +1050,181 @@ The sample also grants `ffi-use`, because calling the mapped code needs it.
 
 UTERM-003's "Sandboxing" section still says the command holds no entitlements. UTERM-003 is frozen, and that text was
 true when written. UTERM-004's Impacts line records the change.
+
+## UTERM-004 M6: Consent, remembered trust, and permission management
+
+### Commits
+
+"Let the user approve, remember, and revoke controller powers", in the code repo. The proposal's M6 status, As built
+block, amended text, and Decision Log entries land in the same commit.
+
+### What landed
+
+M6 adds the startup review sheet for controller runs, with Allow Once, Allow for This Session, Trust This Version,
+and Trust This Identity where the package's signing allows it. Remembered trust lives in a per-user policy store,
+written atomically and read with bounded, regular-file-only reads. A Controllers & Permissions window lists remembered
+approvals and live runs, and revokes either. Every programmatic permission question, including clipboard reads and
+writes, OSC 52 reads, and exec driver requests, waits in the one host-owned Pending Requests panel. A denial holds
+under a stable key until the user retries locally. Descriptor format 2 follows UTERM-019 "Permission descriptor
+format": every permission carries a required `version`, and approvals are keyed by kind, version, and scopes.
+ScriptWire moves to version 9.
+
+### First round
+
+The first round's implementer reported 2433 package tests, 9 skipped, 0 failures, with every local check passing. The
+coordinator reran `caffeinate -dimsu make test-package` and got the same result.
+
+### The beeping, and the stopped fix round
+
+During the first review's fix round, the Mac beeped without end for about 30 minutes. The user stopped the run. The
+coordinator at the time ended an orphaned `xctest` with `make clean-test-processes`, and blamed it for the beeping.
+
+The resumed run found a different cause. The system sound server's log for that window shows two `uniterm` app
+processes from a coordinator UI run opening sound connections at 00:53. The orphaned `xctest` never connected to the
+sound server. The coordinator confirmed this from the log itself. `ControllerConsentUITests` typed a shell command
+right after opening Controllers & Permissions or the review sheet. A panel window with no text view was key, so every
+keystroke beeped, and the command never reached the terminal. That is also why the first round's UI test reported "a
+revoked approval still covered a run".
+
+The hang was real and separate. A WindowKit consent test waited on a task with no deadline after a denial record went
+missing. SwiftPM starts `xctest` in its own process group, so cancelling `swift test` left it running.
+
+Fixes:
+
+- `ControllerConsentUITests` closes the Pending Requests and Controllers windows before it types. It then clicks the
+  terminal and waits for keyboard focus, and fails without typing if focus never arrives. The terminal view now
+  reports accessibility focus when its window is key and it is first responder, so the wait has a signal.
+- Every wait in the WindowKit consent and Controllers window tests has a deadline.
+- A new C test target ends the test bundle when the process that started it exits. A control experiment with a
+  deliberately hung scratch test left an orphan without the guard, and none with it, twice. The scratch test was
+  deleted. The guard's header says the runner must outlive the tests.
+
+`swift test` ignores XCTest time allowances, so a hang outside the bounded classes still lasts until someone cancels
+it. The guard then ends the orphan.
+
+The stopped fix round's partial edits were kept and checked item by item by a fresh implementer.
+
+### Review, first round
+
+The reviewer reported ten findings. All ten are fixed, and a second reviewer confirmed each fix.
+
+1. CONFIRMED. A request that joined a row never updated the row's detail, so Allow Once could release an unseen
+   write. The row now shows the oldest waiting operation. The new test failed red first.
+2. CONFIRMED. A revoke during admission was missed. Admission now goes to review whenever a removal began, ended, or
+   is under way during it. The new test failed red first. It pins one ordering and cannot force every ordering.
+3. PLAUSIBLE, confirmed by trace. A request with no scope got a fresh key each time, so one program could fill the
+   panel and a REPL denial never held. Each requester, and each set of requesters sharing a denial key, holds at most
+   16 rows. Denials now outlive a reconnect: a controller run's under its version, an ordinary script's under its pane
+   until the pane or window closes. Both new tests failed red first.
+4. PLAUSIBLE, confirmed. Pending Requests selected by index across a rebuild. It now reselects by identity. The new
+   test failed red first.
+5. As built named symbols, an env var, fixtures, and test history. It was rewritten, and the choices that lived only
+   there moved to the Decision Log.
+6. A doc comment in `App/AppDelegate.swift` sat on the wrong function. Moved back.
+7. Mid-bullet Amended markers. Moved to the ends of their bullets.
+8. A public test-only Keychain delete. Removed. The test calls the Keychain itself.
+9. PLAUSIBLE, confirmed. The trust store could chmod a linked folder's target and wait on a FIFO. It now checks with
+   `lstat` and requires a regular file. The new test failed red first.
+10. PLAUSIBLE, confirmed. Host-launch folders compared as text, so a link could lead a launch out of its approved
+    folder. Both sides are now resolved, off the main actor. The covered driver starts in the resolved folder.
+
+### Review, second round
+
+The reviewer confirmed the ten fixes and reported five more. `adr-impact` reported one PLAUSIBLE ADR-08 conflict.
+
+1. PLAUSIBLE, confirmed. Controllers & Permissions kept its selection by index across a reload, so Revoke could act on
+   a neighbor row. It now reselects by identity or deselects. The new test failed red first: Revoke ended the wrong
+   run.
+2. Two As built bullets carried test-process notes. Trimmed. Two Decision Log lines were re-wrapped.
+3. PLAUSIBLE, confirmed by the coordinator's UI run log. The pending-requests window overlapped the terminal when the
+   UI test clicked it. See the beeping fixes above.
+4. The test guard's header now says the runner must outlive the tests.
+5. A redundant `?? nil`. Removed.
+6. ADR-08, PLAUSIBLE, confirmed by trace. The new script and driver clipboard reads called the pasteboard on the main
+   actor. A promised item makes that wait on another app. Reads now run off the main actor, and the grant is checked
+   again before any text goes out. Writes stay on the main actor. The terminal's own paste predates M6 and is
+   untouched. No test reproduces a lazy pasteboard provider.
+
+The coordinator's visual check of the review sheet capture added one polish item. The unsigned sheet's help text
+described Trust This Identity, which it does not offer, and its power list was not indented. The help text now
+describes only the buttons shown, and its test failed red first. The summary moved into a left-aligned accessory text
+field, since an alert centres its informative text.
+
+### UI reruns and a third fix round
+
+The first rerun of ControllerConsent, ControllerRun, PendingRequests, ExecPane, and TerminalUITests ran 18 tests with
+one failure. `testControllersAndPermissionsShowsAndRevokesTheApproval` reported that Pending Requests did not close.
+The log showed the Controllers window covering Pending Requests' close button, so the click landed on the Controllers
+window. The test now closes the panels top-down and fails before clicking a covered close button.
+
+That rerun's review sheet capture showed a narrow alert. The version hash wrapped, and the buttons stacked. The
+summary is now 580 points wide in the small system font, so the version fits on one line. The buttons still stack
+vertically, which macOS alerts do once they carry an accessory view. The coordinator accepted that layout. It reads
+cleanly and keeps Deny as the default.
+
+The failed run also attached a full-screen recording and synthesized-event captures to its result bundle, despite
+`-collect-test-diagnostics never`. The coordinator deleted them and the bundle unviewed. The scheme's test action had
+no capture settings, so Xcode fell back to keeping system attachments and recording the screen. The scheme now sets
+`systemAttachmentLifetime` to `keepNever` and prefers screenshots. The generated `.xctestrun` carries both settings, so
+`make test-app` and a direct `xcodebuild … test` get them. The tests' own element screenshots keep their
+`keepAlways` lifetime. No failing run has yet shown the recording gone.
+
+### Best guesses
+
+1. The 8 operations per row, 16 rows per requester, and 64 rows in all. 16 leaves room for at least four requesters.
+   Wrong: a heavy single program hits the cap sooner, or the panel holds more than one person can review.
+2. An ordinary script's denial is keyed by its pane, since a script has no identity a new connection could not also
+   claim. Wrong: a denial would need a different lifetime.
+3. Any trust removal that overlaps an admission sends the run to review. This may ask once more than strictly needed.
+4. Launch folders are resolved, and a covered launch starts a moment after Run. The alternative covered only the exact
+   folder, with no disk work, but dropped the folders inside it.
+5. Clipboard reads run off the main actor, and writes stay on it.
+6. The terminal view's accessibility-focus override exists for the UI test's focus wait. Wrong: the test would check
+   only that the panels are gone.
+7. Format 2 reads "the same kind listed twice is refused" as the same kind and scope twice. The first reviewer judged
+   it sound. UTERM-019 "Permission descriptor format" set the versioned keying.
+
+Each except the sixth has a Decision Log entry marked as a work-queue best guess. The sixth serves only the UI test
+and is recorded here.
+
+### ADR candidates
+
+One passes the bar and is recorded as `Undecided`: a programmatic request never opens its own dialog. It waits in the
+host-owned panel, and its denial persists until the user retries locally. It cuts across every applet that asks for a
+power. `adr-impact` noted that the disconnected terminal's read and unsafe-paste prompts still use sheets, so the
+candidate is scoped to programmatic requests.
+
+Launch folders compared with links resolved does not pass. It is a mechanism in one component, and no second
+path-scoped grant exists.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| `make fmt-check`, `make lint`, `make check` | pass |
+| `make build`, and `xcodebuild build-for-testing` | succeeded, no compiler warnings |
+| `caffeinate -dimsu make test-package` | 2442 tests, 9 skipped, 0 failures |
+| `make test-helper-sandbox` | 8 tests, 0 failures |
+| `scripts/check-sandbox-off.sh` on the built app | sandbox off |
+| `make fuzz` | 19 tests, 0 failures |
+| `scripts/swiftpm-offline-check.sh` | succeeded |
+| `proposals.py check` | only the expected two: UTERM-004 should be implemented, and its row should move |
+| `proposals.py freeze` with the row's commits | only the UTERM-003 hunk, origin `other` |
+| `make clean-test-processes DRY_RUN=1` | no orphans |
+| UI, ControllerConsent probe, first-round fixes | 2 tests, 0 failures |
+| UI, ControllerRun, PendingRequests, ExecPane, PaneControl, ScriptRun, Repl, ReplCapability, Presentation | 17 tests, 0 failures |
+| UI, ControllerConsent, ControllerRun, PendingRequests, ExecPane, Terminal, after round 2 | 18 tests, 1 failure, fixed above |
+| UI, ControllerConsent and PendingRequests, final tree | 4 tests, 0 failures |
+| `caffeinate -dimsu make test-package`, final tree | 2442 tests, 9 skipped, 0 failures |
+
+No new crash report appeared after the UI runs. The final captures of the review sheet and Controllers & Permissions
+render as intended. The terminal's accessibility-focus change passed all 11 TerminalUITests.
+
+New test files take 0.01 to 0.40 seconds per test in the full package run.
+
+### Left open
+
+- `adr-impact` read ADR-09 as leaving a small gap between a covered launch's check and its start. A re-check of the
+  owning connection narrows it. It is not confirmed closed.
+- Whether a rebuilt ad-hoc-signed command reads an earlier build's Keychain signing key without a prompt is unprobed.
+  The proposal says so.

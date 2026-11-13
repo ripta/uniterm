@@ -1,4 +1,5 @@
 import ControllerPackage
+import ControllerTrust
 import Darwin
 import FileRouting
 import Foundation
@@ -15,6 +16,8 @@ import ScriptWire
 struct NativeLaunch {
   let snapshot: ControllerSnapshot
   let scopes: Set<ControllerPermission>
+  let approval: ControllerApproval
+  let standing: Set<ControllerPermission>
   let started: Int
 
   /// The command's process ID version. The entry's must differ, since an exec changes it.
@@ -71,19 +74,76 @@ extension ScriptHost {
 
     controllerAdmissions.insert(connection.id)
 
+    let revision = trustRemovals
+
     Task { @MainActor [weak self] in
       let outcome = await Task.detached {
         Self.admit(request, token: token, settings: settings)
       }.value
 
-      self?.finishController(connection, request, outcome: outcome)
+      self?.finishController(connection, request, outcome: outcome, trustRevision: revision)
     }
   }
 
   /// What admission found, off the main actor.
   enum Admission: Sendable {
-    case admitted(ControllerSnapshot, entryHash: Data?, entryPath: String?)
+    case admitted(ControllerSnapshot, entryHash: Data?, entryPath: String?, trust: TrustLookup)
     case refused(String)
+  }
+
+  /// What the remembered policies say of a run, read when the run was admitted.
+  struct TrustLookup: Sendable {
+    /// The policy that covers the request, when one does. A version policy wins over an identity.
+    var covering: ControllerSelector?
+
+    /// The policy for this controller that leaves the least uncovered, to show what is new.
+    var nearest: ControllerPolicy?
+
+    /// False when the user cannot be offered a remembered choice.
+    var writable: Bool
+
+    var notice: String?
+
+    static let none = TrustLookup(covering: nil, nearest: nil, writable: false, notice: nil)
+  }
+
+  /// The powers a run asks for: what its descriptor declares beyond capabilities, and the
+  /// capabilities named with `--allow`.
+  nonisolated static func requested(
+    _ descriptor: ControllerDescriptor, capabilities: [String]
+  ) -> Set<ControllerPermission> {
+    // A capability is requested at the version the descriptor declares it.
+    var scopes = Set(
+      capabilities.compactMap { name in
+        descriptor.permissions.first { $0.capabilityName == name }
+      })
+
+    for permission in descriptor.permissions where permission.capabilityName == nil {
+      scopes.insert(permission)
+    }
+
+    return scopes
+  }
+
+  /// Reads the policy file, and finds the policy that covers the request.
+  nonisolated static func lookUp(
+    _ requested: Set<ControllerPermission>, for identity: ControllerIdentity,
+    in store: ControllerTrustStore?
+  ) -> TrustLookup {
+    guard let store, !requested.isEmpty else { return .none }
+
+    let state = store.read()
+    let matching = state.policies.filter { $0.selector.matches(identity) }
+    let covering = matching.filter { $0.uncovered(requested).isEmpty }.min { first, _ in
+      if case .version = first.selector { return true }
+
+      return false
+    }
+    let nearest = matching.min { $0.uncovered(requested).count < $1.uncovered(requested).count }
+
+    return TrustLookup(
+      covering: covering?.selector, nearest: nearest, writable: state.writable,
+      notice: state.notice)
   }
 
   nonisolated static func admit(
@@ -120,7 +180,13 @@ extension ScriptHost {
           + "granted.")
     }
 
-    guard wanted == .native else { return .admitted(snapshot, entryHash: nil, entryPath: nil) }
+    let trust = lookUp(
+      requested(descriptor, capabilities: request.capabilities),
+      for: snapshot.controller.identity, in: settings.trust)
+
+    guard wanted == .native else {
+      return .admitted(snapshot, entryHash: nil, entryPath: nil, trust: trust)
+    }
 
     guard let entry = CodeIdentity.ofFile(at: snapshot.entryURL),
       let path = realpath(snapshot.entryURL.path)
@@ -131,53 +197,111 @@ extension ScriptHost {
         "The native entry has no valid code signature, so uniterm cannot tell it runs.")
     }
 
-    return .admitted(snapshot, entryHash: entry.codeDirectoryHash, entryPath: path)
+    return .admitted(snapshot, entryHash: entry.codeDirectoryHash, entryPath: path, trust: trust)
   }
 
   private func finishController(
-    _ connection: ScriptConnection, _ request: ControllerBegin, outcome: Admission
+    _ connection: ScriptConnection, _ request: ControllerBegin, outcome: Admission,
+    trustRevision: UInt64
   ) {
     controllerAdmissions.remove(connection.id)
 
-    let snapshot: ControllerSnapshot
+    let waiting: WaitingAdmission
+    var trust: TrustLookup
 
     switch outcome {
     case .refused(let text):
       return refuseController(connection, text)
 
-    case .admitted(let made, _, _):
-      snapshot = made
+    case .admitted(let made, let hash, let path, let lookup):
+      waiting = WaitingAdmission(
+        connection: connection, request: request, snapshot: made, entryHash: hash,
+        entryPath: path,
+        requested: Self.requested(made.controller.descriptor, capabilities: request.capabilities))
+      trust = lookup
     }
 
     // The command may have exited, started another executable, or been revoked while the package
     // was read. Its run then never starts.
-    guard !connection.isClosed, connection.peerGenerationHolds,
-      !isRevoked(connection.id), let token = connection.peer.token
-    else {
+    guard admissionStillWanted(connection) else {
+      waiting.snapshot.remove()
+
+      return refuseController(connection, "The program that asked for the run is gone.")
+    }
+
+    let identity = waiting.snapshot.controller.identity
+
+    if waiting.requested.isEmpty {
+      return admitRun(waiting, approval: .nothingRequested, standing: [])
+    }
+
+    if permissionRequests.isDenied(Self.startupKey(identity)) {
+      waiting.snapshot.remove()
+
+      return refuseController(
+        connection,
+        "You denied this version of \(identity.controllerID). To be asked again, choose Ask "
+          + "Again in Window > Pending Requests, then run it again.")
+    }
+
+    if let selector = trust.covering {
+      guard !trustRemoved(since: trustRevision) else {
+        // The policy that covered the run may be gone, so the user reviews the run instead.
+        trust.covering = nil
+        trust.nearest = nil
+
+        return queueReview(waiting, trust: trust)
+      }
+
+      return admitRun(waiting, approval: .remembered(selector), standing: waiting.requested)
+    }
+
+    queueReview(waiting, trust: trust)
+  }
+
+  /// True when a removal of a remembered policy began or ended after `revision` was taken, or is
+  /// under way now. What the policy file said before then may cover nothing any more.
+  func trustRemoved(since revision: UInt64) -> Bool {
+    trustRemovalsUnderWay > 0 || trustRemovals != revision
+  }
+
+  /// True while a connection that asked for a run may still be admitted.
+  func admissionStillWanted(_ connection: ScriptConnection) -> Bool {
+    !connection.isClosed && connection.peerGenerationHolds && !isRevoked(connection.id)
+      && connection.peer.token != nil
+  }
+
+  /// Starts an admitted run: a Janet run at once, or a native launch that waits for its entry.
+  func admitRun(
+    _ waiting: WaitingAdmission, approval: ControllerApproval,
+    standing: Set<ControllerPermission>
+  ) {
+    let connection = waiting.connection
+    let snapshot = waiting.snapshot
+
+    guard admissionStillWanted(connection), let token = connection.peer.token else {
       snapshot.remove()
 
       return refuseController(connection, "The program that asked for the run is gone.")
     }
 
     let descriptor = snapshot.controller.descriptor
-    var scopes = Set(request.capabilities.map(ControllerPermission.capability))
-
-    if descriptor.permissions.contains(.paneControl) { scopes.insert(.paneControl) }
-
     let caller = caller(for: connection)
 
-    if case .admitted(_, let hash?, let path?) = outcome {
+    if let hash = waiting.entryHash, let path = waiting.entryPath {
       startNativeLaunch(
         NativeLaunch(
-          snapshot: snapshot, scopes: scopes, started: connection.peerStartTime,
-          launcherGeneration: token.pidVersion, entryHash: hash, entryPath: path,
-          sourceRoot: connection.binding?.root, window: caller?.window, pane: caller?.pane,
-          generation: nil, watch: watchNative(connection.peer.pid)),
+          snapshot: snapshot, scopes: waiting.requested, approval: approval, standing: standing,
+          started: connection.peerStartTime, launcherGeneration: token.pidVersion,
+          entryHash: hash, entryPath: path, sourceRoot: connection.binding?.root,
+          window: caller?.window, pane: caller?.pane, generation: nil,
+          watch: watchNative(connection.peer.pid)),
         pid: connection.peer.pid)
     } else {
       controllerRuns[connection.id] = ControllerRun(
         identity: snapshot.controller.identity, name: descriptor.name,
-        entryKind: descriptor.entryKind, entryPath: descriptor.entryPath, scopes: scopes,
+        entryKind: descriptor.entryKind, entryPath: descriptor.entryPath,
+        scopes: waiting.requested, approval: approval, standing: standing,
         pid: connection.peer.pid, generation: token.pidVersion, connection: connection.id,
         sourceRoot: connection.binding?.root, window: caller?.window, pane: caller?.pane,
         snapshot: snapshot.directory)
@@ -187,11 +311,11 @@ extension ScriptHost {
 
     connection.send(
       .controllerAdmitted(
-        snapshot: snapshot.directory.path, version: snapshot.controller.descriptor.versionDigest))
+        snapshot: snapshot.directory.path, version: descriptor.versionDigest))
     controllersChanged()
   }
 
-  private func refuseController(_ connection: ScriptConnection, _ text: String) {
+  func refuseController(_ connection: ScriptConnection, _ text: String) {
     connection.send(.controllerRefused(text))
     connection.closeAfterSending()
   }
@@ -235,7 +359,7 @@ extension ScriptHost {
     endNativeLaunch(launch, pid: pid)
   }
 
-  private func endNativeLaunch(_ launch: NativeLaunch, pid: pid_t) {
+  func endNativeLaunch(_ launch: NativeLaunch, pid: pid_t) {
     launch.watch.cancel()
 
     for run in controllerRuns.values
@@ -274,37 +398,12 @@ extension ScriptHost {
 
     controllerRuns[connection.id] = ControllerRun(
       identity: launch.snapshot.controller.identity, name: descriptor.name,
-      entryKind: .native, entryPath: descriptor.entryPath, scopes: launch.scopes, pid: pid,
+      entryKind: .native, entryPath: descriptor.entryPath, scopes: launch.scopes,
+      approval: launch.approval, standing: launch.standing, pid: pid,
       generation: token.pidVersion, connection: connection.id, sourceRoot: launch.sourceRoot,
       window: launch.window, pane: launch.pane, snapshot: launch.snapshot.directory)
     sessions[connection.id, default: Session()].name = Self.label(for: descriptor.name)
     controllersChanged()
-  }
-
-  /// The refusal for a call a controller run may not make, or nil. A run waiting for admission
-  /// may make none. A run that did not declare pane control may only post status.
-  func controllerRefusal(for call: ScriptCall, on connection: ScriptConnection) -> ScriptResult? {
-    if controllerAdmissions.contains(connection.id) {
-      return .failure(.refused, "uniterm has not admitted this controller yet.")
-    }
-
-    guard let run = controllerRuns[connection.id] else { return nil }
-
-    guard run.generation == connection.peer.token?.pidVersion, connection.peerGenerationHolds
-    else {
-      return .failure(.refused, "This controller run has ended.")
-    }
-
-    if case .postStatus = call { return nil }
-
-    guard run.declaresPaneControl else {
-      return .failure(
-        .refused,
-        "This controller did not declare pane-control in its controller.json, so it cannot act "
-          + "on panes.")
-    }
-
-    return nil
   }
 
   /// Ends a connection's run when the connection goes, and removes a Janet run's snapshot. A
@@ -312,17 +411,21 @@ extension ScriptHost {
   func controllerConnectionClosed(_ id: UInt64) {
     controllerAdmissions.remove(id)
     controllerRuns[id] = nil
+    dropWaitingAdmission(id)
 
     if let snapshot = controllerSnapshots.removeValue(forKey: id) {
       ControllerSnapshot.remove(directory: snapshot)
     }
   }
 
-  /// Ends the runs of revoked connections. A Janet run's snapshot stays until its connection
-  /// closes. Remembered trust, which a later milestone keeps, is a separate thing and is not
-  /// touched.
+  /// Ends the runs of revoked connections, and refuses the runs still waiting for review. A Janet
+  /// run's snapshot stays until its connection closes. Remembered policies are not touched: only
+  /// the Controllers & Permissions window removes them.
   func controllerRunsRevoked(_ ids: Set<UInt64>) {
-    for id in ids { controllerRuns[id] = nil }
+    for id in ids {
+      controllerRuns[id] = nil
+      dropWaitingAdmission(id, refusal: "You revoked this controller before it started.")
+    }
   }
 
   /// Ends every run and removes every snapshot, as the host stops.
@@ -336,6 +439,11 @@ extension ScriptHost {
     controllerSnapshots = [:]
     controllerRuns = [:]
     controllerAdmissions = []
+
+    for waiting in waitingAdmissions.values { waiting.snapshot.remove() }
+
+    waitingAdmissions = [:]
+    controllerReviews = []
   }
 }
 

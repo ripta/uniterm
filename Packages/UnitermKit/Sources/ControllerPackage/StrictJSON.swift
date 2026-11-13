@@ -292,7 +292,7 @@ public enum StrictJSONReader {
 extension StrictJSON {
   /// The members of an object whose keys are exactly `required` plus some of `optional`. Any other
   /// key is refused, so a field this version does not know can never be ignored.
-  func members(
+  public func members(
     of what: String, required: Set<String>, optional: Set<String> = []
   ) throws -> [String: StrictJSON] {
     guard case .object(let members) = self else {
@@ -316,7 +316,7 @@ extension StrictJSON {
     return found
   }
 
-  func string(_ what: String) throws -> String {
+  public func string(_ what: String) throws -> String {
     guard case .string(let text) = self else {
       throw ControllerPackageError.malformed("\(what) must be a string")
     }
@@ -324,7 +324,7 @@ extension StrictJSON {
     return text
   }
 
-  func integer(_ what: String) throws -> Int {
+  public func integer(_ what: String) throws -> Int {
     guard case .integer(let number) = self else {
       throw ControllerPackageError.malformed("\(what) must be a whole number")
     }
@@ -332,7 +332,7 @@ extension StrictJSON {
     return number
   }
 
-  func array(_ what: String) throws -> [StrictJSON] {
+  public func array(_ what: String) throws -> [StrictJSON] {
     guard case .array(let elements) = self else {
       throw ControllerPackageError.malformed("\(what) must be an array")
     }
@@ -340,7 +340,7 @@ extension StrictJSON {
     return elements
   }
 
-  func object(_ what: String) throws -> [(key: String, value: StrictJSON)] {
+  public func object(_ what: String) throws -> [(key: String, value: StrictJSON)] {
     guard case .object(let members) = self else {
       throw ControllerPackageError.malformed("\(what) must be an object")
     }

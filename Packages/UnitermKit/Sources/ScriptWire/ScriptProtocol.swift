@@ -7,7 +7,7 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 8
+  public static let version: UInt16 = 9
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -16,6 +16,10 @@ public enum ScriptProtocol {
 
   /// The largest body any message may declare. The reader checks it before it allocates.
   public static let maxControlBody = 64 * 1024
+
+  /// The most clipboard text one typed clipboard call reads or writes, in UTF-8 bytes. A larger
+  /// clipboard is refused, never cut.
+  public static let maxClipboardBytes = 32 * 1024
 
   /// The size of a controller's version digest, a SHA-256.
   public static let versionDigestBytes = 32
@@ -269,6 +273,13 @@ public enum ScriptCall: Equatable, Sendable {
   /// object as text, which the app parses and checks.
   case requestLayout(pane: ScriptTarget, layout: String)
 
+  /// Reads the clipboard's plain text. It is a power of its own, which the user grants apart from
+  /// pane control and apart from writes.
+  case readClipboard
+
+  /// Replaces the clipboard with plain text. It is a power of its own, apart from reads.
+  case writeClipboard(text: String)
+
   var code: UInt16 {
     switch self {
     case .postStatus: return 1
@@ -279,6 +290,8 @@ public enum ScriptCall: Equatable, Sendable {
     case .send: return 6
     case .sendCommand: return 7
     case .requestLayout: return 8
+    case .readClipboard: return 9
+    case .writeClipboard: return 10
     }
   }
 
@@ -332,6 +345,12 @@ public enum ScriptCall: Equatable, Sendable {
 
       body.put(UInt32(bytes.count))
       body.put(raw: bytes)
+
+    case .readClipboard:
+      break
+
+    case .writeClipboard(let text):
+      body.put(string: text, limit: ScriptProtocol.maxClipboardBytes)
     }
   }
 
@@ -409,6 +428,12 @@ public enum ScriptCall: Equatable, Sendable {
       let layout = try reader.json(limit: ScriptProtocol.maxLayoutBytes, what: "the layout is")
 
       return .requestLayout(pane: pane, layout: layout)
+
+    case 9:
+      return .readClipboard
+
+    case 10:
+      return .writeClipboard(text: try reader.string(limit: ScriptProtocol.maxClipboardBytes))
 
     default:
       throw WireError.badValue("an unknown host function")
@@ -697,6 +722,10 @@ public enum ScriptAppMessage: Equatable, Sendable {
   /// The app refused the run. The text says why, and the command shows it and runs nothing.
   case controllerRefused(String)
 
+  /// The run waits for the user's review of its requested powers. The command shows the text and
+  /// keeps waiting for the admission or the refusal. It may come once, before either.
+  case controllerReviewing(String)
+
   var wireType: UInt8 {
     switch self {
     case .hello: return 1
@@ -707,6 +736,7 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .stop: return 6
     case .controllerAdmitted: return 7
     case .controllerRefused: return 8
+    case .controllerReviewing: return 9
     }
   }
 
@@ -740,7 +770,7 @@ public enum ScriptAppMessage: Equatable, Sendable {
       body.put(string: snapshot, limit: ScriptProtocol.maxDirectoryBytes)
       body.put(raw: version.prefix(ScriptProtocol.versionDigestBytes))
 
-    case .controllerRefused(let text):
+    case .controllerRefused(let text), .controllerReviewing(let text):
       body.put(string: text, limit: ScriptProtocol.maxFailureBytes)
 
     case .history(let lines, let final):
@@ -844,6 +874,12 @@ public enum ScriptAppMessage: Equatable, Sendable {
       try reader.finished()
 
       return .controllerRefused(text)
+
+    case 9:
+      let text = try reader.string(limit: ScriptProtocol.maxFailureBytes)
+      try reader.finished()
+
+      return .controllerReviewing(text)
 
     default:
       throw WireError.unknownType(type)

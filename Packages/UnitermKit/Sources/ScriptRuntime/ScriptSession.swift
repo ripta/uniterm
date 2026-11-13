@@ -84,7 +84,12 @@ final class ScriptSession: @unchecked Sendable {
   /// verifies the package itself, and answers with the run's snapshot and the version it verified,
   /// or with a refusal, which throws `ScriptSessionError.failed`. Nothing of the package is read
   /// before that answer.
-  static func openController(path: String, begin: ControllerBegin) throws -> (
+  ///
+  /// A run whose powers wait for the user's review is told so once, and `onReview` shows it.
+  static func openController(
+    path: String, begin: ControllerBegin,
+    onReview: (String) -> Void = { FileHandle.standardError.write(Data("uniterm: \($0)\n".utf8)) }
+  ) throws -> (
     session: ScriptSession, snapshot: String, version: Data
   ) {
     let session = try connect(path: path)
@@ -92,15 +97,25 @@ final class ScriptSession: @unchecked Sendable {
     do {
       try session.socket.send(ScriptHelperMessage.controllerBegin(begin).frame())
 
-      switch try session.readMessage() {
-      case .controllerAdmitted(let snapshot, let version):
-        return (session, snapshot, version)
+      var told = false
 
-      case .controllerRefused(let text):
-        throw ScriptSessionError.failed(.refused, text)
+      while true {
+        switch try session.readMessage() {
+        case .controllerAdmitted(let snapshot, let version):
+          return (session, snapshot, version)
 
-      default:
-        throw WireError.badValue("the app answered a controller run with something else")
+        case .controllerRefused(let text):
+          throw ScriptSessionError.failed(.refused, text)
+
+        // The user may take as long as they like, so the wait has no timeout. Ctrl-C ends the
+        // command, and its run with it.
+        case .controllerReviewing(let text) where !told:
+          told = true
+          onReview(text)
+
+        default:
+          throw WireError.badValue("the app answered a controller run with something else")
+        }
       }
     } catch {
       session.close()

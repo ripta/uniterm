@@ -37,9 +37,9 @@ public enum ControllerEntryKind: String, Sendable, Equatable {
   case native
 }
 
-/// A power a controller declares. Every kind has one meaning in this descriptor format. A kind this
-/// version does not know is refused, so a newer meaning never authorizes anything here.
-public enum ControllerPermission: Hashable, Sendable, Comparable {
+/// What a permission grants, apart from its version: its kind and, for kinds that take one, its
+/// scope.
+public enum ControllerPermissionKind: Hashable, Sendable {
   /// The controller acts on the panes its run may address, within the pane rules.
   case paneControl
 
@@ -47,14 +47,214 @@ public enum ControllerPermission: Hashable, Sendable, Comparable {
   /// declare one.
   case capability(String)
 
+  /// The controller reads the clipboard through the typed request.
+  case clipboardRead
+
+  /// The controller replaces the clipboard through the typed request.
+  case clipboardWrite
+
+  /// A pane of a group the controller's run owns may start this program as its exec driver once
+  /// the user chooses Run.
+  case hostLaunch(HostLaunchScope)
+
+  /// The kind as the descriptor and the policy file spell it.
+  public var name: String {
+    switch self {
+    case .paneControl: return "pane-control"
+    case .capability: return "capability"
+    case .clipboardRead: return "clipboard-read"
+    case .clipboardWrite: return "clipboard-write"
+    case .hostLaunch: return "host-launch"
+    }
+  }
+
+  /// What tells two permissions of one kind apart: a capability's name or a host launch's
+  /// executable. A descriptor lists each kind at most once for each of these.
+  var scopeName: String {
+    switch self {
+    case .paneControl, .clipboardRead, .clipboardWrite: return ""
+    case .capability(let name): return name
+    case .hostLaunch(let scope): return scope.executable
+    }
+  }
+}
+
+/// One meaning of one permission kind: the kind, its version, and the versions of that kind it
+/// covers. Each (kind, version) pair this build knows has exactly one entry, and a pair it does not
+/// know is refused wherever it appears, so a meaning a later build adds never authorizes anything
+/// here.
+public struct ControllerPermissionMeaning: Hashable, Sendable {
+  public let kind: String
+  public let version: Int
+
+  /// The versions of the same kind an approval of this one covers. It always holds `version`.
+  public let covers: Set<Int>
+
+  /// The format that first knows this pair. An older format refuses it.
+  public let format: Int
+}
+
+/// A power a controller declares: a kind, with its scope, at one version of its meaning.
+///
+/// Format 1 permissions carry no version, and read as version 1. Format 2 permissions carry a
+/// required version. Approvals record the version too, so a request at a version the approval
+/// covers needs no new review, and a higher version needs one.
+public struct ControllerPermission: Hashable, Sendable, Comparable {
+  public let kind: ControllerPermissionKind
+  public let version: Int
+
+  public init(_ kind: ControllerPermissionKind, version: Int = 1) {
+    self.kind = kind
+    self.version = version
+  }
+
+  public static let paneControl = ControllerPermission(.paneControl)
+  public static let clipboardRead = ControllerPermission(.clipboardRead)
+  public static let clipboardWrite = ControllerPermission(.clipboardWrite)
+
+  public static func capability(_ name: String) -> ControllerPermission {
+    ControllerPermission(.capability(name))
+  }
+
+  public static func hostLaunch(_ scope: HostLaunchScope) -> ControllerPermission {
+    ControllerPermission(.hostLaunch(scope))
+  }
+
+  /// Every (kind, version) pair this build knows.
+  public static let meanings: [ControllerPermissionMeaning] = [
+    ControllerPermissionMeaning(kind: "pane-control", version: 1, covers: [1], format: 1),
+    ControllerPermissionMeaning(kind: "capability", version: 1, covers: [1], format: 1),
+    ControllerPermissionMeaning(kind: "clipboard-read", version: 1, covers: [1], format: 2),
+    ControllerPermissionMeaning(kind: "clipboard-write", version: 1, covers: [1], format: 2),
+    ControllerPermissionMeaning(kind: "host-launch", version: 1, covers: [1], format: 2),
+  ]
+
+  /// The meaning of a pair, or nil when this build does not know it.
+  public static func meaning(kind: String, version: Int) -> ControllerPermissionMeaning? {
+    meanings.first { $0.kind == kind && $0.version == version }
+  }
+
+  /// This permission's meaning, or nil when this build does not know its version.
+  public var meaning: ControllerPermissionMeaning? {
+    Self.meaning(kind: kind.name, version: version)
+  }
+
+  /// The kind's name, as the descriptor spells it.
+  public var kindName: String { kind.name }
+
+  /// The capability's name, when this is a capability.
+  public var capabilityName: String? {
+    if case .capability(let name) = kind { return name }
+
+    return nil
+  }
+
   public static func < (lhs: ControllerPermission, rhs: ControllerPermission) -> Bool {
-    lhs.sortKey < rhs.sortKey
+    (lhs.sortKey, lhs.version) < (rhs.sortKey, rhs.version)
   }
 
   private var sortKey: String {
-    switch self {
+    switch kind {
     case .paneControl: return "0"
     case .capability(let name): return "1" + name
+    case .clipboardRead: return "2"
+    case .clipboardWrite: return "3"
+    case .hostLaunch(let scope):
+      return "4" + scope.executable + "\u{0}" + scope.directory + "\u{0}"
+        + scope.environmentKeys.joined(separator: ",")
+    }
+  }
+}
+
+/// A program a controller may have uniterm start as an exec driver: its absolute executable, the
+/// folder it may run in or any folder inside it, and the environment keys it may be given.
+/// Arguments and environment values are runtime inputs, so a scope never names them.
+public struct HostLaunchScope: Hashable, Sendable {
+  public let executable: String
+  public let directory: String
+
+  /// Sorted, with no key twice.
+  public let environmentKeys: [String]
+
+  /// The most environment keys one scope names.
+  public static let maxEnvironmentKeys = 64
+
+  /// The longest environment key, in bytes.
+  public static let maxKeyBytes = 128
+
+  /// Checks every field. A path must be absolute and plain: no empty, `.`, or `..` component, and
+  /// no trailing slash, so one folder has one spelling and no path climbs out of another.
+  public init(executable: String, directory: String, environmentKeys: [String]) throws {
+    guard Self.isPlainAbsolute(executable), executable != "/" else {
+      throw ControllerPackageError.malformed(
+        "a host launch's executable must be an absolute path with no '.', '..', or empty "
+          + "component")
+    }
+
+    guard Self.isPlainAbsolute(directory) else {
+      throw ControllerPackageError.malformed(
+        "a host launch's directory must be an absolute path with no '.', '..', or empty "
+          + "component")
+    }
+
+    guard environmentKeys.count <= Self.maxEnvironmentKeys,
+      Set(environmentKeys).count == environmentKeys.count,
+      environmentKeys.allSatisfy(Self.isEnvironmentKey)
+    else {
+      throw ControllerPackageError.malformed(
+        "a host launch's environment must list at most \(Self.maxEnvironmentKeys) distinct keys "
+          + "of letters, digits, and '_' that do not start with a digit")
+    }
+
+    self.executable = executable
+    self.directory = directory
+    self.environmentKeys = environmentKeys.sorted()
+  }
+
+  /// True when `path` is `directory` or a folder inside it.
+  public func allows(directory path: String) -> Bool {
+    guard Self.isPlainAbsolute(path) else { return false }
+
+    if path == directory { return true }
+
+    let prefix = directory == "/" ? "/" : directory + "/"
+
+    return path.hasPrefix(prefix)
+  }
+
+  /// `path` with every link in it resolved, or nil when nothing is there. A launch's folder is
+  /// compared and entered in this form, so a link inside an approved folder cannot lead a driver
+  /// out of it.
+  public static func resolved(_ path: String) -> String? {
+    guard let pointer = realpath(path, nil) else { return nil }
+
+    defer { free(pointer) }
+
+    return String(cString: pointer)
+  }
+
+  static func isPlainAbsolute(_ path: String) -> Bool {
+    guard path.hasPrefix("/"), path.utf8.count <= ControllerDescriptor.maxPathBytes else {
+      return false
+    }
+
+    if path == "/" { return true }
+
+    let components = path.dropFirst().split(separator: "/", omittingEmptySubsequences: false)
+
+    return components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+      && !path.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
+  }
+
+  static func isEnvironmentKey(_ key: String) -> Bool {
+    guard let first = key.utf8.first, key.utf8.count <= maxKeyBytes,
+      !(UInt8(ascii: "0")...UInt8(ascii: "9")).contains(first)
+    else { return false }
+
+    return key.utf8.allSatisfy {
+      (UInt8(ascii: "a")...UInt8(ascii: "z")).contains($0)
+        || (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains($0)
+        || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) || $0 == UInt8(ascii: "_")
     }
   }
 }
@@ -65,8 +265,13 @@ public enum ControllerPermission: Hashable, Sendable, Comparable {
 /// cannot disagree about what a file means. The version digest is SHA-256 over those bytes. The
 /// descriptor lists the digest of every packaged file, so the version digest covers the code too.
 public struct ControllerDescriptor: Equatable, Sendable {
-  /// The descriptor format this version reads and writes. A file of another format is refused.
-  public static let format = 1
+  /// The newest descriptor format this version reads. Format 2 gives every permission a required
+  /// version, and adds the clipboard and host launch kinds at version 1. Format 1 knows two kinds,
+  /// with no version, and refuses every other kind. Any other format is refused.
+  public static let format = 2
+
+  /// Every format this version reads.
+  public static let formats = 1...format
 
   /// The descriptor's name inside a package.
   public static let fileName = "controller.json"
@@ -121,9 +326,9 @@ public struct ControllerDescriptor: Equatable, Sendable {
 
     let format = try fields["format"]!.integer("format")
 
-    guard format == Self.format else {
+    guard Self.formats.contains(format) else {
       throw ControllerPackageError.malformed(
-        "format \(format) is not one this uniterm reads. It reads format \(Self.format).")
+        "format \(format) is not one this uniterm reads. It reads formats 1 to \(Self.format).")
     }
 
     let id = try fields["id"]!.string("id")
@@ -158,7 +363,7 @@ public struct ControllerDescriptor: Equatable, Sendable {
       }
     }
 
-    let permissions = try readPermissions(fields["permissions"]!, kind: kind)
+    let permissions = try readPermissions(fields["permissions"]!, kind: kind, format: format)
 
     return ControllerDescriptor(
       id: id, name: name, entryKind: kind, entryPath: entryPath, files: files,
@@ -167,16 +372,26 @@ public struct ControllerDescriptor: Equatable, Sendable {
 
   /// The Janet capabilities the descriptor declares.
   public var capabilities: Set<String> {
-    Set(
-      permissions.compactMap {
-        if case .capability(let name) = $0 { return name }
-
-        return nil
-      })
+    Set(permissions.compactMap(\.capabilityName))
   }
 
   /// The version digest as lowercase hex.
   public var versionHex: String { versionDigest.hex }
+
+  /// True when `id` is a controller ID a descriptor may name.
+  public static func isValidID(_ id: String) -> Bool {
+    (try? checkID(id)) != nil
+  }
+
+  /// True when `name` is a display name a descriptor may give.
+  public static func isValidName(_ name: String) -> Bool {
+    (try? checkName(name)) != nil
+  }
+
+  /// True when a controller may declare the capability `name`.
+  public static func isDeclarableCapability(_ name: String) -> Bool {
+    ScriptCapabilityNames.grantable.contains(name) && !refusedCapabilities.contains(name)
+  }
 
   private static func checkID(_ id: String) throws {
     let bytes = Array(id.utf8)
@@ -309,25 +524,68 @@ public struct ControllerDescriptor: Equatable, Sendable {
   }
 
   private static func readPermissions(
-    _ value: StrictJSON, kind: ControllerEntryKind
+    _ value: StrictJSON, kind: ControllerEntryKind, format: Int
   ) throws -> Set<ControllerPermission> {
     var permissions = Set<ControllerPermission>()
+    var listed = Set<String>()
 
     for element in try value.array("permissions") {
       let fields = try element.members(
-        of: "a permission", required: ["kind"], optional: ["name"])
+        of: "a permission", required: format >= 2 ? ["kind", "version"] : ["kind"],
+        optional: ["name", "executable", "directory", "environment"])
       let permissionKind = try fields["kind"]!.string("a permission's kind")
-      let permission: ControllerPermission
+      let version = try fields["version"]?.integer("a permission's version") ?? 1
+
+      guard let meaning = ControllerPermission.meaning(kind: permissionKind, version: version),
+        meaning.format <= format
+      else {
+        throw ControllerPackageError.malformed(
+          format >= 2 && ControllerPermission.meanings.contains { $0.kind == permissionKind }
+            ? "\(permissionKind) version \(version) is not one this uniterm knows"
+            : "the permission kind \"\(permissionKind)\" is not one descriptor format \(format) "
+              + "knows")
+      }
+
+      let launchFields: Set<String> = ["executable", "directory", "environment"]
+
+      guard permissionKind == "host-launch" || launchFields.isDisjoint(with: fields.keys) else {
+        throw ControllerPackageError.malformed(
+          "only host-launch takes an executable, a directory, or an environment")
+      }
+
+      if permissionKind != "capability", fields["name"] != nil {
+        throw ControllerPackageError.malformed("\(permissionKind) takes no name")
+      }
+
+      let permissionValue: ControllerPermissionKind
 
       switch permissionKind {
       case "pane-control":
-        guard fields["name"] == nil else {
-          throw ControllerPackageError.malformed("pane-control takes no name")
+        permissionValue = .paneControl
+
+      case "clipboard-read":
+        permissionValue = .clipboardRead
+
+      case "clipboard-write":
+        permissionValue = .clipboardWrite
+
+      case "host-launch":
+        guard let executable = fields["executable"], let directory = fields["directory"],
+          let environment = fields["environment"]
+        else {
+          throw ControllerPackageError.malformed(
+            "host-launch needs an executable, a directory, and an environment list")
         }
 
-        permission = .paneControl
+        permissionValue = .hostLaunch(
+          try HostLaunchScope(
+            executable: try executable.string("a host launch's executable"),
+            directory: try directory.string("a host launch's directory"),
+            environmentKeys: try environment.array("a host launch's environment").map {
+              try $0.string("an environment key")
+            }))
 
-      case "capability":
+      default:
         guard kind == .janet else {
           throw ControllerPackageError.malformed("only a Janet entry declares capabilities")
         }
@@ -349,16 +607,16 @@ public struct ControllerDescriptor: Equatable, Sendable {
               + "package")
         }
 
-        permission = .capability(name)
-
-      default:
-        throw ControllerPackageError.malformed(
-          "the permission kind \"\(permissionKind)\" is not one this uniterm knows")
+        permissionValue = .capability(name)
       }
 
-      guard permissions.insert(permission).inserted else {
-        throw ControllerPackageError.malformed("a permission is listed twice")
+      // A kind is listed once, or once for each capability name or host launch executable, at
+      // whatever version. Two versions of one permission would leave its meaning unclear.
+      guard listed.insert(permissionKind + "\u{0}" + permissionValue.scopeName).inserted else {
+        throw ControllerPackageError.malformed("\(permissionKind) is listed twice")
       }
+
+      permissions.insert(ControllerPermission(permissionValue, version: version))
     }
 
     return permissions

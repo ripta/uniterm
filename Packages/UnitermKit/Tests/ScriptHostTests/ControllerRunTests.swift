@@ -28,6 +28,14 @@ final class ControllerRunTests: XCTestCase {
   /// What each change of the host's controllers showed, so a test sees a run that has ended.
   private var seenRuns: [ControllerRun] = []
 
+  /// How the tests answer each startup review, as the user would in the panel. A test that looks
+  /// at reviews itself sets it to nil.
+  private var reviewAnswer: ControllerReviewChoice? = .allowForSession
+
+  /// The reviews each change showed.
+  private var seenReviews: [ControllerReview] = []
+  private var reviewWatch: ChangeObservers.Token?
+
   override func setUp() async throws {
     directory = try ScriptFixtures.makeSocketDirectory()
     work = try ControllerFixtures.temporaryFolder()
@@ -40,8 +48,20 @@ final class ControllerRunTests: XCTestCase {
       listener: try ScriptListener.start(directory: directory),
       issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: windows,
       controllers: ControllerSettings(
-        runsRoot: runs, helper: BundleHelperIdentity(helperURL: try HardenedHelper.url())))
+        runsRoot: runs, helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()),
+        trustDirectory: work.appendingPathComponent("trust")))
     host.start()
+    reviewWatch = host.changes.add { [weak self] in
+      guard let self else { return }
+
+      for review in host.controllerReviews where !seenReviews.contains(review) {
+        seenReviews.append(review)
+
+        if let answer = reviewAnswer {
+          Task { @MainActor in await self.host.decideReview(review.id, answer) }
+        }
+      }
+    }
     host.onControllersChanged = { [weak self] in
       guard let self else { return }
 
@@ -660,7 +680,7 @@ final class ControllerRunTests: XCTestCase {
     }
 
     let settings = try ControllerSettings.atLaunch(
-      root: root, process: TestSessionRoot.identity,
+      root: root, trustDirectory: nil, process: TestSessionRoot.identity,
       helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()))
 
     XCTAssertEqual(

@@ -24,6 +24,7 @@ extension CommandID {
   public static let openFileWith: CommandID = "uniterm.open-with"
   public static let showSettings: CommandID = "uniterm.settings"
   public static let showPendingRequests: CommandID = "uniterm.show-pending-requests"
+  public static let showControllers: CommandID = "uniterm.show-controllers"
   public static let installCommandLineTool: CommandID = "uniterm.install-command-line-tool"
   public static let hideApp: CommandID = "uniterm.hide"
   public static let quit: CommandID = "uniterm.quit"

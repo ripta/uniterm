@@ -53,6 +53,7 @@ final class ScriptWireFuzzTests: XCTestCase {
           snapshot: "/synthetic/run", version: Data(repeating: 0x3C, count: 32)
         ).frame(),
         ScriptAppMessage.controllerRefused("synthetic refusal").frame(),
+        ScriptAppMessage.controllerReviewing("synthetic review notice").frame(),
       ]
   }
 

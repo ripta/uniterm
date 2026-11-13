@@ -17,7 +17,7 @@ my $json = JSON::PP->new->canonical->allow_nonref;
 my $next_id = 1;
 
 # The exec protocol version this driver speaks.
-my $protocol = 2;
+my $protocol = 3;
 
 sub send_message { print $json->encode($_[0]), "\n"; }
 
@@ -71,6 +71,10 @@ sub serve {
         print STDERR "got $message->{type}", (defined $message->{name} ? " $message->{name}" : ""),
             (defined $message->{error} ? " $message->{error}{code}" : ""), "\n";
         print STDERR "error message: $message->{error}{message}\n" if defined $message->{error};
+        if ($message->{type} eq "reply" && ref $message->{result} eq "HASH"
+            && exists $message->{result}{text}) {
+            print STDERR "clipboard text: ", ($message->{result}{text} // "(none)"), "\n";
+        }
 
         if ($message->{type} eq "event" && $message->{name} eq "advance-requested") {
             command("show-slide", {index => $message->{data}{from} + 1});
