@@ -110,6 +110,10 @@ public final class PermissionRequests {
     /// What asks, such as a script's name and PID.
     public let subject: String
 
+    /// The process that asks, when one process does. Programs in a terminal share a question, so
+    /// theirs has none.
+    public let pid: pid_t?
+
     /// What it asks for, such as "Read the clipboard".
     public let title: String
 
@@ -166,8 +170,8 @@ public final class PermissionRequests {
   /// row keeps showing its oldest operation. `denialKey` names what a denial covers, when that
   /// should outlive the requester that asks.
   public func ask(
-    _ key: Key, deniedAs denialKey: Key? = nil, subject: String, title: String, detail: String,
-    sessionTitle: String, answer: @escaping @MainActor (Answer) -> Void
+    _ key: Key, deniedAs denialKey: Key? = nil, subject: String, pid: pid_t? = nil, title: String,
+    detail: String, sessionTitle: String, answer: @escaping @MainActor (Answer) -> Void
   ) -> Outcome {
     let denialKey = denialKey ?? key
 
@@ -196,7 +200,7 @@ public final class PermissionRequests {
     lastID += 1
     rows.append(
       Row(
-        id: lastID, key: key, subject: subject, title: title, detail: detail,
+        id: lastID, key: key, subject: subject, pid: pid, title: title, detail: detail,
         denialKey: denialKey, sessionTitle: sessionTitle, waiting: 1))
     operations[lastID] = [operation]
     changes.notify()
