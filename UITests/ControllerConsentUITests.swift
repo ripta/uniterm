@@ -288,6 +288,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertTrue(pid.exists, "the question row shows no PID")
 
     question.click()
+    attach(panel, named: "pane-call-question-selected")
     panel.buttons["pending-requests-allow-once"].click()
 
     XCTAssertEqual(waitForFile(status), "exit=0\n")
