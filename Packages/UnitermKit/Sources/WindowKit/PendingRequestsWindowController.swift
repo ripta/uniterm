@@ -256,6 +256,12 @@ public final class PendingRequestsWindowController: NSWindowController {
 
     case .review:
       reviewButton.isEnabled = true
+      allowOnceButton.isEnabled = true
+      allowInPaneButton.isHidden = true
+      sessionButton.isHidden = false
+      sessionButton.isEnabled = true
+      sessionButton.title = "Allow for This Session"
+      denyButton.isEnabled = true
 
     case .question(let question):
       allowOnceButton.isEnabled = true
@@ -316,14 +322,17 @@ public final class PendingRequestsWindowController: NSWindowController {
     switch selectedRow {
     case .launch(let request): launches.decide(request.id, .allowOnce)
     case .question(let question): permissions.decide(question.id, .allowOnce)
+    case .review(let review): answer(review, .allowOnce)
     default: break
     }
   }
 
   @objc private func sessionPressed() {
-    guard case .question(let question) = selectedRow else { return }
-
-    permissions.decide(question.id, .allowForSession)
+    switch selectedRow {
+    case .question(let question): permissions.decide(question.id, .allowForSession)
+    case .review(let review): answer(review, .allowForSession)
+    default: break
+    }
   }
 
   @objc private func askAgainPressed() {
@@ -332,25 +341,33 @@ public final class PendingRequestsWindowController: NSWindowController {
     permissions.askAgain(denial.id)
   }
 
+  /// The sheet offers every choice with its explanation. The panel answers the choices that need
+  /// no more than the summary it already shows, so the trust choices stay in the sheet.
   @objc private func reviewPressed() {
     guard case .review(let review) = selectedRow else { return }
 
     Task { @MainActor [weak self] in
-      guard let self else { return }
+      guard let choice = await ControllerReviewSheet.present(review, on: self?.window) else {
+        return
+      }
 
-      guard let choice = await ControllerReviewSheet.present(review, on: window),
-        let scriptHost
+      self?.answer(review, choice)
+    }
+  }
+
+  private func answer(_ review: ControllerReview, _ choice: ControllerReviewChoice) {
+    Task { @MainActor [weak self] in
+      guard let self, let scriptHost,
+        let failure = await scriptHost.decideReview(review.id, choice), let window
       else { return }
 
-      if let failure = await scriptHost.decideReview(review.id, choice), let window {
-        let alert = NSAlert()
+      let alert = NSAlert()
 
-        alert.alertStyle = .warning
-        alert.messageText = "The review was not answered"
-        alert.informativeText = failure
-        alert.addButton(withTitle: "OK")
-        alert.beginSheetModal(for: window) { _ in }
-      }
+      alert.alertStyle = .warning
+      alert.messageText = "The review was not answered"
+      alert.informativeText = failure
+      alert.addButton(withTitle: "OK")
+      alert.beginSheetModal(for: window) { _ in }
     }
   }
 
@@ -371,6 +388,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     case .request(let request): scriptHost?.denyRequest(connection: request.id)
     case .launch(let request): launches.decide(request.id, .deny)
     case .question(let question): permissions.decide(question.id, .deny)
+    case .review(let review): answer(review, .deny)
     default: break
     }
   }
