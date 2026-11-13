@@ -1,6 +1,6 @@
 # UTERM-004: Pane Control and Trust
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-10-31
 **Updated:** 2026-11-12
 
