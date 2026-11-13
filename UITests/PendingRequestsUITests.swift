@@ -7,8 +7,8 @@ import XCTest
 /// is then a child of launchd, outside every pane, so the program's calls are refused and it asks
 /// the user. The program keeps its connection and tries again until it is answered or denied.
 ///
-/// What only the real app shows is the panel, the menu that opens it, the window's indicator, and a
-/// grant reaching the program's next call. The package tests prove each way a grant ends.
+/// What only the real app shows is the panel, the menu and the window's indicator that open it, and
+/// a grant reaching the program's next call. The package tests prove each way a grant ends.
 @MainActor
 final class PendingRequestsUITests: UnitermUITestCase {
   /// Starts the outside program from the terminal. It prints its outcome to `output`, and writes
@@ -78,6 +78,28 @@ final class PendingRequestsUITests: UnitermUITestCase {
     return panel
   }
 
+  /// Opens the panel by clicking the window's indicator, as a user who notices it would.
+  private func openPendingRequests(from indicator: XCUIElement, in app: XCUIApplication)
+    -> XCUIElement
+  {
+    indicator.click()
+
+    let panel = app.windows["pending-requests-window"]
+
+    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the indicator did not open the panel")
+
+    return panel
+  }
+
+  /// Keeps a screenshot with the test's results, so a reviewer sees the indicator as the user does.
+  /// The shot is of the window alone, so it covers nothing but uniterm's own UI.
+  private func keepScreenshot(of element: XCUIElement, named name: String) {
+    let attachment = XCTAttachment(screenshot: element.screenshot())
+    attachment.name = name
+    attachment.lifetime = .keepAlways
+    add(attachment)
+  }
+
   /// Selects the panel's first row once the outside program's request reaches it.
   private func selectRequest(in panel: XCUIElement) {
     let table = panel.tables["pending-requests-table"]
@@ -89,8 +111,9 @@ final class PendingRequestsUITests: UnitermUITestCase {
   }
 
   /// Catches an outside program that gets a pane without the user, a request that never reaches
-  /// the panel or the window's indicator, and a grant that does not let the program's next call
-  /// through. The program lists the windows once the grant is made.
+  /// the panel or the window's indicator, an indicator without a count or that does not open the
+  /// panel, and a grant that does not let the program's next call through. The program lists the
+  /// windows once the grant is made.
   func testAnOutsideProgramAsksAndAGrantLetsItsNextCallThrough() throws {
     let app = launchApp()
     let window = mainWindow(in: app)
@@ -101,10 +124,13 @@ final class PendingRequestsUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the request")
+    XCTAssertEqual(indicator.value as? String, "1 request")
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: program.status), "the program ended before a grant")
 
-    let panel = openPendingRequests(in: app)
+    keepScreenshot(of: window, named: "pending-indicator")
+
+    let panel = openPendingRequests(from: indicator, in: app)
 
     selectRequest(in: panel)
     panel.buttons["Grant Access\u{2026}"].click()

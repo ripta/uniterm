@@ -15,8 +15,9 @@ extension ThemePalette {
 /// The status bar region. It lays out the window's segments in one row.
 ///
 /// The bar knows nothing about where it docks. The window moves this one view between edges, so a
-/// dock change cannot change what the bar shows. A click anywhere on the bar asks to toggle the
-/// history.
+/// dock change cannot change what the bar shows. A click on the dismiss control dismisses, and a
+/// click on a window-state slot that has a command runs that command. A click anywhere else asks
+/// to toggle the history.
 @MainActor
 final class StatusBarView: NSView {
   static let height: CGFloat = 22
@@ -40,15 +41,21 @@ final class StatusBarView: NSView {
   /// Runs when the user clicks the dismiss control.
   var onDismiss: (() -> Void)?
 
+  /// Runs with a window-state slot's command when the user clicks that slot.
+  var onCommand: ((CommandID) -> Void)?
+
   private(set) var segments: [BarSegment] = []
 
   private let stack = NSStackView()
   private var segmentViews: [BarSegmentID: SegmentView] = [:]
+
+  /// The window-state slots whose text the bar dropped for room. They show their icon alone.
+  private var collapsed: Set<BarSegmentID> = []
   private var palette: ThemePalette = .latte
 
   override var wantsUpdateLayer: Bool { true }
 
-  /// A click on the bar toggles the history. It must not drag the window.
+  /// A click on the bar acts on the bar. It must not drag the window.
   override var mouseDownCanMoveWindow: Bool { false }
 
   override init(frame frameRect: NSRect) {
@@ -91,14 +98,39 @@ final class StatusBarView: NSView {
 
     if let dismiss = frame(of: .dismiss), dismiss.insetBy(dx: -4, dy: -4).contains(point) {
       onDismiss?()
+    } else if let command = command(at: point) {
+      onCommand?(command)
     } else {
       onActivate?()
     }
   }
 
+  /// The command of the window-state slot under `point`, with a little slack around the slot.
+  private func command(at point: NSPoint) -> CommandID? {
+    commandSlots.first { $0.frame.insetBy(dx: -3, dy: -4).contains(point) }?.kind.command
+  }
+
+  /// The showing window-state slots that run a command when clicked, with their frames.
+  private var commandSlots: [(kind: WindowStateKind, frame: NSRect)] {
+    segments.compactMap { segment in
+      guard case .window(let kind) = segment.id, kind.command != nil,
+        let frame = frame(of: segment.id)
+      else { return nil }
+
+      return (kind, frame)
+    }
+  }
+
+  /// A slot that opens something shows the pointing hand, so it reads as a control.
+  override func resetCursorRects() {
+    for (_, frame) in commandSlots {
+      addCursorRect(frame, cursor: .pointingHand)
+    }
+  }
+
   override func setFrameSize(_ newSize: NSSize) {
     super.setFrameSize(newSize)
-    fitApplets()
+    fit()
   }
 
   /// Where a segment sits in the bar, or nil when it is not showing.
@@ -134,15 +166,17 @@ final class StatusBarView: NSView {
     }
 
     stack.setViews(ordered, in: .leading)
+    fit()
+    window?.invalidateCursorRects(for: self)
+  }
 
+  private func applyGaps() {
     for (index, segment) in segments.enumerated() {
       guard let view = segmentViews[segment.id] else { continue }
 
       let next = index + 1 < segments.count ? segments[index + 1] : nil
       stack.setCustomSpacing(gap(after: segment, before: next), after: view)
     }
-
-    fitApplets()
   }
 
   /// A slot that shows only an icon sits close to the next one. Text sits further apart.
@@ -153,14 +187,30 @@ final class StatusBarView: NSView {
   }
 
   private func isCompact(_ segment: BarSegment) -> Bool {
-    segment.id != .message && segment.text == nil
+    segment.id != .message && (segment.text == nil || collapsed.contains(segment.id))
   }
 
-  /// Hides the applet segments that do not fit. The message area keeps its least width and every
-  /// window slot stays, so a narrow window loses applet segments first, from the last one back.
-  /// Both an applet segment and a slot are measured by the width they need on their own.
-  private func fitApplets() {
+  /// Fits the segments to the bar. The message area keeps its least width and every window slot
+  /// keeps its icon. A narrow window loses applet segments first, from the last one back. When the
+  /// window's own slots still do not fit, a slot's text goes next, from the last slot back. Both an
+  /// applet segment and a slot are measured by the width they need on their own.
+  private func fit() {
     let available = bounds.width - 2 * Self.edgeInset
+    let labeled = segments.filter { segment in
+      guard case .window = segment.id else { return false }
+      return segment.text != nil
+    }.map(\.id)
+
+    collapsed = []
+    for id in labeled { segmentViews[id]?.isTextCollapsed = false }
+
+    while ownWidth() > available, let id = labeled.last(where: { !collapsed.contains($0) }) {
+      collapsed.insert(id)
+      segmentViews[id]?.isTextCollapsed = true
+    }
+
+    applyGaps()
+
     var used: CGFloat = 0
     var fits = true
 
@@ -191,6 +241,24 @@ final class StatusBarView: NSView {
     }
   }
 
+  /// The width the window's own segments need: everything but the applet segments.
+  private func ownWidth() -> CGFloat {
+    var used: CGFloat = 0
+
+    for (index, segment) in segments.enumerated() {
+      if case .applet = segment.id { continue }
+
+      let next = index + 1 < segments.count ? segments[index + 1] : nil
+      let width =
+        segment.id == .message
+        ? Self.minimumMessageWidth : segmentViews[segment.id]?.fittingSize.width ?? 0
+
+      used += width + gap(after: segment, before: next)
+    }
+
+    return used
+  }
+
   override func updateLayer() {
     layer?.backgroundColor = palette[.mantle].cgColor
   }
@@ -211,6 +279,13 @@ private final class SegmentView: NSStackView {
   private let label = NSTextField(labelWithString: "")
   private var palette: ThemePalette = .latte
   private var segment: BarSegment?
+
+  /// The bar dropped this slot's text for room, so it shows its icon alone.
+  var isTextCollapsed = false {
+    didSet {
+      if isTextCollapsed != oldValue { applyText() }
+    }
+  }
 
   init(id: BarSegmentID) {
     self.id = id
@@ -268,7 +343,6 @@ private final class SegmentView: NSStackView {
     label.font = .systemFont(ofSize: 11, weight: weight)
     label.textColor = color
     label.stringValue = segment.text ?? ""
-    label.isHidden = segment.text == nil
 
     if let name = segment.symbolName,
       let image = NSImage(
@@ -282,9 +356,20 @@ private final class SegmentView: NSStackView {
       icon.isHidden = true
     }
 
-    // The text carries the identifier when there is any. An icon-only segment carries it itself.
-    if segment.text != nil {
+    applyText()
+  }
+
+  /// Shows or hides the text. The text carries the identifier while it shows. An icon-only segment
+  /// carries it itself.
+  private func applyText() {
+    guard let segment else { return }
+
+    let showsText = segment.text != nil && !isTextCollapsed
+    label.isHidden = !showsText
+
+    if showsText {
       label.setAccessibilityIdentifier(id.identifier)
+      label.setAccessibilityLabel(segment.accessibilityLabel)
       icon.setAccessibilityElement(false)
     } else {
       icon.setAccessibilityIdentifier(id.identifier)
