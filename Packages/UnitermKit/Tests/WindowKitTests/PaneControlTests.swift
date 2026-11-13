@@ -189,7 +189,9 @@ final class PaneControlTests: XCTestCase {
           title: "t", detail: "d", subject: "background-tab", sessionTitle: "s"))
     }
 
-    for _ in 0..<1000 where controller.permissionRequests.rows.isEmpty { await Task.yield() }
+    try await waitOrFail("the request reaches Pending Requests") {
+      !controller.permissionRequests.rows.isEmpty
+    }
 
     let row = try XCTUnwrap(controller.permissionRequests.rows.first)
 

@@ -45,6 +45,14 @@ fixed ones.
 - Suspected cause: Cmd-Shift-G sent before the open panel took key focus, as in the pane-tree entries above.
 - Status: unresolved.
 
+### `BrowserUITests.testCommandWClosesTheTabAndCommandShiftTReopensIt`
+
+- Seen: 2026-11-12, once, as the first test of a full `make test-app`.
+- Evidence: `BrowserUITests.swift:166` failed with "Cmd-Shift-T brought no tab" after 49.8 seconds. The other 157
+  tests passed. `BrowserUITests` then passed 12 of 12 alone, this test in 11.6 seconds.
+- Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
+- Status: unresolved.
+
 ## Fixed
 
 ### `BrowserRecoveryTests.testKillingTheSelectedTabShowsTheMessageAndReloadBringsBackItsHistory`
