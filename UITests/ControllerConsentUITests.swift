@@ -19,10 +19,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     add(attachment)
   }
 
-  /// Writes a package whose Janet entry prints a line, and declares pane control.
-  private func writePackage() throws -> String {
+  /// Writes a package that declares pane control. Its Janet entry prints a line unless the test
+  /// gives it another.
+  private func writePackage(main source: String = "(print \"consent fixture ran\")\n") throws
+    -> String
+  {
     let package = scratch + "-consent-package"
-    let main = Data("(print \"consent fixture ran\")\n".utf8)
+    let main = Data(source.utf8)
     let digest = SHA256.hash(data: main).map { String(format: "%02x", $0) }.joined()
 
     try FileManager.default.createDirectory(atPath: package, withIntermediateDirectories: true)
@@ -244,6 +247,50 @@ final class ControllerConsentUITests: UnitermUITestCase {
     open.buttons["Deny"].click()
 
     XCTAssertNotEqual(waitForFile(second), "exit=0\n", "a denied review still ran")
+  }
+
+  /// Catches a question row that does not name the process asking. A run allowed once asks again
+  /// for its pane call, and that row's PID column shows the run's PID, as its review row did.
+  func testAPaneCallQuestionShowsTheRunsPID() throws {
+    let package = try writePackage(
+      main: "(import uniterm)\n(print (length (uniterm/list-windows)))\n")
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer { try? FileManager.default.removeItem(atPath: package) }
+
+    _ = waitForTerminal(in: app)
+
+    let status = try startRun(package, named: "question-pid", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+
+    let panel = openPendingRequests(in: app)
+    let table = panel.tables["pending-requests-table"]
+    let review = table.tableRows.firstMatch
+
+    XCTAssertTrue(review.waitForExistence(timeout: 30), "the review never reached the panel")
+    review.click()
+    panel.buttons["pending-requests-allow-once"].click()
+
+    let question = table.tableRows.containing(
+      NSPredicate(format: "value == %@", "Control panes it may address")
+    ).firstMatch
+
+    XCTAssertTrue(question.waitForExistence(timeout: 30), "the pane call never asked")
+
+    let pid = question.descendants(matching: .any).matching(
+      NSPredicate(format: "value MATCHES %@", "^[0-9]+$")
+    ).firstMatch
+
+    attach(panel, named: "pane-call-question")
+    XCTAssertTrue(pid.exists, "the question row shows no PID")
+
+    question.click()
+    panel.buttons["pending-requests-allow-once"].click()
+
+    XCTAssertEqual(waitForFile(status), "exit=0\n")
   }
 
   /// Catches a Controllers & Permissions window that hides a remembered approval, and a Revoke

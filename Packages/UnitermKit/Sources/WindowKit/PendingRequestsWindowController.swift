@@ -622,7 +622,7 @@ extension PendingRequestsWindowController: NSTableViewDataSource, NSTableViewDel
       return review.waiting.count > 1
         ? "Waits for review, \(review.waiting.count) runs" : "Waits for review"
     case (.question(let question), "program"): return question.subject
-    case (.question, "pid"): return "\u{2014}"
+    case (.question(let question), "pid"): return question.pid.map(String.init) ?? "\u{2014}"
     case (.question(let question), "status"):
       return question.waiting > 1
         ? "\(question.title), \(question.waiting) waiting" : question.title
