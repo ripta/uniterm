@@ -16,3 +16,4 @@
 | UTERM-006 M1-M3 | None | Split at M3: M4's control and exec support need UTERM-015 M4's read power |
 | UTERM-007 M1-M4 | None | Split at M4: M5's remote commands need UTERM-004 M3 |
 | UTERM-003 M1-M5 | None | |
+| UTERM-004 M1-M6 | UTERM-003 | Needs the host API and listener UTERM-003 builds. Placed right after it to close the same-user control window UTERM-003 M3 opens |
