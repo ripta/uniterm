@@ -19,8 +19,10 @@ final class StatusBarTests: XCTestCase {
     fixtures = []
   }
 
-  private func makeFixture(storedPosition: String? = nil) throws -> WindowFixture {
-    let fixture = try WindowFixture(storedPosition: storedPosition)
+  private func makeFixture(
+    storedPosition: String? = nil, commands: CommandRegistry = .testing()
+  ) throws -> WindowFixture {
+    let fixture = try WindowFixture(storedPosition: storedPosition, commands: commands)
     fixtures.append(fixture)
     return fixture
   }
@@ -69,14 +71,15 @@ final class StatusBarTests: XCTestCase {
 
     var states = WindowStates()
     states.set(.layoutNotSaved, text: "Not saved.")
-    states.set(.pendingPermissions, text: "A program is asking.")
+    states.set(.pendingPermissions, text: "Programs are asking.", label: "32 requests")
     states.set(.survivingWork, text: "Work is still running.")
     fixture.controller.windowStates = states
   }
 
   /// Catches a window state that a narrow bar squeezes out, an error message squeezed to nothing,
-  /// and slots that overlap. At the window's real minimum width, every active kind shows inside the
-  /// bar, the message area keeps its least width, and the applet's segments are what left.
+  /// a slot's text that widens the window, and slots that overlap. At the window's real minimum
+  /// width, every active kind shows inside the bar, and the message area keeps its least width. The
+  /// applet's segments left, and so did the pending slot's text, so that slot is an icon alone.
   func testEveryWindowStateStaysDiscoverableAtTheMinimumWidth() throws {
     let fixture = try makeFixture()
     let window = try XCTUnwrap(fixture.controller.window)
@@ -111,10 +114,14 @@ final class StatusBarTests: XCTestCase {
     }
 
     XCTAssertNil(shown.first { $0.id == .applet(1) }, "the last applet segment should leave first")
+
+    let pending = try XCTUnwrap(shown.first { $0.id == .window(.pendingPermissions) }?.frame)
+    let iconOnly = try XCTUnwrap(shown.first { $0.id == .window(.layoutNotSaved) }?.frame)
+    XCTAssertLessThan(pending.width, iconOnly.width + 10, "the pending slot kept its text")
   }
 
-  /// Catches a bar that drops applet segments it has room for. At a wide window, every segment
-  /// shows, in the fixed order, and no window slot moves.
+  /// Catches a bar that drops applet segments or slot text it has room for. At a wide window,
+  /// every segment shows with its text, in the fixed order, and no window slot moves.
   func testAWideBarShowsEverySegmentInOrder() throws {
     let fixture = try makeFixture()
     let window = try XCTUnwrap(fixture.controller.window)
@@ -126,6 +133,10 @@ final class StatusBarTests: XCTestCase {
     let shown = shownFrames(fixture)
 
     XCTAssertEqual(shown.map(\.id), fixture.bar.segments.map(\.id))
+
+    let pending = try XCTUnwrap(shown.first { $0.id == .window(.pendingPermissions) }?.frame)
+    let iconOnly = try XCTUnwrap(shown.first { $0.id == .window(.layoutNotSaved) }?.frame)
+    XCTAssertGreaterThan(pending.width, iconOnly.width + 20, "a wide bar dropped the slot's text")
 
     let ordered = shown.map(\.frame)
 
@@ -552,5 +563,30 @@ final class StatusBarTests: XCTestCase {
     XCTAssertEqual(fixture.messageText, "")
     XCTAssertTrue(fixture.controller.contentController.history.isHidden)
     XCTAssertNil(fixture.bar.frame(of: .dismiss), "the control outlives the error")
+  }
+
+  /// Catches a pending-requests slot whose click opens the history instead of the panel, and a
+  /// slot that takes the clicks meant for the rest of the bar. A click on the slot asks the app
+  /// for the panel and leaves the history closed. A click on the message area still opens it.
+  func testClickingThePendingSlotOpensThePanelAndOtherClicksOpenTheHistory() throws {
+    var opened = 0
+    let commands = CommandRegistry(app: AppCommandHooks(showPendingRequests: { opened += 1 }))
+    let fixture = try makeFixture(commands: commands)
+
+    var states = WindowStates()
+    states.set(.pendingPermissions, text: "1 request waits.", label: "1 request")
+    fixture.controller.windowStates = states
+    fixture.layout()
+
+    let slot = try XCTUnwrap(fixture.bar.frame(of: .window(.pendingPermissions)))
+    try click(fixture, at: NSPoint(x: slot.midX, y: slot.midY))
+
+    XCTAssertEqual(opened, 1)
+    XCTAssertTrue(fixture.controller.contentController.history.isHidden)
+
+    try click(fixture, at: NSPoint(x: 20, y: fixture.bar.bounds.midY))
+
+    XCTAssertEqual(opened, 1)
+    XCTAssertFalse(fixture.controller.contentController.history.isHidden)
   }
 }

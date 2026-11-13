@@ -43,13 +43,14 @@ final class StatusBarContentTests: XCTestCase {
 
   /// Catches window slots in the wrong order, or displaced by an error. The three kinds show in
   /// their fixed order whatever order they were set in. They sit after the message, dismiss, and
-  /// unseen indicator, and before the applet's segments. Each is compact, and its full sentence is
-  /// both the tooltip and the accessibility label.
+  /// unseen indicator, and before the applet's segments. A kind set without a label is compact,
+  /// and one set with a label shows it as text. Either way its full sentence is both the tooltip
+  /// and the accessibility label.
   func testWindowStatesShowInFixedOrderBeforeTheAppletSegments() {
     var states = WindowStates()
     states.set(.survivingWork, text: "Work is still running.")
     states.set(.layoutNotSaved, text: "Not saved.")
-    states.set(.pendingPermissions, text: "A program is asking.")
+    states.set(.pendingPermissions, text: "A program is asking.", label: "2 requests")
 
     let segments = StatusBarContent.segments(
       display: display(.error, .uniterm, "boom"), hasUnseenError: true, windowStates: states,
@@ -65,12 +66,13 @@ final class StatusBarContentTests: XCTestCase {
     for segment in segments {
       guard case .window = segment.id else { continue }
 
-      XCTAssertNil(segment.text)
       XCTAssertNotNil(segment.symbolName)
       XCTAssertEqual(segment.toolTip, segment.accessibilityLabel)
     }
 
+    XCTAssertEqual(segments.map(\.text)[3...5], [nil, "2 requests", nil])
     XCTAssertEqual(segments[3].toolTip, "Not saved.")
+    XCTAssertEqual(segments[4].toolTip, "A program is asking.")
     XCTAssertEqual(segments[5].toolTip, "Work is still running.")
   }
 

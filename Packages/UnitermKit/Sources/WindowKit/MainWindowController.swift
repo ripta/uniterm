@@ -304,6 +304,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     contentController.statusBar.onActivate = { [weak self] in self?.dispatch(.toggleMessageHistory)
     }
     contentController.statusBar.onDismiss = { [weak self] in self?.dispatch(.dismissMessage) }
+    contentController.statusBar.onCommand = { [weak self] id in self?.dispatch(id) }
     wireCommandPalette()
     wireHistory()
     recordFocusedTab()

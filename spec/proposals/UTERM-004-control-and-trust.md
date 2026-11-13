@@ -691,11 +691,12 @@ None.
   in the Pending Requests panel. A connection holds one request however many calls it makes. Requests are held per
   connection, and the listener holds at most 32 connections, so the list holds at most 32. A process that has exited
   cannot ask.
-- The panel opens from Window > Pending Requests… and from the palette. It lists waiting requests and live grants. Its
-  grant sheet names the program and its PID, offers only panes with a running session, and names each way the grant
-  ends.
+- The panel opens from Window > Pending Requests…, from the palette, and from a click on the pending-permissions slot.
+  It lists waiting requests and live grants. Its grant sheet names the program and its PID, offers only panes with a
+  running session, and names each way the grant ends.
   The pending-permissions slot shows in every window while any request waits. An outside caller has no window, so the
-  slot is not per window.
+  slot is not per window. The slot shows how many of the panel's rows wait, such as "2 requests", and drops that text
+  for its icon alone when the bar is too narrow. Each new waiting row also posts one line to the status bar.
 - A grant ends on disconnect, process exit, the source session's end, revocation, and window close. A program that forks
   and exits does not pass its grant to the child that keeps its socket. A grant needs a waiting request and an unbound
   connection, so a bound connection cannot be moved to another pane. Grant scope for panes with tabs, and the end of

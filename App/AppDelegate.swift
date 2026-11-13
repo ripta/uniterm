@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var controllersWindowController: ControllersWindowController?
   private let clipboard = PasteboardClipboard()
   private var pendingObserver: ChangeObservers.Token?
+  private var pendingIndicator: PendingRequestsIndicator?
   private var browserWebsiteData: BrowserWebsiteData?
   private var scriptHost: ScriptHost?
   private var askingToQuit = false
@@ -508,6 +509,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       })
     windowSet = windows
     windows.clipboard = clipboard
+    pendingIndicator = PendingRequestsIndicator(
+      windows: windows, scriptHost: { [weak self] in self?.scriptHost })
     windows.launchAuthority.onActiveChanged = { [weak self] _ in self?.refreshPendingSlot() }
 
     // Scripting starts before any window, so a REPL that a window restores finds the listener.
@@ -810,17 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// The pending-permissions slot shows while a program waits for a pane, a controller waits for
   /// its review, a driver waits to run, or any program waits for a permission.
   private func refreshPendingSlot() {
-    guard let windows = windowSet else { return }
-
-    let waiting =
-      scriptHost?.hasPendingWork == true || !windows.launchAuthority.requests.isEmpty
-      || windows.permissionRequests.isWaiting
-
-    if waiting {
-      windows.setWindowState(.pendingPermissions, text: "Pending permission requests")
-    } else {
-      windows.clearWindowState(.pendingPermissions)
-    }
+    pendingIndicator?.refresh()
   }
 
   /// Opens Controllers & Permissions. Without scripting there is nothing to list, so it says so.
