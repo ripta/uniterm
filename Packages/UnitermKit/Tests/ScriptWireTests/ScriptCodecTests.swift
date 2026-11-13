@@ -40,6 +40,9 @@ final class ScriptCodecTests: XCTestCase {
       .requestLayout(
         pane: pane, layout: #"{"split":"row","children":[{"pane":3},{"open":"fixture-notes"}]}"#),
       .requestLayout(pane: nearest, layout: "{}"),
+      .readClipboard,
+      .writeClipboard(text: ""),
+      .writeClipboard(text: String(repeating: "x", count: ScriptProtocol.maxClipboardBytes)),
     ]
   }()
 
@@ -111,11 +114,21 @@ final class ScriptCodecTests: XCTestCase {
       .controllerAdmitted(
         snapshot: "/tmp/run.synthetic", version: Data(repeating: 0xA5, count: 32)),
       .controllerRefused("synthetic refusal"),
+      .controllerReviewing("synthetic review notice"),
     ]
 
     for message in messages {
       XCTAssertEqual(try roundTrip(message), message)
     }
+  }
+
+  /// Catches an old command or an old app that the version 9 side accepts. Version 8 knows neither
+  /// the typed clipboard calls nor the review notice, so each side refuses the other at the hello,
+  /// before any call or admission.
+  func testTheClipboardAndReviewVersionRefusesTheVersionBeforeIt() {
+    XCTAssertEqual(ScriptProtocol.version, 9)
+    XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: 8)))
+    XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: 8)))
   }
 
   /// Catches a hello that accepts another version, in either direction. The refusal names both

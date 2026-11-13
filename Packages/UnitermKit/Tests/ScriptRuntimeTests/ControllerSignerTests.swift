@@ -8,35 +8,26 @@ import XCTest
 @testable import ScriptRuntime
 
 /// The command's signer and the loader's reading of a snapshot, held to the fixtures the app's own
-/// tests use. The signer needs no certificate and no trust root: a key file is all it reads.
+/// tests use. The signer needs no certificate and no trust root: a key in the user's Keychain is
+/// all it reads, and these tests hold their keys in memory.
 final class ControllerSignerTests: XCTestCase {
   private var root: URL!
 
   override func setUpWithError() throws {
     root = try ControllerFixtures.temporaryFolder()
+    keys = InMemoryKeyStore(keys: ["fixture": try ControllerFixtures.signingKey()])
   }
 
   override func tearDownWithError() throws {
     try? FileManager.default.removeItem(at: root)
   }
 
-  private func command(_ arguments: String...) -> Int32 {
-    ScriptHelperMain.run(arguments: ["uniterm"] + arguments, identity: .unchecked)
-  }
+  /// The signing keys, held in memory so no test reaches the login Keychain. The fixture key is
+  /// in it under "fixture".
+  private var keys: InMemoryKeyStore!
 
-  /// The fixture seed, written as a key file the way keygen writes one.
-  private func fixtureKeyFile() throws -> String {
-    let path = root.appendingPathComponent("fixture.key").path
-    let descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
-
-    XCTAssertGreaterThanOrEqual(descriptor, 0)
-
-    _ = ControllerFixtures.signingSeed.withUnsafeBytes {
-      write(descriptor, $0.baseAddress, $0.count)
-    }
-    close(descriptor)
-
-    return path
+  private func keyCommand(_ arguments: String...) -> Int32 {
+    ControllerCommands.run(arguments: arguments, environment: [:], keys: keys)
   }
 
   /// Catches a signer that signs anything but the exact descriptor bytes, or with another key: its
@@ -46,7 +37,7 @@ final class ControllerSignerTests: XCTestCase {
 
     try FileManager.default.removeItem(at: package.appendingPathComponent("controller.sig"))
 
-    XCTAssertEqual(command("controller", "sign", "--key", try fixtureKeyFile(), package.path), 0)
+    XCTAssertEqual(keyCommand("sign", "--key", "fixture", package.path), 0)
 
     let descriptor = try Data(contentsOf: package.appendingPathComponent("controller.json"))
     let signature = try Data(contentsOf: package.appendingPathComponent("controller.sig"))
@@ -60,16 +51,14 @@ final class ControllerSignerTests: XCTestCase {
   /// with a new key has a new identity, so trust given to the old key never covers it.
   func testANewKeyGivesANewIdentityAndKeygenNeverReplacesAKey() throws {
     let package = try ControllerFixtures.copy("janet-hello")
-    let keyPath = root.appendingPathComponent("new.key").path
+    XCTAssertEqual(keyCommand("keygen", "new"), 0)
 
-    XCTAssertEqual(command("controller", "keygen", keyPath), 0)
+    let first = try keys.key(named: "new").publicKey
 
-    let first = try Data(contentsOf: URL(fileURLWithPath: keyPath))
+    XCTAssertNotEqual(keyCommand("keygen", "new"), 0)
+    XCTAssertEqual(try keys.key(named: "new").publicKey, first)
 
-    XCTAssertNotEqual(command("controller", "keygen", keyPath), 0)
-    XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: keyPath)), first)
-
-    XCTAssertEqual(command("controller", "sign", "--key", keyPath, package.path), 0)
+    XCTAssertEqual(keyCommand("sign", "--key", "new", package.path), 0)
 
     let verified = try VerifiedController(
       descriptorBytes: try Data(contentsOf: package.appendingPathComponent("controller.json")),
@@ -77,6 +66,16 @@ final class ControllerSignerTests: XCTestCase {
 
     XCTAssertEqual(verified.identity.controllerID, ControllerFixtures.Hello.id)
     XCTAssertNotEqual(verified.identity.keyFingerprint, ControllerFixtures.Hello.keyFingerprint)
+  }
+
+  /// Catches a signer that signs with some other key when the named one is missing, which would
+  /// give the package an identity the user never chose. Nothing is written.
+  func testAMissingKeySignsNothing() throws {
+    let package = try ControllerFixtures.copy("janet-hello")
+    let before = try Data(contentsOf: package.appendingPathComponent("controller.sig"))
+
+    XCTAssertNotEqual(keyCommand("sign", "--key", "lost", package.path), 0)
+    XCTAssertEqual(try Data(contentsOf: package.appendingPathComponent("controller.sig")), before)
   }
 
   /// Catches a signer that signs a package whose files no longer match their digests, which would
@@ -89,7 +88,7 @@ final class ControllerSignerTests: XCTestCase {
     let before = try Data(contentsOf: package.appendingPathComponent("controller.sig"))
 
     XCTAssertNotEqual(
-      command("controller", "sign", "--key", try fixtureKeyFile(), package.path), 0)
+      keyCommand("sign", "--key", "fixture", package.path), 0)
     XCTAssertEqual(try Data(contentsOf: package.appendingPathComponent("controller.sig")), before)
   }
 

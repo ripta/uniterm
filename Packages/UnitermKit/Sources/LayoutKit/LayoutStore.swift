@@ -1,3 +1,4 @@
+import AtomicFile
 import Darwin
 import Foundation
 
@@ -313,76 +314,17 @@ public final class LayoutStore {
   private func removeStaleTempFiles() {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
 
-    for name in names where name.contains(".tmp-") {
+    for name in names where name.contains(AtomicFile.tempMarker) {
       try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
     }
   }
 
-  /// Writes to a private temp file, flushes it, and renames it over the target.
+  /// Writes through the shared atomic writer, so a crash leaves the old file or the new one.
   private func writeAtomically(_ data: Data, to url: URL) throws {
-    let temp = URL(fileURLWithPath: url.path + ".tmp-\(getpid())")
-
-    unlink(temp.path)
-
-    let descriptor = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
-
-    guard descriptor >= 0 else { throw LayoutStoreError.write(temp.path, errno) }
-
-    var failure: Int32 = 0
-
-    if fchmod(descriptor, 0o600) != 0 { failure = errno }
-
-    if failure == 0 {
-      failure = data.withUnsafeBytes { buffer -> Int32 in
-        var offset = 0
-
-        while offset < buffer.count {
-          let written = write(descriptor, buffer.baseAddress! + offset, buffer.count - offset)
-
-          if written < 0 {
-            if errno == EINTR { continue }
-
-            return errno
-          }
-
-          offset += written
-        }
-
-        return 0
-      }
+    do {
+      try AtomicFile.write(data, to: url)
+    } catch {
+      throw LayoutStoreError.write(error.path, error.code)
     }
-
-    // fsync does not flush the drive's cache on macOS. F_FULLFSYNC does, and some file systems
-    // refuse it, so fsync is the fallback.
-    if failure == 0, fcntl(descriptor, F_FULLFSYNC) != 0, fsync(descriptor) != 0 {
-      failure = errno
-    }
-
-    close(descriptor)
-
-    guard failure == 0 else {
-      unlink(temp.path)
-      throw LayoutStoreError.write(temp.path, failure)
-    }
-
-    guard rename(temp.path, url.path) == 0 else {
-      let code = errno
-      unlink(temp.path)
-      throw LayoutStoreError.write(url.path, code)
-    }
-
-    syncDirectory()
-  }
-
-  /// Makes the rename itself durable. A failure here leaves the file in place, so it is not an
-  /// error.
-  private func syncDirectory() {
-    let descriptor = open(directory.path, O_RDONLY | O_CLOEXEC)
-
-    guard descriptor >= 0 else { return }
-
-    if fcntl(descriptor, F_FULLFSYNC) != 0 { fsync(descriptor) }
-
-    close(descriptor)
   }
 }

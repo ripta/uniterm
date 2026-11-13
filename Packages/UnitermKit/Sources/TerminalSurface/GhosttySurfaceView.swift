@@ -1085,6 +1085,12 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
   override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
 
+  /// Focused while typed keys reach this terminal: its window is key and it is first responder.
+  /// UI tests check it before they type.
+  override func isAccessibilityFocused() -> Bool {
+    window?.isKeyWindow == true && window?.firstResponder === self
+  }
+
   /// The visible screen text. UI tests read the terminal's output through it.
   override func accessibilityValue() -> Any? {
     guard let surface else { return nil }

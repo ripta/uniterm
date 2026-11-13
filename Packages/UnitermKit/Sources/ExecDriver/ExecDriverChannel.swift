@@ -57,6 +57,12 @@ public final class ExecDriverChannel: AppletEventSink {
 
     /// A command for a member of a group the driver owns.
     case command(pane: UInt64, AppletCommandSubmission)
+
+    /// A read of the clipboard. The reply is `{"text": ...}`, with null for no text.
+    case clipboardRead
+
+    /// A write of plain text to the clipboard. The reply is an empty object.
+    case clipboardWrite(String)
   }
 
   /// Answers a host request with one reply. A window that offers none refuses every request.
@@ -252,7 +258,8 @@ public final class ExecDriverChannel: AppletEventSink {
     case (.connected, .hello):
       end(.failed("it sent a second hello"))
 
-    case (.greeting, .command), (.greeting, .paneCommand), (.greeting, .layout):
+    case (.greeting, .command), (.greeting, .paneCommand), (.greeting, .layout),
+      (.greeting, .clipboardRead), (.greeting, .clipboardWrite):
       end(.failed("it sent a command before its hello"))
 
     case (.connected, .command(let id, let name, let arguments)):
@@ -268,6 +275,12 @@ public final class ExecDriverChannel: AppletEventSink {
 
     case (.connected, .layout(let id, let layout)):
       ask(.layout(layout), id: id)
+
+    case (.connected, .clipboardRead(let id)):
+      ask(.clipboardRead, id: id)
+
+    case (.connected, .clipboardWrite(let id, let text)):
+      ask(.clipboardWrite(text), id: id)
 
     case (_, .refusal(let text)):
       end(.refused("The driver refused uniterm: \(StatusText.bounded(text, maximumBytes: 256))"))

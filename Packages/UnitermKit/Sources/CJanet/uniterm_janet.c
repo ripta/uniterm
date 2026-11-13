@@ -258,7 +258,9 @@ enum {
     CALL_OPEN_TAB = 5,
     CALL_SEND = 6,
     CALL_SEND_COMMAND = 7,
-    CALL_REQUEST_LAYOUT = 8
+    CALL_REQUEST_LAYOUT = 8,
+    CALL_READ_CLIPBOARD = 9,
+    CALL_WRITE_CLIPBOARD = 10
 };
 
 /* The largest ID a script may hold. Every integer below it is exact in a double. */
@@ -725,9 +727,11 @@ static const char *failure_kind_name(int32_t status) {
 /*
  * Runs one call through the host and turns its reply into a Janet value. A failure raises the
  * app's text. With `structured`, it raises a struct of :kind and :message instead, so a script
- * can tell a refusal from its own mistake without reading the words.
+ * can tell a refusal from its own mistake without reading the words. With `raw`, the reply is not
+ * a value: its first byte is 1 when text follows and 0 when there is none, and the text is
+ * returned as a string of any length the frame holds.
  */
-static Janet invoke_call(JanetBuffer *request, int structured) {
+static Janet invoke_reply(JanetBuffer *request, int structured, int raw) {
     const uniterm_host *host = active_host;
 
     if (host == NULL || host->call == NULL) janet_panic("this function is not available");
@@ -760,6 +764,24 @@ static Janet invoke_call(JanetBuffer *request, int structured) {
         janet_panicf("%s", text);
     }
 
+    if (raw) {
+        int readable = reply != NULL && reply_length > 0 && reply[0] <= 1
+                       && (reply[0] == 1 || reply_length == 1)
+                       && valid_utf8(reply + 1, (int32_t)(reply_length - 1));
+
+        if (!readable) {
+            free(reply);
+            janet_panic("uniterm sent a reply that could not be read");
+        }
+
+        Janet text = reply[0] == 1 ? janet_stringv(reply + 1, (int32_t)(reply_length - 1))
+                                   : janet_wrap_nil();
+
+        free(reply);
+
+        return text;
+    }
+
     if (reply == NULL || reply_length == 0) {
         free(reply);
 
@@ -782,6 +804,10 @@ static Janet invoke_call(JanetBuffer *request, int structured) {
     free(reply);
 
     return value;
+}
+
+static Janet invoke_call(JanetBuffer *request, int structured) {
+    return invoke_reply(request, structured, 0);
 }
 
 static Janet invoke(JanetBuffer *request) {
@@ -1151,6 +1177,40 @@ static Janet cfun_request_layout(int32_t argc, Janet *argv) {
     return invoke_call(request, 1);
 }
 
+static Janet cfun_read_clipboard(int32_t argc, Janet *argv) {
+    (void)argv;
+    janet_fixarity(argc, 0);
+
+    JanetBuffer *request = janet_buffer(8);
+
+    put_u16(request, CALL_READ_CLIPBOARD);
+
+    return invoke_reply(request, 1, 1);
+}
+
+/* The text may be empty. A longer text is refused rather than cut, so the clipboard never holds
+ * a part of what the script meant. */
+static Janet cfun_write_clipboard(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    JanetString text = janet_getstring(argv, 0);
+    int32_t length = janet_string_length(text);
+
+    if (length > UNITERM_JANET_MAX_CLIPBOARD_BYTES) {
+        janet_panicf("the text is %d bytes, and the most is %d", length,
+                     UNITERM_JANET_MAX_CLIPBOARD_BYTES);
+    }
+
+    if (!valid_utf8(text, length)) janet_panic("the text is not UTF-8");
+
+    JanetBuffer *request = janet_buffer(length + 8);
+
+    put_u16(request, CALL_WRITE_CLIPBOARD);
+    put_text(request, text);
+
+    return invoke_call(request, 1);
+}
+
 static const JanetReg uniterm_cfuns[] = {
     {"api-version", cfun_api_version,
      "(uniterm/api-version)\n\nThe version of the host API. A change that breaks a script "
@@ -1202,6 +1262,17 @@ static const JanetReg uniterm_cfuns[] = {
      "driver a layout declares runs only once the user chooses Run. A failure raises a struct of "
      ":kind and :message, and nothing changes. The kind is :busy while another layout from the "
      "script is still being prepared."},
+    {"read-clipboard", cfun_read_clipboard,
+     "(uniterm/read-clipboard)\n\nReturns the clipboard's plain text, or nil when it holds none. "
+     "Reading is a permission of its own, apart from writing and from pane control. The user "
+     "approves it in uniterm, and the call waits until the user answers. A failure raises a struct "
+     "of :kind and :message, where :kind is :refused when the user denied it or the script may not "
+     "ask, :busy while too many of the script's requests wait, or :failed."},
+    {"write-clipboard", cfun_write_clipboard,
+     "(uniterm/write-clipboard text)\n\nReplaces the clipboard with plain text, at most 32 KiB. "
+     "Writing is a permission of its own, apart from reading and from pane control. The user "
+     "approves it in uniterm, and the call waits until the user answers. A failure raises a struct "
+     "of :kind and :message, as uniterm/read-clipboard does, and leaves the clipboard as it was."},
     {NULL, NULL, NULL}};
 
 /*

@@ -18,6 +18,13 @@ public protocol ControllerAuthority: AnyObject {
 
   /// What pane chrome calls a connection, or nil when it is gone.
   func controllerName(_ id: UInt64) -> String?
+
+  /// True when the connection's live controller run may start this program as a driver in a pane
+  /// of a group it owns, without asking. It may look at the disk, so it never blocks the main
+  /// actor.
+  func coversLaunch(
+    connection: UInt64, executable: String, directory: String, environmentKeys: [String]
+  ) async -> Bool
 }
 
 extension ScriptHost: ControllerAuthority {}

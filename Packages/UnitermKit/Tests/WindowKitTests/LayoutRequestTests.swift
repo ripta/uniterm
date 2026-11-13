@@ -566,4 +566,13 @@ final class FakeControllerAuthority: ControllerAuthority {
   func revokeControllers(_ ids: Set<UInt64>) {}
 
   func controllerName(_ id: UInt64) -> String? { "fake controller \(id)" }
+
+  /// The launches each connection's run may start without asking, as (executable, directory).
+  var launches: [UInt64: Set<String>] = [:]
+
+  func coversLaunch(
+    connection: UInt64, executable: String, directory: String, environmentKeys: [String]
+  ) async -> Bool {
+    launches[connection]?.contains(executable + " in " + directory) == true
+  }
 }

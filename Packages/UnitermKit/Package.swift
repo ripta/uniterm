@@ -65,6 +65,9 @@ let package = Package(
     // Process info helpers that TerminalSurface and ScriptHost both use, with no dependencies. It
     // reads process identity and ancestry through sysctl, which works on setuid root processes.
     .target(name: "ProcessInspection"),
+    // Writes a private file so a crash leaves the old one or the new one. The layout store and the
+    // controller policy store both use it. It has no dependencies.
+    .target(name: "AtomicFile"),
     // The palette's tokens, flavors, color values, and color math, with no AppKit. GeoData reads the
     // accent set from it. Theme adds the AppKit colors and re-exports it, so `import Theme` still
     // sees every name.
@@ -74,7 +77,7 @@ let package = Package(
     .target(name: "StatusKit"),
     .target(name: "AppletKit", dependencies: ["StatusKit", "Theme"]),
     .target(name: "PaneModel"),
-    .target(name: "LayoutKit", dependencies: ["AppletKit", "PaneModel"]),
+    .target(name: "LayoutKit", dependencies: ["AppletKit", "AtomicFile", "PaneModel"]),
     .target(name: "FileRouting", dependencies: ["AppletKit"]),
     // An applet's exec driver: the JSON-lines wire, the bounded pipes, and the child process. It
     // reads and writes on threads of its own and hops to the main thread with bounded batches.
@@ -83,7 +86,8 @@ let package = Package(
       name: "WindowKit",
       dependencies: [
         "Theme", "Preferences", "AppletKit", "StatusKit", "PaneModel", "LayoutKit", "FileRouting",
-        "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ExecDriver",
+        "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ExecDriver", "ControllerPackage",
+        "ControllerTrust",
       ]),
     .target(name: "SettingsKit", dependencies: ["Preferences"]),
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
@@ -198,6 +202,10 @@ let package = Package(
     // the signer, and the helper's loader all read packages through it, so they read one meaning
     // from the same bytes. It has no AppKit and no Janet.
     .target(name: "ControllerPackage", dependencies: ["ScriptWire"]),
+    // Remembered controller approvals: the selectors, the typed scopes and how one covers another,
+    // and the private policy file. It has no AppKit, so the app's admission and the fuzzers share
+    // one reading of the file.
+    .target(name: "ControllerTrust", dependencies: ["AtomicFile", "ControllerPackage"]),
     // The helper side of scripting. It owns the one Janet VM of its process, on its main thread.
     .target(name: "ScriptRuntime", dependencies: ["CJanet", "ControllerPackage", "ScriptWire"]),
     // A thin main over ScriptRuntime, so tests can run a helper without the hardened runtime. The
@@ -208,8 +216,8 @@ let package = Package(
     .target(
       name: "ScriptHost",
       dependencies: [
-        "ControllerPackage", "FileRouting", "HelperHost", "PaneModel", "ProcessInspection",
-        "ScriptWire", "StatusKit",
+        "ControllerPackage", "ControllerTrust", "FileRouting", "HelperHost", "PaneModel",
+        "ProcessInspection", "ScriptWire", "StatusKit",
       ]),
     // The REPL applet. It hosts a terminal session whose child is the REPL helper, and binds the
     // helper's control channel to its pane through the script host. It never imports Janet.
@@ -233,6 +241,9 @@ let package = Package(
         "BrowserTestSupport", "TerminalApplet", "ReplApplet", "DataViewerApplet", "MapViewerApplet",
         "ImageViewerApplet", "TextViewerApplet",
       ]),
+    // Ends a test process whose `swift test` is gone, so a hung test cannot outlive a cancelled
+    // run. Every test target links into one bundle, so one test target's dependency guards all.
+    .target(name: "TestProcessGuard", path: "Tests/TestProcessGuard"),
     // Test support. It builds ZIP archives for the tests of both targets that read workbooks, and
     // holds the seeded generator the table and map fuzzers share.
     .target(name: "TableTestSupport", path: "Tests/TableTestSupport"),
@@ -269,6 +280,12 @@ let package = Package(
       name: "ControllerPackageTests",
       dependencies: [
         "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "ScriptWire",
+        "TableTestSupport",
+      ]),
+    .testTarget(
+      name: "ControllerTrustTests",
+      dependencies: [
+        "AtomicFile", "ControllerPackage", "ControllerTrust", "ControllerTestSupport",
         "TableTestSupport",
       ]),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
@@ -378,7 +395,8 @@ let package = Package(
       dependencies: [
         "WindowKit", "Theme", "Preferences", "StatusKit", "AppletKit", "PaneModel", "LayoutKit",
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
-        "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper",
+        "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
+        "ControllerTrust", "TestProcessGuard",
       ]),
   ],
   swiftLanguageModes: [.v6],

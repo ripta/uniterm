@@ -122,7 +122,10 @@ extension MainWindowController {
     controllerAuthority?.revokeControllers(connections)
 
     for attachment in execAttachments.values {
-      if let owner = attachment.owner, owners.contains(owner) { attachment.revoked = true }
+      if let owner = attachment.owner, owners.contains(owner) {
+        attachment.revoked = true
+        endDriverClipboard(of: attachment)
+      }
     }
 
     for owner in owners { ownerEnded(owner) }
@@ -137,12 +140,16 @@ extension MainWindowController {
   }
 
   /// An owner's authority ended. Its groups in this window lose their owner, and each pane that
-  /// was a member gets a new generation, so a permission asked under the owner is stale.
+  /// was a member gets a new generation, so a permission asked under the owner is stale. A launch
+  /// that waits for approval in such a pane is withdrawn, since the controller that staged it no
+  /// longer stands behind it.
   func ownerEnded(_ owner: GroupOwner) {
     let released = paneArea.releaseOwner(owner)
 
     for pane in released where contains(pane: pane) {
       pushControl(paneControls.bump(pane), to: pane)
+      launchAuthority.withdraw(
+        target: ExecLaunchAuthority.Target(window: scriptWindowID, pane: pane))
     }
 
     refreshControlMarks()

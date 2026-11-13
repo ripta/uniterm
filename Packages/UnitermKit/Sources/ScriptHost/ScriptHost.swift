@@ -114,6 +114,36 @@ public final class ScriptHost {
   /// Connections that asked for a controller run the host has not answered yet.
   var controllerAdmissions: Set<UInt64> = []
 
+  /// Counts the starts and ends of removals of remembered policies, and how many are under way.
+  /// The policy file is read and changed off the main actor, so a read that a removal overlapped
+  /// may hold a policy that is gone. What was read covers a run only when no removal began or
+  /// ended since the read began, and none is under way.
+  var trustRemovals: UInt64 = 0
+  var trustRemovalsUnderWay = 0
+
+  /// Verified runs that wait for the user's startup review, by connection.
+  var waitingAdmissions: [UInt64: WaitingAdmission] = [:]
+
+  /// The startup reviews that wait, oldest first.
+  public internal(set) var controllerReviews: [ControllerReview] = []
+  var lastReviewID: UInt64 = 0
+
+  /// The permission questions and denials the Pending Requests panel shows. Exec drivers and
+  /// terminals put theirs here too.
+  public let permissionRequests: PermissionRequests
+
+  /// The clipboard the typed clipboard calls reach. Without one, they are refused.
+  let clipboard: (any ScriptClipboard)?
+
+  private var permissionWatch: ChangeObservers.Token?
+
+  /// The clipboard powers the user allowed for the session of an ordinary script connection.
+  var clipboardGrants: [UInt64: Set<ControllerPermission>] = [:]
+
+  /// Runs on every change the panel or the Controllers & Permissions window shows: a request, a
+  /// review, a run, or a remembered policy.
+  public let changes = ChangeObservers()
+
   /// Native controller launches, by the process that runs them.
   var nativeLaunches: [pid_t: NativeLaunch] = [:]
 
@@ -172,9 +202,13 @@ public final class ScriptHost {
     windows: (any ScriptWindowAPI)? = nil, sentContent: ScriptSentContent? = nil,
     onRefusal: @escaping @MainActor (ScriptRefusal) -> Void = { _ in },
     reaper: ProcessReaper = .live, replLimits: ReplLimits = .live,
-    replProbes: ReplProbes = .live, controllers: ControllerSettings? = nil
+    replProbes: ReplProbes = .live, controllers: ControllerSettings? = nil,
+    clipboard: (any ScriptClipboard)? = nil,
+    permissionRequests: PermissionRequests = PermissionRequests()
   ) {
     self.controllerSettings = controllers
+    self.clipboard = clipboard
+    self.permissionRequests = permissionRequests
     self.reaper = reaper
     self.replLimits = replLimits
     self.replProbes = replProbes
@@ -183,6 +217,8 @@ public final class ScriptHost {
     self.windows = windows
     self.sentContent = sentContent
     self.onRefusal = onRefusal
+
+    permissionWatch = permissionRequests.changes.add { [weak self] in self?.pendingChanged() }
   }
 
   /// The address of this instance, which no other instance shares. A REPL's helper takes it, so
@@ -227,6 +263,8 @@ public final class ScriptHost {
     declined = []
     grants = [:]
     revokedControllers = []
+    clipboardGrants = [:]
+    permissionRequests.end { if case .connection = $0 { return true } else { return false } }
   }
 
   func handle(_ event: ScriptEvent) {
@@ -272,22 +310,22 @@ public final class ScriptHost {
 
       releaseFilesOfClosedPanes()
 
-      switch call {
-      case .openPane, .openTab, .sendCommand, .requestLayout:
-        Task { @MainActor [weak self] in
-          let result =
-            await self?.runAsync(call, connection: connection)
-            ?? .failure(.refused, "uniterm is quitting")
+      if let refusal = authorize(connection) { return connection.reply(id: id, result: refusal) }
 
-          connection.reply(id: id, result: result)
-        }
+      switch checkPower(call, on: connection) {
+      case .allowed:
+        dispatch(call, id: id, on: connection, once: nil)
 
-      default:
-        connection.reply(id: id, result: run(call, on: connection))
+      case .refused(let result):
+        connection.reply(id: id, result: result)
+
+      case .needsApproval(let power):
+        askForOperation(call, id: id, on: connection, power: power)
       }
 
     case .closed(let connection):
       peerWatches.removeValue(forKey: connection.id)?.cancel()
+      clipboardGrants[connection.id] = nil
       controllerConnectionClosed(connection.id)
       sessions[connection.id]?.producer?.retire()
       sessions[connection.id] = nil
@@ -303,10 +341,54 @@ public final class ScriptHost {
     }
   }
 
-  private func run(_ call: ScriptCall, on connection: ScriptConnection) -> ScriptResult {
+  /// Runs a call whose power check passed, or that the user allowed once. `once` carries that
+  /// one allowed power, so the check at the effect sees the same answer and nothing more.
+  func dispatch(
+    _ call: ScriptCall, id: UInt32, on connection: ScriptConnection, once: ControllerPermission?
+  ) {
+    guard !connection.isClosed else { return }
+
+    switch call {
+    case .openPane, .openTab, .sendCommand, .requestLayout:
+      Task { @MainActor [weak self] in
+        let result =
+          await self?.runAsync(call, connection: connection, once: once)
+          ?? .failure(.refused, "uniterm is quitting")
+
+        connection.reply(id: id, result: result)
+      }
+
+    case .readClipboard, .writeClipboard:
+      Task { @MainActor [weak self] in
+        let result =
+          await self?.performClipboard(call, on: connection, once: once)
+          ?? .failure(.refused, "uniterm is quitting")
+
+        connection.reply(id: id, result: result)
+      }
+
+    default:
+      connection.reply(id: id, result: run(call, on: connection, once: once))
+    }
+  }
+
+  /// The refusal for a call whose power no longer holds at its effect, or nil.
+  private func powerRefusal(
+    _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission?
+  ) -> ScriptResult? {
+    switch checkPower(call, on: connection, once: once) {
+    case .allowed: return nil
+    case .refused(let result): return result
+    case .needsApproval: return .failure(.refused, "The permission for this call has ended.")
+    }
+  }
+
+  private func run(
+    _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission?
+  ) -> ScriptResult {
     if let refusal = authorize(connection) { return refusal }
 
-    if let refusal = controllerRefusal(for: call, on: connection) { return refusal }
+    if let refusal = powerRefusal(call, on: connection, once: once) { return refusal }
 
     switch call {
     case .postStatus(let level, let text):
@@ -326,8 +408,8 @@ public final class ScriptHost {
         try requireWindows().listPanes(window: window, caller: try requireCaller(connection))
       }
 
-    case .openPane, .openTab, .sendCommand, .requestLayout:
-      return .failure(.failed, "the call needs to wait, and was run as if it did not")
+    case .openPane, .openTab, .sendCommand, .requestLayout, .readClipboard, .writeClipboard:
+      return .failure(.failed, "the call has its own path, and was run as if it did not")
 
     case .send(let target, let name, let content):
       return answer {
@@ -337,10 +419,12 @@ public final class ScriptHost {
   }
 
   /// The calls that check a directory run off the main actor and answer later.
-  private func runAsync(_ call: ScriptCall, connection: ScriptConnection) async -> ScriptResult {
+  private func runAsync(
+    _ call: ScriptCall, connection: ScriptConnection, once: ControllerPermission?
+  ) async -> ScriptResult {
     if let refusal = authorize(connection) { return refusal }
 
-    if let refusal = controllerRefusal(for: call, on: connection) { return refusal }
+    if let refusal = powerRefusal(call, on: connection, once: once) { return refusal }
 
     do {
       let caller = try requireCaller(connection)
@@ -350,7 +434,8 @@ public final class ScriptHost {
       let stillAllowed: @MainActor () throws -> Void = {
         try self.requireAuthority(connection)
 
-        if case .failure(let kind, let text)? = self.controllerRefusal(for: call, on: connection) {
+        if case .failure(let kind, let text)? = self.powerRefusal(call, on: connection, once: once)
+        {
           throw ScriptCallError(kind, text)
         }
 
@@ -395,7 +480,7 @@ public final class ScriptHost {
   /// The refusal for a call the connection may not make, or nil when it may. An unbound connection
   /// is asked about once. A binding is checked again on every call, so a peer that exited, or a
   /// session that closed, takes its authority with it.
-  private func authorize(_ connection: ScriptConnection) -> ScriptResult? {
+  func authorize(_ connection: ScriptConnection) -> ScriptResult? {
     if peerWasReplaced(connection) {
       peerReplaced(connection)
 
@@ -499,6 +584,7 @@ public final class ScriptHost {
 
     declined.insert(connection.id)
     controllerRuns[connection.id] = nil
+    dropWaitingAdmission(connection.id)
     authorityEnded(connection.id)
   }
 
@@ -537,13 +623,18 @@ public final class ScriptHost {
     revokedControllers.contains(id)
   }
 
+  /// A connection's authority ended. Its clipboard grants and the operations it has waiting go
+  /// with it, so no queued request outlives the authority it asked under.
   func authorityEnded(_ id: UInt64) {
+    clipboardGrants[id] = nil
+    permissionRequests.end(.connection(id))
     onControllerEnded?(id)
     controllersChanged()
   }
 
   func controllersChanged() {
     onControllersChanged?()
+    changes.notify()
   }
 
   // MARK: Controllers
@@ -917,7 +1008,6 @@ public final class ScriptHost {
   }
 
   private func notifyPendingRequestsChanged() {
-    onPendingRequestsChanged?()
-    onPendingRequestsActiveChanged?(!pendingRequests.isEmpty)
+    pendingChanged()
   }
 }

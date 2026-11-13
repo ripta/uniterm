@@ -8,10 +8,14 @@ import Foundation
 /// schema version. No command or event flows until both sides accept the other's hello.
 ///
 /// Version 2 adds a driver's layout request and its commands to the members of a group it owns.
-/// Each side refuses any version but its own at the hello, so an old driver with a new app, or
-/// the reverse, runs no command.
+/// Version 3 adds the typed clipboard read and write. Each side refuses any version but its own at
+/// the hello, so an old driver with a new app, or the reverse, runs no command.
 public enum ExecProtocol {
-  public static let version = 2
+  public static let version = 3
+
+  /// The most clipboard text one typed clipboard request reads or writes, in UTF-8 bytes. A larger
+  /// clipboard is refused, never cut.
+  public static let maxClipboardBytes = 256 * 1024
 
   /// The longest frame, newline excluded. The reader refuses a longer line before it has
   /// buffered the whole of it.
@@ -83,6 +87,12 @@ public enum ExecDriverMessage: Sendable, Equatable {
 
   /// A layout for the driver's own subtree, anchored at its pane. The window reads the layout.
   case layout(id: JSONValue, layout: JSONValue)
+
+  /// A read of the clipboard's plain text. It is a power of its own, apart from writes.
+  case clipboardRead(id: JSONValue)
+
+  /// A write of plain text to the clipboard. It is a power of its own, apart from reads.
+  case clipboardWrite(id: JSONValue, text: String)
 
   /// The driver refuses the app, such as for an app hello it does not support. The text is shown.
   case refusal(String)
@@ -179,6 +189,19 @@ public enum ExecWire {
       }
 
       return .layout(id: try requestID(fields["id"]), layout: layout)
+
+    case "clipboard-read":
+      return .clipboardRead(id: try requestID(fields["id"]))
+
+    case "clipboard-write":
+      guard case .string(let text)? = fields["text"],
+        text.utf8.count <= ExecProtocol.maxClipboardBytes
+      else {
+        throw .malformed(
+          "its text is not a string of at most \(ExecProtocol.maxClipboardBytes) bytes")
+      }
+
+      return .clipboardWrite(id: try requestID(fields["id"]), text: text)
 
     case "error":
       var text = "the driver gave no reason"

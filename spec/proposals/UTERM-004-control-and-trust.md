@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-11
+**Updated:** 2026-11-12
 
 ## Dependencies
 
@@ -453,9 +453,15 @@ requires a local review before effects. Undeclared effects fail even when the co
   directory scope. The approval explicitly says that arguments and environment values may vary within these bounds.
   Values remain runtime inputs and are not saved as approval secrets. Another executable/entry or broader scope needs
   approval. Arbitrary host-program execution is not implied by permission to launch a declared packaged entry.
-  Until M5 brings packaged entries, an entry is the declaration's absolute executable, its directory scope is the one
-  directory it runs in, and its target is the one pane where the user chose Run. Such a grant lasts for this launch
-  of uniterm, and M6 grows it into the startup review and remembered policies. Amended 2026-11-11; see Decision Log.
+  A controller declares a host launch in its descriptor: an absolute executable, a directory that covers itself and
+  every folder inside it, and environment key names. Its target is any pane of a group the live run owns. The user's
+  Run starts such a launch with no question while the run's own approval holds the scope. The launch's folder and
+  the approved one are compared with every link resolved, and the driver starts in the resolved folder, so a link
+  inside the approved folder cannot lead the driver out of it. A folder that does not exist is not covered. Allow
+  once holds none, so each of its launches asks. A launch with no owning run, such as a restored pane's, asks in the
+  panel as before: Allow once, or a grant for that pane's exact executable and directory for this launch of uniterm.
+  A launch waiting there in a pane of a group whose owner's authority ends is withdrawn. Amended 2026-11-12; see
+  Decision Log.
 - Allow once binds one identified pending effect and its immutable inputs. A session grant binds the authenticated
   live run. Version and identity policies can cover later freshly authenticated runs. A pathname, claimed digest,
   process name, or old pane ID cannot activate a remembered policy.
@@ -467,6 +473,12 @@ requires a local review before effects. Undeclared effects fail even when the co
   repeated protocol messages cannot spawn repeated modal dialogs. The indicator is the window's pending-permissions
   slot, a typed window state that sits before the focused applet's segments. Denial suppresses automatic re-prompting
   until a local retry. Coalescing cannot widen Allow once into approval of multiple different operations.
+  Requests of one power from one requester share a row. A row holds at most 8 waiting operations, one requester at
+  most 16 rows, and the panel at most 64. A request past a bound is refused as busy. A row shows its oldest waiting
+  operation in full, which is the one Allow once releases. A denial outlives a reconnect: a controller run's covers
+  its verified version, and an ordinary script's covers the scripts acting for its pane until the pane closes. A
+  terminal tab's or a REPL's covers its kind of request under one control generation. Amended 2026-11-12; see
+  Decision Log.
 - A user's Run action supplies execution intent. A matching policy can supply permissions without a second dialog.
   Saved layout state alone never executes a controller. Remembered permission does not override an existing pane's
   disconnected mode or adopt restored group members. Source enablement and restored-member adoption remain local.
@@ -475,13 +487,20 @@ requires a local review before effects. Undeclared effects fail even when the co
   clipboard powers, and pane control remain separate dimensions.
 - Durable policies live in a separate versioned private file, written atomically. Corrupt files and unknown policy
   semantics authorize nothing and are kept for recovery. Layout files contain no policy or signing key. Optional
-  local signing keys use Keychain. Until M6 moves them there, the signer reads a key file that only its owner can
-  read, behind an interface the Keychain store will take over. Amended 2026-11-11; see Decision Log. Controllers &
-  Permissions shows trusted selector/fingerprint, approved scopes, and active runs. Revocation removes remembered policy and current authority, including queued work. It cannot undo
-  external effects already performed by an approved program.
+  local signing keys are generic-password items in the login Keychain, each under a name the user gives. A missing
+  key fails the signing, and no other key signs in its place. The policy file is
+  `~/Library/Application Support/uniterm/controllers/policy.json`, format 1. A file this build cannot read is moved
+  aside, numbered, and grants nothing. A file from a newer build, by its format or by a permission kind or version
+  this build lacks, is left where it is, untouched, and this build neither trusts nor writes it. Controllers &
+  Permissions shows trusted selector/fingerprint, approved scopes, and active runs. Revocation removes remembered
+  policy and current authority, including queued work. A run whose admission a removal overlaps is reviewed, not
+  started under the removed policy. It cannot undo external effects already performed by an approved program.
+  Amended 2026-11-12; see Decision Log.
 - Admission and typed clipboard contracts are versioned. Old controller/new app and new controller/old app refuse
-  unsupported semantics before effects. Permission scopes refer to current roles and owned groups, not persisted
-  window or pane references.
+  unsupported semantics before effects. The typed clipboard calls and the review notice take ScriptWire to version 9,
+  and the driver's clipboard messages take the exec protocol to version 3. Each side refuses any other version at
+  the hello. Permission scopes refer to current roles and owned groups, not persisted window or pane references.
+  Amended 2026-11-12; see Decision Log.
 
 Rationale: varying a chart's document argument does not request more authority. Exact-input matching would repeat
 prompts despite unchanged powers. Identity trust alone must never authorize undeclared powers. The typed clipboard
@@ -499,13 +518,23 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   permissions. Version trust covers descriptor and packaged code/dependencies. An optional signature covers the
   descriptor and its file digests; identity trust pins the signing public key plus controller ID. Signing and loading
   share one interpretation of the exact descriptor bytes. Unverified display metadata conveys no authority.
-- The descriptor is `controller.json`, format 1, read as strict JSON. A repeated key, an unknown field, a value of
-  another type, and anything after the document are refused. A packaged path is ASCII letters, digits, `.`, `_`, and
-  `-`, in components that start with a letter or a digit, so no path has a second spelling. Two paths that differ only
-  by case are refused. Format 1 knows two permission kinds: `pane-control`, and a Janet `capability` by the name
-  `--allow` takes. Any other kind is refused, so a meaning a later format adds authorizes nothing here. A controller
-  cannot declare a capability that loads native code. A run's `--allow` names only declared capabilities. A run that
-  does not declare pane control may post status and nothing else.
+- The descriptor is `controller.json`, read as strict JSON, in format 1 or format 2. A repeated key, an unknown field,
+  a value of another type, and anything after the document are refused. A packaged path is ASCII letters, digits,
+  `.`, `_`, and `-`, in components that start with a letter or a digit, so no path has a second spelling. Two paths
+  that differ only by case are refused. A controller cannot declare a capability that loads native code. A run's
+  `--allow` names only declared capabilities. A run that does not declare pane control may post status and nothing
+  else. Amended 2026-11-12; see Decision Log.
+- Format 1 knows two permission kinds, with no version: `pane-control`, and a Janet `capability` by the name `--allow`
+  takes. Any other kind is refused. Format 2 gives every permission a required `version`, those two kinds included.
+  Each build knows a fixed set of (kind, version) pairs, each with one meaning, one review text, and the versions it
+  covers. An unknown kind or version refuses the whole descriptor at load, and so does one kind listed twice. A kind
+  that takes a scope, a capability's name or a host launch's executable, is listed once for each scope. Format 2
+  adds `clipboard-read`, `clipboard-write`, and `host-launch` at version 1. A host launch names an absolute
+  `executable`, a `directory`, and an `environment` list of key names. Approvals record (kind, version, scopes). A
+  request covered by an approved version needs no new review, and a higher version needs one. A format 1 permission
+  reads as version 1, so a format 1 approval covers the same kind at version 1 in format 2. Skew: a build without a
+  kind or version refuses the descriptor at load, and a newer build reads older formats and versions with their own
+  meanings. An older build reading a newer policy file authorizes nothing. Amended 2026-11-12; see Decision Log.
 - The signature is `controller.sig`: an Ed25519 signature, through CryptoKit, over a fixed domain line and the
   descriptor's exact bytes. The version is the SHA-256 of those bytes, and the key's fingerprint is the SHA-256 of the
   public key. A signature file that does not verify refuses the package. It never falls back to an unsigned version.
@@ -543,10 +572,12 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   and current window/group. Execution generation includes successful exec, not merely PID and start time. Exit,
   executable replacement, disconnect, or revocation invalidates the live binding. It does not delete durable trust.
   Revalidate generation and revocation at dispatch, with exec/exit notifications for prompt invalidation.
-- The run request is a `controller-begin` message on ScriptWire version 8. It names the entry kind, the package path,
-  and the requested capabilities, and no digest. The app answers with the snapshot's folder and the version it verified,
-  or with a refusal. Both sides refuse any other version at the hello, so an old `uniterm` command with a new app, and a
-  new command with an old app, run nothing. No deploy order is needed. The descriptor and signature formats start at 1.
+- The run request is a `controller-begin` message, which ScriptWire version 8 added. It names the entry kind, the
+  package path, and the requested capabilities, and no digest. The app answers with the snapshot's folder and the
+  version it verified, or with a refusal. While the run waits for the user's review, the app first sends a notice
+  that version 9 adds, and the command shows it. Both sides refuse any other version at the hello, so an old
+  `uniterm` command with a new app, and a new command with an old app, run nothing. No deploy order is needed. The
+  descriptor and signature formats start at 1. Amended 2026-11-12; see Decision Log.
 - Unix-stream peer lookup is not immutable per-message sender attestation. Generation checks and notifications do
   not make check-and-effect atomic against exec or deliberately transferred sockets. Such races and injection remain
   within the stated same-user limitation. No atomic per-message or OS-sandbox guarantee is claimed.
@@ -994,7 +1025,7 @@ None.
 
 ### M6: Consent, remembered trust, and permission management
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Startup shows requested powers once, with Allow once, Session, Trust this version, and eligible Trust this identity
 - Unchanged or narrower scoped requests reuse approval; new powers, wider scopes, or unsupported meanings do not
@@ -1008,6 +1039,41 @@ None.
 - Signing tooling creates optional local keys in Keychain; losing a key never silently substitutes another identity
 - Old/new admission and typed clipboard versions refuse unsupported contracts in both directions before effects
 - Remembered trust neither overrides disconnected existing panes nor adopts restored group members or activates Run
+
+**As built:**
+
+- A controller run that asks for any power waits for a startup review in the Pending Requests panel. Review opens a
+  sheet that lists every requested power, what is new beside an earlier approval, the version, and the key. Deny is the
+  default button. Trust This Identity shows only for a signed package, and neither trust choice shows when the policy
+  file cannot take one. The sheet's help describes only the choices it shows. The command says once that it waits, and waits with no timeout. A run that asks for no power
+  starts at once. Allow once starts the run with its capabilities, and each later use of another power asks again.
+  Runs of one version that ask for the same powers share one review, and Allow once or Allow for this session starts
+  the oldest alone. See the 2026-11-12 Decision Log entries on Allow once and on runs that ask for nothing.
+- Remembered policies live in a new module with no AppKit, beside a shared atomic writer that the layout store now
+  uses too. Every read and change of the policy file takes a lock on its folder, so two running instances keep each
+  other's changes. The store refuses a link in place of its folder and anything but a regular file in place of the
+  policy file. The policy reader is strict JSON and is in `make fuzz`. Which policy covers a run, and how a trust
+  choice changes an earlier policy, are in the 2026-11-12 Decision Log entries on covering policies.
+- Typed clipboard reads and writes reach the general pasteboard through one access point, which reads off the main
+  actor; see the 2026-11-12 Decision Log entry on clipboard reads. Questions wait in the panel
+  within the bounds the coalescing bullet names. A revoke, a closed connection, a lost binding, an ended session, an
+  ended driver run, and a closed pane withdraw their waiting requests: the program is refused, and no denial is
+  recorded. A Janet read gets its text by the route the 2026-11-12 entry on Janet clipboard replies describes.
+- A controlled terminal's OSC 52 question, and a controlled REPL's, waits in the panel like any other, labelled as
+  covering the programs in the tab or the REPL, with no controller named.
+- Controllers & Permissions is in the Window menu and the palette. It lists remembered approvals by selector, with the
+  full fingerprint or version and the scopes, and the live runs with their approval. Revoke on an approval removes it
+  from the file, then ends the runs it admitted. Revoke on a run ends that run alone, as the badge's Revoke does. The
+  Pending Requests panel and Controllers & Permissions keep the row the user chose selected while other rows come
+  and go, and select nothing once it is gone.
+- Signing keys live in the login Keychain, and the signing commands' tests use a key store in memory. One test
+  reaches the real Keychain under a service name of its own. Whether a rebuilt ad hoc command reads an item an earlier
+  build made without a system prompt was not probed.
+- Descriptor format 2 follows the per-permission version that UTERM-019's review settled; see the 2026-11-12 Decision
+  Log entry. The shared descriptor fixtures cover each format 2 refusal, and one good format 2 descriptor joins the
+  fuzz corpus.
+- Debug builds take the policy folder from the environment, so the UI tests never touch the developer's policy file.
+  A UI test drives the review sheet and Controllers & Permissions.
 
 ## Decision Log
 
@@ -1369,6 +1435,142 @@ None.
   uniterm right after each free, before a new surface can take the address. That rests on libghostty joining every
   thread that queues events before the free returns, and it runs other surfaces' events in the middle of a close. If
   the user would rather carry no second patch, the drain would replace it, and the regression test stays as it is.
+
+- 2026-11-12: Built descriptor format 2 with a version on every permission (work-queue best guess, following
+  UTERM-019's "Permission descriptor format" and "Who builds descriptor format 2", which the user chose for M6). The
+  uncommitted first draft of M6 added the clipboard and host launch kinds in a format 2 with no version. "Verified
+  artifact and run binding" said: "The descriptor is `controller.json`, format 1, read as strict JSON." and "Format 1
+  knows two permission kinds [...] Any other kind is refused, so a meaning a later format adds authorizes nothing
+  here." It now defines format 2 as UTERM-019 settled it, and the bullet carries the marker. One rule needed a reading:
+  "the same kind listed twice is refused" would refuse a package that declares two capabilities, which format 1
+  allows. A kind with a scope is listed once per scope here, a capability per name and a host launch per executable.
+  If the user wants one entry per kind, a capability entry would take a list of names.
+- 2026-11-12: Let Allow once approve the start alone (work-queue best guess). "Controller trust and approval choices"
+  says Allow once covers "the pending operation only", and a session covers the run. At startup the pending operation
+  is the start, which applies the run's capabilities. Every other power then asks per use: each pane call, each
+  clipboard request, and each host launch. Allow for this session on one of those keeps that power for the run. If the
+  user wants Allow once to cover a whole first run, it would match Allow for this session and one of the two could go.
+- 2026-11-12: Started a run that asks for no power without a review (work-queue best guess). Such a run may only post
+  status, which M5 already let it do, so a review would ask about nothing. M5's UI test runs such a package.
+- 2026-11-12: Kept denials until Ask Again (work-queue best guess). "Permission scopes and approval flow" says a
+  denial stops re-prompting "until a local retry". A denied startup review is keyed by the verified version, so a
+  rerun of that version is refused at once. A denied power is keyed by its requester and power, and a terminal's by its
+  tab and control generation. Each denial is a row in the Pending Requests panel, and Ask Again on it is the retry. At
+  most 64 are kept, oldest dropped first. A requester's denials go when it ends.
+- 2026-11-12: Moved controlled OSC 52 questions into the Pending Requests panel (work-queue best guess). M2 asked in a
+  sheet, bounded to one per kind, "until M6's coalesced permission panel replaces this bound". Each request after a
+  denial opened another sheet. The question is now a panel row like any other, and the pending-permissions slot
+  shows. The ordinary disconnected terminal's read prompt and unsafe paste prompt keep their sheets.
+- 2026-11-12: Let a host launch's directory cover the folders inside it (work-queue best guess). "Permission scopes
+  and approval flow" named a "permitted directory scope". M3's grant held one exact directory. A narrower directory is
+  then a narrower request that an approval covers. M3's pane grant from the panel keeps its exact directory. The
+  host-launch bullet said: "Until M5 brings packaged entries, an entry is the declaration's absolute executable, its
+  directory scope is the one directory it runs in, and its target is the one pane where the user chose Run. Such a
+  grant lasts for this launch of uniterm, and M6 grows it into the startup review and remembered policies." It now
+  says what M6 built, with the entry below on owning runs.
+- 2026-11-12: Covered a launch only through the live run that owns the pane's group (work-queue best guess). A
+  pathname cannot activate a remembered policy, so the window asks the run that owns the innermost group the pane is a
+  member of. A launch in a pane no run owns, such as a restored one, still asks. A launch waiting in the panel in a pane
+  whose owner's authority ends is withdrawn, which is how M6 reads "staged host launches".
+- 2026-11-12: Left a newer policy file in place, and moved a corrupt one aside (work-queue best guess). The approved
+  plan said a corrupt or newer file is kept aside. ADR-06 moves a newer layout aside. Moving a newer policy file would
+  leave the newer build with no policies on its next launch. Later proposals add permission kinds and versions with no
+  policy format change, so a file whose JSON is sound but names a pair this build lacks counts as newer too. Two
+  builds that run together then never move each other's file aside. Left in place, the file survives a downgrade
+  untouched, and this build grants nothing and offers no trust choice. A broken file helps no build, so it is moved
+  aside, numbered, keeping 5, and a fresh file can be written. The bullet now says so.
+- 2026-11-12: Named signing keys in the Keychain (work-queue best guess). M5's signer took a key file path. The
+  commands now take a key name, the account of a generic-password item under the service
+  `dev.uniterm.controller-signing-key` in the login Keychain. The item uses the legacy login Keychain, since an ad hoc
+  command cannot hold a Keychain access group. A rebuilt command may get a system prompt to read a key an earlier
+  build made, which was not probed. The bullet said: "Until M6 moves them there, the signer reads a key file that only
+  its owner can read, behind an interface the Keychain store will take over." It now names the Keychain items.
+- 2026-11-12: Moved the script wire to version 9 and the exec protocol to version 3 (work-queue best guess). The
+  typed clipboard calls and the review notice are new on the script wire, and the clipboard messages are new on the
+  exec wire. Each side refuses any other version at the hello, so no deploy order is needed. The run request bullet
+  said "a `controller-begin` message on ScriptWire version 8", and the admission bullet named no version. Both now
+  name version 9. UTERM-019's "Result encoding" entry also names ScriptWire 9, and lands later, so it would take
+  the next version. Its owner should know.
+- 2026-11-12: Let ordinary scripts use the typed clipboard with once or session answers (work-queue best guess).
+  "Verified artifact and run binding" says generic peers keep explicit once/session admission without claiming
+  identity. A script bound to its pane by ancestry, with no controller run, asks for each read or write, and Allow for
+  This Connection keeps that power until it disconnects. Nothing about it is remembered. If the user wants clipboard
+  requests from controllers alone, the calls would be refused for ordinary scripts.
+- 2026-11-12: Kept several instances apart for live runs (work-queue best guess). Each running instance rereads the
+  policy file at every admission, so a policy removed in one stops covering new runs in the other. A run already
+  admitted in the other instance keeps its authority until it ends or is revoked there. If the user wants a removal
+  to end runs everywhere, the instances would need to watch the file.
+- 2026-11-12: Revoke in Controllers & Permissions removes the policy and its runs, and the badge's Revoke ends the
+  live run alone (work-queue best guess). "How control is enabled" says revoking a controller ends its live grant, and
+  "Permission scopes and approval flow" says revocation removes remembered policy and current authority. Two places
+  keep the two meanings apart, so ending a run never forgets its trust by accident.
+- 2026-11-12: ADR candidate (cuts across the system): a programmatic request never opens its own dialog. It waits in
+  the host-owned panel, and its denial persists until the user retries locally. It would sit beside ADR-09.
+  Undecided. Found in M6.
+- 2026-11-12: Let a version policy cover a run before an identity policy, and merged a trust choice into the policy
+  it widens (work-queue best guess). "Controller trust and approval choices" offers both selectors and does not say
+  which one a run's approval names when both cover it. A version names the exact verified artifact, so it is the
+  narrower selector, and the run is shown as a trusted version. Trust this version or Trust this identity on a
+  selector that already has a policy adds the newly approved powers to it. Replacing the policy would drop powers an
+  earlier review approved for a wider run. If the user wants a trust choice to replace the earlier policy, the merge
+  would go.
+- 2026-11-12: Gave the Janet clipboard read a raw reply (work-queue best guess). The script wire's value encoding
+  holds at most 4 KiB in one string, and a clipboard read may return up to 32 KiB. The read's reply is a flag byte
+  for no text, or the flag and the UTF-8 text, and nothing else on the wire changed. A longer clipboard is refused,
+  not cut. The alternative was a 4 KiB cap on reads.
+- 2026-11-12: Bounded the panel at 8 operations a row, 16 rows a requester, and 64 rows (work-queue best guess). The
+  first round of M6 had the row and panel bounds only. A question with no scope asks on its own, so one requester
+  could fill all 64 rows and leave no room for any other. The per-requester bound of 16 leaves room for at least
+  four requesters. A terminal with eight tabs that all ask to read and write still fits. The coalescing bullet now
+  states the bounds. It said only that requests are "bounded and coalesced".
+- 2026-11-12: Kept a connection's denial past its reconnect (work-queue best guess). The entry on keeping denials
+  until Ask Again said "A requester's denials go when it ends", and a script's requester was its connection. A
+  denied script that disconnected and ran again was then asked again with no action from the user, which "Denial
+  suppresses automatic re-prompting until a local retry" forbids. A controller run's denial is now kept under its
+  verified version, as a denied startup review is. An ordinary script names nothing a new connection could not
+  claim, so its denial covers every ordinary script acting for its pane, and goes when the pane closes. Its rows
+  still go with its connection. A controlled REPL's questions had no scope, so a denial of one never covered the
+  next. They now take the kind of request and the control generation, as a terminal tab's do. If the user wants an
+  ordinary script's denial narrower, the key would need an identity the script cannot fake, which M6 does not have.
+- 2026-11-12: Showed a row's oldest waiting operation (work-queue best guess). A request that joined a row kept the
+  first request's text. After Allow once released that first write, the row still showed its text, and the next
+  Allow once wrote text the user never saw. Each waiting operation now keeps its own text, and the row shows the
+  oldest, which is the one Allow once releases.
+- 2026-11-12: Sent a run to review when a policy removal overlapped its admission (work-queue best guess). Admission
+  reads the policy file off the main actor, and a removal writes it off the main actor. A run whose read came before
+  the removal could start under the removed policy after the revoke had ended the policy's runs. A run is now
+  covered only when no removal began or ended since its admission started, and none is under way. Otherwise the
+  user reviews it. A run whose review chose a trust choice while a removal ran starts for its session, under no
+  policy. A removal of any policy sends an overlapping run to review, which can ask once more than needed. The
+  durable policies bullet now says so.
+- 2026-11-12: Resolved links in a host launch's folder (work-queue best guess). A launch's folder was compared with
+  the approved folder as text. A link inside the approved folder could then lead a covered driver anywhere. Both
+  folders are now compared with every link resolved, and a covered driver starts in the resolved folder, so a link
+  changed after the check cannot move it. A folder that does not exist is not covered. The links are resolved off
+  the main actor, as ADR-08 asks of disk work with no bound, so a covered launch starts a moment after Run. The
+  other option was to cover only the approved folder itself, which needs no disk work but drops the folders inside
+  it. Policy containment at admission still compares the declared text, since no driver runs there. The host-launch bullet now says so.
+- 2026-11-12: Read the clipboard off the main actor for typed requests (work-queue best guess). A script's or a
+  driver's typed read asked the general pasteboard on the main actor. An app can supply its text only when asked, so
+  the read could wait on another process, which ADR-08 forbids. The read now runs off the main actor, and the grant
+  is checked again before any text goes to the program. A typed write still runs on the main actor, since it hands
+  the text to the pasteboard server and waits on no other app. The terminal's own paste predates M6 and is left as
+  it was.
+- 2026-11-12: Refused a linked policy folder and a policy file that is no regular file (work-queue best guess). The
+  store made its folder private with a call that follows a link, so a link in its place made the link's target
+  private and kept the policies there. A FIFO in the file's place made every read wait forever while it held the
+  lock. Both now grant nothing and wait on nothing, and the notice says why.
+- 2026-11-12: Found the continuous beeping, and ended a test process whose runner is gone (work-queue best guess).
+  Two things went wrong on the night M6's first round ran. A consent test waited, with no deadline, on a question a
+  broken denial left unanswered. Its cancelled `swift test` left the test process running, since SwiftPM gives it a
+  process group of its own. Separately, the system sound server's log shows about 580 alert sounds in two minutes,
+  all from the two app processes of the coordinator's UI run, and none from the hung test process. The new consent
+  UI test typed a shell command while Controllers & Permissions or the Pending Requests panel was key. No text view
+  took the keys, so each character beeped, and the command never reached the terminal. The UI test now clicks the
+  terminal before it types. The package's test bundle now links a small guard that exits when the process that
+  started it exits, and the consent tests bound every wait, so a wait that runs out fails and stops its test. A
+  cancelled hung run was checked with and without the guard: without it the process stayed, and with it nothing was
+  left.
 
 ## References
 

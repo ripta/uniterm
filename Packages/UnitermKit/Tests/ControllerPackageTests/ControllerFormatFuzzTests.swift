@@ -5,8 +5,8 @@ import XCTest
 
 @testable import ControllerPackage
 
-/// A seeded mutation fuzzer for the controller formats: the descriptor, the signature file, and
-/// the Mach-O load commands. Each input is a valid document or image with bytes flipped, cut, or
+/// A seeded mutation fuzzer for the controller formats: the descriptor in both formats, the
+/// signature file, and the Mach-O load commands. Each input is a valid document or image with bytes flipped, cut, or
 /// inserted.
 ///
 /// `make test-package` runs it at a small count. `make fuzz` runs it under the address sanitizer
@@ -30,6 +30,7 @@ final class ControllerFormatFuzzTests: XCTestCase {
     return [
       try Data(contentsOf: package.appendingPathComponent("controller.json")),
       try Data(contentsOf: package.appendingPathComponent("controller.sig")),
+      try ControllerFixtures.descriptor(ControllerFixtures.formatTwo),
     ] + (try ControllerFixtures.rejected.map { try ControllerFixtures.descriptor($0.name) })
   }
 

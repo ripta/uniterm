@@ -111,8 +111,19 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Asks the user for a driver's environment values. Tests replace it.
   var execValuesAsker: ExecValuesAsker = ExecValuesSheet.present
 
-  /// Asks the user for a permission an applet requests. Tests replace it.
-  var permissionAsker: PermissionAsker = PermissionDialog.present
+  /// Asks the user for a permission an applet requests. Nil puts the question in the Pending
+  /// Requests panel, which is the only way the app asks. Tests may replace it.
+  var permissionAsker: PermissionAsker?
+
+  /// The permission questions every window and the script host share. The window set gives every
+  /// window the same one.
+  var permissionRequests = PermissionRequests()
+
+  /// The clipboard a driver's typed clipboard requests reach. Without one, they are refused.
+  weak var clipboard: (any ScriptClipboard)?
+
+  /// Counts permission questions with no scope, so each gets a key of its own.
+  var lastPermissionScope: UInt64 = 0
 
   /// The tabs that took focus, newest first. It lives in memory only. A tab ID is never reused,
   /// so an entry for a tab that closed is harmless and the palette prunes it when it lists.
@@ -1448,7 +1459,32 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     var named = request
     named.detail = "Pane \u{201C}\(name)\u{201D}. \(request.detail)"
 
-    return await permissionAsker(named, window)
+    if let permissionAsker { return await permissionAsker(named, window) }
+
+    guard let pane = paneArea.paneID(for: applet) else { return .deny }
+
+    let requester = PermissionRequests.Requester.terminal(
+      window: scriptWindowID, pane: pane.rawValue)
+
+    lastPermissionScope += 1
+
+    let key = PermissionRequests.Key(
+      requester: requester, power: named.scope ?? "question \(lastPermissionScope)")
+
+    return await withCheckedContinuation { continuation in
+      let outcome = permissionRequests.ask(
+        key, subject: "Programs in \u{201C}\(name)\u{201D}", title: named.title,
+        detail: named.detail, sessionTitle: named.sessionTitle
+      ) { answer in
+        switch answer {
+        case .allowOnce: continuation.resume(returning: .allowOnce)
+        case .allowForSession: continuation.resume(returning: .allowForSession)
+        case .deny, .withdrawn: continuation.resume(returning: .deny)
+        }
+      }
+
+      if outcome != .waiting { continuation.resume(returning: .deny) }
+    }
   }
 
   func applet(

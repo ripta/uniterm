@@ -46,6 +46,10 @@ final class ExecWireTests: XCTestCase {
       #"{"type":"command","id":1,"name":"x","pane":"3","applet":"a","schema":1}"#,
       #"{"type":"layout","id":1}"#, #"{"type":"layout","id":1,"layout":[1]}"#,
       #"{"type":"layout","layout":{}}"#,
+      #"{"type":"clipboard-read"}"#, #"{"type":"clipboard-write","id":1}"#,
+      #"{"type":"clipboard-write","id":1,"text":3}"#,
+      #"{"type":"clipboard-write","id":1,"text":""#
+        + String(repeating: "x", count: ExecProtocol.maxClipboardBytes + 1) + #""}"#,
       String(repeating: "[", count: ExecProtocol.maxDepth + 1),
       "[" + Array(repeating: "1", count: ExecProtocol.maxValues + 1).joined(separator: ","),
     ]
@@ -70,6 +74,14 @@ final class ExecWireTests: XCTestCase {
     XCTAssertEqual(
       try ExecWire.decode(Data(#"{"type":"layout","id":3,"layout":{"pane":1}}"#.utf8)),
       .layout(id: .number(3), layout: .object(["pane": .number(1)])))
+
+    XCTAssertEqual(
+      try ExecWire.decode(Data(#"{"type":"clipboard-read","id":4}"#.utf8)),
+      .clipboardRead(id: .number(4)))
+
+    XCTAssertEqual(
+      try ExecWire.decode(Data(#"{"type":"clipboard-write","id":"w","text":"a\nb"}"#.utf8)),
+      .clipboardWrite(id: .string("w"), text: "a\nb"))
   }
 
   /// Catches a frame for the driver that holds a raw newline, which would split one message into

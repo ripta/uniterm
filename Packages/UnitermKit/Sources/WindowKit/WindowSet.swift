@@ -369,6 +369,17 @@ public final class WindowSet {
   /// requests and grants, and only the panel decides them.
   public let launchAuthority = ExecLaunchAuthority()
 
+  /// The permission questions of every window, its drivers, and its terminals. The script host
+  /// takes the same one, so the Pending Requests panel lists them all in one place.
+  public let permissionRequests = PermissionRequests()
+
+  /// The clipboard drivers' typed clipboard requests reach. The app sets the general pasteboard.
+  public var clipboard: (any ScriptClipboard)? {
+    didSet {
+      for controller in controllers { controller.clipboard = clipboard }
+    }
+  }
+
   /// How long the quit waits, in all, for drivers to end on SIGTERM before their groups get
   /// SIGKILL. ADR-08 lets the main thread wait this long because the bound is fixed.
   public static let driverQuitGrace: TimeInterval = 0.5
@@ -416,6 +427,8 @@ public final class WindowSet {
     controller.scriptWindowID = windowIDs.next()
     controller.controllerAuthority = controllerAuthority
     controller.launchAuthority = launchAuthority
+    controller.permissionRequests = permissionRequests
+    controller.clipboard = clipboard
     controller.onClose = { [weak self] controller in
       self?.windowDidClose(controller)
     }
@@ -505,6 +518,15 @@ public final class WindowSet {
     controllers.removeAll { $0 === controller }
     onScriptWindowClosed?(controller.scriptWindowID)
     launchAuthority.windowClosed(controller.scriptWindowID)
+
+    let window = controller.scriptWindowID
+
+    permissionRequests.end { requester in
+      switch requester {
+      case .driver(let id, _, _), .terminal(let id, _), .paneScripts(let id, _): return id == window
+      case .connection, .controllerVersion: return false
+      }
+    }
 
     keyOrder.removeAll { $0 === controller }
     closing.append(controller)
