@@ -136,6 +136,14 @@ if ($mode eq "script") {
         }
     }
     serve();
+} elsif ($mode eq "clipboard-sizes") {
+    # Writes one clipboard text of each size in the arguments, every byte a control character, so
+    # the JSON encoder escapes each one to six bytes. A test sizes the text, not the argv.
+    read_app_hello();
+    hello($protocol, $schema);
+    request({type => "clipboard-write", text => "\x01" x $_}) for @rest;
+    command("status", {});
+    serve();
 } elsif ($mode eq "env") {
     my ($file) = @rest;
     read_app_hello();

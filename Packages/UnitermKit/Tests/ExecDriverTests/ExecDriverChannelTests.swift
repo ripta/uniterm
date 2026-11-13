@@ -43,7 +43,7 @@ final class ExecDriverChannelTests: XCTestCase {
   private func start(
     _ mode: String, type: String = SlidesFixture.typeID, schema: Int = 1, _ rest: [String] = [],
     directory: String? = nil, keys: [String] = [], values: [String: String] = [:],
-    killGrace: DispatchTimeInterval = .seconds(2)
+    killGrace: DispatchTimeInterval = .seconds(2), host: ExecDriverChannel.HostHandler? = nil
   ) throws -> ExecDriverChannel {
     let declaration = try ExecDeclaration(
       arguments: ExecTestDriver.arguments(mode, type: type, schema: schema, rest),
@@ -55,7 +55,7 @@ final class ExecDriverChannelTests: XCTestCase {
     let channel = ExecDriverChannel(
       launch: launch, environment: environment, applet: applet, dispatcher: dispatcher,
       authority: { nil }, producer: center.issueProducer(kind: .applet, name: "driver"),
-      killGrace: killGrace, onEnd: { [weak self] end in self?.ended.append(end) })
+      killGrace: killGrace, host: host, onEnd: { [weak self] end in self?.ended.append(end) })
 
     channels.append(channel)
     try channel.start()
@@ -193,6 +193,35 @@ final class ExecDriverChannelTests: XCTestCase {
 
       XCTAssertTrue(reason.contains(needle), "\(mode): \(reason)")
     }
+  }
+
+  /// Catches a clipboard write that ends the driver for its size. A write at the bound, every byte
+  /// escaped to six, still fits one frame and reaches the window. A write one byte longer is
+  /// refused as that call alone, before the window sees it, and the driver's next command runs.
+  func testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives() async throws {
+    var writes: [Int] = []
+    let bound = ExecProtocol.maxClipboardBytes
+
+    let channel = try start(
+      "clipboard-sizes", [String(bound), String(bound + 1)],
+      host: { request, reply in
+        if case .clipboardWrite(let text) = request { writes.append(text.utf8.count) }
+
+        reply(.success(.object([:])))
+      })
+
+    await waitUntil("the channel ends or answers both writes and the command after them") {
+      !ended.isEmpty
+        || (historyTexts.contains("got error bad-argument")
+          && historyTexts.count(where: { $0 == "got reply" }) == 2)
+    }
+
+    XCTAssertEqual(channel.phase, .connected, "the channel ended: \(ended)")
+    XCTAssertEqual(writes, [bound])
+    XCTAssertTrue(historyTexts.contains("got error bad-argument"), "\(historyTexts)")
+    XCTAssertTrue(
+      historyTexts.contains { $0.hasPrefix("error message:") && $0.contains("\(bound) bytes") },
+      "\(historyTexts)")
   }
 
   /// Catches a flood of small commands from a driver that never reads its replies, growing a

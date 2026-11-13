@@ -48,8 +48,6 @@ final class ExecWireTests: XCTestCase {
       #"{"type":"layout","layout":{}}"#,
       #"{"type":"clipboard-read"}"#, #"{"type":"clipboard-write","id":1}"#,
       #"{"type":"clipboard-write","id":1,"text":3}"#,
-      #"{"type":"clipboard-write","id":1,"text":""#
-        + String(repeating: "x", count: ExecProtocol.maxClipboardBytes + 1) + #""}"#,
       String(repeating: "[", count: ExecProtocol.maxDepth + 1),
       "[" + Array(repeating: "1", count: ExecProtocol.maxValues + 1).joined(separator: ","),
     ]
@@ -82,6 +80,36 @@ final class ExecWireTests: XCTestCase {
     XCTAssertEqual(
       try ExecWire.decode(Data(#"{"type":"clipboard-write","id":"w","text":"a\nb"}"#.utf8)),
       .clipboardWrite(id: .string("w"), text: "a\nb"))
+  }
+
+  /// Catches a clipboard text that passes the byte bound and still overruns the frame once JSON
+  /// escapes it. A control character escapes to six bytes, so a text at the bound must fit one
+  /// frame both ways: in the app's reply to a read, and in a driver's write with every byte and
+  /// the longest request ID escaped. The channel refuses a longer write as one call, so the
+  /// decoder passes it on rather than failing the wire.
+  func testAClipboardTextAtTheBoundFitsOneFrameEitherWayWhenEveryByteEscapes() throws {
+    let text = String(repeating: "\u{1}", count: ExecProtocol.maxClipboardBytes)
+    let id = String(repeating: "\u{1}", count: ExecProtocol.maxRequestIDBytes)
+
+    let reply = ExecWire.frame(.reply(id: .string(id), result: .object(["text": .string(text)])))
+
+    XCTAssertLessThanOrEqual(reply.count - 1, ExecProtocol.maxFrameBytes)
+
+    let escaped = String(repeating: #"\u0001"#, count: ExecProtocol.maxClipboardBytes)
+    let escapedID = String(repeating: #"\u0001"#, count: ExecProtocol.maxRequestIDBytes)
+    let write = #"{"id":"\#(escapedID)","text":"\#(escaped)","type":"clipboard-write"}"#
+    var reader = ExecFrameReader()
+    let lines = try reader.feed(Array((write + "\n").utf8))
+
+    XCTAssertEqual(lines.count, 1)
+    XCTAssertEqual(
+      try ExecWire.decode(try XCTUnwrap(lines.first)), .clipboardWrite(id: .string(id), text: text))
+
+    let over = String(repeating: "x", count: ExecProtocol.maxClipboardBytes + 1)
+
+    XCTAssertEqual(
+      try ExecWire.decode(Data(#"{"type":"clipboard-write","id":1,"text":"\#(over)"}"#.utf8)),
+      .clipboardWrite(id: .number(1), text: over))
   }
 
   /// Catches a frame for the driver that holds a raw newline, which would split one message into

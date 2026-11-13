@@ -137,7 +137,6 @@ public final class PermissionRequests {
   public static let maxRows = 64
   public static let maxRowsPerRequester = 16
   public static let maxPerRow = 8
-  public static let maxDenials = 64
 
   public private(set) var rows: [Row] = []
   public private(set) var denials: [Denial] = []
@@ -237,13 +236,14 @@ public final class PermissionRequests {
   }
 
   /// Records a denial with no row, such as a refused startup review.
+  ///
+  /// Denials have no count bound, and none is ever dropped to make room. Each one is a user's Deny.
+  /// No program can grow the list. Dropping a denial would ask its program again on its own.
   public func recordDenial(_ key: Key, subject: String, title: String) {
     guard !isDenied(key) else { return }
 
     lastID += 1
     denials.append(Denial(id: lastID, key: key, subject: subject, title: title))
-
-    if denials.count > Self.maxDenials { denials.removeFirst(denials.count - Self.maxDenials) }
 
     changes.notify()
   }
