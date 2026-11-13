@@ -14,8 +14,13 @@ public enum ExecProtocol {
   public static let version = 3
 
   /// The most clipboard text one typed clipboard request reads or writes, in UTF-8 bytes. A larger
-  /// clipboard is refused, never cut.
-  public static let maxClipboardBytes = 256 * 1024
+  /// clipboard is refused, never cut. A longer write is refused as that one call while its line
+  /// fits a frame. A line past the frame still ends the driver, since the reader never learns its
+  /// request ID.
+  ///
+  /// JSON escapes a control character to six bytes. The bound is an eighth of a frame. A text at
+  /// the bound therefore fits one frame with the rest of its message, however it is escaped.
+  public static let maxClipboardBytes = 128 * 1024
 
   /// The longest frame, newline excluded. The reader refuses a longer line before it has
   /// buffered the whole of it.
@@ -91,7 +96,8 @@ public enum ExecDriverMessage: Sendable, Equatable {
   /// A read of the clipboard's plain text. It is a power of its own, apart from writes.
   case clipboardRead(id: JSONValue)
 
-  /// A write of plain text to the clipboard. It is a power of its own, apart from reads.
+  /// A write of plain text to the clipboard. It is a power of its own, apart from reads. The text
+  /// may pass `maxClipboardBytes`, and the channel refuses that write alone.
   case clipboardWrite(id: JSONValue, text: String)
 
   /// The driver refuses the app, such as for an app hello it does not support. The text is shown.
@@ -194,11 +200,9 @@ public enum ExecWire {
       return .clipboardRead(id: try requestID(fields["id"]))
 
     case "clipboard-write":
-      guard case .string(let text)? = fields["text"],
-        text.utf8.count <= ExecProtocol.maxClipboardBytes
-      else {
-        throw .malformed(
-          "its text is not a string of at most \(ExecProtocol.maxClipboardBytes) bytes")
+      // Text past the clipboard bound is still a message. The channel refuses that one write.
+      guard case .string(let text)? = fields["text"] else {
+        throw .malformed("its text is not a string")
       }
 
       return .clipboardWrite(id: try requestID(fields["id"]), text: text)

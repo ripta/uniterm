@@ -176,21 +176,31 @@ final class PaneControlTests: XCTestCase {
       details.append(question.detail)
       return false
     }
-    controller.permissionAsker = { request, _ in
-      details.append(request.detail)
-      return .deny
-    }
 
     _ = await controller.applet(
       applet,
       confirm: AppletConfirmation(
         title: "t", detail: "d", confirmTitle: "a", cancelTitle: "b", subject: "background-tab"))
-    _ = await controller.applet(
-      applet,
-      askPermission: AppletPermissionRequest(
-        title: "t", detail: "d", subject: "background-tab", sessionTitle: "s"))
 
-    XCTAssertEqual(details.count, 2)
+    let asked = Task {
+      await controller.applet(
+        applet,
+        askPermission: AppletPermissionRequest(
+          title: "t", detail: "d", subject: "background-tab", sessionTitle: "s"))
+    }
+
+    for _ in 0..<1000 where controller.permissionRequests.rows.isEmpty { await Task.yield() }
+
+    let row = try XCTUnwrap(controller.permissionRequests.rows.first)
+
+    details.append(row.detail)
+    details.append(row.subject)
+    controller.permissionRequests.decide(row.id, .deny)
+
+    let answer = await asked.value
+
+    XCTAssertEqual(answer, .deny)
+    XCTAssertEqual(details.count, 3)
 
     for detail in details {
       XCTAssertTrue(detail.contains("background-tab"), detail)

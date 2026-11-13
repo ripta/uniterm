@@ -61,7 +61,8 @@ public final class ExecDriverChannel: AppletEventSink {
     /// A read of the clipboard. The reply is `{"text": ...}`, with null for no text.
     case clipboardRead
 
-    /// A write of plain text to the clipboard. The reply is an empty object.
+    /// A write of plain text to the clipboard, of at most `maxClipboardBytes`. The channel
+    /// refuses a longer one that reached it as one message. The reply is an empty object.
     case clipboardWrite(String)
   }
 
@@ -280,6 +281,17 @@ public final class ExecDriverChannel: AppletEventSink {
       ask(.clipboardRead, id: id)
 
     case (.connected, .clipboardWrite(let id, let text)):
+      guard text.utf8.count <= ExecProtocol.maxClipboardBytes else {
+        answer(
+          id: id,
+          with: .failure(
+            AppletCommandError(
+              .badArgument,
+              "The text is \(text.utf8.count) bytes, more than the "
+                + "\(ExecProtocol.maxClipboardBytes) bytes a driver may write to the clipboard.")))
+        return
+      }
+
       ask(.clipboardWrite(text), id: id)
 
     case (_, .refusal(let text)):

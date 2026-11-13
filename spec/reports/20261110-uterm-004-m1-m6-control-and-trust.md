@@ -1228,3 +1228,48 @@ New test files take 0.01 to 0.40 seconds per test in the full package run.
   owning connection narrows it. It is not confirmed closed.
 - Whether a rebuilt ad-hoc-signed command reads an earlier build's Keychain signing key without a prompt is unprobed.
   The proposal says so.
+
+## Row review
+
+A reviewer weighed the row's eight commits together, and `adr-impact` checked them against every ADR. `adr-impact`
+found no conflict. ADR-10's in-place edit matches the user's decision. It found no ADR candidate beyond the two
+already recorded as `Undecided`.
+
+The reviewer found the wire versions consistent: ScriptWire 9 and exec 3 each refuse any other version at hello. M1's
+pending-request rows still feed the same panel as M6's rows, so they are not dead scaffolding. Its findings:
+
+1. A Decision Log edit in UTERM-005 dropped the blank line before `## References`. Another session's commit, "Carry
+   browser automation's decisions into the browser and inspector proposals", made it. Left for the user.
+2. Fixed. Fifteen UTERM-004 lines ran past 120 columns. They were rewrapped, with no words changed, and four sentence
+   chains were split.
+3. PLAUSIBLE, confirmed. A driver's clipboard text was bounded at 256 KiB before JSON escaping. A control-heavy text
+   at the bound escaped past the 1 MiB frame cap, and the reader then ended the driver. Both new tests failed red
+   first: the reply frame measured 1,573,293 bytes. The bound is now 128 KiB, so an escaped text at the bound always
+   fits one frame. A too-long write is refused for that call alone. A line longer than 1 MiB still ends the driver,
+   since the reader refuses it before it learns the request ID. The proposal now states the bound, and why the script
+   wire's 32 KiB differs.
+4. PLAUSIBLE, confirmed. Denials past 64 dropped the oldest, so an old requester could be asked again with no retry.
+   The new test failed red first. The cap is removed. Only a user's Deny adds a denial, so no program can grow the
+   list.
+5. A public test-only permission hook was removed. The pane-control test now drives the real Pending Requests path.
+
+### Best guesses
+
+1. The exec clipboard bound is 128 KiB, an eighth of a frame. Raising the frame to 2 MiB would double what a reader
+   may hold for one line. Wrong: larger clipboards need a larger frame.
+2. A too-long write is refused as `bad-argument`. A too-long read still answers `failed`.
+3. Denials have no count bound. Wrong: the bound comes back as a busy refusal, never as dropping the oldest.
+4. The exec protocol stays at version 3. This row introduced the clipboard messages, and none shipped with the old
+   bound.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| `make fmt-check`, `make lint`, `make check` | pass |
+| `make build` | succeeded |
+| `caffeinate -dimsu make test-package` | 2445 tests, 9 skipped, 0 failures |
+| `make test-helper-sandbox` | 8 tests, 0 failures |
+| `scripts/check-sandbox-off.sh` | sandbox off |
+| `make fuzz` | 19 tests, 0 failures |
+| `proposals.py check` and `freeze` | only the expected findings and the UTERM-003 hunk, origin `other` |
