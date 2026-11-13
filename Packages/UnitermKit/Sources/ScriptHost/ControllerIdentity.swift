@@ -1,4 +1,5 @@
 import ControllerPackage
+import ControllerTrust
 import Darwin
 import FileRouting
 import Foundation
@@ -13,9 +14,20 @@ public struct ControllerSettings: Sendable {
 
   public let helper: any ControllerHelperIdentity
 
-  public init(runsRoot: URL, helper: any ControllerHelperIdentity) {
+  /// The remembered approvals. Without it, nothing is remembered and only Allow once and Allow
+  /// for this session are offered.
+  let trust: ControllerTrustStore?
+
+  /// `trustDirectory` is the folder of the private policy file, or nil to remember nothing.
+  public init(runsRoot: URL, helper: any ControllerHelperIdentity, trustDirectory: URL? = nil) {
     self.runsRoot = runsRoot
     self.helper = helper
+    trust = trustDirectory.map(ControllerTrustStore.init(directory:))
+  }
+
+  /// The policy folder under the user's Application Support, which layout files never share.
+  public static func defaultTrustDirectory() throws -> URL {
+    try ControllerTrustStore.defaultDirectory()
   }
 
   /// The settings for the running app, with the command inside its own bundle. Each instance keeps
@@ -24,7 +36,7 @@ public struct ControllerSettings: Sendable {
   /// never one that a running instance still runs a controller from. `process` is a parameter so
   /// a test stands in for another instance.
   public static func atLaunch(
-    root: URL, process: ProcessIdentity = .current,
+    root: URL, trustDirectory: URL?, process: ProcessIdentity = .current,
     helper: any ControllerHelperIdentity = BundleHelperIdentity.current()
   ) throws -> ControllerSettings {
     try ControllerSnapshot.prepareRunsRoot(root)
@@ -42,7 +54,8 @@ public struct ControllerSettings: Sendable {
     }
 
     return ControllerSettings(
-      runsRoot: root.appendingPathComponent(process.folderName, isDirectory: true), helper: helper)
+      runsRoot: root.appendingPathComponent(process.folderName, isDirectory: true), helper: helper,
+      trustDirectory: trustDirectory)
   }
 
   /// The runs folder under the user's caches, which the app alone writes.
@@ -218,6 +231,31 @@ struct CodeIdentity: Equatable {
   }
 }
 
+/// How the user approved a run's requested powers.
+public enum ControllerApproval: Sendable, Equatable {
+  /// The run asked for no power, so there was nothing to review.
+  case nothingRequested
+
+  /// The start alone. Each later use of a power asks on its own.
+  case once
+
+  /// The requested powers, for this run.
+  case session
+
+  /// A remembered policy covered the request.
+  case remembered(ControllerSelector)
+
+  public var displayText: String {
+    switch self {
+    case .nothingRequested: return "No powers requested"
+    case .once: return "Allowed once"
+    case .session: return "Allowed for this session"
+    case .remembered(.version): return "Trusted version"
+    case .remembered(.identity): return "Trusted identity"
+    }
+  }
+}
+
 /// One admitted controller run: what was verified, and the live process and connection it is bound
 /// to. It is the run's authority, never a remembered trust. It ends when the run's process exits or
 /// starts another executable, when the connection closes, or when the user revokes the controller.
@@ -230,9 +268,15 @@ public struct ControllerRun: Sendable, Equatable {
   public let entryKind: ControllerEntryKind
   public let entryPath: String
 
-  /// What the run may do: the descriptor's pane control, and the capabilities the user granted
-  /// with `--allow`, each one declared.
+  /// What the run asked for and the user's review covered: the descriptor's other powers, and the
+  /// capabilities named with `--allow`, each one declared.
   public let scopes: Set<ControllerPermission>
+
+  public let approval: ControllerApproval
+
+  /// The powers the run may use without asking again. Under Allow once it holds only the
+  /// capabilities its start applied. An operation the user allows for the session adds its power.
+  public internal(set) var standing: Set<ControllerPermission>
 
   public let pid: pid_t
 

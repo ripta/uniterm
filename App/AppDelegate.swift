@@ -45,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var layoutPersistence: LayoutPersistence?
   private var settingsWindowController: SettingsWindowController?
   private var pendingRequestsWindowController: PendingRequestsWindowController?
+  private var controllersWindowController: ControllersWindowController?
+  private let clipboard = PasteboardClipboard()
+  private var pendingObserver: ChangeObservers.Token?
   private var browserWebsiteData: BrowserWebsiteData?
   private var scriptHost: ScriptHost?
   private var askingToQuit = false
@@ -179,12 +182,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return try ControllerSettings.defaultRunsRoot()
   }
 
+  /// Where remembered controller approvals live.
+  ///
+  /// UI tests set `UNITERM_CONTROLLER_POLICY_DIR` so remembered controller approvals stay out of
+  /// the developer's own policy file. Only debug builds honor it, for the same reason as the
+  /// layout folder.
+  private func controllerPolicyDirectory() -> URL? {
+    #if DEBUG
+      if let path = debugEnvironment["UNITERM_CONTROLLER_POLICY_DIR"] {
+        return URL(fileURLWithPath: path, isDirectory: true)
+      }
+    #endif
+
+    do {
+      return try ControllerSettings.defaultTrustDirectory()
+    } catch {
+      logger.error("controller trust is off: \(String(describing: error), privacy: .public)")
+      return nil
+    }
+  }
+
   /// Where controller runs keep their snapshots, and the bundle command that may ask for one. The
   /// snapshots that ended instances left are removed first. A failure leaves scripting running
   /// without controller packages, and says so in the log.
   private func makeControllerSettings() -> ControllerSettings? {
     do {
-      return try ControllerSettings.atLaunch(root: try controllerRunsDirectory())
+      return try ControllerSettings.atLaunch(
+        root: try controllerRunsDirectory(), trustDirectory: controllerPolicyDirectory())
     } catch {
       logger.error("controller runs are off: \(String(describing: error), privacy: .public)")
       return nil
@@ -208,7 +232,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           self?.logger.error("a script connection was refused: \(refusal.text, privacy: .public)")
           self?.windowSet?.post(level: .warning, text: refusal.text)
         },
-        controllers: makeControllerSettings())
+        controllers: makeControllerSettings(), clipboard: clipboard,
+        permissionRequests: windows.permissionRequests)
 
       host.start()
       scriptHost = host
@@ -216,6 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       windows.wireControllers(to: host)
 
       host.onPendingRequestsActiveChanged = { [weak self] _ in self?.refreshPendingSlot() }
+      pendingObserver = windows.permissionRequests.changes.add { [weak self] in
+        self?.refreshPendingSlot()
+      }
 
       windows.wireSessionReporting(
         onStarted: { [weak host] windowID, pane, _, pid, started, generation in
@@ -333,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         newWindow: { [weak self] in self?.openWindow() },
         showSettings: { [weak self] in self?.presentSettings() },
         showPendingRequests: { [weak self] in self?.presentPendingRequests() },
+        showControllers: { [weak self] in self?.presentControllers() },
         installCommandLineTool: { [weak self] in self?.installCommandLineTool() },
         openFile: { [weak self] anchor in
           Task { await self?.fileOpens?.open(from: anchor) }
@@ -478,6 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           places: places, makeApplet: makeApplet)
       })
     windowSet = windows
+    windows.clipboard = clipboard
     windows.launchAuthority.onActiveChanged = { [weak self] _ in self?.refreshPendingSlot() }
 
     // Scripting starts before any window, so a REPL that a window restores finds the listener.
@@ -777,19 +807,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     controller.present()
   }
 
-  /// The pending-permissions slot shows while a program waits for a pane or a driver waits to run.
+  /// The pending-permissions slot shows while a program waits for a pane, a controller waits for
+  /// its review, a driver waits to run, or any program waits for a permission.
   private func refreshPendingSlot() {
     guard let windows = windowSet else { return }
 
     let waiting =
-      scriptHost?.allPendingRequests().isEmpty == false
-      || !windows.launchAuthority.requests.isEmpty
+      scriptHost?.hasPendingWork == true || !windows.launchAuthority.requests.isEmpty
+      || windows.permissionRequests.isWaiting
 
     if waiting {
       windows.setWindowState(.pendingPermissions, text: "Pending permission requests")
     } else {
       windows.clearWindowState(.pendingPermissions)
     }
+  }
+
+  /// Opens Controllers & Permissions. Without scripting there is nothing to list, so it says so.
+  private func presentControllers() {
+    guard let scriptHost else {
+      let alert = NSAlert()
+
+      alert.messageText = "No controllers can run"
+      alert.informativeText = "Scripting did not start, so no controller runs or approvals exist."
+      alert.addButton(withTitle: "OK")
+      alert.runModal()
+
+      return
+    }
+
+    let controller =
+      controllersWindowController ?? ControllersWindowController(scriptHost: scriptHost)
+    controllersWindowController = controller
+    controller.present()
   }
 
   private func presentPendingRequests() {

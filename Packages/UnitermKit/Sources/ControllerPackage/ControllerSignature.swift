@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Security
 
 /// A controller's optional `controller.sig`: an Ed25519 signature over the exact bytes of its
 /// `controller.json`.
@@ -123,8 +124,7 @@ public struct ControllerSignature: Equatable, Sendable {
   }
 }
 
-/// A key that signs controller descriptors. Where the private key lives is the key's own business,
-/// so a key file now and the Keychain later both fit.
+/// A key that signs controller descriptors. Where the private key lives is its store's business.
 public protocol ControllerSigningKey: Sendable {
   /// The raw 32-byte Ed25519 public key.
   var publicKey: Data { get }
@@ -154,66 +154,144 @@ public struct InMemorySigningKey: ControllerSigningKey {
   }
 }
 
-/// A private key in a file of its own: the 32 raw bytes, readable by its owner alone.
-public enum ControllerKeyFile {
-  /// Makes a new key at `path`. An existing file is never replaced, so a key cannot be lost by
-  /// making another over it.
-  public static func create(at path: String) throws -> InMemorySigningKey {
-    let key = InMemorySigningKey()
-    let descriptor = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+/// Where signing keys live. Each key has a name the user chose. Making a key never replaces one,
+/// and a missing key is an error, so signing never goes on with a different identity.
+public protocol ControllerKeyStore: Sendable {
+  /// Makes a new key under `name`. Throws when a key of that name exists.
+  func create(named name: String) throws -> any ControllerSigningKey
 
-    guard descriptor >= 0 else {
-      throw ControllerPackageError.io("cannot create the key \(path): \(errnoText())")
+  /// The key under `name`. Throws when there is none.
+  func key(named name: String) throws -> any ControllerSigningKey
+}
+
+extension ControllerKeyStore {
+  /// The longest key name, in UTF-8 bytes.
+  public static var maxNameBytes: Int { 128 }
+
+  /// A key name is printable text with no edge spaces.
+  public static func checkName(_ name: String) throws {
+    guard !name.isEmpty, name.utf8.count <= maxNameBytes,
+      name.trimmingCharacters(in: .whitespaces) == name,
+      name.unicodeScalars.allSatisfy({ !$0.properties.generalCategory.isControlOrFormat })
+    else {
+      throw ControllerPackageError.io(
+        "a key name must be 1 to \(maxNameBytes) bytes of printable text with no edge spaces")
+    }
+  }
+}
+
+/// Keys as generic-password items in the user's login Keychain. Each item holds the 32-byte
+/// Ed25519 private key, under the store's service and the key's name as its account.
+public struct KeychainKeyStore: ControllerKeyStore {
+  /// The service every uniterm signing key is filed under.
+  public static let defaultService = "dev.uniterm.controller-signing-key"
+
+  public let service: String
+
+  public init(service: String = defaultService) {
+    self.service = service
+  }
+
+  public func create(named name: String) throws -> any ControllerSigningKey {
+    try Self.checkName(name)
+
+    let key = InMemorySigningKey()
+    let attributes: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: name,
+      kSecAttrLabel as String: "uniterm controller signing key \(name)",
+      kSecValueData as String: key.seed,
+    ]
+
+    let status = SecItemAdd(attributes as CFDictionary, nil)
+
+    guard status != errSecDuplicateItem else {
+      throw ControllerPackageError.io(
+        "a signing key named \(name) is already in your login Keychain. uniterm never replaces a "
+          + "key. Choose another name.")
     }
 
-    defer { close(descriptor) }
-
-    let seed = key.seed
-    let written = seed.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
-
-    guard written == seed.count, fsync(descriptor) == 0 else {
-      let reason = errnoText()
-
-      unlink(path)
-
-      throw ControllerPackageError.io("cannot write the key \(path): \(reason)")
+    guard status == errSecSuccess else {
+      throw ControllerPackageError.io(
+        "cannot add the key \(name) to your login Keychain: \(Self.text(status))")
     }
 
     return key
   }
 
-  /// Reads a key. A file another user owns, one that a group or others can read, a link, or one of
-  /// the wrong size is refused.
-  public static func load(from path: String) throws -> InMemorySigningKey {
-    let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+  public func key(named name: String) throws -> any ControllerSigningKey {
+    try Self.checkName(name)
 
-    guard descriptor >= 0 else {
-      throw ControllerPackageError.io("cannot open the key \(path): \(errnoText())")
-    }
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: name,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
 
-    defer { close(descriptor) }
-
-    var info = stat()
-
-    guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
-      throw ControllerPackageError.io("the key \(path) is not a plain file")
-    }
-
-    guard info.st_uid == geteuid(), info.st_mode & 0o077 == 0 else {
+    guard status != errSecItemNotFound else {
       throw ControllerPackageError.io(
-        "the key \(path) must belong to you and be readable by you alone. Run chmod 600 on it.")
+        "no signing key named \(name) is in your login Keychain. uniterm signs with no other key "
+          + "in its place, since another key is another identity. Make one with uniterm "
+          + "controller keygen \(name).")
     }
 
-    guard info.st_size == 32 else {
-      throw ControllerPackageError.io("the key \(path) is not a uniterm signing key")
+    guard status == errSecSuccess, let seed = result as? Data else {
+      throw ControllerPackageError.io(
+        "cannot read the key \(name) from your login Keychain: \(Self.text(status))")
     }
 
-    var seed = Data(count: 32)
-    let read = seed.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, 32) }
-
-    guard read == 32 else { throw ControllerPackageError.io("cannot read the key \(path)") }
+    guard seed.count == 32 else {
+      throw ControllerPackageError.io("the Keychain item \(name) is not a uniterm signing key")
+    }
 
     return try InMemorySigningKey(seed: seed)
+  }
+
+  private static func text(_ status: OSStatus) -> String {
+    (SecCopyErrorMessageString(status, nil) as String?) ?? "error \(status)"
+  }
+}
+
+/// Keys held in memory, for tests and for a signer that already has its keys.
+public final class InMemoryKeyStore: ControllerKeyStore, @unchecked Sendable {
+  private let lock = NSLock()
+  private var keys: [String: InMemorySigningKey]
+
+  public init(keys: [String: InMemorySigningKey] = [:]) {
+    self.keys = keys
+  }
+
+  public func create(named name: String) throws -> any ControllerSigningKey {
+    try Self.checkName(name)
+
+    return try lock.withLock {
+      guard keys[name] == nil else {
+        throw ControllerPackageError.io("a signing key named \(name) already exists")
+      }
+
+      let key = InMemorySigningKey()
+
+      keys[name] = key
+
+      return key
+    }
+  }
+
+  public func key(named name: String) throws -> any ControllerSigningKey {
+    try Self.checkName(name)
+
+    return try lock.withLock {
+      guard let key = keys[name] else {
+        throw ControllerPackageError.io("no signing key named \(name)")
+      }
+
+      return key
+    }
   }
 }
 

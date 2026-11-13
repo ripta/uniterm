@@ -55,6 +55,9 @@ public enum ControllerFixtures {
     public static let output = "hello from the fixture controller\n"
   }
 
+  /// A format 2 descriptor with every permission kind at version 1, which every reader accepts.
+  public static let formatTwo = "format-two"
+
   /// Descriptors every reader refuses, with a fragment of the reason each one gives.
   public static let rejected: [(name: String, reason: String)] = [
     ("duplicate-key", "appears twice"),
@@ -65,9 +68,15 @@ public enum ControllerFixtures {
     ("escape-absolute", "not a plain relative path"),
     ("dot-alias", "not a plain relative path"),
     ("unicode-alias", "not a plain relative path"),
-    ("unknown-permission", "not one this uniterm knows"),
+    ("unknown-permission", "not one descriptor format 1 knows"),
+    ("format-one-clipboard", "\"clipboard-read\" is not one descriptor format 1 knows"),
+    ("host-launch-relative", "executable must be an absolute path"),
+    ("missing-version", "a permission is missing \"version\""),
+    ("unknown-version", "clipboard-read version 2 is not one this uniterm knows"),
+    ("unknown-kind-versioned", "\"everything\" is not one descriptor format 2 knows"),
+    ("duplicate-kind", "pane-control is listed twice"),
     ("native-module-capability", "loads native code"),
-    ("newer-format", "format 2 is not one this uniterm reads"),
+    ("newer-format", "format 3 is not one this uniterm reads"),
     ("entry-not-listed", "not among the files"),
     ("boolean-value", "only strings, whole numbers"),
     ("trailing-data", "something follows"),
@@ -106,6 +115,9 @@ public struct ControllerPackageBuilder {
   public var entry = "main.janet"
   public var files: [String: Data] = [:]
 
+  /// The descriptor format. Format 2 permissions must carry their version.
+  public var format = 1
+
   /// Each permission as its JSON object text, such as `{"kind": "pane-control"}`.
   public var permissions: [String] = [#"{"kind": "pane-control"}"#]
 
@@ -124,7 +136,7 @@ public struct ControllerPackageBuilder {
     return Data(
       """
       {
-        "format": 1,
+        "format": \(format),
         "id": "\(id)",
         "name": "\(name)",
         "entry": {"kind": "\(entryKind)", "path": "\(entry)"},

@@ -798,7 +798,9 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
     let subject = label(of: tab)
 
-    if let permission = Self.permission(for: request, subject: subject) {
+    if var permission = Self.permission(for: request, subject: subject) {
+      permission.scope = "tab \(tab.id) \(request.kind) generation \(control.generation)"
+
       Task { @MainActor [weak self] in
         guard let self else {
           request.resolve(.deny)

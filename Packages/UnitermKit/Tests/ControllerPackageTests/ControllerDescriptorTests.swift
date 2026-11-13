@@ -133,22 +133,29 @@ final class ControllerDescriptorTests: XCTestCase {
       .object([("a", .string("\u{1F600}")), ("b", .array([.integer(1), .integer(23)]))]))
   }
 
-  /// Catches a key file that another user can read, one made over an existing key, or a loaded key
-  /// that is not the one written.
-  func testAKeyFileIsPrivateAndNeverReplaced() throws {
-    let path = try ControllerFixtures.temporaryFolder().appendingPathComponent("key").path
-    let made = try ControllerKeyFile.create(at: path)
-    var info = stat()
+  /// Catches a format 2 reader that drops a permission's version, reads a kind format 1 lacks in
+  /// format 1, or reads the new kinds without their scope. Format 1 stays readable with its two
+  /// kinds at version 1, so its approvals carry over.
+  func testFormatTwoVersionsEveryPermissionAndFormatOneReadsAsVersionOne() throws {
+    let files = #"{"main.janet": "sha256:\#(String(repeating: "a", count: 64))"}"#
+    let one = try ControllerDescriptor.parse(
+      Data(
+        #"{"format": 1, "id": "dev.uniterm.fixture.two", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": \#(files), "permissions": [{"kind": "pane-control"}, {"kind": "capability", "name": "fs-read"}]}"#
+          .utf8))
+    let two = try ControllerDescriptor.parse(
+      Data(
+        #"{"format": 2, "id": "dev.uniterm.fixture.two", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": \#(files), "permissions": [{"kind": "pane-control", "version": 1}, {"kind": "capability", "name": "fs-read", "version": 1}, {"kind": "clipboard-read", "version": 1}, {"kind": "clipboard-write", "version": 1}, {"kind": "host-launch", "version": 1, "executable": "/usr/bin/true", "directory": "/tmp", "environment": ["TOKEN", "A_KEY"]}]}"#
+          .utf8))
 
-    XCTAssertEqual(stat(path, &info), 0)
-    XCTAssertEqual(info.st_mode & 0o777, 0o600)
-    XCTAssertEqual(try ControllerKeyFile.load(from: path).publicKey, made.publicKey)
-    XCTAssertThrowsError(try ControllerKeyFile.create(at: path))
-    XCTAssertEqual(try ControllerKeyFile.load(from: path).publicKey, made.publicKey)
-
-    XCTAssertEqual(chmod(path, 0o640), 0)
-    XCTAssertThrowsError(try ControllerKeyFile.load(from: path)) { error in
-      XCTAssertTrue("\(error)".contains("readable by you alone"), "\(error)")
-    }
+    XCTAssertEqual(one.permissions, [.paneControl, .capability("fs-read")])
+    XCTAssertTrue(one.permissions.allSatisfy { $0.version == 1 })
+    XCTAssertEqual(
+      two.permissions,
+      [
+        .paneControl, .capability("fs-read"), .clipboardRead, .clipboardWrite,
+        .hostLaunch(
+          try HostLaunchScope(
+            executable: "/usr/bin/true", directory: "/tmp", environmentKeys: ["A_KEY", "TOKEN"])),
+      ])
   }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import ControllerPackage
 import ExecDriver
 import PaneModel
 import ScriptHost
@@ -46,8 +47,15 @@ final class ExecAttachment {
   /// own pane again, layouts still in preparation included. A new run starts clear.
   var revoked = false
 
-  init(declaration: ExecDeclaration, note: String) {
+  /// The clipboard powers the user allowed for this run. A new run starts with none.
+  var clipboardGrants: Set<ControllerPermission> = []
+
+  /// The pane the attachment drives.
+  let pane: NodeID?
+
+  init(declaration: ExecDeclaration, note: String, pane: NodeID? = nil) {
     self.declaration = declaration
+    self.pane = pane
     state = .idle(note)
   }
 
@@ -91,7 +99,7 @@ extension MainWindowController {
       ? "Restored. Nothing runs until you choose Run."
       : "Not running. Choose Run to start it."
 
-    execAttachments[pane] = ExecAttachment(declaration: declaration, note: note)
+    execAttachments[pane] = ExecAttachment(declaration: declaration, note: note, pane: pane)
     refreshExecStatus(of: pane)
     onLayoutChange?()
   }
@@ -162,6 +170,28 @@ extension MainWindowController {
     attachment.state = .waitingForApproval
     refreshExecStatus(of: pane)
 
+    guard let connection = owner(of: pane)?.connection, let controllerAuthority else {
+      return askToLaunch(launch, for: attachment, in: pane)
+    }
+
+    Task { @MainActor [weak self, weak attachment] in
+      let covered = await Self.covered(launch, by: connection, authority: controllerAuthority)
+
+      guard let self, let attachment, execAttachments[pane] === attachment,
+        case .waitingForApproval = attachment.state
+      else { return }
+
+      if let covered, owner(of: pane)?.connection == connection {
+        start(covered, for: attachment, in: pane)
+      } else {
+        askToLaunch(launch, for: attachment, in: pane)
+      }
+    }
+  }
+
+  /// Puts a launch that nothing covers before the user in the Pending Requests panel.
+  private func askToLaunch(_ launch: ExecLaunch, for attachment: ExecAttachment, in pane: NodeID) {
+    let target = ExecLaunchAuthority.Target(window: scriptWindowID, pane: pane)
     let requested = launchAuthority.request(
       launch, in: target, paneTitle: paneArea.applet(for: pane)?.title ?? "Pane"
     ) { [weak self, weak attachment] decision in
@@ -185,6 +215,33 @@ extension MainWindowController {
     }
   }
 
+  /// The launch that the live controller run owning the pane's group may start without asking,
+  /// under its own approval, or nil. A remembered policy reaches a pane only this way: through a
+  /// live run that owns it now, never through a path or a saved pane.
+  ///
+  /// The launch comes back with its folder resolved, and the driver starts there. A link inside
+  /// the approved folder then cannot lead the driver out of it, at the check or after it. The
+  /// folder is resolved off the main actor, since the disk may be slow.
+  private static func covered(
+    _ launch: ExecLaunch, by connection: UInt64, authority: any ControllerAuthority
+  ) async -> ExecLaunch? {
+    let directory = launch.directory
+
+    guard
+      let folder = await Task.detached(operation: { HostLaunchScope.resolved(directory) }).value,
+      let declaration = try? ExecDeclaration(
+        arguments: launch.arguments, directory: folder,
+        environmentKeys: launch.declaration.environmentKeys),
+      let resolved = try? ExecLaunch(
+        declaration: declaration, environment: launch.environment, home: folder),
+      await authority.coversLaunch(
+        connection: connection, executable: declaration.executable, directory: folder,
+        environmentKeys: declaration.environmentKeys)
+    else { return nil }
+
+    return resolved
+  }
+
   /// Starts exactly the launch that was approved. The applet learns of the driver before the
   /// driver can reach it, so its clipboard policy tightens first.
   private func start(_ launch: ExecLaunch, for attachment: ExecAttachment, in pane: NodeID) {
@@ -204,6 +261,7 @@ extension MainWindowController {
 
     attachment.owner = owner
     attachment.revoked = false
+    attachment.clipboardGrants = []
     pushControl(paneControls.set(driver: .exec, for: pane), to: pane)
 
     let drives: @MainActor () -> Bool = { [weak self, weak attachment] in
@@ -237,6 +295,15 @@ extension MainWindowController {
       host: { [weak self] request, reply in
         guard let self else {
           return reply(.failure(AppletCommandError(.refused, "uniterm is quitting")))
+        }
+
+        switch request {
+        case .clipboardRead, .clipboardWrite:
+          return driverAskedClipboard(
+            request, attachment: attachment, run: run, pane: pane, drives: drives, reply: reply)
+
+        case .layout, .command:
+          break
         }
 
         if let refusal = beyond() { return reply(.failure(Self.driverFailure(refusal))) }
@@ -278,12 +345,25 @@ extension MainWindowController {
     refreshControlMarks()
   }
 
-  /// A run's groups lose their owner when the run ends, however it ends.
+  /// A run's groups lose their owner when the run ends, however it ends. Its clipboard questions
+  /// and the clipboard powers it was allowed go with it.
   private func releaseDriverOwner(of attachment: ExecAttachment) {
+    endDriverClipboard(of: attachment)
+
     guard let owner = attachment.owner else { return }
 
     attachment.owner = nil
     ownerEnded(owner)
+  }
+
+  /// Ends a driver run's clipboard questions and powers. A revoke does this too.
+  func endDriverClipboard(of attachment: ExecAttachment) {
+    attachment.clipboardGrants = []
+
+    guard let pane = attachment.pane else { return }
+
+    permissionRequests.end(
+      .driver(window: scriptWindowID, pane: pane.rawValue, run: attachment.run))
   }
 
   /// A pane left the window. Its driver's authority ends at once, since nothing names the
@@ -293,6 +373,9 @@ extension MainWindowController {
     if let attachment = execAttachments.removeValue(forKey: pane) {
       releaseDriverOwner(of: attachment)
     }
+
+    permissionRequests.end(.terminal(window: scriptWindowID, pane: pane.rawValue))
+    permissionRequests.end(.paneScripts(window: scriptWindowID, pane: pane.rawValue))
 
     launchAuthority.paneClosed(ExecLaunchAuthority.Target(window: scriptWindowID, pane: pane))
   }
@@ -335,6 +418,9 @@ extension MainWindowController {
           reply(.failure(Self.driverFailure(error)))
         }
       }
+
+    case .clipboardRead, .clipboardWrite:
+      reply(.failure(AppletCommandError(.failed, "the clipboard is answered elsewhere")))
 
     case .command(let target, let submission):
       let member = NodeID(rawValue: target)
@@ -379,6 +465,127 @@ extension MainWindowController {
           return nil
         },
         reply: reply)
+    }
+  }
+
+  /// Answers a driver's typed clipboard request. Reads and writes are separate powers. Each one
+  /// asks the user in the Pending Requests panel unless the user allowed that power for this run.
+  /// The grant is checked again at the clipboard itself: the run must still drive the pane, and
+  /// a revoke ends the run's clipboard powers for the rest of the run.
+  private func driverAskedClipboard(
+    _ request: ExecDriverChannel.HostRequest, attachment: ExecAttachment, run: UInt64,
+    pane: NodeID, drives: @escaping @MainActor () -> Bool,
+    reply: @escaping ControlDispatcher.Reply
+  ) {
+    let power: ControllerPermission = request == .clipboardRead ? .clipboardRead : .clipboardWrite
+
+    let allowed: @MainActor (Bool) -> Bool = { [weak attachment] once in
+      guard let attachment else { return false }
+
+      return drives() && !attachment.revoked
+        && (once || attachment.clipboardGrants.contains(power))
+    }
+
+    let ended = AppletCommandError(.refused, "The permission for this request has ended.")
+
+    let access: @MainActor (Bool) -> Void = { [weak self] once in
+      guard let self, allowed(once) else { return reply(.failure(ended)) }
+
+      guard let clipboard else {
+        return reply(.failure(AppletCommandError(.refused, "uniterm has no clipboard to offer.")))
+      }
+
+      switch request {
+      case .clipboardRead:
+        // The read can wait on another app, so it runs off the main actor. The grant is checked
+        // again before the text goes to the driver.
+        Task { @MainActor in
+          let text = await clipboard.readText()
+
+          guard allowed(once) else { return reply(.failure(ended)) }
+
+          guard let text else { return reply(.success(.object(["text": .null]))) }
+
+          guard text.utf8.count <= ExecProtocol.maxClipboardBytes else {
+            return reply(
+              .failure(
+                AppletCommandError(
+                  .failed,
+                  "The clipboard holds more than the \(ExecProtocol.maxClipboardBytes) bytes a "
+                    + "driver may read.")))
+          }
+
+          reply(.success(.object(["text": .string(text)])))
+        }
+
+      case .clipboardWrite(let text):
+        clipboard.writeText(text)
+        reply(.success(.object([:])))
+
+      case .layout, .command:
+        reply(.failure(AppletCommandError(.failed, "not a clipboard request")))
+      }
+    }
+
+    guard !attachment.revoked else {
+      return reply(
+        .failure(
+          AppletCommandError(
+            .refused, "You revoked this driver. It needs a new run to use the clipboard.")))
+    }
+
+    if attachment.clipboardGrants.contains(power) { return access(false) }
+
+    var detail = "The driver \(attachment.program) asks to \(power.displayText.lowercased())."
+
+    if case .clipboardWrite(let text) = request {
+      detail += " It would write: \u{201C}\(StatusText.bounded(text, maximumBytes: 160))\u{201D}"
+    }
+
+    detail += " Allow for This Run lets this run do it again without asking, until it ends."
+
+    let outcome = permissionRequests.ask(
+      PermissionRequests.Key(
+        requester: .driver(window: scriptWindowID, pane: pane.rawValue, run: run),
+        power: power.kindName),
+      subject: "\(attachment.program) (driver)", title: power.displayText, detail: detail,
+      sessionTitle: "Allow for This Run"
+    ) { [weak attachment] answer in
+      switch answer {
+      case .deny:
+        reply(.failure(AppletCommandError(.refused, "You denied this request.")))
+
+      case .withdrawn:
+        reply(
+          .failure(
+            AppletCommandError(.refused, "The request ended before you answered it.")))
+
+      case .allowOnce:
+        access(true)
+
+      case .allowForSession:
+        if let attachment, drives(), !attachment.revoked {
+          attachment.clipboardGrants.insert(power)
+        }
+
+        access(false)
+      }
+    }
+
+    switch outcome {
+    case .waiting:
+      break
+
+    case .denied:
+      reply(
+        .failure(
+          AppletCommandError(
+            .refused,
+            "You denied this earlier. To be asked again, choose Ask Again in Window > Pending "
+              + "Requests.")))
+
+    case .busy:
+      reply(.failure(AppletCommandError(.busy, "Too many of this driver's requests wait.")))
     }
   }
 

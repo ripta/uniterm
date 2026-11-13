@@ -6,12 +6,12 @@ import Preferences
 import ScriptTestSupport
 import ScriptWire
 import StatusKit
-import TerminalSurface
 import Theme
 import XCTest
 
 @testable import ReplApplet
 @testable import ScriptHost
+@testable import TerminalSurface
 @testable import WindowKit
 
 @MainActor
@@ -334,6 +334,46 @@ final class ReplAppletTests: XCTestCase {
     let saved = try ReplDescription.decode(applet.describe())
 
     XCTAssertEqual(saved.history, ["(+ 1 2)", "(def x 1)", "(print x)"])
+  }
+
+  // MARK: Clipboard questions
+
+  /// Catches a controlled REPL's clipboard question with no scope. Each request then asks on its
+  /// own, so a denial never holds and one program can fill the Pending Requests panel. Requests
+  /// of one kind under one control generation share a scope, and another kind or generation
+  /// gets another.
+  func testControlledClipboardQuestionsShareAScopePerKindAndGeneration() async throws {
+    let recorder = RecordingHost()
+    let applet = makeApplet(host: recorder)
+    let session = try XCTUnwrap(engine.sessions.first)
+
+    applet.controlDidChange(PaneControl(access: .remoteControlled, driver: .none, generation: 5))
+
+    let ask: (TerminalClipboardRequest.Kind) -> Void = { kind in
+      session.onEvent?(
+        .clipboardRequest(
+          TerminalClipboardRequest(kind: kind, text: "synthetic", offersSession: true) { _ in }))
+    }
+
+    ask(.read)
+    ask(.read)
+    ask(.write)
+
+    _ = await waitUntil(timeout: .seconds(5)) { recorder.permissions.count == 3 }
+
+    applet.controlDidChange(PaneControl(access: .remoteControlled, driver: .none, generation: 6))
+    ask(.read)
+
+    _ = await waitUntil(timeout: .seconds(5)) { recorder.permissions.count == 4 }
+
+    let scopes = recorder.permissions.map(\.scope)
+
+    guard scopes.count == 4 else { return XCTFail("asked \(scopes.count) questions, not 4") }
+
+    XCTAssertNotNil(scopes[0], "a controlled question has no scope")
+    XCTAssertEqual(scopes[0], scopes[1], "two reads in one generation asked apart")
+    XCTAssertNotEqual(scopes[0], scopes[2], "a read and a write share a denial")
+    XCTAssertNotEqual(scopes[0], scopes[3], "a denial outlived its control generation")
   }
 
   // MARK: Helper death

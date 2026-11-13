@@ -597,7 +597,8 @@ public final class ReplApplet: Applet, InputOwning {
           ? "This pane is controlled by another program. A program in this REPL asked for the clipboard with an escape sequence."
           : "This pane is controlled by another program. A program in this REPL asked to replace the clipboard with an escape sequence.",
         subject: title,
-        sessionTitle: reads ? "Allow Reads in This REPL" : "Allow Writes in This REPL")
+        sessionTitle: reads ? "Allow Reads in This REPL" : "Allow Writes in This REPL",
+        scope: "repl \(request.kind) generation \(control.generation)")
 
       Task { @MainActor [weak self] in
         guard let self else {

@@ -15,12 +15,13 @@ enum ControllerCommands {
   static var usageText: String {
     """
     usage: uniterm controller run [--socket PATH] package [argument...]
-           uniterm controller sign --key KEYFILE package
-           uniterm controller keygen KEYFILE
+           uniterm controller sign --key NAME package
+           uniterm controller keygen NAME
 
     run      runs a package's native entry, from uniterm's verified copy of the package.
-    sign     signs a package's controller.json with the key in KEYFILE, and writes controller.sig.
-    keygen   makes a new signing key in KEYFILE, readable by you alone. It never replaces a file.
+    sign     signs a package's controller.json with the key NAME in your login Keychain, and
+             writes controller.sig. A missing key is an error. No other key signs in its place.
+    keygen   makes a new signing key NAME in your login Keychain. It never replaces a key.
 
     A package with a Janet entry runs with uniterm run instead: uniterm run [--allow CAPABILITY]...
     package [argument...].
@@ -131,11 +132,14 @@ enum ControllerCommands {
   }
 
   /// `uniterm controller ...`.
-  static func run(arguments: [String], environment: [String: String]) -> Int32 {
+  static func run(
+    arguments: [String], environment: [String: String],
+    keys: any ControllerKeyStore = KeychainKeyStore()
+  ) -> Int32 {
     switch arguments.first {
     case "run": return runNative(Array(arguments.dropFirst()), environment: environment)
-    case "sign": return sign(Array(arguments.dropFirst()))
-    case "keygen": return keygen(Array(arguments.dropFirst()))
+    case "sign": return sign(Array(arguments.dropFirst()), keys: keys)
+    case "keygen": return keygen(Array(arguments.dropFirst()), keys: keys)
     case "-h", "--help", nil:
       print(usageText)
 
@@ -233,16 +237,16 @@ enum ControllerCommands {
       status: ScriptHelperMain.Exit.unavailable)
   }
 
-  private static func sign(_ arguments: [String]) -> Int32 {
+  static func sign(_ arguments: [String], keys: any ControllerKeyStore) -> Int32 {
     guard arguments.count == 3, arguments[0] == "--key" else {
       return ScriptHelperMain.fail(
-        "sign needs --key KEYFILE and a package\n\(usageText)", status: ScriptHelperMain.Exit.usage)
+        "sign needs --key NAME and a package\n\(usageText)", status: ScriptHelperMain.Exit.usage)
     }
 
     let package = arguments[2]
 
     do {
-      let key = try ControllerKeyFile.load(from: arguments[1])
+      let key = try keys.key(named: arguments[1])
       let descriptor = try ControllerSnapshot.descriptorForSigning(at: package)
       let identity = try ControllerDescriptor.parse(descriptor)
       let signature = try ControllerSignature.sign(descriptor: descriptor, with: key)
@@ -260,14 +264,14 @@ enum ControllerCommands {
     }
   }
 
-  private static func keygen(_ arguments: [String]) -> Int32 {
+  static func keygen(_ arguments: [String], keys: any ControllerKeyStore) -> Int32 {
     guard arguments.count == 1 else {
       return ScriptHelperMain.fail(
-        "keygen needs one KEYFILE\n\(usageText)", status: ScriptHelperMain.Exit.usage)
+        "keygen needs one NAME\n\(usageText)", status: ScriptHelperMain.Exit.usage)
     }
 
     do {
-      let key = try ControllerKeyFile.create(at: arguments[0])
+      let key = try keys.create(named: arguments[0])
 
       print(
         "key \(ControllerSignature(publicKey: key.publicKey, signature: Data()).keyFingerprint)")

@@ -57,11 +57,20 @@ public struct AppletPermissionRequest: Sendable, Equatable {
   /// The session button says exactly what it covers, such as every program in one terminal tab.
   public var sessionTitle: String
 
-  public init(title: String, detail: String, subject: String? = nil, sessionTitle: String) {
+  /// What one denial covers, such as reads in one tab under one control generation. Requests with
+  /// the same scope from the same pane share one question, and after a denial they are refused
+  /// without one until the user asks to be asked again. Nil asks each request on its own.
+  public var scope: String?
+
+  public init(
+    title: String, detail: String, subject: String? = nil, sessionTitle: String,
+    scope: String? = nil
+  ) {
     self.title = title
     self.detail = detail
     self.subject = subject
     self.sessionTitle = sessionTitle
+    self.scope = scope
   }
 }
 

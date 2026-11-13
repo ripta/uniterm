@@ -3,7 +3,8 @@
 #
 # SwiftPM runs xctest in a process group of its own, so a signal to the `swift test` or make group
 # never reaches it. A healthy orphan dies on its next write to the closed pipe. A hung test writes
-# nothing, so it stays until someone ends it.
+# nothing, so it stays until someone ends it. The package's test bundle links a guard that exits
+# when its runner does, so this is the backstop for a bundle built without it.
 #
 # Only processes whose parent is launchd qualify, and only those running a bundle under the given
 # build directories. A live test run in this checkout or any other is never touched.
