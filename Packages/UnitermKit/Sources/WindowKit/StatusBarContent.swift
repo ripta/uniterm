@@ -58,7 +58,7 @@ struct BarSegment: Sendable, Equatable {
 /// Works out what the status bar shows. It is pure, so a test needs no window.
 enum StatusBarContent {
   /// The window's slots in order: the message area, a dismiss control while an error is on the
-  /// bar, one unseen indicator, one compact slot for each active window state, then the
+  /// bar, one unseen indicator, one slot for each active window state, then the
   /// focused applet's slots. The message area is always there, empty when the bar is idle, so the
   /// layout does not jump when a message arrives.
   static func segments(
@@ -89,7 +89,8 @@ enum StatusBarContent {
     for state in windowStates.active {
       result.append(
         BarSegment(
-          id: .window(state.kind), symbolName: state.kind.symbolName, text: nil, tone: .warning,
+          id: .window(state.kind), symbolName: state.kind.symbolName, text: state.label,
+          tone: .warning,
           accessibilityLabel: state.text, toolTip: state.text))
     }
 

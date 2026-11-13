@@ -112,9 +112,9 @@ public final class WindowSet {
   public private(set) var windowStates = WindowStates()
 
   /// Marks `kind` as holding in every window of the instance, and in each window that opens
-  /// later.
-  public func setWindowState(_ kind: WindowStateKind, text: String) {
-    windowStates.set(kind, text: text)
+  /// later. A `label` shows beside the slot's icon.
+  public func setWindowState(_ kind: WindowStateKind, text: String, label: String? = nil) {
+    windowStates.set(kind, text: text, label: label)
     publishWindowStates()
   }
 
