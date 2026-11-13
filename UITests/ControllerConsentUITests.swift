@@ -192,6 +192,49 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertEqual(waitForFile(second), "exit=0\n", "the trusted version asked again")
   }
 
+  /// Catches a panel whose Allow Once and Deny do nothing for a startup review, so that only the
+  /// sheet could answer it, and an Allow Once that is remembered for the next run.
+  func testThePanelAnswersAReviewWithoutTheSheet() throws {
+    let package = try writePackage()
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer { try? FileManager.default.removeItem(atPath: package) }
+
+    _ = waitForTerminal(in: app)
+
+    let first = try startRun(package, named: "panel-once", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+
+    let panel = openPendingRequests(in: app)
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    row.click()
+    panel.buttons["pending-requests-allow-once"].click()
+
+    XCTAssertFalse(panel.sheets.firstMatch.exists, "Allow Once opened the sheet")
+    XCTAssertEqual(waitForFile(first), "exit=0\n")
+    XCTAssertEqual(
+      try String(contentsOfFile: first + ".out", encoding: .utf8), "consent fixture ran\n")
+
+    let second = try startRun(package, named: "panel-deny", in: app)
+
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30), "a run allowed once was remembered for the next")
+
+    let open = openPendingRequests(in: app)
+    let next = open.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(next.waitForExistence(timeout: 30), "the second review never reached the panel")
+    next.click()
+    open.buttons["Deny"].click()
+
+    XCTAssertNotEqual(waitForFile(second), "exit=0\n", "a denied review still ran")
+  }
+
   /// Catches a Controllers & Permissions window that hides a remembered approval, and a Revoke
   /// that leaves it covering the next run.
   func testControllersAndPermissionsShowsAndRevokesTheApproval() throws {
