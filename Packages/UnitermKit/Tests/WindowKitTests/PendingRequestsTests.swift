@@ -6,8 +6,8 @@ import XCTest
 @testable import WindowKit
 
 @MainActor
-final class PendingRequestsIndicatorTests: XCTestCase {
-  private let suite = "uniterm-pending-indicator-test-\(UUID().uuidString)"
+final class PendingRequestsTests: XCTestCase {
+  private let suite = "uniterm-pending-requests-test-\(UUID().uuidString)"
   private var windows: WindowSet!
   private var indicator: PendingRequestsIndicator!
 
@@ -90,5 +90,73 @@ final class PendingRequestsIndicatorTests: XCTestCase {
 
     XCTAssertFalse(windows.permissionRequests.denials.isEmpty)
     XCTAssertNil(windows.windowStates.text(of: .pendingPermissions))
+  }
+
+  // MARK: Panel buttons
+
+  private func makePanel() throws -> (panel: PendingRequestsWindowController, table: NSTableView) {
+    let panel = PendingRequestsWindowController(scriptHost: nil, windows: windows)
+    let content = try XCTUnwrap(panel.window?.contentView)
+
+    content.layoutSubtreeIfNeeded()
+
+    return (panel, try XCTUnwrap(content.firstDescendant(of: NSTableView.self)))
+  }
+
+  /// The titles of the panel's buttons that show, in the order they sit.
+  private func shownButtons(_ panel: PendingRequestsWindowController) throws -> [String] {
+    let content = try XCTUnwrap(panel.window?.contentView)
+
+    return content.descendants(of: NSButton.self)
+      .filter { !$0.isHiddenOrHasHiddenAncestor && $0.bezelStyle != .helpButton }
+      .map(\.title)
+  }
+
+  private func detailText(_ panel: PendingRequestsWindowController) throws -> String {
+    let content = try XCTUnwrap(panel.window?.contentView)
+    let detail = content.descendants(of: NSTextField.self)
+      .first { $0.accessibilityIdentifier() == "pending-requests-detail" }
+
+    return try XCTUnwrap(detail).stringValue
+  }
+
+  /// Catches buttons that show for a row kind they cannot answer, or that show disabled with
+  /// nothing selected. An empty panel and an unselected row show no button, and the detail says
+  /// what to do. A question shows its own answers, and nothing else, every one of them live.
+  func testThePanelShowsOnlyTheSelectedRowsButtons() throws {
+    let (panel, table) = try makePanel()
+
+    XCTAssertEqual(try shownButtons(panel), [])
+    XCTAssertEqual(try detailText(panel), "Nothing waits for your answer.")
+
+    ask("clipboard-read")
+
+    XCTAssertEqual(try shownButtons(panel), [])
+    XCTAssertEqual(try detailText(panel), "Select a request to answer it.")
+
+    table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+
+    XCTAssertEqual(try shownButtons(panel), ["Allow Once", "Allow for This Session", "Deny"])
+
+    let content = try XCTUnwrap(panel.window?.contentView)
+    let shown = content.descendants(of: NSButton.self).filter { !$0.isHiddenOrHasHiddenAncestor }
+    XCTAssertTrue(shown.allSatisfy(\.isEnabled), "a shown button is disabled")
+
+    let row = try XCTUnwrap(windows.permissionRequests.rows.first)
+    windows.permissionRequests.decide(row.id, .deny)
+    table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+
+    XCTAssertEqual(try shownButtons(panel), ["Ask Again"])
+  }
+}
+
+extension NSView {
+  fileprivate func descendants<T: NSView>(of type: T.Type) -> [T] {
+    subviews.flatMap { ($0 as? T).map { [$0] } ?? [] }
+      + subviews.flatMap { $0.descendants(of: type) }
+  }
+
+  fileprivate func firstDescendant<T: NSView>(of type: T.Type) -> T? {
+    descendants(of: type).first
   }
 }

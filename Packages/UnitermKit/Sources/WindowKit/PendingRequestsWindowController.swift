@@ -181,9 +181,12 @@ public final class PendingRequestsWindowController: NSWindowController {
       trustVersionButton, trustIdentityButton, denyButton, NSView(), askAgainButton, revokeButton,
     ])
 
-    // The row holds more buttons than fit at once. A hidden button must take no room.
+    // The row holds more buttons than fit at once. A hidden button must take no room. The row
+    // keeps a button's height while it shows none, so the list does not jump on selection.
     buttons.detachesHiddenViews = true
     buttons.orientation = .horizontal
+    buttons.heightAnchor.constraint(greaterThanOrEqualToConstant: denyButton.fittingSize.height)
+      .isActive = true
 
     for view in [heading, scrollView, detail, buttons] {
       view.translatesAutoresizingMaskIntoConstraints = false
@@ -245,22 +248,14 @@ public final class PendingRequestsWindowController: NSWindowController {
     return rows.indices.contains(index) ? rows[index] : nil
   }
 
+  /// Shows only the buttons that answer the selected row. Every button it shows is live. With
+  /// nothing selected, no button shows, and the detail says what to do.
   private func updateButtons() {
     let row = selectedRow
 
-    for button in [
-      grantButton, allowOnceButton, allowInPaneButton, denyButton, revokeButton, sessionButton,
-      askAgainButton, trustVersionButton, trustIdentityButton,
-    ] {
-      button.isEnabled = false
-    }
-
-    for button in [sessionButton, trustVersionButton, trustIdentityButton, helpButton] {
+    for button in allButtons {
       button.isHidden = true
-    }
-
-    for button in [grantButton, allowInPaneButton, askAgainButton, revokeButton] {
-      button.isHidden = false
+      button.isEnabled = true
     }
 
     if let help, row?.identity != .review(help.review) {
@@ -268,54 +263,55 @@ public final class PendingRequestsWindowController: NSWindowController {
       self.help = nil
     }
 
+    let shown: [NSButton]
+
     switch row {
     case .request:
-      grantButton.isEnabled = true
-      denyButton.isEnabled = true
+      shown = [grantButton, denyButton]
 
     case .launch:
-      allowOnceButton.isEnabled = true
-      allowInPaneButton.isEnabled = true
-      denyButton.isEnabled = true
+      shown = [allowOnceButton, allowInPaneButton, denyButton]
 
     case .grant, .launchGrant:
-      revokeButton.isEnabled = true
+      shown = [revokeButton]
 
     case .review(let review):
       let offered = ControllerReviewText.offered(for: review)
 
-      // None of these can answer a review. Hiding them leaves room for the trust choices.
-      for button in [grantButton, allowInPaneButton, askAgainButton, revokeButton] {
-        button.isHidden = true
-      }
-
-      allowOnceButton.isEnabled = true
-      sessionButton.isHidden = false
-      sessionButton.isEnabled = true
       sessionButton.title = "Allow for This Session"
-      trustVersionButton.isHidden = !offered.contains(.trustVersion)
-      trustVersionButton.isEnabled = !trustVersionButton.isHidden
-      trustIdentityButton.isHidden = !offered.contains(.trustIdentity)
-      trustIdentityButton.isEnabled = !trustIdentityButton.isHidden
-      helpButton.isHidden = false
-      denyButton.isEnabled = true
+      shown =
+        [helpButton, allowOnceButton, sessionButton]
+        + (offered.contains(.trustVersion) ? [trustVersionButton] : [])
+        + (offered.contains(.trustIdentity) ? [trustIdentityButton] : []) + [denyButton]
 
     case .question(let question):
-      allowOnceButton.isEnabled = true
-      allowInPaneButton.isHidden = true
-      sessionButton.isHidden = false
-      sessionButton.isEnabled = true
       sessionButton.title = question.sessionTitle
-      denyButton.isEnabled = true
+      shown = [allowOnceButton, sessionButton, denyButton]
 
     case .denial:
-      askAgainButton.isEnabled = true
+      shown = [askAgainButton]
 
     case nil:
-      break
+      shown = []
     }
 
-    detail.stringValue = row.map(describe) ?? ""
+    for button in shown {
+      button.isHidden = false
+    }
+
+    if let row {
+      detail.stringValue = describe(row)
+    } else {
+      detail.stringValue =
+        rows.isEmpty ? "Nothing waits for your answer." : "Select a request to answer it."
+    }
+  }
+
+  private var allButtons: [NSButton] {
+    [
+      helpButton, grantButton, allowOnceButton, allowInPaneButton, sessionButton,
+      trustVersionButton, trustIdentityButton, denyButton, askAgainButton, revokeButton,
+    ]
   }
 
   /// Every input a launch binds, or the scope a grant covers, in full.
