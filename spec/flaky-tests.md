@@ -63,6 +63,14 @@ fixed ones.
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.
 
+### `BrowserUITests.testCommandWClosesTheTabAndCommandShiftTReopensIt`
+
+- Seen: 2026-11-12, once, as the first test of a full `make test-app`.
+- Evidence: `BrowserUITests.swift:166` failed with "Cmd-Shift-T brought no tab" after 49.8 seconds. The other 157
+  tests passed. `BrowserUITests` then passed 12 of 12 alone, this test in 11.6 seconds.
+- Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
+- Status: unresolved.
+
 ## Fixed
 
 ### `FileWatcherTests.testChangesToOtherFilesInTheFolderDeliverNothing`

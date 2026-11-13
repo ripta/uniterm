@@ -1278,3 +1278,37 @@ pending-request rows still feed the same panel as M6's rows, so they are not dea
 
 UTERM-004 is `implemented`, and the proposal index says so. The row moved from `queue.md` to the end of `history.md`.
 `proposals.py check` returned `[]`.
+
+## Final review
+
+A reviewer looked at all ten of the run's commits together, with an ADR review, and `adr-impact` checked the same range.
+Neither found a conflict or a blocking defect. No new ADR candidate passed the bar.
+
+1. ADR-10's in-place edit is the user's decision, and UTERM-004's Decision Log records it. The reviewer noted that
+   ADR-10's Consequences paragraph names only Janet's in-process sandbox as the weaker bound. The command's
+   JIT-capable memory weakens it further. Left for the user to judge whether that deserves a line.
+2. PLAUSIBLE, fixed. A pane-control test waited for the Pending Requests row by counting scheduler yields. It now
+   waits with the shared deadline-bounded helper the consent tests use.
+3. Dismissed. The UTERM-004 history row keeps its "UTERM-003" dependency. Rows move verbatim, and UTERM-013's history
+   row keeps its dependency the same way.
+
+### Checks
+
+| Check | Result |
+|---|---|
+| `caffeinate -dimsu make test-app` | 158 tests, 1 failure, see below |
+| UI, `BrowserUITests` alone | 12 tests, 0 failures |
+| `caffeinate -dimsu make test-package`, after the final fix | 2445 tests, 9 skipped, 0 failures |
+| `swift test --filter PaneControlTests` | 15 tests, 0 failures |
+| `make fmt-check`, `make lint` | pass |
+
+The one failure was `BrowserUITests.testCommandWClosesTheTabAndCommandShiftTReopensIt`, the first test of the suite. It
+reported "Cmd-Shift-T brought no tab" after 49.8 seconds. Alone, the whole class passed, and this test took 11.6
+seconds. The run's commits do not touch the browser applet or its test. The cause is unresolved, and the test is
+listed under "Potential" in `spec/flaky-tests.md`.
+
+That failure also showed the scheme's capture settings working. Its result bundle held 61 attachments, and none was a
+screen recording, a synthesized event, or a UI snapshot.
+
+No uniterm or xctest crash report appeared after the full UI run. The only new reports are `ImageDecoderHelper`
+ones written during the package run that followed, as every package run writes.
