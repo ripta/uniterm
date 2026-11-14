@@ -23,6 +23,7 @@
 | [UTERM-019](UTERM-019-browser-automation.md) | Controller scripts run JavaScript, follow page events, and send input in their own browser tabs | accepted |
 | [UTERM-020](UTERM-020-inspector-bridge.md) | Console, network, interception, and debugging for controller tabs through a hidden Web Inspector | accepted |
 | [UTERM-021](UTERM-021-declared-script-permissions.md) | Script files declare their powers, with strict mode by default and a lint | accepted |
+| [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | draft |
 
 ## Dependency Graph
 
@@ -48,6 +49,7 @@ UTERM-018 ← UTERM-003, UTERM-004, UTERM-005, UTERM-007, UTERM-013, UTERM-015
 UTERM-019 ← UTERM-003, UTERM-004, UTERM-005
 UTERM-020 ← UTERM-019
 UTERM-021 ← UTERM-003, UTERM-004
+UTERM-022 ← UTERM-003, UTERM-004, UTERM-021
 ```
 
 ## Not Yet Filed
