@@ -509,6 +509,7 @@ None.
   an M2 check. The Impacts line for UTERM-003 now says undeclared runs wait for the app's answer.
 - 2026-11-14: Review gate: kept all, including both one-session additions for packages and REPL helpers.
 - 2026-11-14: The user accepted the proposal.
+- 2026-11-14: Scheduled as M1-M5 in queue.md.
 - 2026-11-14: ADR candidate (cuts across the system): one session per command process, for files, packages, and REPL
   helpers. Declined: ADR-09's authenticated binding to the actual run already covers it.
 
