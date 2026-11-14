@@ -195,3 +195,106 @@ if proof_key "${image[@]}" >/dev/null 2>&1 && [[ -n "$(proof_key "${image[@]}" 2
   exit 1
 fi
 echo "PASS: a missing input produces no key"
+
+# The swift test watchdog runs fake test commands. A copy of `sleep` named xctest stands in for the
+# test process, so the abort path runs against a real child without building any tests. macOS kills
+# a copied system binary at launch, so the copy is signed again, ad hoc.
+watch_dir="$scratch/watch"
+mkdir -p "$watch_dir"
+cp /bin/sleep "$watch_dir/xctest"
+codesign --force --sign - "$watch_dir/xctest" 2>/dev/null
+
+cat >"$watch_dir/passing" <<'FAKE'
+#!/usr/bin/env bash
+echo "Test Case '-[Suite testOne]' started."
+echo "Test Case '-[Suite testOne]' passed (0.001 seconds)."
+echo "after the tests"
+FAKE
+
+cat >"$watch_dir/failing" <<'FAKE'
+#!/usr/bin/env bash
+echo "Test Case '-[Suite testOne]' started."
+echo "Test Case '-[Suite testOne]' failed (0.001 seconds)."
+exit 3
+FAKE
+
+cat >"$watch_dir/stuck" <<FAKE
+#!/usr/bin/env bash
+echo "Test Case '-[Suite testStuck]' started."
+"$watch_dir/xctest" 60
+FAKE
+
+cat >"$watch_dir/slow-run" <<'FAKE'
+#!/usr/bin/env bash
+for name in testFirst testSecond testThird; do
+  echo "Test Case '-[Suite $name]' started."
+  sleep 1.5
+  echo "Test Case '-[Suite $name]' passed (1.500 seconds)."
+done
+FAKE
+
+chmod +x "$watch_dir/passing" "$watch_dir/failing" "$watch_dir/stuck" "$watch_dir/slow-run"
+
+run_watch() {
+  local limit="$1" command="$2"
+  RUN_SWIFT_TESTS_POLL=1 RUN_SWIFT_TESTS_GRACE=5 \
+    bash "$root/scripts/run-swift-tests.sh" "$limit" "$watch_dir/$command" \
+    >"$scratch/watch-out" 2>"$scratch/watch-err"
+}
+
+expect_watch_status() {
+  local name="$1" expected="$2" actual="$3"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "FAIL: $name: expected exit $expected, got $actual" >&2
+    cat "$scratch/watch-out" "$scratch/watch-err" >&2
+    exit 1
+  fi
+}
+
+expect_watch_text() {
+  local name="$1" file="$2" text="$3"
+  if ! grep -qF -- "$text" "$scratch/$file"; then
+    echo "FAIL: $name: $file lacks: $text" >&2
+    cat "$scratch/watch-out" "$scratch/watch-err" >&2
+    exit 1
+  fi
+}
+
+status=0
+run_watch 30 passing || status=$?
+expect_watch_status "a passing run passes its status through" 0 "$status"
+expect_watch_text "a passing run passes its output through" watch-out "after the tests"
+if [[ -s "$scratch/watch-err" ]]; then
+  echo "FAIL: a passing run wrote to standard error" >&2
+  cat "$scratch/watch-err" >&2
+  exit 1
+fi
+echo "PASS: a passing run is passed through untouched"
+
+status=0
+run_watch 30 failing || status=$?
+expect_watch_status "a failing run passes its status through" 3 "$status"
+echo "PASS: a failing run keeps its status"
+
+status=0
+started_at="$(date +%s)"
+run_watch 2 stuck || status=$?
+elapsed=$(($(date +%s) - started_at))
+if [[ "$status" == 0 ]]; then
+  echo "FAIL: a stuck test passed" >&2
+  exit 1
+fi
+expect_watch_text "a stuck test is named" watch-err "-[Suite testStuck] has run for"
+expect_watch_text "a stuck test process is sampled" watch-err "sampling test process"
+expect_watch_text "a stuck test process is aborted" watch-err "aborting test process"
+if ((elapsed > 40)); then
+  echo "FAIL: a stuck test took $elapsed s to end" >&2
+  exit 1
+fi
+echo "PASS: a stuck test is named, sampled, and aborted"
+
+status=0
+run_watch 2 slow-run || status=$?
+expect_watch_status "a run longer than the limit, of short tests, passes" 0 "$status"
+expect_watch_text "a run longer than the limit keeps every test" watch-out "-[Suite testThird]' passed"
+echo "PASS: the limit applies to each test, not to the run"
