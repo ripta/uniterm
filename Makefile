@@ -23,6 +23,9 @@ FUZZ_ITERATIONS ?= 5000
 FILES ?=
 # Set to 1 to have clean-test-processes list what it would end, without ending it.
 DRY_RUN ?=
+# Seconds one package test may run before it is sampled and aborted. It sits above the longest wait
+# a failing test makes, so a failing test still reports its own assertion.
+TEST_TIME_LIMIT ?= 120
 
 PACKAGE_DIR := Packages/UnitermKit
 SWIFT_DIRS := App Helpers UITests $(PACKAGE_DIR)/Sources $(PACKAGE_DIR)/Tests $(PACKAGE_DIR)/Package.swift
@@ -65,15 +68,16 @@ clean-test-processes: ## End xctest processes orphaned by a hung or cancelled te
 ##@ Test
 
 .PHONY: test-ci
-test-ci: ## Verify CI change detection and result gating with temporary Git history
+test-ci: ## Verify CI change detection, result gating, and the package test time limit with fixtures
 	bash scripts/test-ci.sh
 
 .PHONY: test
 test: test-ci test-package test-helper-sandbox test-app ## Run CI gating, package tests, helper sandbox tests, and app UI tests
 
 .PHONY: test-package
-test-package: ghostty ## Run the package tests with swift test
-	cd $(PACKAGE_DIR) && swift test --scratch-path ../../$(SWIFTPM_SCRATCH)
+test-package: ghostty ## Run the package tests with swift test, each test under TEST_TIME_LIMIT seconds
+	cd $(PACKAGE_DIR) && ../../scripts/run-swift-tests.sh $(TEST_TIME_LIMIT) \
+		swift test --scratch-path ../../$(SWIFTPM_SCRATCH)
 
 # A helper's sandbox cannot be proved from a package build. This runs the probe and the samples
 # against each helper inside the built app, and it fails when a helper is missing, so a lost copy
@@ -86,6 +90,7 @@ test-helper-sandbox: build ## Run each helper's sandbox probe and samples agains
 	cd $(PACKAGE_DIR) && \
 		UNITERM_IMAGE_HELPER="$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/ImageDecoder" \
 		UNITERM_DOCUMENT_HELPER="$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/DocumentDecoder" \
+		../../scripts/run-swift-tests.sh $(TEST_TIME_LIMIT) \
 		swift test --scratch-path ../../$(SWIFTPM_SCRATCH) --filter HelperSandboxTests
 
 .PHONY: fuzz
