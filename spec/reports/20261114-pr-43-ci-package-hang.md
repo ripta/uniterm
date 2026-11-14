@@ -174,9 +174,15 @@ The step that worked was to watch the process from outside it, with line-buffere
 
 ## Gaps in CI
 
-These gaps turned one leak into a multi-hour hunt. Closing them is outside PR #43 and needs its own decision.
+These gaps turned one leak into a multi-hour hunt. They were closed after PR #43, in their own change.
 
-- No test has its own time limit, so one stuck test uses up the whole 30-minute job and never fails by name.
-- Test output is block-buffered, so a cancelled job's log does not name the last test that ran.
-- Nothing samples the test process before a timeout kills it, so a hang leaves no stack.
+- No package test had its own time limit, so one stuck test used up the whole 30-minute job and never failed by name.
+  The UI tests already had one through `xcodebuild`.
+- Test output was block-buffered, so a cancelled job's log did not name the last test that ran.
+- Nothing sampled the test process before a timeout killed it, so a hang left no stack.
 - No test notices leaked threads or handlers. The leak showed only as system CPU time, which nothing checks.
+
+The commit "Give each package test a time limit, and sample a stuck one" closes the first three. `make test-package`
+and `make test-helper-sandbox` now run `swift test` through `scripts/run-swift-tests.sh`. It sets `NSUnbufferedIO`, so
+XCTest writes each line as it goes, and it names, samples, and aborts a test that runs past `TEST_TIME_LIMIT`, 120
+seconds by default. The fourth gap is still open.
