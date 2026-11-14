@@ -196,9 +196,16 @@ if proof_key "${image[@]}" >/dev/null 2>&1 && [[ -n "$(proof_key "${image[@]}" 2
 fi
 echo "PASS: a missing input produces no key"
 
-# The swift test watchdog runs fake test commands. A copy of `sleep` named xctest stands in for the
-# test process, so the abort path runs against a real child without building any tests. macOS kills
-# a copied system binary at launch, so the copy is signed again, ad hoc.
+# The swift test watchdog samples with macOS's `sample`, so it is proved only on macOS. The changes
+# job runs these checks on Linux, and the package job runs them again on macOS.
+if [[ "$(uname -s)" != Darwin ]]; then
+  echo "SKIP: the package test time limit runs only on macOS"
+  exit 0
+fi
+
+# The watchdog runs fake test commands. A copy of `sleep` named xctest stands in for the test
+# process, so the abort path runs against a real child without building any tests. macOS kills a
+# copied system binary at launch, so the copy is signed again, ad hoc.
 watch_dir="$scratch/watch"
 mkdir -p "$watch_dir"
 cp /bin/sleep "$watch_dir/xctest"
