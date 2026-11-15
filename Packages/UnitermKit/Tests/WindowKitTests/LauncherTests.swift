@@ -605,29 +605,40 @@ final class LauncherTests: XCTestCase {
   /// yet. AppKit logs each unsatisfiable set and breaks one constraint. The test checks that every
   /// required constraint holds after layout, and first proves the check sees a deliberate conflict.
   /// The stage must clip the card, so it never draws over the hint bar.
+  ///
+  /// Each size runs with legacy scrollers and with overlay ones. A Mac set to always show scroll
+  /// bars, or one with no trackpad, gives the list a scroller that takes width from its clip view.
+  /// The system setting decides the default, so the test sets each style itself on a new launcher,
+  /// before its first layout, the way the setting would.
   func testTinyAndEmptyPanesLayOutWithoutConflictsAndClipTheCard() throws {
-    let (view, window) = bareLauncher()
-    defer { window.close() }
+    for (name, style) in [("legacy", NSScroller.Style.legacy), ("overlay", .overlay)] {
+      let (view, window) = bareLauncher()
+      defer { window.close() }
 
-    view.choose(.program)
+      let scrollViews = descendants(of: view).compactMap { $0 as? NSScrollView }
+      XCTAssertFalse(scrollViews.isEmpty, "the launcher has no scroll view to set a style on")
+      for scrollView in scrollViews { scrollView.scrollerStyle = style }
 
-    let probe = NSView()
-    probe.translatesAutoresizingMaskIntoConstraints = false
-    view.addSubview(probe)
-    probe.widthAnchor.constraint(equalToConstant: 10).isActive = true
-    probe.widthAnchor.constraint(equalToConstant: 20).isActive = true
-    view.layoutSubtreeIfNeeded()
-    XCTAssertFalse(
-      unsatisfiedRequiredConstraints(under: view).isEmpty, "the check cannot see a conflict")
-    probe.removeFromSuperview()
+      view.choose(.program)
 
-    for size in [NSSize.zero, NSSize(width: 200, height: 100), NSSize(width: 380, height: 60)] {
-      lay(out: view, in: window, at: size)
-      let broken = unsatisfiedRequiredConstraints(under: view)
-      XCTAssertTrue(broken.isEmpty, "\(size): \(broken)")
+      let probe = NSView()
+      probe.translatesAutoresizingMaskIntoConstraints = false
+      view.addSubview(probe)
+      probe.widthAnchor.constraint(equalToConstant: 10).isActive = true
+      probe.widthAnchor.constraint(equalToConstant: 20).isActive = true
+      view.layoutSubtreeIfNeeded()
+      XCTAssertFalse(
+        unsatisfiedRequiredConstraints(under: view).isEmpty, "the check cannot see a conflict")
+      probe.removeFromSuperview()
+
+      for size in [NSSize.zero, NSSize(width: 200, height: 100), NSSize(width: 380, height: 60)] {
+        lay(out: view, in: window, at: size)
+        let broken = unsatisfiedRequiredConstraints(under: view)
+        XCTAssertTrue(broken.isEmpty, "\(name) scrollers at \(size): \(broken)")
+      }
+
+      XCTAssertEqual(view.stage.layer?.masksToBounds, true, "the card is not clipped to its stage")
     }
-
-    XCTAssertEqual(view.stage.layer?.masksToBounds, true, "the card is not clipped to its stage")
   }
 
   /// Catches a short pane that clips the filter box, squashes the legend, or hides the header
@@ -718,12 +729,26 @@ final class LauncherTests: XCTestCase {
     return (view, window)
   }
 
+  /// Lays the launcher out until no view asks for another pass, the way the window's display cycle
+  /// does. A view that marks itself during a pass gets its layout on the next cycle.
   private func lay(out view: LauncherView, in window: NSWindow, at size: NSSize) {
     window.setContentSize(size)
     view.frame = NSRect(origin: .zero, size: size)
-    window.contentView?.layoutSubtreeIfNeeded()
+
+    for _ in 0..<4 {
+      window.contentView?.layoutSubtreeIfNeeded()
+      guard ([view] + descendants(of: view)).contains(where: \.needsLayout) else { break }
+    }
+
+    XCTAssertFalse(
+      ([view] + descendants(of: view)).contains(where: \.needsLayout),
+      "the launcher's layout did not settle")
 
     XCTAssertEqual(view.frame.size, size, "the launcher did not keep its pane's size")
+  }
+
+  private func descendants(of root: NSView) -> [NSView] {
+    root.subviews.flatMap { [$0] + descendants(of: $0) }
   }
 
   private func subview(of root: NSView, identifiedAs identifier: String) -> NSView? {

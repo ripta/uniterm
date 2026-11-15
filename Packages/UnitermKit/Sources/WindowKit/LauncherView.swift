@@ -178,6 +178,42 @@ private final class LauncherListDocument: NSView {
   override var mouseDownCanMoveWindow: Bool { false }
 }
 
+/// Scrolls the launcher's list, and asks for another layout when a scroller takes or gives back
+/// width.
+///
+/// A legacy scroller that shows or hides changes the clip view's width while the scroll view tiles,
+/// which is after Auto Layout has solved the pass. At the card's smallest width the card must grow
+/// to make room, and nothing else asks for the second solve. The list would then run under the
+/// scroller.
+///
+/// Tiling happens inside the card's own layout, which clears any mark set on the card then. The
+/// scroll view's layout comes after the card's, so the mark is set there.
+///
+/// A shown scroller makes the list narrower and so taller, which keeps it shown. The second pass
+/// therefore settles.
+@MainActor
+private final class LauncherListScroll: NSScrollView {
+  private var clipWidthChanged = false
+
+  override func tile() {
+    let width = contentView.frame.width
+    super.tile()
+
+    if contentView.frame.width != width {
+      clipWidthChanged = true
+    }
+  }
+
+  override func layout() {
+    super.layout()
+
+    if clipWidthChanged {
+      clipWidthChanged = false
+      superview?.needsLayout = true
+    }
+  }
+}
+
 /// What a new pane shows until the user picks an applet.
 ///
 /// The view owns the model and turns keys and clicks into model changes. It never opens an applet
@@ -252,7 +288,7 @@ final class LauncherView: NSView, NSTextFieldDelegate {
   private let listDocument = LauncherListDocument()
 
   /// Scrolls the list when it is taller than the room under the filter box.
-  private let listScroll = NSScrollView()
+  private let listScroll = LauncherListScroll()
 
   /// The place field under the map viewer's row, once the launcher has a place search.
   private(set) var placeSearch: PlaceSearchView?
