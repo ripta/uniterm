@@ -25,6 +25,10 @@ public enum ScriptRefusal: Sendable, Equatable {
   /// opens its session before any script code runs, so a second one comes from script code.
   case secondSession
 
+  /// The bundled command opened a session with the plain begin. It sends an undeclared begin for a
+  /// file that declares nothing, so a plain begin from it comes from script code.
+  case plainBeginFromCommand
+
   /// What the user is told.
   public var text: String {
     switch self {
@@ -38,6 +42,10 @@ public enum ScriptRefusal: Sendable, Equatable {
     case .peerNotReading: return "A script stopped reading uniterm's replies and was disconnected."
     case .secondSession:
       return "A program that already has a script or a REPL connected tried to begin another."
+    case .plainBeginFromCommand:
+      return
+        "The uniterm command opened a script session without saying whether its file declares "
+        + "powers, so the session was refused."
     }
   }
 }
@@ -56,6 +64,9 @@ public enum ScriptEvent: Sendable {
   /// A helper reported what the app's copy of its file declares, as JSON text. The app reads it
   /// strictly before it believes any of it.
   case fileDeclared(ScriptConnection, json: String)
+
+  /// A helper declared the connection a run of a script file that declares nothing.
+  case undeclaredBegun(ScriptConnection, UndeclaredBegin)
   case request(ScriptConnection, id: UInt32, call: ScriptCall)
 
   /// A REPL's helper presented its token. It is the first message of the connection.

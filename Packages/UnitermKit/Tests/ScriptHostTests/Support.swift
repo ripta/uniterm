@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Preferences
 import ScriptTestSupport
 import ScriptWire
 import XCTest
@@ -11,6 +12,42 @@ struct HelperRun {
   let status: Int32
   let standardOutput: String
   let standardError: String
+}
+
+/// A settings store in a defaults domain of its own, so a test never reads or writes the
+/// developer's settings. A new store holds no stored mode, which reads as strict.
+@MainActor
+final class TestScriptSettings {
+  let store: SettingsStore
+  let defaults: UserDefaults
+  private let suite = "dev.uniterm.tests.\(UUID().uuidString)"
+
+  init(mode: ScriptFileMode? = nil) {
+    defaults = UserDefaults(suiteName: suite)!
+    store = SettingsStore(defaults: defaults)
+
+    if let mode { set(mode) }
+  }
+
+  func set(_ mode: ScriptFileMode) {
+    store.set(mode, for: .scriptFileMode)
+  }
+
+  func remove() {
+    defaults.removePersistentDomain(forName: suite)
+  }
+}
+
+extension ScriptHost {
+  /// Answers every undeclared review that waits now and any that comes later. The caller holds the
+  /// token for as long as the answers should continue.
+  func answerUndeclaredReviews(with choice: UndeclaredReviewChoice) -> ChangeObservers.Token {
+    changes.add { [weak self] in
+      guard let self else { return }
+
+      for review in undeclaredReviews { decideUndeclaredReview(review.id, choice) }
+    }
+  }
 }
 
 enum ScriptFixtures {

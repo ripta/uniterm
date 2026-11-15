@@ -286,14 +286,25 @@ final class DeclaredFileProtocolTests: XCTestCase {
 
     defer { first.shutdownAndClose() }
 
-    try first.send(ScriptHelperMessage.begin(name: "first").frame())
+    try first.send(ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "first")).frame())
+
+    guard case .controllerRefused(let strictText) = try await read(first) else {
+      return XCTFail("the first begin was not answered")
+    }
+
+    XCTAssertTrue(strictText.contains("strict mode"), strictText)
 
     let plain = try await connect()
 
     defer { plain.shutdownAndClose() }
 
-    try plain.send(ScriptHelperMessage.begin(name: "second").frame())
-    expect(await isClosed(plain), "a second plain begin was accepted")
+    try plain.send(ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "second")).frame())
+
+    guard case .controllerRefused(let plainText) = try await read(plain) else {
+      return XCTFail("a second undeclared begin was not refused")
+    }
+
+    XCTAssertEqual(plainText, ScriptHost.secondSessionText)
 
     let controller = try await connect()
 
@@ -360,8 +371,13 @@ final class DeclaredFileProtocolTests: XCTestCase {
 
     defer { again.shutdownAndClose() }
 
-    try again.send(ScriptHelperMessage.begin(name: "later").frame())
-    expect(await isClosed(again), "a refused session freed its process")
+    try again.send(ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "later")).frame())
+
+    guard case .controllerRefused(let text) = try await read(again) else {
+      return XCTFail("a refused session freed its process")
+    }
+
+    XCTAssertEqual(text, ScriptHost.secondSessionText)
   }
 
   /// Catches the rule being applied to a program that is not the command. A generic peer keeps
@@ -411,7 +427,7 @@ final class DeclaredFileProtocolTests: XCTestCase {
 
     defer { peer.shutdownAndClose() }
 
-    try peer.send(ScriptHelperMessage.begin(name: "late").frame())
+    try peer.send(ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "late")).frame())
 
     let expected = ScriptHost.maxProcessSessions - dead + 1
 
@@ -440,8 +456,13 @@ final class DeclaredFileProtocolTests: XCTestCase {
 
     defer { plain.shutdownAndClose() }
 
-    try plain.send(ScriptHelperMessage.begin(name: "late").frame())
-    expect(await isClosed(plain), "a begin was taken with no room")
+    try plain.send(ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "late")).frame())
+
+    guard case .controllerRefused(let plainText) = try await read(plain) else {
+      return XCTFail("a begin was taken with no room")
+    }
+
+    XCTAssertEqual(plainText, ScriptHost.secondSessionText)
 
     let file = try await connect()
 

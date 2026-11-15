@@ -171,6 +171,10 @@ public struct BundleHelperIdentity: ControllerHelperIdentity {
         + "with that command."
     }
 
+    // The file was just read and the peer matches it, so a command replaced on disk since the
+    // cheap check's copy was kept is the command now. Later checks are cheap again.
+    reference.replace(with: expected)
+
     return nil
   }
 }
@@ -179,6 +183,13 @@ public struct BundleHelperIdentity: ControllerHelperIdentity {
 private final class CommandReference: @unchecked Sendable {
   private let lock = NSLock()
   private var kept: CodeIdentity?
+
+  func replace(with identity: CodeIdentity) {
+    lock.lock()
+    defer { lock.unlock() }
+
+    kept = identity
+  }
 
   func identity(of url: URL) -> CodeIdentity? {
     lock.lock()

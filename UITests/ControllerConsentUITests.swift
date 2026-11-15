@@ -47,18 +47,19 @@ final class ControllerConsentUITests: UnitermUITestCase {
   }
 
   /// Runs the package from the terminal and returns the status file the shell writes.
-  private func startRun(_ package: String, named name: String, in app: XCUIApplication) throws
-    -> String
-  {
+  private func startRun(
+    _ package: String, named name: String, allow: [String] = [], in app: XCUIApplication
+  ) throws -> String {
     let command = try bundledCommand()
     let shell = scratch + "-\(name).sh"
     let status = scratch + "-\(name).status"
+    let flags = allow.map { "--allow \($0)" }.joined(separator: " ")
 
     try write(
       """
       attempts=0
       while [ $attempts -lt 100 ]; do
-        "\(command)" run --socket "\(testSocket)" "\(package)" > "\(status).out" 2> "\(status).err"
+        "\(command)" run --socket "\(testSocket)" \(flags) "\(package)" > "\(status).out" 2> "\(status).err"
         code=$?
         [ $code -ne 69 ] && break
         attempts=$((attempts + 1))
@@ -77,6 +78,25 @@ final class ControllerConsentUITests: UnitermUITestCase {
     runInTerminal(shell, in: app)
 
     return status
+  }
+
+  /// What the command and its shell left behind, for a failure message. A review that never shows
+  /// is either a run that never started or a run the app refused, and the status says which.
+  private func runReport(_ status: String) -> String {
+    func read(_ path: String) -> String {
+      (try? String(contentsOfFile: path, encoding: .utf8)) ?? "none"
+    }
+
+    return "The shell wrote \(read(status)). Standard output: \(read(status + ".out")) "
+      + "Standard error: \(read(status + ".err"))"
+  }
+
+  /// What the panel shows, for a failure message: its rows and the selected row's detail.
+  private func panelReport(_ panel: XCUIElement) -> String {
+    let rows = panel.tables["pending-requests-table"].tableRows.count
+    let detail = panel.staticTexts["pending-requests-detail"].value as? String ?? "none"
+
+    return "The panel lists \(rows) rows. Its detail reads: \(detail)"
   }
 
   /// Gives the main window's terminal the keys. A panel the test opened would take them
@@ -161,7 +181,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let first = try startRun(package, named: "consent-first", in: app)
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
@@ -171,7 +193,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     let trustVersion = panel.buttons["pending-requests-trust-version"]
 
-    XCTAssertTrue(trustVersion.waitForExistence(timeout: 5), "the panel offers no version trust")
+    XCTAssertTrue(
+      trustVersion.waitForExistence(timeout: 5),
+      "the panel offers no version trust. \(panelReport(panel))")
     XCTAssertFalse(
       panel.buttons["pending-requests-trust-identity"].exists,
       "an unsigned package was offered identity trust")
@@ -226,7 +250,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let first = try startRun(package, named: "panel-once", in: app)
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
@@ -242,7 +268,8 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let second = try startRun(package, named: "panel-deny", in: app)
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30), "a run allowed once was remembered for the next")
+      indicator.waitForExistence(timeout: 30),
+      "the second review never showed, or the run was remembered. \(runReport(second))")
 
     let open = openPendingRequests(in: app)
     let next = open.tables["pending-requests-table"].tableRows.firstMatch
@@ -269,7 +296,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let status = try startRun(package, named: "question-pid", in: app)
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(status))")
 
     let panel = openPendingRequests(in: app)
     let table = panel.tables["pending-requests-table"]
@@ -303,13 +332,14 @@ final class ControllerConsentUITests: UnitermUITestCase {
   }
 
   /// Catches a plain script's question calling its per-run choice by the connection's name. The
-  /// script has no package and no review, so its clipboard question is the first the user sees.
+  /// script declares nothing, so it runs in unsafe mode, and its review comes before its clipboard
+  /// question. Allow and Ask Each Use keeps the question a plain script has always had.
   func testAPlainScriptsQuestionNamesItsRun() throws {
     let script = scratch + "-plain-question.janet"
 
     try write("(import uniterm)\n(print (get (protect (uniterm/read-clipboard)) 0))\n", to: script)
 
-    let app = launchApp()
+    let app = launchApp(settings: ["scriptFileMode": "unsafe"])
     let window = mainWindow(in: app)
 
     defer { try? FileManager.default.removeItem(atPath: script) }
@@ -319,9 +349,21 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let status = try startRun(script, named: "plain-question", in: app)
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the question")
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(status))")
 
     let panel = openPendingRequests(in: app)
+    let review = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(review.waitForExistence(timeout: 30), "the review never reached the panel")
+    review.click()
+
+    let ask = panel.buttons["pending-requests-allow-once"]
+
+    XCTAssertTrue(ask.waitForExistence(timeout: 5), "the review offers no Allow and Ask Each Use")
+    ask.click()
+
     let question = panel.tables["pending-requests-table"].tableRows.firstMatch
 
     XCTAssertTrue(question.waitForExistence(timeout: 30), "the clipboard call never asked")
@@ -335,6 +377,66 @@ final class ControllerConsentUITests: UnitermUITestCase {
     panel.buttons["Deny"].click()
 
     XCTAssertEqual(waitForFile(status), "exit=0\n")
+  }
+
+  /// Catches an undeclared script whose review never reaches the panel, one that offers anything
+  /// but the three unsafe choices, one that offers trust, one that omits the `--allow`
+  /// capabilities or the way to make the script trustable, and Allow Everything that does not let
+  /// the clipboard call through without a question. The script ran no code until the panel
+  /// answered.
+  func testAnUnsafeReviewOffersThreeChoicesAndNoTrust() throws {
+    let script = scratch + "-unsafe-review.janet"
+    let marker = scratch + "-unsafe-review.marker"
+
+    try write(
+      "(import uniterm)\n(spit \"\(marker)\" \"ran\")\n(print (uniterm/read-clipboard))\n",
+      to: script)
+
+    let app = launchApp(settings: ["scriptFileMode": "unsafe"])
+    let window = mainWindow(in: app)
+
+    defer {
+      for path in [script, marker] { try? FileManager.default.removeItem(atPath: path) }
+    }
+
+    _ = waitForTerminal(in: app)
+
+    let status = try startRun(script, named: "unsafe-review", allow: ["fs-write"], in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(status))")
+
+    let panel = openPendingRequests(in: app)
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    row.click()
+
+    XCTAssertTrue(
+      waitFor(panel.staticTexts["pending-requests-detail"], timeout: 5) {
+        $0.contains("Undeclared script file") && $0.contains("--allow fs-write")
+          && $0.contains("(declare-permissions ...)") && $0.contains("this run only")
+      }, "the panel does not show the undeclared file, its --allow capabilities, and the way out")
+    XCTAssertFalse(
+      FileManager.default.fileExists(atPath: marker), "the script ran before the answer")
+
+    XCTAssertTrue(panel.buttons["Reject"].waitForExistence(timeout: 5))
+    XCTAssertTrue(panel.buttons["Allow and Ask Each Use"].exists)
+    XCTAssertTrue(panel.buttons["Allow Everything"].exists)
+
+    for trust in ["pending-requests-trust-version", "pending-requests-trust-identity"] {
+      XCTAssertFalse(panel.buttons[trust].exists, "an undeclared file was offered trust")
+    }
+
+    attach(panel, named: "unsafe-review")
+    panel.buttons["Allow Everything"].click()
+
+    // A clipboard call that asked would leave the script waiting for the user, so a script that
+    // finishes proves Allow Everything let the call through.
+    XCTAssertEqual(waitForFile(status), "exit=0\n")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: marker))
   }
 
   /// Catches a declared script file whose review never reaches the panel, one that lists powers
@@ -364,7 +466,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let first = try startRun(script, named: "declared-first", in: app)
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
@@ -381,7 +485,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     let trustVersion = panel.buttons["pending-requests-trust-version"]
 
-    XCTAssertTrue(trustVersion.waitForExistence(timeout: 5), "the panel offers no version trust")
+    XCTAssertTrue(
+      trustVersion.waitForExistence(timeout: 5),
+      "the panel offers no version trust. \(panelReport(panel))")
     XCTAssertFalse(
       panel.buttons["pending-requests-trust-identity"].exists,
       "an unsigned file was offered identity trust")
@@ -457,7 +563,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let first = try startRun(script, named: "signed-first", in: app)
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
@@ -504,7 +612,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     let trustVersion = panel.buttons["pending-requests-trust-version"]
 
-    XCTAssertTrue(trustVersion.waitForExistence(timeout: 5), "the panel offers no version trust")
+    XCTAssertTrue(
+      trustVersion.waitForExistence(timeout: 5),
+      "the panel offers no version trust. \(panelReport(panel))")
     trustVersion.click()
     XCTAssertEqual(waitForFile(first), "exit=0\n")
 

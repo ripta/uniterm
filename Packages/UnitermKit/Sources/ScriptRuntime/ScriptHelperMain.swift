@@ -21,6 +21,10 @@ public enum ScriptHelperMain {
     public static let dataError: Int32 = 65
     public static let noInput: Int32 = 66
     public static let unavailable: Int32 = 69
+
+    /// The app was reached and refused the run: strict mode, a rejected review, a denial, or a
+    /// power the file did not declare. A caller that retries on `unavailable` must not retry this.
+    public static let refused: Int32 = 77
     public static let protocolMismatch: Int32 = 70
     public static let connectionLost: Int32 = 74
     public static let notBundleCommand: Int32 = 78
@@ -66,6 +70,9 @@ public enum ScriptHelperMain {
       A file whose first form is (declare-permissions ...) declares the powers it needs. uniterm
       shows them for review, then runs its own copy of the file with no import of any other file.
       Each --allow must name a capability the declaration lists.
+
+      A file that declares nothing is refused while uniterm's Script files setting is Strict, which
+      is the default. In Unsafe mode, uniterm asks you about it each time before it runs.
 
         --allow CAPABILITY  let the script use a capability. Repeat it to allow more. The
                             names are Janet's own, and each is denied by default.
@@ -173,7 +180,8 @@ public enum ScriptHelperMain {
     let session: ScriptSession
 
     do {
-      session = try ScriptSession.open(path: address.path, name: name)
+      session = try ScriptSession.openUndeclared(
+        path: address.path, begin: UndeclaredBegin(name: name, capabilities: invocation.allowed))
     } catch {
       return connectionFailure(error, address: address)
     }
@@ -263,7 +271,7 @@ public enum ScriptHelperMain {
         status: Exit.unavailable)
 
     case ScriptSessionError.failed(_, let text):
-      return fail(text, status: Exit.unavailable)
+      return fail(text, status: Exit.refused)
 
     default:
       return fail("cannot talk to uniterm at \(address.path): \(error)", status: Exit.unavailable)

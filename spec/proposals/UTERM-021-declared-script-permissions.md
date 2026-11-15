@@ -19,6 +19,9 @@
 - UTERM-003 — "Where scripts run": the app reads and snapshots a declared script file before the command runs it. The
   command runs the snapshot, not the bytes it read itself. An undeclared file is not snapshotted, and its run waits
   for the app's answer. `uniterm run` no longer sends the plain begin.
+- UTERM-003 — the command's public exit statuses (64, 66, 69, 70): a refusal from the app, such as strict mode, a
+  rejected review, or a denial, exits 77. 69 stays for no uniterm reachable, so a caller that retries on 69 does not
+  retry a refusal. See Decision Log.
 
 ## Summary
 
@@ -282,7 +285,8 @@ reads as strict.
 
 - Switching to strict refuses every waiting undeclared-file review, with a message naming strict mode. An admission or
   an answer that finishes after the switch is refused too.
-- A live undeclared run keeps running after a switch to strict. The user ends it with Revoke.
+- A live undeclared run keeps running after a switch to strict. The user ends its authority with Revoke, as for a
+  controller run. Its next call is refused, and the process is not stopped. Amended 2026-11-15; see Decision Log.
 - Switching to unsafe affects runs that start afterward.
 - Strict mode's refusal names the Settings row.
 
@@ -510,7 +514,7 @@ file.
 
 ### M4: Strict and unsafe modes
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The setting defaults to strict
 - In strict mode, a file without a declaration is refused with a message naming strict mode and the form
@@ -527,9 +531,57 @@ file.
 - Revoking an Allow Everything grant refuses the run's next call
 - Switching to strict refuses every waiting undeclared-file review with a message naming strict mode
 - An admission in flight, or a review answer, that finishes after a switch to strict is refused
-- A live undeclared run keeps running after a switch to strict, and Revoke ends it
+- A live undeclared run keeps running after a switch to strict, and Revoke ends its authority, so its next call is
+  refused
 - A missing or unknown stored mode reads as strict
-- The repo's script fixtures and examples carry declarations, and the package and UI test suites pass in strict mode
+- The scripts that the UI tests run through the bundled command carry declarations, or run in unsafe mode when the test
+  is about an undeclared file, and the package and UI test suites pass in strict mode. The package tests' script
+  fixtures stay undeclared, since the SwiftPM test helper that runs them is a generic peer, and a declared file needs
+  the bundled command. Amended 2026-11-15 in two bullets; see Decision Log.
+
+**As built:**
+
+The Settings page has a "Script files" row with Strict and Unsafe, and a missing or unknown stored value reads as
+strict. The host reads the store each time it needs the mode, and watches the key. ScriptWire is at version 11, which
+adds the undeclared begin and its admitted answer. Refusals and the review notice reuse the controller answers. The
+command opens a session for an undeclared file with the undeclared begin and runs none of its code until the app
+admits it. It no longer sends the plain begin.
+
+The app tells the bundled command from any other program with the cheap check it already runs on the main actor, and
+the full check follows off the main actor. A plain begin from the command is refused and its connection closed. An
+undeclared begin from the command claims its place in the one-session table, then takes one of two paths. Strict
+mode refuses it with a message that names the mode, the form to add, ffi and modules, and the Settings row. Unsafe mode
+puts a review in the Pending Requests panel once the full check passes, and the mode is read again when the check
+finishes. A call from the connection before the answer is refused, as for a controller. An undeclared begin from a
+program that is not the command gets the admission a plain begin gets, with an admitted answer at once and no review,
+so the SwiftPM test helper and any other program that speaks the wire are unchanged in strict mode.
+
+The review offers Reject, Allow and Ask Each Use, and Allow Everything. It lists the run's `--allow` capabilities and
+says a declaration makes the script trustable. No choice is remembered, and none is a trust choice. Ask Each Use leaves
+the connection as a plain script's is, with clipboard questions and the pane rules. Allow Everything puts the clipboard
+read and write in the connection's standing clipboard grants, which the call boundary already checks, so a host launch
+still asks. The Pending Requests panel lists every live undeclared run, not only those with Allow Everything. Revoke on
+a row does what Revoke does for a controller run or a declared file run: it ends the run's authority, so its next call
+is refused, and it does not close the connection or stop the process. Switching to strict refuses each waiting review at
+once. An answer that arrives after the switch reads the mode again and refuses the run, and an admission in flight is
+refused when its full check finishes. A live run is left alone. A file with a later `(declare-permissions ...)` form is refused by the
+command before it connects, as the M2 reader reports it, so the app never sees that begin.
+
+A peer that the cheap check does not take for the command gets the full check, off the main actor, before it is
+admitted as a generic one. A command replaced on disk under a running app fails the cheap check, and would otherwise
+have been admitted with no review. The connection's calls wait for the decision. The check refreshes the cached copy of
+the command's signature when it passes. A file or controller begin that the cheap check did not take for the command
+claims its place in the one-session table when its full check passes. The window's pending slot counts an undeclared
+review as it counts any other row.
+
+An app refusal of a run, whether strict mode, Reject, a switch to strict, a denial, or an undeclared power at
+admission, makes the command exit with status 77. Status 69 stays for no reachable uniterm, so a caller that retries on
+69 does not retry a refusal.
+
+The package tests' script fixtures stay undeclared, and the tests that exercise a plain script through the real signed
+command set unsafe mode and answer the review. The UI tests that drive the real app declare their scripts, answer the
+review in the panel, and seed unsafe mode for the plain-script question and the unsafe review. The decision for the
+fixtures is in the Decision Log.
 
 ### M5: The lint
 
@@ -622,6 +674,23 @@ file.
   "a fixed domain line" and did not name it, and the line has to differ from the descriptor's so neither kind of
   signature verifies the other. Amended text: the Signing decision now names both lines. If a different line is
   wanted, only the one constant and the signatures made so far change.
+- 2026-11-15 (run best guess): The package tests' script fixtures stay undeclared. The SwiftPM test helper that runs
+  them is not the bundled command, so the app takes it for a generic peer, which UTERM-004 admits in strict mode, and a
+  declared file from it is refused because only the bundled command may begin one. Declaring them would have moved
+  every one of those tests onto the signed copy of the command, with a review answered in each. The M4 check said "the
+  repo's script fixtures and examples carry declarations". Amended text: it now names the scripts the UI tests run
+  through the bundled command, and says the package fixtures stay undeclared and why. The repo has no other script
+  examples. If declared fixtures are wanted anyway, those tests move to the signed command and answer a review each.
+- 2026-11-15 (run best guess): An app refusal of a run makes the command exit 77 (EX_NOPERM), where it exited 69. The
+  proposal names no exit status. The change came from review: scripts that loop while the exit is 69, meaning no app
+  is up yet, would retry a strict-mode refusal for the whole retry window. 69 stays for no reachable uniterm. UTERM-003
+  names the sysexits statuses as public contract, so its list is stale by this one.
+- 2026-11-15 (run best guess): Revoke on an undeclared run ends its authority and does not stop the process. The
+  Where-the-mode-setting-lives decision and the M4 check said a live run "keeps running" and that Revoke "ends it". A
+  controller run's Revoke and a declared file run's Revoke refuse the run's later calls and leave the process and its
+  connection alone, so the undeclared run does the same. Amended text: the decision now says the user ends the run's
+  authority, as for a controller run, and the check says its next call is refused. If a stopped process is wanted,
+  Revoke would close the connection for all three kinds of run, which is a separate decision.
 
 ## References
 

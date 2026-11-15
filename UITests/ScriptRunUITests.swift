@@ -40,6 +40,9 @@ final class ScriptRunUITests: UnitermUITestCase {
 
     try write(
       """
+      (declare-permissions {:name "Synthetic Run"}
+        {:kind :pane-control :version 1})
+
       (import uniterm)
 
       (def windows (uniterm/list-windows))
@@ -74,6 +77,7 @@ final class ScriptRunUITests: UnitermUITestCase {
     }
 
     runInTerminal(shell, in: app)
+    answerFirstReview(in: app, pressing: "pending-requests-allow-session")
 
     let result = try XCTUnwrap(waitForFile(status), "the shell never finished the command")
     let errorText = (try? String(contentsOfFile: errors, encoding: .utf8)) ?? ""

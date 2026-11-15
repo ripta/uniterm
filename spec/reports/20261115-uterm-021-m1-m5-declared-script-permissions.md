@@ -20,8 +20,8 @@ work is stashed.
 | UTERM-021 M1: Run wording | DONE | "Name every one-run choice Allow for This Run" |
 | UTERM-021 M2: Declared files | DONE | "Run a script file's declared powers from a reviewed snapshot" |
 | UTERM-021 M3: Signed files | DONE | "Trust a signed script file by its key and ID" |
-| UTERM-021 M4: Strict and unsafe modes | IN PROGRESS | |
-| UTERM-021 M5: The lint | QUEUED | |
+| UTERM-021 M4: Strict and unsafe modes | DONE | "Refuse undeclared script files unless the user chooses unsafe mode" |
+| UTERM-021 M5: The lint | IN PROGRESS | |
 
 ## Commands that leave the sandbox
 
@@ -257,3 +257,96 @@ nothing new then runs without review.
 
 The package suite took 218.5 s wall, against 206 s after M2. The new signing tests are unit and in-process command
 tests, each well under a second. `ControllerConsentUITests` now has 7 tests and took about 250 s including its build.
+
+## UTERM-021 M4: Strict and unsafe modes
+
+Commits: "Read a plain script from a pipe", "Record the UI flakes seen while adding strict and unsafe script modes",
+then "Refuse undeclared script files unless the user chooses unsafe mode".
+
+A "Script files" row on the Settings page chooses Strict or Unsafe, with strict the default. The command now sends an
+undeclared begin for a file that declares nothing, and runs none of its code until the app answers. ScriptWire is at
+version 11. Strict mode refuses the file with a message that names the mode, the form to add, and the Settings row.
+Unsafe mode reviews it for one run, with Reject, Allow and Ask Each Use, and Allow Everything. A refusal from the app
+now exits 77. Exit 69 still means no uniterm is reachable.
+
+### Checks
+
+- `make fmt-check`, `make lint`, and `make check` pass.
+- `make build` passes.
+- `caffeinate -dimsu make test-package`: 2580 tests, 9 skipped, 1 failure, 270.8 s wall on a busy machine. The
+  failure was `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread`, a listed potential flake. It passed
+  alone. The run before the review fixes passed with 0 failures in 211 s.
+- Scoped wire fuzz under ASan, 5000 iterations, passes.
+- `scripts/swiftpm-offline-check.sh` passes, since `Package.swift` gained a dependency.
+- `make clean`, then `make test-helper-sandbox`, passes.
+- `proposals.py check` and `freeze` report nothing.
+- UI tests: the coordinator ran the five touched classes, `ControllerConsentUITests`, `FormLayoutUITests`,
+  `PendingRequestsUITests`, `ScriptRunUITests`, and `PresentationUITests`, three times, then `ControllerConsentUITests`
+  alone once.
+  - The first run failed 4 of 14 on two real defects. The window's pending indicator did not count undeclared
+    reviews, and one test read the command's stderr notice as script output. Both are fixed.
+  - The later runs failed 3, 2, and 1 tests, a different set each time. Every test passed in at least one run of the
+    final code. Those failures are recorded as potential flakes in `spec/flaky-tests.md`, under "Unowned failures"
+    below.
+  - The coordinator viewed the Settings screenshot. It shows the Script files row with Strict selected and aligned
+    with the other rows. No crash report appeared during any UI run.
+
+### Best guesses
+
+- The package tests' script fixtures stay undeclared. The SwiftPM test helper that runs them is a generic peer, and
+  only the bundled command may begin a declared file. Strict mode is tested through the signed copy of the command in
+  `UndeclaredFileTests`, and the UI tests declare their scripts or seed unsafe mode. The M4 fixture check is amended
+  in place, with a Decision Log entry. The plan had said the fixtures gain declarations.
+- An undeclared begin from a program that is not the bundled command gets the generic admission at once, with no
+  review. The M4 check that a generic peer keeps its admission in strict mode requires this.
+- A peer the cheap cached check does not take for the command gets the full check before any generic admission. When
+  it passes, the peer is the command, and the cached identity is refreshed.
+- An app refusal exits 77 (`EX_NOPERM`), so a retry loop on 69 does not rerun a review the user refused. UTERM-003
+  names the public statuses and is frozen, so UTERM-021's Impacts section records the addition.
+- Revoke on an undeclared run does what it does for a controller or a declared file. It ends the run's authority, and
+  the next call is refused. The process keeps running. The Settings decision and the M4 check said Revoke "ends" the
+  run, so both are amended in place to say so precisely. Closing the connection for all three kinds of run would be a
+  separate decision.
+- The Pending Requests panel lists every live undeclared run with Revoke, not only Allow Everything runs.
+- A Reject records no denial, since an undeclared file has no identity to key one on.
+
+### Review
+
+- The cached command check could miss a command replaced on disk under a running app. Its undeclared file then got
+  the generic admission, with no strict refusal and no review. A plain begin and the one-session claim had the same
+  gap. The trace confirmed it. Fixed: a failed cheap check falls through to the full check, and the connection's
+  requests wait for the decision. New tests use a helper whose cheap check fails while the full one passes.
+- Policy refusals exited 69, which the UI shell loops and any user wrapper treat as "not up yet". Fixed with exit 77.
+- "Revoke ends it" overstated what Revoke does. The text is fixed, and the behavior matches the other run kinds.
+- A doc comment named a caller that does not exist. Fixed.
+- Two tests slept 300 ms and 200 ms. Both now wait on an observable effect. Fixed.
+- The fixtures deviation: the reviewer judged it acceptable, since declaring the fixtures would test nothing about
+  strict mode. It is listed here for the user.
+- `adr-impact` found no conflicts. It asked whether a new review row could steal the panel's selection, against
+  ADR-12. The trace found the selection is restored by row identity. A new test pins it. It also raised "an unknown
+  setting value reads as the safe one" as a possible ADR. It does not pass the bar. It is one setting's default, and
+  ADR-09's "unsupported meanings authorize nothing" covers the principle.
+
+### Bugs found
+
+- `uniterm run` on a pipe or `/dev/fd/N` failed in the command's own read. It was found in M2. Fixed in "Read a plain
+  script from a pipe", with the regression test seen failing first.
+- The window's pending indicator did not count undeclared reviews. Found by the first UI run and fixed in the
+  milestone commit.
+
+### Unowned failures
+
+- `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread` failed once more in a full package run. It passed
+  alone. It is already listed.
+- `ControllerConsentUITests` and `PendingRequestsUITests` failed in scattered tests across three UI runs. The failures
+  were a typed shell line that never ran, an automation hit-point error, a first test that ran past its one-minute
+  allowance, and three tests that failed together in one run but passed when run alone. Each test passed in at least
+  one run of the final code. None was reproduced on the commit before M4, so it stays uncertain whether M4's longer
+  test flows made the UI environment's flakiness more likely. They are listed in `spec/flaky-tests.md`. The failure
+  messages now report what the shell and the command wrote, so the next failure explains itself.
+
+### Test cost
+
+The package suite took 211 s before the review fixes and 271 s after, on a machine busy with other work. The new
+`UndeclaredFileTests` has 19 tests. The five touched UI classes, 14 tests, take about 5.5 minutes together, including
+the build.

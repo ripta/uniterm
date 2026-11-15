@@ -216,6 +216,13 @@ extension ScriptHost {
       return refuseController(connection, text)
 
     case .admitted(let made, let hash, let path, let lookup):
+      guard claimAfterFullCheck(connection) else {
+        made.remove()
+        onRefusal(.secondSession)
+
+        return refuseController(connection, Self.secondSessionText)
+      }
+
       proceed(
         WaitingAdmission(
           connection: connection, artifact: .package(made), entryHash: hash, entryPath: path,
@@ -472,6 +479,7 @@ extension ScriptHost {
       controllerRuns[id] = nil
       dropWaitingAdmission(id, refusal: "You revoked this run before it started.")
       dropPendingDeclaration(id, refusal: "You revoked this program before it started.")
+      dropUndeclared(id, refusal: "You revoked this run before it started.")
     }
   }
 

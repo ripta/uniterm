@@ -100,18 +100,29 @@ extension ScriptHost {
   /// it runs before the admission starts, so a second begin from the command is refused even while
   /// the first still authenticates. A program that is not the command takes no place, so it cannot
   /// fill the table. The admission refuses it with the full check.
+  ///
+  /// The cheap check can fail for the command itself, when the command was replaced on disk under a
+  /// running app. A peer it does not take for the command is marked, and claims its place once the
+  /// admission's full check passes. The full check is what refuses a program that is not the
+  /// command.
   func claimIfBundledCommand(_ connection: ScriptConnection) -> Bool {
-    guard let settings = controllerSettings, let token = connection.peer.token,
-      settings.helper.isRunningCommand(token)
-    else { return true }
+    guard let settings = controllerSettings, let token = connection.peer.token else { return true }
+
+    guard settings.helper.isRunningCommand(token) else {
+      lateClaims.insert(connection.id)
+
+      return true
+    }
 
     return claimProcessSession(connection)
   }
 
-  /// A plain begin has no answer, so the connection simply ends.
-  func refuseSecondSession(_ connection: ScriptConnection) {
-    connection.close()
-    onRefusal(.secondSession)
+  /// Claims the place of a begin that the cheap check did not take for the command, now that the
+  /// full check has. Returns false when the process already has a session.
+  func claimAfterFullCheck(_ connection: ScriptConnection) -> Bool {
+    guard lateClaims.remove(connection.id) != nil else { return true }
+
+    return claimProcessSession(connection)
   }
 
   func refuseSecondAttach(_ connection: ScriptConnection) {
@@ -195,6 +206,14 @@ extension ScriptHost {
       snapshot.remove()
 
       return refuseController(connection, "The program that asked for the run is gone.")
+    }
+
+    guard claimAfterFullCheck(connection) else {
+      controllerAdmissions.remove(connection.id)
+      snapshot.remove()
+      onRefusal(.secondSession)
+
+      return refuseController(connection, Self.secondSessionText)
     }
 
     let wait = fileDeclarationTimeout

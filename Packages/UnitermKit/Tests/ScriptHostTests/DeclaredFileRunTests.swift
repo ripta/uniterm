@@ -28,6 +28,11 @@ final class DeclaredFileRunTests: XCTestCase {
   private var seenRuns: [ControllerRun] = []
   private var reviewWatch: ChangeObservers.Token?
 
+  /// The undeclared scripts here run in unsafe mode, and each review is answered to ask on each
+  /// use. The strict mode and the unsafe review have their own tests.
+  private var settings: TestScriptSettings!
+  private var undeclaredWatch: ChangeObservers.Token?
+
   /// How the tests answer each startup review. A test that answers itself sets it to nil.
   private var reviewAnswer: ControllerReviewChoice? = .allowForSession
 
@@ -36,12 +41,14 @@ final class DeclaredFileRunTests: XCTestCase {
     work = try ControllerFixtures.temporaryFolder()
     runs = work.appendingPathComponent("runs")
     trust = work.appendingPathComponent("trust")
+    settings = TestScriptSettings(mode: .unsafe)
 
     try startHost()
   }
 
   override func tearDown() async throws {
     host.stop()
+    settings.remove()
     try? FileManager.default.removeItem(at: directory)
     ControllerSnapshot.removeStale(in: runs)
     try? FileManager.default.removeItem(at: work)
@@ -55,8 +62,10 @@ final class DeclaredFileRunTests: XCTestCase {
       issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: FakeWindowAPI(),
       controllers: ControllerSettings(
         runsRoot: runs, helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()),
-        trustDirectory: trust))
+        trustDirectory: trust),
+      settings: settings.store)
     host.start()
+    undeclaredWatch = host.answerUndeclaredReviews(with: .askEachUse)
     reviewWatch = host.changes.add { [weak self] in
       guard let self else { return }
 
@@ -692,9 +701,9 @@ final class DeclaredFileRunTests: XCTestCase {
     expect(await waitUntil { self.runFolders.isEmpty }, "a refused file left its snapshot")
   }
 
-  /// Catches an undeclared file that reads its `.sig`. Until the app answers undeclared files, one
-  /// still runs as a plain script. A valid signature beside it grants no identity, and a signature
-  /// that would not verify costs it nothing.
+  /// Catches an undeclared file that reads its `.sig`. In unsafe mode one runs after its own
+  /// review. A valid signature beside it grants no identity, and a signature that would not
+  /// verify costs it nothing.
   func testASignatureBesideAnUndeclaredFileGrantsNoIdentity() async throws {
     reviewAnswer = nil
 

@@ -265,6 +265,12 @@ final class ScriptRunAppQuitTests: XCTestCase {
     defer { if process.isRunning { process.terminate() } }
 
     let asked = await listener.drive { event in
+      if case .undeclaredBegun(let connection, _) = event {
+        connection.send(.undeclaredAdmitted)
+
+        return false
+      }
+
       guard case .request = event else { return false }
 
       listener.stop()
@@ -299,6 +305,10 @@ final class ScriptRunAppQuitTests: XCTestCase {
 
     Task {
       _ = await listener.drive { event in
+        if case .undeclaredBegun(let connection, _) = event {
+          connection.send(.undeclaredAdmitted)
+        }
+
         if case .request(let connection, let id, _) = event {
           connection.reply(id: id, result: .ok(Data()))
         }

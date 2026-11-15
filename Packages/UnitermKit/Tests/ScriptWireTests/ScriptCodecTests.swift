@@ -87,6 +87,9 @@ final class ScriptCodecTests: XCTestCase {
         FileBegin(path: "/tmp/caf\u{00E9}.janet", capabilities: ["fs-read", "net-connect"])),
       .fileDeclaration(#"{"permissions":[{"kind":"pane-control","version":1}]}"#),
       .fileDeclaration(""),
+      .undeclaredBegin(UndeclaredBegin(name: "tidy.janet")),
+      .undeclaredBegin(
+        UndeclaredBegin(name: "caf\u{00E9}.janet", capabilities: ["fs-read", "net-connect"])),
     ]
 
     for level in ScriptStatusLevel.allCases {
@@ -122,6 +125,7 @@ final class ScriptCodecTests: XCTestCase {
       .controllerReviewing("synthetic review notice"),
       .fileAdmitted(
         snapshot: "/tmp/run.synthetic/script.janet", version: Data(repeating: 0x5A, count: 32)),
+      .undeclaredAdmitted,
     ]
 
     for message in messages {
@@ -129,13 +133,16 @@ final class ScriptCodecTests: XCTestCase {
     }
   }
 
-  /// Catches an old command or an old app that the version 10 side accepts. Version 9 knows neither
-  /// the file begin nor the declaration, so each side refuses the other at the hello, before any
-  /// call or admission.
-  func testTheDeclaredFileVersionRefusesTheVersionBeforeIt() {
-    XCTAssertEqual(ScriptProtocol.version, 10)
-    XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: 9)))
-    XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: 9)))
+  /// Catches an old command or an old app that the version 11 side accepts. Version 10 knows no
+  /// undeclared begin, so an older command would run a file with no answer from the app. Each
+  /// side refuses the other at the hello, before any call or admission.
+  func testTheUndeclaredBeginVersionRefusesTheVersionBeforeIt() {
+    XCTAssertEqual(ScriptProtocol.version, 11)
+
+    for older: UInt16 in [9, 10] {
+      XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: older)))
+      XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: older)))
+    }
   }
 
   /// Catches a hello that accepts another version, in either direction. The refusal names both
@@ -631,6 +638,39 @@ extension ScriptCodecTests {
     trailing.put(UInt8(0))
 
     XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 11, body: trailing.bytes))
+  }
+
+  /// Catches an undeclared begin whose name or capabilities pass their bounds, or that carries
+  /// trailing bytes, being read.
+  func testUndeclaredBeginBoundsAreRefusedWhenDecoded() {
+    var many = ByteWriter()
+
+    many.put(string: "a.janet", limit: ScriptProtocol.maxNameBytes)
+    many.put(UInt8(ControllerBegin.maxCapabilities + 1))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 13, body: many.bytes))
+
+    var long = ByteWriter()
+
+    long.put(UInt16(ScriptProtocol.maxNameBytes + 1))
+    long.put(raw: Data(repeating: 0x61, count: ScriptProtocol.maxNameBytes + 1))
+    long.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 13, body: long.bytes))
+
+    var trailing = ByteWriter()
+
+    trailing.put(string: "a.janet", limit: ScriptProtocol.maxNameBytes)
+    trailing.put(UInt8(0))
+    trailing.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 13, body: trailing.bytes))
+
+    var admitted = ByteWriter()
+
+    admitted.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptAppMessage.decode(type: 11, body: admitted.bytes))
   }
 
   /// Catches a file's version that is not a SHA-256 being read as an admission.

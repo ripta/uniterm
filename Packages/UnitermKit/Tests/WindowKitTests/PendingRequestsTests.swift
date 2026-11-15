@@ -1,14 +1,17 @@
 import AppKit
+import FileRouting
 import Preferences
 import ScriptHost
+import ScriptWire
+import StatusKit
 import XCTest
 
 @testable import WindowKit
 
 @MainActor
 final class PendingRequestsTests: XCTestCase {
-  private let suite = "uniterm-pending-requests-test-\(UUID().uuidString)"
-  private var windows: WindowSet!
+  fileprivate let suite = "uniterm-pending-requests-test-\(UUID().uuidString)"
+  fileprivate var windows: WindowSet!
   private var indicator: PendingRequestsIndicator!
 
   override func setUp() async throws {
@@ -46,7 +49,7 @@ final class PendingRequestsTests: XCTestCase {
     windows.activeController?.statusCenter.history.map(\.text) ?? []
   }
 
-  private func ask(_ power: String, subject: String = "build.janet, PID 42") {
+  fileprivate func ask(_ power: String, subject: String = "build.janet, PID 42") {
     _ = windows.permissionRequests.ask(
       .init(requester: .terminal(window: 1, pane: 1), power: power), subject: subject,
       title: "Read the clipboard", detail: "", sessionTitle: "Allow for This Run",
@@ -104,7 +107,7 @@ final class PendingRequestsTests: XCTestCase {
   }
 
   /// The titles of the panel's buttons that show, in the order they sit.
-  private func shownButtons(_ panel: PendingRequestsWindowController) throws -> [String] {
+  fileprivate func shownButtons(_ panel: PendingRequestsWindowController) throws -> [String] {
     let content = try XCTUnwrap(panel.window?.contentView)
 
     return content.descendants(of: NSButton.self)
@@ -147,6 +150,79 @@ final class PendingRequestsTests: XCTestCase {
     table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
 
     XCTAssertEqual(try shownButtons(panel), ["Ask Again"])
+  }
+}
+
+/// A helper that takes every peer for the bundle's command, so a raw peer can play it.
+private struct AcceptingHelper: ControllerHelperIdentity {
+  func refusal(forPeer token: AuditToken) -> String? { nil }
+}
+
+extension PendingRequestsTests {
+  /// Catches a review that arrives above the chosen row moving the user's selection. Reviews list
+  /// first, so one that arrives while the user has a question selected lands above it. The
+  /// selection must stay on the question, with its own buttons, so no key answers a row the user
+  /// did not choose.
+  func testAReviewArrivingAboveTheSelectionLeavesTheSelectionOnItsRow() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ut-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+
+    store.set(.unsafe, for: .scriptFileMode)
+
+    let center = StatusCenter()
+    let host = ScriptHost(
+      listener: try ScriptListener.start(directory: directory),
+      issueProducer: { center.issueProducer(kind: .script, name: $0) },
+      controllers: ControllerSettings(
+        runsRoot: directory.appendingPathComponent("runs"), helper: AcceptingHelper()),
+      permissionRequests: windows.permissionRequests, settings: store)
+
+    host.start()
+
+    defer {
+      host.stop()
+      try? FileManager.default.removeItem(at: directory)
+    }
+
+    let panel = PendingRequestsWindowController(scriptHost: host, windows: windows)
+    let content = try XCTUnwrap(panel.window?.contentView)
+
+    content.layoutSubtreeIfNeeded()
+
+    let table = try XCTUnwrap(content.firstDescendant(of: NSTableView.self))
+
+    ask("clipboard-read")
+    table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+
+    XCTAssertEqual(try shownButtons(panel), ["Allow Once", "Allow for This Run", "Deny"])
+
+    let socket = try UnixSocket.connect(path: host.instanceAddress)
+
+    defer { socket.shutdownAndClose() }
+
+    try socket.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
+    try socket.send(
+      ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "arrives.janet")).frame())
+
+    var waited = 0
+
+    while host.undeclaredReviews.isEmpty, waited < 300 {
+      try await Task.sleep(for: .milliseconds(50))
+      waited += 1
+    }
+
+    XCTAssertEqual(host.undeclaredReviews.count, 1, "the review never arrived")
+
+    // The window's slot counts what the panel lists, so a review it left out would never show.
+    let counted = PendingRequestsIndicator(windows: windows, scriptHost: { host })
+
+    XCTAssertTrue(
+      counted.waitingItems().contains { $0.sentence.contains("arrives.janet") },
+      "the pending slot does not count an undeclared review")
+    XCTAssertEqual(table.numberOfRows, 2)
+    XCTAssertEqual(table.selectedRow, 1, "the selection moved off the question")
+    XCTAssertEqual(try shownButtons(panel), ["Allow Once", "Allow for This Run", "Deny"])
   }
 }
 

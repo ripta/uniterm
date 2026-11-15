@@ -217,7 +217,7 @@ let package = Package(
       name: "ScriptHost",
       dependencies: [
         "ControllerPackage", "ControllerTrust", "FileRouting", "HelperHost", "PaneModel",
-        "ProcessInspection", "ScriptWire", "StatusKit",
+        "Preferences", "ProcessInspection", "ScriptWire", "StatusKit",
       ]),
     // The REPL applet. It hosts a terminal session whose child is the REPL helper, and binds the
     // helper's control channel to its pane through the script host. It never imports Janet.
@@ -360,7 +360,8 @@ let package = Package(
       name: "ScriptHostTests",
       dependencies: [
         "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "FileRouting",
-        "ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport", "StatusKit",
+        "Preferences", "ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport",
+        "StatusKit",
       ],
       resources: [.copy("Fixtures")]),
     .testTarget(

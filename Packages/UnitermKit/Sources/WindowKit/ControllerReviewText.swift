@@ -77,4 +77,44 @@ enum ControllerReviewText {
 
     return sentences.joined(separator: " ")
   }
+
+  /// Everything the review of an undeclared file shows. The name comes from the command, so it is
+  /// escaped as a descriptor's is.
+  static func summary(_ review: UndeclaredReview) -> String {
+    let allowed =
+      review.capabilities.isEmpty
+      ? "  no --allow capabilities"
+      : review.capabilities.map { "  --allow \(LaunchApprovalText.escaped($0))" }
+        .joined(separator: "\n")
+
+    return [
+      "Undeclared script file: \(LaunchApprovalText.escaped(review.name))",
+      "It declares nothing, so uniterm cannot tell what it will do. Adding a "
+        + "(declare-permissions ...) form makes it reviewable and trustable.",
+      "Asks for:",
+      allowed,
+      "Each choice lasts this run only.",
+    ].joined(separator: "\n")
+  }
+
+  /// What an undeclared run that the user admitted can do now.
+  static func summary(_ run: UndeclaredRun) -> String {
+    let power =
+      run.choice == .allowEverything
+      ? "Allow Everything: it reads and replaces the clipboard without asking. A host launch "
+        + "still asks each time."
+      : "Allow and Ask Each Use: its clipboard calls ask, and its pane calls follow the pane rules."
+
+    return [
+      "Undeclared script file: \(LaunchApprovalText.escaped(run.name)), process \(run.pid)",
+      power,
+      "Revoke ends its authority. Its next call is refused.",
+    ].joined(separator: "\n")
+  }
+
+  /// What each choice of an undeclared file's review covers.
+  static let undeclaredChoices =
+    "Reject does not start the script. Allow and Ask Each Use starts it, and each clipboard call "
+    + "asks again. Allow Everything starts it and lets it read and replace the clipboard until it "
+    + "ends. A host launch always asks. None of the choices is remembered."
 }

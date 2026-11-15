@@ -234,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           self?.windowSet?.post(level: .warning, text: refusal.text)
         },
         controllers: makeControllerSettings(), clipboard: clipboard,
-        permissionRequests: windows.permissionRequests)
+        permissionRequests: windows.permissionRequests, settings: settings)
 
       host.start()
       scriptHost = host

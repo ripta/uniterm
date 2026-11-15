@@ -171,6 +171,33 @@ class UnitermUITestCase: XCTestCase {
     return nil
   }
 
+  /// Answers the oldest review in the Pending Requests panel as a user does: opens the panel from the
+  /// Window menu, selects its first row, and presses the button named `identifier`. The panel
+  /// closes after, so the terminal takes the keys again. A test that runs a declared script file
+  /// calls it once the script is started, since the file runs no code until its powers are allowed.
+  func answerFirstReview(in app: XCUIApplication, pressing identifier: String) {
+    app.menuBars.menuBarItems["Window"].click()
+    app.menuBars.menuItems["Pending Requests\u{2026}"].click()
+
+    let panel = app.windows["pending-requests-window"]
+
+    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    row.click()
+
+    let button = panel.buttons[identifier]
+
+    XCTAssertTrue(button.waitForExistence(timeout: 5), "the review offers no \(identifier)")
+    button.click()
+
+    let close = panel.buttons[XCUIIdentifierCloseWindow]
+
+    if close.isHittable { close.click() }
+  }
+
   /// Enables remote control on the focused pane from the File menu, as a user does, and waits for
   /// the pane's control badge. Every new pane starts disconnected, so a script that acts from it
   /// needs this first.

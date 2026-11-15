@@ -70,14 +70,43 @@ final class ScriptSession: @unchecked Sendable {
   /// What a REPL's helper says when the app's end of the connection closes.
   static let replQuitText = "uniterm quit, or closed this REPL's connection"
 
-  /// Connects, exchanges the protocol version, and names the script. Throws
-  /// `WireError.versionMismatch` when the app is another version.
-  static func open(path: String, name: String) throws -> ScriptSession {
+  /// Connects and asks the app to admit a script file that declares nothing. The command has read
+  /// the file and runs it itself, so nothing of it is sent but its name and the capabilities
+  /// granted. Nothing runs until the app admits it. A refusal throws
+  /// `ScriptSessionError.failed`, and a run that waits for the user's review is told so once.
+  static func openUndeclared(
+    path: String, begin: UndeclaredBegin,
+    onReview: (String) -> Void = { FileHandle.standardError.write(Data("uniterm: \($0)\n".utf8)) }
+  ) throws -> ScriptSession {
     let session = try connect(path: path)
 
-    try session.socket.send(ScriptHelperMessage.begin(name: name).frame())
+    do {
+      try session.socket.send(ScriptHelperMessage.undeclaredBegin(begin).frame())
 
-    return session
+      var told = false
+
+      while true {
+        switch try session.readMessage() {
+        case .undeclaredAdmitted:
+          return session
+
+        case .controllerRefused(let text):
+          throw ScriptSessionError.failed(.refused, text)
+
+        // The user may take as long as they like, so the wait has no timeout.
+        case .controllerReviewing(let text) where !told:
+          told = true
+          onReview(text)
+
+        default:
+          throw WireError.badValue("the app answered an undeclared script with something else")
+        }
+      }
+    } catch {
+      session.close()
+
+      throw error
+    }
   }
 
   /// Connects and asks the app to admit a controller run. The app authenticates this process,

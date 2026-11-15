@@ -1,6 +1,7 @@
 import ControllerPackage
 import Foundation
 import PaneModel
+import Preferences
 import ProcessInspection
 import ScriptWire
 import StatusKit
@@ -35,7 +36,7 @@ public final class ScriptHost {
     /// socket gets.
     case genericPeer
 
-    /// The bundled command running a plain script file.
+    /// The bundled command running a script file that declares nothing.
     case bundledRun
 
     /// A controller run, from a package or a native entry.
@@ -167,6 +168,25 @@ public final class ScriptHost {
   /// The most processes the table keeps. A begin that finds it full of live processes is refused.
   static let maxProcessSessions = 1024
 
+  /// Where the user chose how undeclared script files are treated. Without it, they are refused.
+  let settings: SettingsStore?
+  private var settingsWatch: SettingsObservation?
+
+  /// The reviews of undeclared script files that wait, oldest first, and the runs behind them.
+  public internal(set) var undeclaredReviews: [UndeclaredReview] = []
+  var waitingUndeclared: [UInt64: WaitingUndeclared] = [:]
+
+  /// The calls of connections whose begin waits for the full check of the command, in order. They
+  /// run, or are refused, once the check decides what the connection is.
+  var heldRequests: [UInt64: [ScriptEvent]] = [:]
+
+  /// Connections of a file or controller begin that the cheap check did not take for the command.
+  /// Their place in the one-session table is claimed when the full check passes.
+  var lateClaims: Set<UInt64> = []
+
+  /// The undeclared runs the user admitted, by connection.
+  var undeclaredRuns: [UInt64: UndeclaredRun] = [:]
+
   /// The startup reviews that wait, oldest first.
   public internal(set) var controllerReviews: [ControllerReview] = []
   var lastReviewID: UInt64 = 0
@@ -247,8 +267,9 @@ public final class ScriptHost {
     reaper: ProcessReaper = .live, replLimits: ReplLimits = .live,
     replProbes: ReplProbes = .live, controllers: ControllerSettings? = nil,
     clipboard: (any ScriptClipboard)? = nil,
-    permissionRequests: PermissionRequests = PermissionRequests()
+    permissionRequests: PermissionRequests = PermissionRequests(), settings: SettingsStore? = nil
   ) {
+    self.settings = settings
     self.controllerSettings = controllers
     self.clipboard = clipboard
     self.permissionRequests = permissionRequests
@@ -262,6 +283,11 @@ public final class ScriptHost {
     self.onRefusal = onRefusal
 
     permissionWatch = permissionRequests.changes.add { [weak self] in self?.pendingChanged() }
+
+    if let settings {
+      settings.watch(.scriptFileMode)
+      settingsWatch = settings.addObserver { [weak self] in self?.scriptFileModeMayHaveChanged() }
+    }
   }
 
   /// The address of this instance, which no other instance shares. A REPL's helper takes it, so
@@ -300,6 +326,13 @@ public final class ScriptHost {
     sessions = [:]
     processSessions = [:]
     stopControllers()
+    settingsWatch?.cancel()
+    settingsWatch = nil
+    waitingUndeclared = [:]
+    undeclaredReviews = []
+    undeclaredRuns = [:]
+    heldRequests = [:]
+    lateClaims = []
 
     for watch in peerWatches.values { watch.cancel() }
 
@@ -318,20 +351,7 @@ public final class ScriptHost {
   func handle(_ event: ScriptEvent) {
     switch event {
     case .begun(let connection, let name):
-      let kind = plainPeerKind(of: connection)
-
-      sessions[connection.id, default: Session()].name = Self.label(for: name)
-      sessions[connection.id, default: Session()].kind = kind
-
-      // Only the bundled command is held to one session. A generic peer keeps the admission any
-      // program on the socket gets, and a native entry's connections are adopted as before.
-      if kind == .bundledRun, !claimProcessSession(connection) {
-        return refuseSecondSession(connection)
-      }
-
-      watchPeer(of: connection)
-      bindConnection(connection)
-      adoptNativeRun(connection)
+      begin(connection, .plain(name))
 
     case .controllerBegun(let connection, let request):
       sessions[connection.id, default: Session()].name = "controller"
@@ -365,6 +385,9 @@ public final class ScriptHost {
 
     case .fileDeclared(let connection, let json):
       receiveDeclaration(connection, json: json)
+
+    case .undeclaredBegun(let connection, let request):
+      begin(connection, .undeclared(request))
 
     case .attached(let connection, let token):
       sessions[connection.id, default: Session()].kind = .repl
@@ -401,6 +424,12 @@ public final class ScriptHost {
     case .request(let connection, let id, let call):
       guard sessions[connection.id]?.refused != true, !connection.isClosed else { return }
 
+      if heldRequests[connection.id] != nil {
+        heldRequests[connection.id]?.append(event)
+
+        return
+      }
+
       releaseFilesOfClosedPanes()
 
       if let refusal = authorize(connection) { return connection.reply(id: id, result: refusal) }
@@ -420,6 +449,9 @@ public final class ScriptHost {
       peerWatches.removeValue(forKey: connection.id)?.cancel()
       clipboardGrants[connection.id] = nil
       controllerConnectionClosed(connection.id)
+      dropUndeclared(connection.id)
+      heldRequests[connection.id] = nil
+      lateClaims.remove(connection.id)
       sessions[connection.id]?.producer?.retire()
       sessions[connection.id] = nil
       boundRepls.removeValue(forKey: connection.id)?.connectionClosed()
@@ -634,7 +666,7 @@ public final class ScriptHost {
 
   /// Watches the connection's peer for an exec or an exit. The watch only hurries the end along.
   /// Every call checks the peer's generation itself, so an event that arrives late changes nothing.
-  private func watchPeer(of connection: ScriptConnection) {
+  func watchPeer(of connection: ScriptConnection) {
     guard peerWatches[connection.id] == nil else { return }
 
     let watch = DispatchSource.makeProcessSource(
@@ -679,6 +711,7 @@ public final class ScriptHost {
     controllerRuns[connection.id] = nil
     dropWaitingAdmission(connection.id)
     dropPendingDeclaration(connection.id)
+    dropUndeclared(connection.id)
     authorityEnded(connection.id)
   }
 
@@ -797,7 +830,7 @@ public final class ScriptHost {
 
   /// Validates the peer's ancestry and binds the connection to a session root when found. A
   /// connection that cannot be bound remains unbound, and its calls are refused.
-  private func bindConnection(_ connection: ScriptConnection) {
+  func bindConnection(_ connection: ScriptConnection) {
     let peerIdentity = ProcessIdentity(
       pid: connection.peer.pid, started: connection.peerStartTime)
 

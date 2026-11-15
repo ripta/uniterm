@@ -238,6 +238,40 @@ final class ControllersWindowTests: XCTestCase {
       [.allowOnce, .allowForSession, .trustVersion, .deny])
   }
 
+  /// Catches an undeclared file's review that leaves out an `--allow` capability or the way to make
+  /// the script trustable, lets a name reorder the text the user reads, or describes a run as
+  /// broader than its choice.
+  func testTheUndeclaredReviewListsTheAllowedCapabilitiesAndTheWayToTrust() {
+    let review = UndeclaredReview(
+      id: 1, name: "tidy\u{202E}.janet", capabilities: ["fs-read", "net-connect"], connection: 4,
+      pid: 100)
+    let text = ControllerReviewText.summary(review)
+
+    XCTAssertTrue(text.hasPrefix("Undeclared script file: tidy\\u{202E}.janet"), text)
+    XCTAssertFalse(text.contains("\u{202E}"), text)
+    XCTAssertTrue(text.contains("--allow fs-read\n  --allow net-connect"), text)
+    XCTAssertTrue(text.contains("(declare-permissions ...)"), text)
+    XCTAssertTrue(text.contains("this run only"), text)
+
+    let bare = ControllerReviewText.summary(
+      UndeclaredReview(id: 2, name: "a.janet", capabilities: [], connection: 5, pid: 101))
+
+    XCTAssertTrue(bare.contains("no --allow capabilities"), bare)
+    XCTAssertFalse(ControllerReviewText.undeclaredChoices.contains("Trust"))
+
+    let everything = ControllerReviewText.summary(
+      UndeclaredRun(
+        connection: 4, name: "tidy.janet", pid: 100, capabilities: [], choice: .allowEverything))
+    let asking = ControllerReviewText.summary(
+      UndeclaredRun(
+        connection: 4, name: "tidy.janet", pid: 100, capabilities: [], choice: .askEachUse))
+
+    XCTAssertTrue(everything.contains("without asking"), everything)
+    XCTAssertTrue(everything.contains("host launch"), everything)
+    XCTAssertTrue(asking.contains("clipboard calls ask"), asking)
+    XCTAssertFalse(asking.contains("without asking"), asking)
+  }
+
   /// Catches a window that keeps its selection by index when the chosen row goes. The next row
   /// then takes its place, and Revoke ends a run the user did not choose. The selection goes
   /// with its row.

@@ -24,6 +24,9 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     try write(
       """
+      (declare-permissions {:name "Synthetic Outside Program"}
+        {:kind :pane-control :version 1})
+
       (import uniterm)
 
       (var outcome "gave up")
@@ -44,13 +47,13 @@ final class PendingRequestsUITests: UnitermUITestCase {
       """
       (
         sleep 1
-        "\(command)" run --socket "\(testSocket)" "\(fixture)" > "\(output)" 2>&1
+        "\(command)" run --socket "\(testSocket)" "\(fixture)" > "\(output)" 2> "\(output).err"
         echo "exit=$?" > "\(status)"
       ) < /dev/null > /dev/null 2>&1 &
       """, to: shell)
 
     addTeardownBlock {
-      for path in [fixture, shell, output, status] {
+      for path in [fixture, shell, output, output + ".err", status] {
         try? FileManager.default.removeItem(atPath: path)
       }
     }
@@ -121,10 +124,15 @@ final class PendingRequestsUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     let program = try startOutsideProgram("granted", in: app)
+
+    answerFirstReview(in: app, pressing: "pending-requests-allow-session")
+
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the request")
-    XCTAssertEqual(indicator.value as? String, "1 request")
+    XCTAssertTrue(
+      waitFor(indicator, timeout: 30) { $0 == "1 request" },
+      "the indicator never counted the one request")
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: program.status), "the program ended before a grant")
 
@@ -155,6 +163,9 @@ final class PendingRequestsUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     let program = try startOutsideProgram("denied", in: app)
+
+    answerFirstReview(in: app, pressing: "pending-requests-allow-session")
+
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the request")

@@ -420,7 +420,8 @@ extension ScriptHost {
   /// True while anything waits for the user: a program's pane request, a startup review, or a
   /// permission question.
   public var hasPendingWork: Bool {
-    !allPendingRequests().isEmpty || !controllerReviews.isEmpty || permissionRequests.isWaiting
+    !allPendingRequests().isEmpty || !controllerReviews.isEmpty || !undeclaredReviews.isEmpty
+      || permissionRequests.isWaiting
   }
 }
 
@@ -447,8 +448,10 @@ extension ScriptHost {
   func checkPower(
     _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission? = nil
   ) -> PowerCheck {
-    if controllerAdmissions.contains(connection.id) || waitingAdmissions[connection.id] != nil {
-      let subject = sessions[connection.id]?.kind == .fileRun ? "script" : "controller"
+    if controllerAdmissions.contains(connection.id) || waitingAdmissions[connection.id] != nil
+      || waitingUndeclared[connection.id] != nil
+    {
+      let subject = sessions[connection.id]?.kind == .controllerRun ? "controller" : "script"
 
       return .refused(.failure(.refused, "uniterm has not admitted this \(subject) yet."))
     }

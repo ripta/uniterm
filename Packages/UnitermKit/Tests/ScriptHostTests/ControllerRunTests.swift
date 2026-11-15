@@ -36,7 +36,13 @@ final class ControllerRunTests: XCTestCase {
   private var seenReviews: [ControllerReview] = []
   private var reviewWatch: ChangeObservers.Token?
 
+  /// The plain scripts here run in unsafe mode, and each undeclared review is answered to ask on
+  /// each use.
+  private var settings: TestScriptSettings!
+  private var undeclaredWatch: ChangeObservers.Token?
+
   override func setUp() async throws {
+    settings = TestScriptSettings(mode: .unsafe)
     directory = try ScriptFixtures.makeSocketDirectory()
     work = try ControllerFixtures.temporaryFolder()
     runs = work.appendingPathComponent("runs")
@@ -49,8 +55,10 @@ final class ControllerRunTests: XCTestCase {
       issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: windows,
       controllers: ControllerSettings(
         runsRoot: runs, helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()),
-        trustDirectory: work.appendingPathComponent("trust")))
+        trustDirectory: work.appendingPathComponent("trust")),
+      settings: settings.store)
     host.start()
+    undeclaredWatch = host.answerUndeclaredReviews(with: .askEachUse)
     reviewWatch = host.changes.add { [weak self] in
       guard let self else { return }
 
@@ -75,6 +83,7 @@ final class ControllerRunTests: XCTestCase {
 
   override func tearDown() async throws {
     host.stop()
+    settings.remove()
     try? FileManager.default.removeItem(at: directory)
     ControllerSnapshot.removeStale(in: runs)
     try? FileManager.default.removeItem(at: work)

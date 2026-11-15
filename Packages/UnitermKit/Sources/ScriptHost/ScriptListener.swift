@@ -363,6 +363,13 @@ public final class ScriptListener: @unchecked Sendable {
           setReadTimeout(0, on: descriptor)
           continuation.yield(.fileBegun(connection, begin))
 
+        case .undeclaredBegin(let begin):
+          guard role == .undeclared else { throw WireError.badValue("a second begin") }
+
+          role = .script
+          setReadTimeout(0, on: descriptor)
+          continuation.yield(.undeclaredBegun(connection, begin))
+
         case .fileDeclaration(let json):
           guard fileBegun, !fileDeclared else {
             throw WireError.badValue("a declaration from a connection that began no file, or twice")

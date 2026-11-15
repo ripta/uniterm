@@ -24,6 +24,11 @@ final class ControllerConsentTests: XCTestCase {
   private var clipboard: MemoryClipboard!
   private var watch: ChangeObservers.Token?
 
+  /// The plain scripts here run in unsafe mode, and each undeclared review is answered to ask on
+  /// each use.
+  private var settings: TestScriptSettings!
+  private var undeclaredWatch: ChangeObservers.Token?
+
   /// How the test answers each startup review it sees. Nil leaves reviews waiting.
   private var reviewAnswer: ControllerReviewChoice?
 
@@ -39,6 +44,7 @@ final class ControllerConsentTests: XCTestCase {
     work = try ControllerFixtures.temporaryFolder()
     trust = work.appendingPathComponent("trust")
     clipboard = MemoryClipboard(text: "synthetic clipboard")
+    settings = TestScriptSettings(mode: .unsafe)
 
     let center = StatusCenter()
 
@@ -48,8 +54,9 @@ final class ControllerConsentTests: XCTestCase {
       controllers: ControllerSettings(
         runsRoot: work.appendingPathComponent("runs"),
         helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()), trustDirectory: trust),
-      clipboard: clipboard)
+      clipboard: clipboard, settings: settings.store)
     host.start()
+    undeclaredWatch = host.answerUndeclaredReviews(with: .askEachUse)
     watch = host.changes.add { [weak self] in self?.answerWhatWaits() }
 
     recordTestProcessAsSessionRoot(host)
@@ -57,6 +64,7 @@ final class ControllerConsentTests: XCTestCase {
 
   override func tearDown() async throws {
     host.stop()
+    settings.remove()
     try? FileManager.default.removeItem(at: directory)
     try? FileManager.default.removeItem(at: work)
   }

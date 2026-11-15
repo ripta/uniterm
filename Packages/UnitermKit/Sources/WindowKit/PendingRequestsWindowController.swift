@@ -29,6 +29,8 @@ public final class PendingRequestsWindowController: NSWindowController {
     case launch(ExecLaunchAuthority.Request)
     case launchGrant(ExecLaunchAuthority.Grant)
     case review(ControllerReview)
+    case undeclaredReview(UndeclaredReview)
+    case undeclaredRun(UndeclaredRun)
     case question(PermissionRequests.Row)
     case denial(PermissionRequests.Denial)
 
@@ -40,6 +42,8 @@ public final class PendingRequestsWindowController: NSWindowController {
       case .launch(let request): return .launch(request.id)
       case .launchGrant(let grant): return .launchGrant(grant.id)
       case .review(let review): return .review(review.id)
+      case .undeclaredReview(let review): return .undeclaredReview(review.id)
+      case .undeclaredRun(let run): return .undeclaredRun(run.connection)
       case .question(let question): return .question(question.id)
       case .denial(let denial): return .denial(denial.id)
       }
@@ -52,6 +56,8 @@ public final class PendingRequestsWindowController: NSWindowController {
     case launch(UInt64)
     case launchGrant(UInt64)
     case review(UInt64)
+    case undeclaredReview(UInt64)
+    case undeclaredRun(UInt64)
     case question(UInt64)
     case denial(UInt64)
   }
@@ -74,7 +80,7 @@ public final class PendingRequestsWindowController: NSWindowController {
   private var rows: [Row] = []
 
   /// The popover the help button opens, with the review it describes.
-  private var help: (popover: NSPopover, review: UInt64)?
+  private var help: (popover: NSPopover, row: RowIdentity)?
   private var observers: [ChangeObservers.Token] = []
 
   private var permissions: PermissionRequests { windows.permissionRequests }
@@ -226,9 +232,12 @@ public final class PendingRequestsWindowController: NSWindowController {
 
     rows =
       (scriptHost?.controllerReviews.map(Row.review) ?? [])
+      + (scriptHost?.undeclaredReviews.map(Row.undeclaredReview) ?? [])
       + (scriptHost?.allPendingRequests().map(Row.request) ?? [])
       + launches.requests.map(Row.launch) + permissions.rows.map(Row.question)
-      + (scriptHost?.allGrants().map(Row.grant) ?? []) + launches.grants.map(Row.launchGrant)
+      + (scriptHost?.allGrants().map(Row.grant) ?? [])
+      + (scriptHost?.allUndeclaredRuns().map(Row.undeclaredRun) ?? [])
+      + launches.grants.map(Row.launchGrant)
       + permissions.denials.map(Row.denial)
 
     tableView.reloadData()
@@ -258,7 +267,11 @@ public final class PendingRequestsWindowController: NSWindowController {
       button.isEnabled = true
     }
 
-    if let help, row?.identity != .review(help.review) {
+    allowOnceButton.title = "Allow Once"
+    sessionButton.title = "Allow for This Run"
+    denyButton.title = "Deny"
+
+    if let help, row?.identity != help.row {
       help.popover.close()
       self.help = nil
     }
@@ -278,11 +291,19 @@ public final class PendingRequestsWindowController: NSWindowController {
     case .review(let review):
       let offered = ControllerReviewText.offered(for: review)
 
-      sessionButton.title = "Allow for This Run"
       shown =
         [helpButton, allowOnceButton, sessionButton]
         + (offered.contains(.trustVersion) ? [trustVersionButton] : [])
         + (offered.contains(.trustIdentity) ? [trustIdentityButton] : []) + [denyButton]
+
+    case .undeclaredReview:
+      allowOnceButton.title = "Allow and Ask Each Use"
+      sessionButton.title = "Allow Everything"
+      denyButton.title = "Reject"
+      shown = [helpButton, allowOnceButton, sessionButton, denyButton]
+
+    case .undeclaredRun:
+      shown = [revokeButton]
 
     case .question(let question):
       sessionButton.title = question.sessionTitle
@@ -328,6 +349,12 @@ public final class PendingRequestsWindowController: NSWindowController {
     case .review(let review):
       return ControllerReviewText.summary(review)
 
+    case .undeclaredReview(let review):
+      return ControllerReviewText.summary(review)
+
+    case .undeclaredRun(let run):
+      return ControllerReviewText.summary(run)
+
     case .question(let question):
       return question.waiting > 1
         ? "\(question.detail)\n\(question.waiting) requests wait. Allow Once allows the oldest alone."
@@ -356,6 +383,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     case .launch(let request): launches.decide(request.id, .allowOnce)
     case .question(let question): permissions.decide(question.id, .allowOnce)
     case .review(let review): answer(review, .allowOnce)
+    case .undeclaredReview(let review): answer(review, .askEachUse)
     default: break
     }
   }
@@ -364,6 +392,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     switch selectedRow {
     case .question(let question): permissions.decide(question.id, .allowForSession)
     case .review(let review): answer(review, .allowForSession)
+    case .undeclaredReview(let review): answer(review, .allowEverything)
     default: break
     }
   }
@@ -403,9 +432,15 @@ public final class PendingRequestsWindowController: NSWindowController {
       return
     }
 
-    guard case .review(let review) = selectedRow else { return }
+    let words: String
 
-    let text = NSTextField(wrappingLabelWithString: ControllerReviewText.choices(for: review))
+    switch selectedRow {
+    case .review(let review): words = ControllerReviewText.choices(for: review)
+    case .undeclaredReview: words = ControllerReviewText.undeclaredChoices
+    default: return
+    }
+
+    let text = NSTextField(wrappingLabelWithString: words)
 
     text.isSelectable = true
     text.preferredMaxLayoutWidth = Self.helpWidth
@@ -433,7 +468,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     // than a transient close followed by the same click opening it again.
     popover.behavior = .semitransient
     popover.delegate = self
-    help = (popover, review.id)
+    help = (popover, selectedRow?.identity ?? .review(0))
 
     // Above the button, so the help covers the panel and not whatever lies below it.
     popover.show(
@@ -457,6 +492,19 @@ public final class PendingRequestsWindowController: NSWindowController {
     }
   }
 
+  private func answer(_ review: UndeclaredReview, _ choice: UndeclaredReviewChoice) {
+    guard let failure = scriptHost?.decideUndeclaredReview(review.id, choice), let window
+    else { return }
+
+    let alert = NSAlert()
+
+    alert.alertStyle = .warning
+    alert.messageText = "The review was not answered"
+    alert.informativeText = failure
+    alert.addButton(withTitle: "OK")
+    alert.beginSheetModal(for: window) { _ in }
+  }
+
   @objc private func allowInPanePressed() {
     guard case .launch(let request) = selectedRow else { return }
 
@@ -475,6 +523,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     case .launch(let request): launches.decide(request.id, .deny)
     case .question(let question): permissions.decide(question.id, .deny)
     case .review(let review): answer(review, .deny)
+    case .undeclaredReview(let review): answer(review, .reject)
     default: break
     }
   }
@@ -482,6 +531,7 @@ public final class PendingRequestsWindowController: NSWindowController {
   @objc private func revokePressed() {
     switch selectedRow {
     case .grant(let grant): scriptHost?.revokeGrant(connection: grant.connection)
+    case .undeclaredRun(let run): scriptHost?.revokeUndeclaredRun(connection: run.connection)
     case .launchGrant(let grant): launches.revokeGrant(grant.id)
     default: break
     }
@@ -617,6 +667,13 @@ extension PendingRequestsWindowController: NSTableViewDataSource, NSTableViewDel
     case (.review(let review), "status"):
       return review.waiting.count > 1
         ? "Waits for review, \(review.waiting.count) runs" : "Waits for review"
+    case (.undeclaredReview(let review), "program"): return "\(review.name) (undeclared)"
+    case (.undeclaredReview(let review), "pid"): return String(review.pid)
+    case (.undeclaredReview, "status"): return "Waits for review"
+    case (.undeclaredRun(let run), "program"): return "\(run.name) (undeclared)"
+    case (.undeclaredRun(let run), "pid"): return String(run.pid)
+    case (.undeclaredRun(let run), "status"):
+      return run.choice == .allowEverything ? "Running, Allow Everything" : "Running, Ask Each Use"
     case (.question(let question), "program"): return question.subject
     case (.question(let question), "pid"): return question.pid.map(String.init) ?? "\u{2014}"
     case (.question(let question), "status"):

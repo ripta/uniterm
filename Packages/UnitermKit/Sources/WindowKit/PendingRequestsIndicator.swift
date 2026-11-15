@@ -14,6 +14,7 @@ public final class PendingRequestsIndicator {
   /// One waiting row, by what it is about. The kinds keep their own ID spaces.
   enum Key: Hashable {
     case review(UInt64)
+    case undeclaredReview(UInt64)
     case request(UInt64)
     case launch(UInt64)
     case question(UInt64)
@@ -66,6 +67,12 @@ public final class PendingRequestsIndicator {
         sentence: "\(review.name) (\(review.identity.controllerID)) waits for review.")
     }
 
+    let undeclared = (host?.undeclaredReviews ?? []).map { review in
+      Item(
+        key: .undeclaredReview(review.id),
+        sentence: "\(review.name) declares nothing and waits for review.")
+    }
+
     // The bar has one line, so a program is named by its file name. The panel shows the full path.
     let requests = (host?.allPendingRequests() ?? []).map { request in
       let program = request.executablePath.map { ($0 as NSString).lastPathComponent }
@@ -86,6 +93,6 @@ public final class PendingRequestsIndicator {
       Item(key: .question(row.id), sentence: "\(row.subject) asks: \(row.title).")
     }
 
-    return reviews + requests + launches + questions
+    return reviews + undeclared + requests + launches + questions
   }
 }
