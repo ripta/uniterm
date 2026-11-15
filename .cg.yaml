@@ -3,6 +3,7 @@ allow:
   - exact: [./scripts/check-sandbox-off.sh]
   - exact: [./scripts/check-sandbox-off.sh, .build/DerivedData/Build/Products/Debug/uniterm.app]
   - prefix: [./scripts/clean-test-processes.sh]
+  - prefix: [./scripts/run-swift-tests.sh]
   - prefix: [./scripts/run-ui-tests.sh]
   - prefix: [./scripts/swiftpm-offline-check.sh]
   - prefix: [/usr/bin/lldb, --batch]
