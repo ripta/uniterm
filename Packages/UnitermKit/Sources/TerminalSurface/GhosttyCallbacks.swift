@@ -112,6 +112,12 @@ enum GhosttyCallbacks {
       let raw = action.action.cell_size
       notice = .cellSize(width: raw.width, height: raw.height)
 
+    // libghostty asks here as the child ends. Taking it keeps libghostty from printing "Press any
+    // key to close" and waiting for that key, which it does for every launch with a command. The
+    // pane's owner decides what an ended session does, so the exit is reported now.
+    case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
+      notice = .exited
+
     case GHOSTTY_ACTION_SCROLLBAR, GHOSTTY_ACTION_RENDER, GHOSTTY_ACTION_RENDERER_HEALTH,
       GHOSTTY_ACTION_MOUSE_VISIBILITY, GHOSTTY_ACTION_COLOR_CHANGE, GHOSTTY_ACTION_INITIAL_SIZE,
       GHOSTTY_ACTION_SIZE_LIMIT, GHOSTTY_ACTION_MOUSE_OVER_LINK,

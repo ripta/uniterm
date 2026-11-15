@@ -67,7 +67,9 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
     // libghostty runs a command through `/bin/sh -c` and has no call for an argument list. Every
     // word is quoted, so the shell sees the program and its arguments exactly as uniterm has them.
-    // libghostty also keeps the pane open after the program ends, until a key is pressed.
+    //
+    // libghostty would also keep the pane open after the program ends, until a key is pressed.
+    // uniterm takes the child-exited action instead and reports the exit at once.
     if let program = launch.program {
       config.command = UnsafePointer(copy(ShellWords.quote(program)))
     }
