@@ -7,3 +7,4 @@
 | [20261114-second-ctrl-c-test-flaky-under-full-suite](20261114-second-ctrl-c-test-flaky-under-full-suite.md) | The second-Ctrl-C test sometimes sees the first Ctrl-C end the script | open |
 | [20261114-launcher-rows-short-of-filter-box-with-legacy-scroller](20261114-launcher-rows-short-of-filter-box-with-legacy-scroller.md) | The launcher's rows end 17 points short of the filter box while a legacy scroller shows | open |
 | [20261115-loader-variables-reach-hardened-command-with-sip-off](20261115-loader-variables-reach-hardened-command-with-sip-off.md) | A loader variable reaches the hardened `uniterm` command on a Mac with SIP off | open |
+| [20261115-helper-sandbox-tests-fail-after-ui-test-build](20261115-helper-sandbox-tests-fail-after-ui-test-build.md) | The helper sandbox tests fail after a UI test build leaves test entitlements on the helpers | open |
