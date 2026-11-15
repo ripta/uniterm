@@ -264,13 +264,25 @@ extension ScriptHost {
         "--allow \(undeclared) is not a capability the file declares, so it cannot be granted.")
     }
 
+    let snapshot = pending.snapshot
+
+    if snapshot.signature != nil, declaration.id == nil {
+      controllerAdmissions.remove(connection.id)
+      snapshot.remove()
+
+      return refuseController(
+        connection,
+        "uniterm refused the script file: it has a .sig beside it, so its (declare-permissions ...) "
+          + "form must name an :id. A signature with no ID would match nothing it could be trusted "
+          + "by.")
+    }
+
     // A file name can hold any character, and the review prints the ID as it prints a validated
     // one, so the name is cleaned before it stands in for an ID.
-    let snapshot = pending.snapshot
     let title = Self.fileTitle(snapshot.sourceName)
     let identity = ControllerIdentity(
-      controllerID: declaration.id ?? title, version: snapshot.versionHex, keyFingerprint: nil,
-      artifact: .file)
+      controllerID: declaration.id ?? title, version: snapshot.versionHex,
+      keyFingerprint: snapshot.signature?.keyFingerprint, artifact: .file)
     let artifact = FileRunArtifact(
       snapshot: snapshot, declaration: declaration, identity: identity,
       name: declaration.name ?? title)

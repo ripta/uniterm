@@ -1,5 +1,6 @@
 import CJanet
 import ControllerPackage
+import CryptoKit
 import Darwin
 import Foundation
 import ScriptWire
@@ -15,12 +16,15 @@ enum ControllerCommands {
   static var usageText: String {
     """
     usage: uniterm controller run [--socket PATH] package [argument...]
-           uniterm controller sign --key NAME package
+           uniterm controller sign --key NAME package|file.janet
            uniterm controller keygen NAME
 
     run      runs a package's native entry, from uniterm's verified copy of the package.
     sign     signs a package's controller.json with the key NAME in your login Keychain, and
-             writes controller.sig. A missing key is an error. No other key signs in its place.
+             writes controller.sig. Given a script file instead, it signs the file's exact bytes
+             and writes file.janet.sig beside it. The file must declare an :id in its
+             (declare-permissions ...) form. A missing key is an error. No other key signs in its
+             place.
     keygen   makes a new signing key NAME in your login Keychain. It never replaces a key.
 
     A package with a Janet entry runs with uniterm run instead: uniterm run [--allow CAPABILITY]...
@@ -240,10 +244,15 @@ enum ControllerCommands {
   static func sign(_ arguments: [String], keys: any ControllerKeyStore) -> Int32 {
     guard arguments.count == 3, arguments[0] == "--key" else {
       return ScriptHelperMain.fail(
-        "sign needs --key NAME and a package\n\(usageText)", status: ScriptHelperMain.Exit.usage)
+        "sign needs --key NAME and a package or a script file\n\(usageText)",
+        status: ScriptHelperMain.Exit.usage)
     }
 
     let package = arguments[2]
+
+    if !isPackage(package) {
+      return signFile(package, keyName: arguments[1], keys: keys)
+    }
 
     do {
       let key = try keys.key(named: arguments[1])
@@ -261,6 +270,61 @@ enum ControllerCommands {
     } catch {
       return ScriptHelperMain.fail(
         "cannot sign \(package): \(error)", status: ScriptHelperMain.Exit.noInput)
+    }
+  }
+
+  /// Signs a script file's exact bytes and writes the `.sig` beside the file the app will read. The
+  /// app reads beside the resolved path, so a link is resolved first. A file that declares nothing
+  /// or names no `:id` is refused, since the app would refuse its signature.
+  static func signFile(_ file: String, keyName: String, keys: any ControllerKeyStore) -> Int32 {
+    guard let resolved = realpath(file) else {
+      return ScriptHelperMain.fail(
+        "cannot sign \(file): it does not exist", status: ScriptHelperMain.Exit.noInput)
+    }
+
+    do {
+      let key = try keys.key(named: keyName)
+      let bytes = try DeclaredFileSnapshot.bytesForSigning(at: resolved)
+      let declaration: FileDeclaration
+
+      switch DeclaredScript.read(bytes) {
+      case .declared(let json):
+        declaration = try FileDeclaration.parse(json)
+
+      case .undeclared:
+        return ScriptHelperMain.fail(
+          "cannot sign \(file): its first form is not (declare-permissions ...), and a signature "
+            + "on an undeclared file would grant no identity",
+          status: ScriptHelperMain.Exit.dataError)
+
+      case .invalid(let text):
+        return ScriptHelperMain.fail(
+          "cannot sign \(file): \(text)", status: ScriptHelperMain.Exit.dataError)
+      }
+
+      guard let id = declaration.id else {
+        return ScriptHelperMain.fail(
+          "cannot sign \(file): its (declare-permissions ...) form names no :id, and uniterm "
+            + "refuses a signed file without one. Add a header such as {:id \"dev.example.tidy\"} "
+            + "first.",
+          status: ScriptHelperMain.Exit.dataError)
+      }
+
+      let signature = try ControllerSignature.sign(bytes, as: .scriptFile, with: key)
+      let target = URL(fileURLWithPath: resolved + ControllerSignature.fileSuffix)
+
+      try signature.encoded().write(to: target, options: .atomic)
+
+      let version = Data(SHA256.hash(data: bytes)).hex
+
+      print("signed \(id), version \(version)")
+      print("key \(signature.keyFingerprint)")
+      print("wrote \(target.path)")
+
+      return ScriptHelperMain.Exit.ok
+    } catch {
+      return ScriptHelperMain.fail(
+        "cannot sign \(file): \(error)", status: ScriptHelperMain.Exit.noInput)
     }
   }
 

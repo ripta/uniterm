@@ -166,6 +166,10 @@ public struct DeclaredFileSnapshot: Sendable {
   /// The source file's name, for a title when the declaration names none.
   public let sourceName: String
 
+  /// The sidecar signature beside the source, when one is there. It verified over the bytes of
+  /// this copy, so a signed snapshot is never signed by a signature that covers other bytes.
+  public let signature: ControllerSignature?
+
   public var file: URL { directory.appendingPathComponent(Self.fileName) }
 
   public var versionHex: String { version.hex }
@@ -192,7 +196,7 @@ public struct DeclaredFileSnapshot: Sendable {
       )
     }
 
-    let input = try openRegularFile(source, what: "the file \(source)")
+    let input = try openRegularFile(source, what: "the file \(source)", limit: maxBytes)
 
     defer { close(input) }
 
@@ -264,11 +268,14 @@ public struct DeclaredFileSnapshot: Sendable {
 
       let version = Data(hasher.finalize())
       let copy = try readFile(
-        at: directory.appendingPathComponent(fileName).path, what: "the snapshot")
+        at: directory.appendingPathComponent(fileName).path, what: "the snapshot",
+        limit: maxBytes)
 
       guard Data(SHA256.hash(data: copy)) == version else {
         throw ControllerPackageError.contents("the snapshot of \(source) does not match its source")
       }
+
+      let signature = try readSignature(besides: source, verifying: copy)
 
       guard fchmod(target, 0o500) == 0 else {
         throw ControllerPackageError.io("cannot lock the snapshot: \(errnoText())")
@@ -276,7 +283,7 @@ public struct DeclaredFileSnapshot: Sendable {
 
       return DeclaredFileSnapshot(
         directory: directory, version: version,
-        sourceName: URL(fileURLWithPath: source).lastPathComponent)
+        sourceName: URL(fileURLWithPath: source).lastPathComponent, signature: signature)
     } catch {
       ControllerSnapshot.remove(directory: directory)
 
@@ -288,7 +295,7 @@ public struct DeclaredFileSnapshot: Sendable {
   /// verified, or nothing is returned. The command parses and runs these bytes and reads the copy
   /// no more.
   public static func read(at path: String, version: Data) throws -> Data {
-    let bytes = try readFile(at: path, what: "the snapshot")
+    let bytes = try readFile(at: path, what: "the snapshot", limit: maxBytes)
 
     guard Data(SHA256.hash(data: bytes)) == version else {
       throw ControllerPackageError.contents(
@@ -298,12 +305,52 @@ public struct DeclaredFileSnapshot: Sendable {
     return bytes
   }
 
+  /// Reads a script file in place, for signing: a regular file within the size cap, opened without
+  /// following a link. The caller resolves the path first.
+  public static func bytesForSigning(at path: String) throws -> Data {
+    try readFile(at: path, what: "the file \(path)", limit: maxBytes)
+  }
+
   /// Removes the snapshot. Safe to call twice.
   public func remove() {
     ControllerSnapshot.remove(directory: directory)
   }
 
-  private static func openRegularFile(_ path: String, what: String) throws -> Int32 {
+  /// Reads the `.sig` beside `source`, opened as the file was: no link followed, a regular file, and
+  /// the signature's own size cap. A signature that is there and does not read or verify over
+  /// `bytes` throws a file-signature error whatever the reason, so a bad signature never leaves a file to run as an unsigned one.
+  private static func readSignature(
+    besides source: String, verifying bytes: Data
+  ) throws -> ControllerSignature? {
+    let path = source + ControllerSignature.fileSuffix
+    var info = stat()
+
+    guard lstat(path, &info) == 0 else {
+      guard errno == ENOENT else {
+        throw ControllerPackageError.fileSignature("cannot read \(path): \(errnoText())")
+      }
+
+      return nil
+    }
+
+    do {
+      let signatureBytes = try readFile(
+        at: path, what: "the signature \(path)", limit: ControllerSignature.maxBytes)
+      let signature = try ControllerSignature.parse(signatureBytes)
+
+      try signature.verify(bytes, as: .scriptFile)
+
+      return signature
+    } catch ControllerPackageError.signature(let text) {
+      throw ControllerPackageError.fileSignature(text)
+    } catch ControllerPackageError.contents(let text) {
+      throw ControllerPackageError.fileSignature(text)
+    } catch ControllerPackageError.io(let text) {
+      throw ControllerPackageError.fileSignature(text)
+    }
+  }
+
+  private static func openRegularFile(_ path: String, what: String, limit: Int) throws -> Int32 {
     let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
 
     guard descriptor >= 0 else {
@@ -324,17 +371,17 @@ public struct DeclaredFileSnapshot: Sendable {
         "\(path) is not a regular file. A pipe or a device cannot be declared.")
     }
 
-    guard info.st_size <= maxBytes else {
+    guard info.st_size <= limit else {
       close(descriptor)
 
-      throw ControllerPackageError.contents("\(path) is over \(maxBytes) bytes")
+      throw ControllerPackageError.contents("\(path) is over \(limit) bytes")
     }
 
     return descriptor
   }
 
-  private static func readFile(at path: String, what: String) throws -> Data {
-    let descriptor = try openRegularFile(path, what: what)
+  private static func readFile(at path: String, what: String, limit: Int) throws -> Data {
+    let descriptor = try openRegularFile(path, what: what, limit: limit)
 
     defer { close(descriptor) }
 
@@ -354,8 +401,8 @@ public struct DeclaredFileSnapshot: Sendable {
 
       bytes.append(contentsOf: buffer[..<count])
 
-      guard bytes.count <= maxBytes else {
-        throw ControllerPackageError.contents("\(path) is over \(maxBytes) bytes")
+      guard bytes.count <= limit else {
+        throw ControllerPackageError.contents("\(path) is over \(limit) bytes")
       }
     }
   }

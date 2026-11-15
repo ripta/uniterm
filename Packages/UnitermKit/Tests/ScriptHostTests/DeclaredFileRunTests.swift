@@ -489,6 +489,254 @@ final class DeclaredFileRunTests: XCTestCase {
     XCTAssertEqual(granted.standardOutput, "5\n")
   }
 
+  // MARK: Signatures
+
+  private static let signedHeader = #"{:id "dev.uniterm.fixture.tidy" :name "Tidy"}"#
+
+  /// Writes `file.sig` beside `file`, signed as a script file by `key`.
+  @discardableResult
+  private func sign(_ file: URL, with key: InMemorySigningKey? = nil) throws -> ControllerSignature
+  {
+    let signature = try ControllerSignature.sign(
+      try Data(contentsOf: file), as: .scriptFile,
+      with: try key ?? ControllerFixtures.signingKey())
+
+    try signature.encoded().write(to: URL(fileURLWithPath: file.path + ".sig"))
+
+    return signature
+  }
+
+  private func signed(
+    _ body: String, header: String = signedHeader,
+    permissions: [String] = ["{:kind :pane-control :version 1}"], key: InMemorySigningKey? = nil
+  ) throws -> URL {
+    let file = try declared(body, header: header, permissions: permissions)
+
+    try sign(file, with: key)
+
+    return file
+  }
+
+  /// Catches a signed file whose review lacks the signer. The review carries the key's fingerprint
+  /// and the declared ID, which is what the panel needs to offer Trust This Identity and to print
+  /// the signer.
+  func testASignedFileIsReviewedWithItsSignersKeyAndID() async throws {
+    reviewAnswer = nil
+
+    let file = try signed(#"(print "ran")"#)
+    let started = try start(file)
+
+    defer { if started.process.isRunning { started.process.terminate() } }
+
+    expect(await waitUntil { !self.host.controllerReviews.isEmpty }, "no review was queued")
+
+    let review = try XCTUnwrap(host.controllerReviews.first)
+
+    XCTAssertTrue(review.isSigned)
+    XCTAssertEqual(review.identity.artifact, .file)
+    XCTAssertEqual(review.identity.controllerID, "dev.uniterm.fixture.tidy")
+    XCTAssertEqual(review.identity.keyFingerprint, ControllerFixtures.Hello.keyFingerprint)
+    XCTAssertEqual(started.output.text, "")
+
+    await host.decideReview(review.id, .deny)
+  }
+
+  /// Catches an unsigned file that offers identity trust. Without a `.sig` there is no key to pin.
+  func testAnUnsignedFileHasNoKeyToTrust() async throws {
+    reviewAnswer = nil
+
+    let file = try declared(#"(print "ran")"#, header: Self.signedHeader)
+    let started = try start(file)
+
+    defer { if started.process.isRunning { started.process.terminate() } }
+
+    expect(await waitUntil { !self.host.controllerReviews.isEmpty }, "no review was queued")
+    XCTAssertFalse(try XCTUnwrap(host.controllerReviews.first).isSigned)
+
+    await host.decideReview(try XCTUnwrap(host.controllerReviews.first).id, .deny)
+  }
+
+  /// Catches identity trust that is not remembered, or that covers the wrong things. A new version
+  /// signed by the same key that asks for nothing new runs without a review. One that asks for more
+  /// is reviewed, and the review says what is new. Another key under the same ID, and the same key
+  /// under another ID, are reviewed too.
+  func testTrustThisIdentityCoversLaterVersionsThatAskForNothingNew() async throws {
+    reviewAnswer = .trustIdentity
+
+    let first = try signed(#"(print "one")"#)
+    let result = try await run(first)
+
+    XCTAssertEqual(result.status, 0, result.standardError)
+    XCTAssertEqual(seenReviews.count, 1)
+
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: trust.path)) ?? []
+
+    XCTAssertTrue(names.contains("files.json"), "\(names)")
+
+    reviewAnswer = .deny
+
+    let update = try signed(#"(print "two")"#, key: nil)
+    let updated = try await run(update)
+
+    XCTAssertEqual(updated.status, 0, updated.standardError)
+    XCTAssertEqual(updated.standardOutput, "two\n")
+    XCTAssertEqual(seenReviews.count, 1, "a later version under the trusted identity was reviewed")
+    XCTAssertEqual(seenRuns.last?.approval.displayText, "Trusted identity")
+
+    let wider = try signed(
+      #"(print "three")"#,
+      permissions: ["{:kind :pane-control :version 1}", "{:kind :clipboard-read :version 1}"])
+    let refused = try await run(wider)
+
+    XCTAssertNotEqual(refused.status, 0)
+    XCTAssertEqual(refused.standardOutput, "")
+    XCTAssertEqual(seenReviews.count, 2, "a version asking for more ran without a review")
+    XCTAssertEqual(seenReviews.last?.added, [.clipboardRead])
+    XCTAssertNotNil(seenReviews.last?.revises)
+
+    let otherKey = try signed(#"(print "four")"#, key: InMemorySigningKey())
+    let byOtherKey = try await run(otherKey)
+
+    XCTAssertNotEqual(byOtherKey.status, 0)
+    XCTAssertEqual(seenReviews.count, 3, "another key rode on the trusted identity")
+
+    let otherID = try signed(
+      #"(print "five")"#, header: #"{:id "dev.uniterm.fixture.other" :name "Tidy"}"#)
+    let byOtherID = try await run(otherID)
+
+    XCTAssertNotEqual(byOtherID.status, 0)
+    XCTAssertEqual(seenReviews.count, 4, "another ID rode on the trusted identity")
+  }
+
+  /// Catches an identity approval of a package that covers a signed file with the same ID and key.
+  /// The approval is written as the controller store writes it, and the file is still reviewed.
+  func testAPackageIdentityApprovalDoesNotCoverASignedFile() async throws {
+    let store = ControllerTrustStore(directory: trust, artifact: .package)
+
+    try store.update { _ in
+      [
+        ControllerPolicy(
+          selector: .identity(
+            controllerID: "dev.uniterm.fixture.tidy",
+            keyFingerprint: ControllerFixtures.Hello.keyFingerprint),
+          name: "Tidy", scopes: [.paneControl], approved: "2026-11-15T10:00:00Z")
+      ]
+    }
+    reviewAnswer = .deny
+
+    let result = try await run(try signed(#"(print "ran")"#))
+
+    XCTAssertNotEqual(result.status, 0)
+    XCTAssertEqual(result.standardOutput, "")
+    XCTAssertEqual(seenReviews.count, 1, "a package approval covered a script file")
+  }
+
+  /// Catches a `.sig` that falls back to an unsigned run. A signature over other bytes, a
+  /// package's signature, and a signature that is not one each refuse the file before any review
+  /// and before any of its code runs, even when the same bytes were trusted unsigned.
+  func testASignatureThatDoesNotVerifyRefusesTheFileAndNeverFallsBack() async throws {
+    reviewAnswer = .trustVersion
+
+    let file = try declared(#"(print "ran")"#, header: Self.signedHeader)
+    let unsigned = try await run(file)
+
+    XCTAssertEqual(unsigned.status, 0, unsigned.standardError)
+    XCTAssertEqual(seenReviews.count, 1)
+
+    reviewAnswer = nil
+
+    let sidecar = URL(fileURLWithPath: file.path + ".sig")
+    let forged = try ControllerSignature.sign(
+      Data("(print :other)".utf8), as: .scriptFile, with: try ControllerFixtures.signingKey())
+    let packages = try ControllerSignature.sign(
+      descriptor: try Data(contentsOf: file), with: try ControllerFixtures.signingKey())
+
+    for (bytes, fragment) in [
+      (forged.encoded(), "the file was changed after it was signed"),
+      (packages.encoded(), "the file was changed after it was signed"),
+      (Data("{}".utf8), "the file's .sig"),
+    ] {
+      try bytes.write(to: sidecar)
+
+      let result = try await run(file)
+
+      XCTAssertNotEqual(result.status, 0, fragment)
+      XCTAssertEqual(result.standardOutput, "", "the trusted bytes ran under a bad signature")
+      XCTAssertTrue(result.standardError.contains(fragment), result.standardError)
+    }
+
+    XCTAssertEqual(seenReviews.count, 1, "a refused signature reached a review")
+    expect(await waitUntil { self.runFolders.isEmpty }, "a refused file left its snapshot")
+  }
+
+  /// Catches a signed file with no `:id` that reaches a review. The signature would have nothing to
+  /// pin, so the file is refused with a message that says what to add.
+  func testASignedFileWithoutAnIDIsRefused() async throws {
+    reviewAnswer = nil
+
+    let named = try signed(#"(print "ran")"#, header: #"{:name "Tidy"}"#)
+    let noHeader = try source(
+      "(declare-permissions {:kind :pane-control :version 1})\n(print :ran)\n", named: "bare")
+
+    try sign(noHeader)
+
+    for file in [named, noHeader] {
+      let result = try await run(file)
+
+      XCTAssertNotEqual(result.status, 0)
+      XCTAssertEqual(result.standardOutput, "")
+      XCTAssertTrue(result.standardError.contains("must name an :id"), result.standardError)
+    }
+
+    XCTAssertTrue(seenReviews.isEmpty)
+    expect(await waitUntil { self.runFolders.isEmpty }, "a refused file left its snapshot")
+  }
+
+  /// Catches an undeclared file that reads its `.sig`. Until the app answers undeclared files, one
+  /// still runs as a plain script. A valid signature beside it grants no identity, and a signature
+  /// that would not verify costs it nothing.
+  func testASignatureBesideAnUndeclaredFileGrantsNoIdentity() async throws {
+    reviewAnswer = nil
+
+    let file = try source(
+      "(def header {:id \"dev.uniterm.fixture.tidy\"})\n(print :ran)\n", named: "plain")
+
+    try sign(file)
+
+    let valid = try await run(file)
+
+    XCTAssertEqual(valid.status, 0, valid.standardError)
+    XCTAssertEqual(valid.standardOutput, "ran\n")
+
+    try Data("not a signature".utf8).write(to: URL(fileURLWithPath: file.path + ".sig"))
+
+    let broken = try await run(file)
+
+    XCTAssertEqual(broken.status, 0, broken.standardError)
+    XCTAssertEqual(broken.standardOutput, "ran\n")
+    XCTAssertTrue(seenReviews.isEmpty)
+    XCTAssertTrue(
+      host.allControllerRuns().allSatisfy { $0.identity.keyFingerprint == nil },
+      "a plain run took an identity from a .sig")
+  }
+
+  /// Catches a signature looked up beside the link and not the file. A link to a signed file runs
+  /// as signed.
+  func testTheSignatureIsReadBesideTheResolvedFile() async throws {
+    reviewAnswer = .allowForSession
+
+    let file = try signed(#"(print "ran")"#)
+    let link = work.appendingPathComponent("link-to-signed.janet")
+
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+
+    let result = try await run(link)
+
+    XCTAssertEqual(result.status, 0, result.standardError)
+    XCTAssertEqual(
+      seenReviews.first?.identity.keyFingerprint, ControllerFixtures.Hello.keyFingerprint)
+  }
+
   // MARK: Paths
 
   /// Catches a symlink that is refused or run from the link's own bytes, and an `(dyn :args)` that

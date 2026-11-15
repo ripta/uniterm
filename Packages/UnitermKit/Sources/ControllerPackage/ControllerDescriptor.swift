@@ -14,6 +14,9 @@ public enum ControllerPackageError: Error, Equatable, CustomStringConvertible, S
   /// The signature file is present and does not verify.
   case signature(String)
 
+  /// A script file's `.sig` is present and does not read or verify.
+  case fileSignature(String)
+
   /// A native entry or library loads code from outside the package and the system.
   case loadBoundary(String)
 
@@ -29,6 +32,7 @@ public enum ControllerPackageError: Error, Equatable, CustomStringConvertible, S
     case .declaration(let text): return "the file's declaration: \(text)"
     case .contents(let text): return text
     case .signature(let text): return "controller.sig: \(text)"
+    case .fileSignature(let text): return "the file's .sig: \(text)"
     case .loadBoundary(let text): return text
     case .io(let text): return text
     }

@@ -63,9 +63,11 @@ enum ControllerReviewText {
     }
 
     if shown.contains(.trustIdentity) {
+      let subject = review.identity.artifact == .file ? "file" : "controller"
+
       sentences.append(
         "Trust This Identity remembers them for every version this key signs under this "
-          + "controller ID.")
+          + "\(subject) ID.")
     }
 
     if shown.contains(.trustVersion) || shown.contains(.trustIdentity) {

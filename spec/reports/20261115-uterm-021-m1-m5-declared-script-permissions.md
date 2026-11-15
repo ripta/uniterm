@@ -19,8 +19,8 @@ work is stashed.
 |---|---|---|
 | UTERM-021 M1: Run wording | DONE | "Name every one-run choice Allow for This Run" |
 | UTERM-021 M2: Declared files | DONE | "Run a script file's declared powers from a reviewed snapshot" |
-| UTERM-021 M3: Signed files | IN PROGRESS | |
-| UTERM-021 M4: Strict and unsafe modes | QUEUED | |
+| UTERM-021 M3: Signed files | DONE | "Trust a signed script file by its key and ID" |
+| UTERM-021 M4: Strict and unsafe modes | IN PROGRESS | |
 | UTERM-021 M5: The lint | QUEUED | |
 
 ## Commands that leave the sandbox
@@ -199,3 +199,61 @@ from the same process. The proposal's As built block has the details.
 The package suite took 199 s before the review fixes and 206 s after. `DeclaredFileRunTests` spawns the real command,
 14 tests in about 2.1 s. `DeclaredFileProtocolTests` takes about 0.8 s, with the declaration-bound test the slowest at
 0.3 s. The other new test files each take under 0.2 s. The new fuzz test runs 400 iterations in the package suite.
+
+## UTERM-021 M3: Signed files
+
+Commits: "Record a second local sighting of the find test's main-actor flake", then "Trust a signed script file by
+its key and ID".
+
+`uniterm controller sign --key NAME file.janet` writes `file.janet.sig`. The signature uses its own domain line, so a
+package signature never verifies a file and a file signature never verifies a package. The app verifies the `.sig`
+over the copied bytes while it snapshots. A signed file offers Trust This Identity. A later version that asks for
+nothing new then runs without review.
+
+### Checks
+
+- `make fmt-check`, `make lint`, and `make check` pass.
+- `make build` passes.
+- `caffeinate -dimsu make test-package` passes: 2551 tests, 9 skipped, 0 failures, 218.5 s wall after the review
+  fixes.
+- Scoped `make fuzz` under ASan for `ControllerFormatFuzzTests` and `DeclaredScriptFuzzTests` passes.
+- `make clean`, then `make test-helper-sandbox`, passes after the review fixes.
+- `proposals.py check` and `freeze` report nothing.
+- The coordinator ran `ControllerConsentUITests`, 7 of 7 passing, including the new signed-file test. The coordinator
+  viewed the signed file's review, which shows "Signed by key" and offers Trust This Identity. The review fixes changed
+  error wrapping and tests only, so the UI run was not repeated.
+
+### Best guesses
+
+- The file domain line is `uniterm script file 1\n`, the plan's best guess 4. The proposal's Signing decision is
+  amended in place to name both lines.
+- `sign` treats a folder as a package and any other path as a file, so the CLI needs no new flag. A missing path
+  reports that the file does not exist.
+- `sign` writes the `.sig` beside the resolved file, since the app reads beside the resolved path. It prints the path
+  it wrote.
+- A signed file with no `:id` is refused once its declaration arrives, since the header is known only then. The
+  signature itself is checked earlier, at the snapshot. Nothing is shown or kept before the refusal.
+
+### Review
+
+- A `.sig` that was a link or too large failed with a generic contents or I/O error, not the file-signature error the
+  As built names. Fixed. Every `.sig` failure now raises the file-signature error.
+- The re-sign test asserted only that the bytes changed. It now checks that each signature verifies its own bytes and
+  rejects the other's. Fixed.
+- The identity-widening test covered a new capability, not a host launch. Dismissed: `ControllerPolicyTests` already
+  proves a host launch with another directory, a sibling folder, an extra environment key, or another executable is
+  not covered. File and package approvals share that check.
+- `sign` routing every non-folder path to the file signer: kept as the best guess above.
+- `adr-impact` found no conflicts and no ADR candidates. ADR-09's rule that identity proves continuity, not every
+  future power, holds, since a version asking for more is reviewed.
+
+### Unowned failures
+
+- `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread` failed once in a full package run, counting 35
+  main-actor turns where it expects more than 100. It passed alone and in the next full run. It was not reproduced on
+  the base commit. Its existing potential-flake entry in `spec/flaky-tests.md` now records this sighting.
+
+### Test cost
+
+The package suite took 218.5 s wall, against 206 s after M2. The new signing tests are unit and in-process command
+tests, each well under a second. `ControllerConsentUITests` now has 7 tests and took about 250 s including its build.

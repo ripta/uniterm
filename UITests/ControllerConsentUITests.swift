@@ -414,6 +414,76 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertTrue(waitUntilGone(approval, timeout: 10), "the file approval stayed after Revoke")
   }
 
+  /// Catches a signed script file whose review omits the signer or hides Trust This Identity, and an
+  /// identity approval that the window does not list. The signature is made here with a throwaway
+  /// key over the file's bytes under the script-file domain line, as the signer writes it.
+  func testASignedFilesReviewOffersTrustThisIdentity() throws {
+    let script = scratch + "-signed-file.janet"
+    let source = Data(
+      """
+      (declare-permissions {:id "dev.uniterm.uitest.signed" :name "Synthetic Signed Tidy"}
+        {:kind :pane-control :version 1})
+
+      (print "signed file ran")
+
+      """.utf8)
+    let key = Curve25519.Signing.PrivateKey()
+    let signature = try key.signature(for: Data("uniterm script file 1\n".utf8) + source)
+    let fingerprint = SHA256.hash(data: key.publicKey.rawRepresentation)
+      .map { String(format: "%02x", $0) }.joined()
+
+    try source.write(to: URL(fileURLWithPath: script))
+    try write(
+      """
+      {
+        "format": 1,
+        "algorithm": "ed25519",
+        "public-key": "\(key.publicKey.rawRepresentation.base64EncodedString())",
+        "signature": "\(signature.base64EncodedString())"
+      }
+
+      """, to: script + ".sig")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer {
+      try? FileManager.default.removeItem(atPath: script)
+      try? FileManager.default.removeItem(atPath: script + ".sig")
+    }
+
+    _ = waitForTerminal(in: app)
+
+    let first = try startRun(script, named: "signed-first", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+
+    let panel = openPendingRequests(in: app)
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    row.click()
+
+    XCTAssertTrue(
+      waitFor(panel.staticTexts["pending-requests-detail"], timeout: 5) {
+        $0.contains("Script file: Synthetic Signed Tidy (dev.uniterm.uitest.signed)")
+          && $0.contains("Signed by key: \(fingerprint)")
+      }, "the panel does not show the signed file and its signer's key")
+
+    let trustIdentity = panel.buttons["pending-requests-trust-identity"]
+
+    XCTAssertTrue(trustIdentity.waitForExistence(timeout: 5), "a signed file was not offered it")
+    attach(panel, named: "signed-file-review")
+    trustIdentity.click()
+
+    XCTAssertEqual(waitForFile(first), "exit=0\n")
+
+    let second = try startRun(script, named: "signed-second", in: app)
+
+    XCTAssertEqual(waitForFile(second), "exit=0\n", "the trusted identity asked again")
+  }
+
   /// Catches a Controllers & Permissions window that hides a remembered approval, and a Revoke
   /// that leaves it covering the next run.
   func testControllersAndPermissionsShowsAndRevokesTheApproval() throws {

@@ -323,4 +323,130 @@ final class DeclaredFileTests: XCTestCase {
   func testTheCapMatchesAPackagedFilesCap() {
     XCTAssertEqual(DeclaredFileSnapshot.maxBytes, ControllerDescriptor.maxFileBytes)
   }
+
+  // MARK: Signatures
+
+  private func sign(
+    _ source: URL, as subject: ControllerSignature.Subject = .scriptFile,
+    with key: InMemorySigningKey? = nil
+  ) throws -> ControllerSignature {
+    let signature = try ControllerSignature.sign(
+      try Data(contentsOf: source), as: subject, with: try key ?? ControllerFixtures.signingKey())
+
+    try signature.encoded().write(to: URL(fileURLWithPath: source.path + ".sig"))
+
+    return signature
+  }
+
+  /// Catches a file signature that verifies where a package's does, and the other way round. The
+  /// domain lines differ, so the same key over the same bytes gives two signatures that each verify
+  /// for their own subject only.
+  func testAFileSignatureNeverVerifiesAPackageAndAPackageSignatureNeverVerifiesAFile() throws {
+    let bytes = Data("(declare-permissions {:id \"dev.example.a\"})\n".utf8)
+    let key = try ControllerFixtures.signingKey()
+    let file = try ControllerSignature.sign(bytes, as: .scriptFile, with: key)
+    let package = try ControllerSignature.sign(descriptor: bytes, with: key)
+
+    XCTAssertNotEqual(file.signature, package.signature)
+    XCTAssertNoThrow(try file.verify(bytes, as: .scriptFile))
+    XCTAssertNoThrow(try package.verify(descriptor: bytes))
+
+    XCTAssertThrowsError(try file.verify(descriptor: bytes))
+    XCTAssertThrowsError(try package.verify(bytes, as: .scriptFile)) { error in
+      XCTAssertTrue("\(error)".contains("the file was changed"), "\(error)")
+    }
+
+    XCTAssertEqual(
+      ControllerSignature.Subject.scriptFile.domain, Data("uniterm script file 1\n".utf8))
+    XCTAssertEqual(
+      ControllerSignature.Subject.descriptor.domain,
+      Data("uniterm controller descriptor 1\n".utf8))
+  }
+
+  /// Catches a snapshot that drops the signature beside the file, or reads it as another file's.
+  /// The fingerprint is the fixture key's, and a file with no `.sig` is unsigned.
+  func testASnapshotCarriesTheSignatureThatVerifiedOverItsBytes() throws {
+    let source = try write("(declare-permissions {:id \"dev.example.a\"})\n(print :ran)\n")
+
+    XCTAssertNil(try DeclaredFileSnapshot.create(from: source.path, in: runs).signature)
+
+    let signature = try sign(source)
+    let made = try DeclaredFileSnapshot.create(from: source.path, in: runs)
+
+    XCTAssertEqual(made.signature, signature)
+    XCTAssertEqual(made.signature?.keyFingerprint, ControllerFixtures.Hello.keyFingerprint)
+    XCTAssertEqual(
+      try FileManager.default.contentsOfDirectory(atPath: made.directory.path), ["script.janet"])
+  }
+
+  /// Catches a present `.sig` that falls back to an unsigned file. Each way a signature can be
+  /// wrong refuses the file and leaves no folder: edited bytes, a package's signature, text that
+  /// is not a signature, a signature over the cap, and a link.
+  func testASignatureThatDoesNotVerifyRefusesTheFile() throws {
+    let source = try write("(declare-permissions {:id \"dev.example.a\"})\n(print :one)\n")
+    let sidecar = URL(fileURLWithPath: source.path + ".sig")
+
+    _ = try sign(source)
+    try Data("(declare-permissions {:id \"dev.example.a\"})\n(print :two)\n".utf8).write(to: source)
+    assertRefused(source.path, saying: "the file was changed after it was signed")
+
+    _ = try sign(source, as: .descriptor)
+    assertRefused(source.path, saying: "the file was changed after it was signed")
+
+    try Data("not json".utf8).write(to: sidecar)
+    assertRefused(source.path, saying: "the file's .sig")
+
+    try Data(repeating: 0x20, count: ControllerSignature.maxBytes + 1).write(to: sidecar)
+    assertRefused(source.path, saying: "is over \(ControllerSignature.maxBytes) bytes")
+    assertFileSignatureError(source.path)
+
+    try FileManager.default.removeItem(at: sidecar)
+
+    let elsewhere = try write("{}", named: "elsewhere.sig")
+
+    try FileManager.default.createSymbolicLink(at: sidecar, withDestinationURL: elsewhere)
+    assertRefused(source.path, saying: "is a link")
+    assertFileSignatureError(source.path)
+
+    try FileManager.default.removeItem(at: elsewhere)
+    assertRefused(source.path, saying: "is a link")
+    assertFileSignatureError(source.path)
+
+    try FileManager.default.removeItem(at: sidecar)
+    try FileManager.default.createDirectory(at: sidecar, withIntermediateDirectories: false)
+    assertRefused(source.path, saying: "is not a regular file")
+    assertFileSignatureError(source.path)
+  }
+
+  /// Every way a `.sig` can fail surfaces as the file-signature error, so callers handle one case.
+  private func assertFileSignatureError(
+    _ path: String, file: StaticString = #filePath, line: UInt = #line
+  ) {
+    XCTAssertThrowsError(
+      try DeclaredFileSnapshot.create(from: path, in: runs), file: file, line: line
+    ) { error in
+      guard case ControllerPackageError.fileSignature = error else {
+        return XCTFail("not a file-signature error: \(error)", file: file, line: line)
+      }
+    }
+  }
+
+  /// Catches a signature verified over the source as it stood at the start and not over the bytes
+  /// copied. The source is rewritten while it is copied, so the copy is the old bytes, and a
+  /// signature over the new bytes must refuse.
+  func testTheSignatureIsCheckedAgainstTheBytesCopied() throws {
+    let old = "(declare-permissions {:id \"dev.example.a\"})\n(print :one)\n"
+    let new = "(declare-permissions {:id \"dev.example.a\"})\n(print :two)\n"
+    let source = try write(new)
+
+    _ = try sign(source)
+    try Data(old.utf8).write(to: source)
+
+    XCTAssertThrowsError(
+      try DeclaredFileSnapshot.copy(
+        from: source.path, in: runs, afterCopying: { try? Data(new.utf8).write(to: source) })
+    ) { error in
+      XCTAssertTrue("\(error)".contains("the file was changed"), "\(error)")
+    }
+  }
 }

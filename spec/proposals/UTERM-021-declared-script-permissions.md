@@ -102,6 +102,8 @@ Decision: a file is signed by a detached `file.janet.sig` beside it. The signatu
 Ed25519 signature over a fixed domain line and the file's exact bytes. A signed file's leading struct must carry an
 `:id`.
 
+- The domain line is `uniterm script file 1`, where a package descriptor's is `uniterm controller descriptor 1`, so a
+  signature for one never verifies the other. Amended 2026-11-15; see Decision Log.
 - A signature that does not verify refuses the file. It never falls back to an unsigned version.
 - Identity trust pins the public key plus the ID, as it does for a controller.
 
@@ -468,7 +470,7 @@ and an oversize file is proved against raw peers and the snapshot itself.
 
 ### M3: Signed files
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - `uniterm controller sign` signs a file and writes `file.janet.sig`
 - A signed file offers Trust This Identity, and a new version under a trusted identity that asks for nothing new runs
@@ -478,6 +480,33 @@ and an oversize file is proved against raw peers and the snapshot itself.
 - The file signature's domain line differs from the controller descriptor's, so a package signature never verifies a
   file
 - A valid `.sig` beside an undeclared file grants no identity
+
+**As built:**
+
+`uniterm controller sign --key NAME file.janet` signs a script file. The path is a package when it is a
+folder and a file otherwise. The command resolves the file's path, because the app reads the `.sig` beside the
+resolved path. It refuses a file whose first form is not a declaration, a declaration that fails to read, and a
+declaration with no `:id`. It writes `file.janet.sig` atomically in `controller.sig`'s format and prints the ID,
+the version, the key's fingerprint, and the path it wrote.
+
+The signature type now takes a subject. A descriptor's domain line is still `uniterm controller descriptor 1`,
+and a script file's is `uniterm script file 1`. Verifying and signing take the subject, and the descriptor forms
+call them with the descriptor subject. A file signature that fails raises its own error case, so the message
+names the file's `.sig` and not `controller.sig`.
+
+The app reads the `.sig` while it snapshots the file. It looks beside the resolved path, refuses a link, a pipe,
+and a device, and caps the signature at 4 KiB. It verifies over the bytes it read back from the copy, which are
+the bytes it hashed. A `.sig` that is there and does not read or verify refuses the file and removes the copy.
+The snapshot carries the verified signature. The file's identity takes the signature's key fingerprint. A signed
+file whose header names no `:id` is refused after the command reports the declaration, with a message that asks
+for one. Nothing on the plain path reads a `.sig`, so a valid or broken signature beside an undeclared file
+changes nothing about its run.
+
+Trust This Identity was already offered for any review whose identity carries a fingerprint, so a signed file now
+gets it. It writes a file identity approval of the ID and the key. A later version under that approval that asks
+for no new power runs without a review. One that asks for more gets a review that lists what is new. A package
+identity approval with the same ID and key does not cover the file, and the review's help text says "file ID" for a
+file.
 
 ### M4: Strict and unsafe modes
 
@@ -589,6 +618,10 @@ and an oversize file is proved against raw peers and the snapshot itself.
   each scope" and did not say what a host launch's scope is. Amended text: "A scoped kind, such as a capability or a
   host launch, is listed once for each scope." It now says a capability is listed by its name and a host launch by its
   executable alone. A declaration that wants two directories for one executable lists the broader directory.
+- 2026-11-15 (run best guess): A script file's signature domain line is `uniterm script file 1\n`. The decision said
+  "a fixed domain line" and did not name it, and the line has to differ from the descriptor's so neither kind of
+  signature verifies the other. Amended text: the Signing decision now names both lines. If a different line is
+  wanted, only the one constant and the signatures made so far change.
 
 ## References
 
