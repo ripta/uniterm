@@ -59,6 +59,8 @@ fixed ones.
 - Seen: 2026-11-14, once, in CI's package job, in the same run as the entry above.
 - Evidence: `FindTests.swift:172` counted 3 main-actor turns during the search, where it expects more than 100. The
   test took 6.6 s there and about 1.2 s locally, where it passed 10 of 10 alone.
+- Seen again: 2026-11-15, once, in a local full `make test-package` run during a work-queue run that touches no
+  text-viewer code. It counted 35 turns. It passed alone and in the next full run.
 - Suspected cause: the main actor was busy for seconds at a time, likely laying out the four-million-character text,
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.
