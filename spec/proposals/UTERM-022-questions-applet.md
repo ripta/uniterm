@@ -759,6 +759,7 @@ None.
   checks, length counting, result size and reply limits, reader compatibility, exact decimals), M2 (focus and
   arrival), M3 (REPL header, unbound callers, owned-group layouts, busy kind, wait rechecks, the question-only session,
   terminal-tab requesters, the REPL stop), and M4 (Janet keyword spelling, exit codes, Ctrl-C and reply matching).
+- 2026-11-14: Scheduled as UTERM-022 M1-M4 in queue.md.
 
 ## References
 
