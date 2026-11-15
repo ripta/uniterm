@@ -71,6 +71,15 @@ fixed ones.
 - Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
 - Status: unresolved.
 
+### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
+
+- Seen: 2026-11-15, once, in the first CI `package` run of PR #49.
+- Evidence: `ExecPaneTests.swift:606` measured 5.47 s against its 5 s bound. The main thread's turn arrived within its
+  2 s wait. Locally the whole test took 1.97 s.
+- Suspected cause: the bound covers the 20,000 synthesized clicks as well as the turn, and the CI runner is several
+  times slower. Not confirmed. A driver that slowed each click would look the same.
+- Status: unresolved.
+
 ## Fixed
 
 ### `FileWatcherTests.testChangesToOtherFilesInTheFolderDeliverNothing`
