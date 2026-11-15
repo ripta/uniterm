@@ -3,11 +3,11 @@ import XCTest
 
 /// The startup review and Controllers & Permissions in the real app. A controller package that
 /// declares pane control runs from the first pane's terminal with the bundled command. Its review
-/// waits in the Pending Requests panel, the review sheet answers it, and the Controllers &
-/// Permissions window shows and revokes the remembered approval.
+/// waits in the Pending Requests panel, the panel answers it, and the Controllers & Permissions
+/// window shows and revokes the remembered approval.
 ///
-/// The package tests prove each rule of consent and trust. These prove that the panel, the sheet,
-/// and the window reach those rules, and that a user can read them. Every capture holds synthetic
+/// The package tests prove each rule of consent and trust. These prove that the panel and the
+/// window reach those rules, and that a user can read them. Every capture holds synthetic
 /// names only.
 @MainActor
 final class ControllerConsentUITests: UnitermUITestCase {
@@ -19,10 +19,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     add(attachment)
   }
 
-  /// Writes a package whose Janet entry prints a line, and declares pane control.
-  private func writePackage() throws -> String {
+  /// Writes a package that declares pane control. Its Janet entry prints a line unless the test
+  /// gives it another.
+  private func writePackage(main source: String = "(print \"consent fixture ran\")\n") throws
+    -> String
+  {
     let package = scratch + "-consent-package"
-    let main = Data("(print \"consent fixture ran\")\n".utf8)
+    let main = Data(source.utf8)
     let digest = SHA256.hash(data: main).map { String(format: "%02x", $0) }.joined()
 
     try FileManager.default.createDirectory(atPath: package, withIntermediateDirectories: true)
@@ -142,10 +145,11 @@ final class ControllerConsentUITests: UnitermUITestCase {
     return window
   }
 
-  /// Catches a review that never reaches the panel, a sheet that hides the requested power or
-  /// offers identity trust for an unsigned package, and Trust This Version that does not let the
-  /// same version run again without a review.
-  func testTheReviewSheetTrustsAVersionThatThenRunsWithoutAsking() throws {
+  /// Catches a review that never reaches the panel, a panel that hides the requested power or
+  /// offers identity trust for an unsigned package, help that does not say what the offered
+  /// choices cover, and Trust This Version that does not let the same version run again without a
+  /// review.
+  func testThePanelTrustsAVersionThatThenRunsWithoutAsking() throws {
     let package = try writePackage()
     let app = launchApp()
     let window = mainWindow(in: app)
@@ -164,23 +168,34 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
     row.click()
-    panel.buttons["pending-requests-review"].click()
 
-    let sheet = panel.sheets.firstMatch
+    let trustVersion = panel.buttons["pending-requests-trust-version"]
 
-    XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Review showed no sheet")
-    XCTAssertTrue(sheet.buttons["controller-review-version"].exists)
+    XCTAssertTrue(trustVersion.waitForExistence(timeout: 5), "the panel offers no version trust")
     XCTAssertFalse(
-      sheet.buttons["controller-review-identity"].exists,
+      panel.buttons["pending-requests-trust-identity"].exists,
       "an unsigned package was offered identity trust")
     XCTAssertTrue(
-      sheet.staticTexts.allElementsBoundByIndex.contains {
-        ($0.value.map { "\($0)" } ?? "").contains("Control panes it may address")
-          || $0.label.contains("Control panes it may address")
-      }, "the sheet does not show the requested power")
+      waitFor(panel.staticTexts["pending-requests-detail"], timeout: 5) {
+        $0.contains("Control panes it may address")
+      }, "the panel does not show the requested power")
 
-    attach(sheet, named: "controller-review-sheet")
-    sheet.buttons["controller-review-version"].click()
+    attach(panel, named: "pending-requests-review")
+
+    let help = panel.buttons["pending-requests-help"]
+    let helpText = app.descendants(matching: .staticText)["pending-requests-help-text"]
+
+    XCTAssertTrue(help.exists, "the panel offers no help for the review")
+    help.click()
+    XCTAssertTrue(
+      waitFor(helpText, timeout: 5) {
+        $0.contains("Trust This Version remembers them") && !$0.contains("Trust This Identity")
+      }, "the help does not describe exactly the offered choices")
+
+    attach(panel, named: "pending-requests-help")
+    help.click()
+    XCTAssertTrue(waitUntilGone(helpText, timeout: 5), "the help button did not close the help")
+    trustVersion.click()
 
     XCTAssertEqual(waitForFile(first), "exit=0\n")
     XCTAssertEqual(
@@ -190,6 +205,93 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let second = try startRun(package, named: "consent-second", in: app)
 
     XCTAssertEqual(waitForFile(second), "exit=0\n", "the trusted version asked again")
+  }
+
+  /// Catches a panel whose Allow Once and Deny do nothing for a startup review, and an Allow Once
+  /// that is remembered for the next run.
+  func testThePanelAllowsOnceAndDeniesAReview() throws {
+    let package = try writePackage()
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer { try? FileManager.default.removeItem(atPath: package) }
+
+    _ = waitForTerminal(in: app)
+
+    let first = try startRun(package, named: "panel-once", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+
+    let panel = openPendingRequests(in: app)
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    row.click()
+    panel.buttons["pending-requests-allow-once"].click()
+
+    XCTAssertEqual(waitForFile(first), "exit=0\n")
+    XCTAssertEqual(
+      try String(contentsOfFile: first + ".out", encoding: .utf8), "consent fixture ran\n")
+
+    let second = try startRun(package, named: "panel-deny", in: app)
+
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30), "a run allowed once was remembered for the next")
+
+    let open = openPendingRequests(in: app)
+    let next = open.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(next.waitForExistence(timeout: 30), "the second review never reached the panel")
+    next.click()
+    open.buttons["Deny"].click()
+
+    XCTAssertNotEqual(waitForFile(second), "exit=0\n", "a denied review still ran")
+  }
+
+  /// Catches a question row that does not name the process asking. A run allowed once asks again
+  /// for its pane call, and that row's PID column shows the run's PID, as its review row did.
+  func testAPaneCallQuestionShowsTheRunsPID() throws {
+    let package = try writePackage(
+      main: "(import uniterm)\n(print (length (uniterm/list-windows)))\n")
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer { try? FileManager.default.removeItem(atPath: package) }
+
+    _ = waitForTerminal(in: app)
+
+    let status = try startRun(package, named: "question-pid", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+
+    let panel = openPendingRequests(in: app)
+    let table = panel.tables["pending-requests-table"]
+    let review = table.tableRows.firstMatch
+
+    XCTAssertTrue(review.waitForExistence(timeout: 30), "the review never reached the panel")
+    review.click()
+    panel.buttons["pending-requests-allow-once"].click()
+
+    let question = table.tableRows.containing(
+      NSPredicate(format: "value == %@", "Control panes it may address")
+    ).firstMatch
+
+    XCTAssertTrue(question.waitForExistence(timeout: 30), "the pane call never asked")
+
+    let pid = question.descendants(matching: .any).matching(
+      NSPredicate(format: "value MATCHES %@", "^[0-9]+$")
+    ).firstMatch
+
+    attach(panel, named: "pane-call-question")
+    XCTAssertTrue(pid.exists, "the question row shows no PID")
+
+    question.click()
+    attach(panel, named: "pane-call-question-selected")
+    panel.buttons["pending-requests-allow-once"].click()
+
+    XCTAssertEqual(waitForFile(status), "exit=0\n")
   }
 
   /// Catches a Controllers & Permissions window that hides a remembered approval, and a Revoke
@@ -209,12 +311,11 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
     row.click()
-    panel.buttons["pending-requests-review"].click()
 
-    let sheet = panel.sheets.firstMatch
+    let trustVersion = panel.buttons["pending-requests-trust-version"]
 
-    XCTAssertTrue(sheet.waitForExistence(timeout: 5))
-    sheet.buttons["controller-review-version"].click()
+    XCTAssertTrue(trustVersion.waitForExistence(timeout: 5), "the panel offers no version trust")
+    trustVersion.click()
     XCTAssertEqual(waitForFile(first), "exit=0\n")
 
     let controllers = openControllers(in: app)

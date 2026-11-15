@@ -494,7 +494,7 @@ extension ScriptHost {
 
     let outcome = permissionRequests.ask(
       key, deniedAs: denialKey(for: connection, run: run, power: power), subject: subject,
-      title: power.displayText, detail: detail,
+      pid: connection.peer.pid, title: power.displayText, detail: detail,
       sessionTitle: isRun ? "Allow for This Run" : "Allow for This Connection"
     ) { [weak self, weak connection] answer in
       guard let self, let connection else { return }

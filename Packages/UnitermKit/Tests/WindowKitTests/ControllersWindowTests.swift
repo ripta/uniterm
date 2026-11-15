@@ -59,20 +59,18 @@ final class ControllersWindowTests: XCTestCase {
 
   /// Catches Trust This Identity offered for an unsigned controller, or either trust choice
   /// offered when the policy file cannot take one, and help text that describes a button the
-  /// sheet does not show. Deny comes first, as the default.
+  /// panel does not show.
   func testTheReviewOffersTrustOnlyWhereItCanHold() throws {
-    let choices = { (review: ControllerReview) in
-      ControllerReviewSheet.options(for: review).map(\.choice)
-    }
+    let choices = { (review: ControllerReview) in ControllerReviewText.offered(for: review) }
 
     XCTAssertEqual(
       choices(try review(signed: true, canRemember: true)),
-      [.deny, .allowOnce, .allowForSession, .trustVersion, .trustIdentity])
+      [.allowOnce, .allowForSession, .trustVersion, .trustIdentity, .deny])
     XCTAssertEqual(
       choices(try review(signed: false, canRemember: true)),
-      [.deny, .allowOnce, .allowForSession, .trustVersion])
+      [.allowOnce, .allowForSession, .trustVersion, .deny])
     XCTAssertEqual(
-      choices(try review(signed: true, canRemember: false)), [.deny, .allowOnce, .allowForSession])
+      choices(try review(signed: true, canRemember: false)), [.allowOnce, .allowForSession, .deny])
 
     let help = { (review: ControllerReview) in ControllerReviewText.choices(for: review) }
     let signed = help(try review(signed: true, canRemember: true))

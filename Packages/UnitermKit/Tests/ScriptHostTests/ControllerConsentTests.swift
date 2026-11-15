@@ -198,21 +198,30 @@ final class ControllerConsentTests: XCTestCase {
     XCTAssertEqual(clipboard.reads, 4)
   }
 
-  /// Catches Allow once that lets a second pane call through. Under Allow once each pane call
-  /// asks, as each clipboard request does.
+  /// Catches Allow once that lets a second pane call through, and a question row that does not
+  /// name the process asking. Under Allow once each pane call asks, as each clipboard request does.
+  /// Each row carries the run's PID, the same one its startup review showed.
   func testAllowOnceAsksForEachPaneCall() async throws {
     let lister = try package(
       "(protect (uniterm/list-windows))\n(protect (uniterm/list-windows))\n",
       permissions: [Self.paneControl])
+    var pids: [pid_t?] = []
 
     reviewAnswer = .allowOnce
-    operationAnswer = { _ in .allowOnce }
+    operationAnswer = { row in
+      pids.append(row.pid)
+
+      return .allowOnce
+    }
 
     let result = try await run(lister)
 
     XCTAssertEqual(result.status, 0, result.standardError)
     XCTAssertEqual(
       operationAnswers.map(\.title), Array(repeating: "Control panes it may address", count: 2))
+
+    let reviewed = try XCTUnwrap(reviewsSeen.values.first?.waiting.first?.pid)
+    XCTAssertEqual(pids, [reviewed, reviewed])
   }
 
   /// Catches an ordinary script, which has no controller identity, reaching the clipboard without

@@ -16,8 +16,9 @@ import ScriptHost
 /// these, start without asking, whatever their arguments and values. These buttons are the only
 /// way a launch is approved.
 ///
-/// A controller's startup review lists the powers it asks for once, and Review opens the sheet
-/// that answers it. A permission question from a script, a driver, or a terminal waits here as one
+/// A controller's startup review lists the powers it asks for once, and is answered here. The
+/// trust choices show only where the review offers them, and the help button says what each
+/// choice covers. A permission question from a script, a driver, or a terminal waits here as one
 /// row however many times it is asked. A denial stays listed, and Ask Again is the only way to be
 /// asked again.
 @MainActor
@@ -64,10 +65,16 @@ public final class PendingRequestsWindowController: NSWindowController {
   private let allowInPaneButton = NSButton(title: "Allow in This Pane", target: nil, action: nil)
   private let denyButton = NSButton(title: "Deny", target: nil, action: nil)
   private let revokeButton = NSButton(title: "Revoke", target: nil, action: nil)
-  private let reviewButton = NSButton(title: "Review\u{2026}", target: nil, action: nil)
+  private let trustVersionButton = NSButton(title: "Trust This Version", target: nil, action: nil)
+  private let trustIdentityButton = NSButton(
+    title: "Trust This Identity", target: nil, action: nil)
+  private let helpButton = NSButton(title: "", target: nil, action: nil)
   private let sessionButton = NSButton(title: "Allow for This Run", target: nil, action: nil)
   private let askAgainButton = NSButton(title: "Ask Again", target: nil, action: nil)
   private var rows: [Row] = []
+
+  /// The popover the help button opens, with the review it describes.
+  private var help: (popover: NSPopover, review: UInt64)?
   private var observers: [ChangeObservers.Token] = []
 
   private var permissions: PermissionRequests { windows.permissionRequests }
@@ -79,7 +86,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     self.windows = windows
 
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
+      contentRect: NSRect(x: 0, y: 0, width: 720, height: 360),
       styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
 
     window.title = "Pending Requests"
@@ -151,9 +158,17 @@ public final class PendingRequestsWindowController: NSWindowController {
     denyButton.action = #selector(denyPressed)
     revokeButton.target = self
     revokeButton.action = #selector(revokePressed)
-    reviewButton.target = self
-    reviewButton.action = #selector(reviewPressed)
-    reviewButton.setAccessibilityIdentifier("pending-requests-review")
+    trustVersionButton.target = self
+    trustVersionButton.action = #selector(trustVersionPressed)
+    trustVersionButton.setAccessibilityIdentifier("pending-requests-trust-version")
+    trustIdentityButton.target = self
+    trustIdentityButton.action = #selector(trustIdentityPressed)
+    trustIdentityButton.setAccessibilityIdentifier("pending-requests-trust-identity")
+    helpButton.bezelStyle = .helpButton
+    helpButton.target = self
+    helpButton.action = #selector(helpPressed)
+    helpButton.setAccessibilityIdentifier("pending-requests-help")
+    helpButton.setAccessibilityLabel("Help")
     sessionButton.target = self
     sessionButton.action = #selector(sessionPressed)
     sessionButton.setAccessibilityIdentifier("pending-requests-allow-session")
@@ -162,11 +177,16 @@ public final class PendingRequestsWindowController: NSWindowController {
     askAgainButton.setAccessibilityIdentifier("pending-requests-ask-again")
 
     let buttons = NSStackView(views: [
-      grantButton, reviewButton, allowOnceButton, allowInPaneButton, sessionButton, denyButton,
-      NSView(), askAgainButton, revokeButton,
+      helpButton, grantButton, allowOnceButton, allowInPaneButton, sessionButton,
+      trustVersionButton, trustIdentityButton, denyButton, NSView(), askAgainButton, revokeButton,
     ])
 
+    // The row holds more buttons than fit at once. A hidden button must take no room. The row
+    // keeps a button's height while it shows none, so the list does not jump on selection.
+    buttons.detachesHiddenViews = true
     buttons.orientation = .horizontal
+    buttons.heightAnchor.constraint(greaterThanOrEqualToConstant: denyButton.fittingSize.height)
+      .isActive = true
 
     for view in [heading, scrollView, detail, buttons] {
       view.translatesAutoresizingMaskIntoConstraints = false
@@ -228,51 +248,70 @@ public final class PendingRequestsWindowController: NSWindowController {
     return rows.indices.contains(index) ? rows[index] : nil
   }
 
+  /// Shows only the buttons that answer the selected row. Every button it shows is live. With
+  /// nothing selected, no button shows, and the detail says what to do.
   private func updateButtons() {
     let row = selectedRow
 
-    for button in [
-      grantButton, allowOnceButton, allowInPaneButton, denyButton, revokeButton, reviewButton,
-      sessionButton, askAgainButton,
-    ] {
-      button.isEnabled = false
+    for button in allButtons {
+      button.isHidden = true
+      button.isEnabled = true
     }
 
-    sessionButton.isHidden = true
-    allowInPaneButton.isHidden = false
+    if let help, row?.identity != .review(help.review) {
+      help.popover.close()
+      self.help = nil
+    }
+
+    let shown: [NSButton]
 
     switch row {
     case .request:
-      grantButton.isEnabled = true
-      denyButton.isEnabled = true
+      shown = [grantButton, denyButton]
 
     case .launch:
-      allowOnceButton.isEnabled = true
-      allowInPaneButton.isEnabled = true
-      denyButton.isEnabled = true
+      shown = [allowOnceButton, allowInPaneButton, denyButton]
 
     case .grant, .launchGrant:
-      revokeButton.isEnabled = true
+      shown = [revokeButton]
 
-    case .review:
-      reviewButton.isEnabled = true
+    case .review(let review):
+      let offered = ControllerReviewText.offered(for: review)
+
+      sessionButton.title = "Allow for This Session"
+      shown =
+        [helpButton, allowOnceButton, sessionButton]
+        + (offered.contains(.trustVersion) ? [trustVersionButton] : [])
+        + (offered.contains(.trustIdentity) ? [trustIdentityButton] : []) + [denyButton]
 
     case .question(let question):
-      allowOnceButton.isEnabled = true
-      allowInPaneButton.isHidden = true
-      sessionButton.isHidden = false
-      sessionButton.isEnabled = true
       sessionButton.title = question.sessionTitle
-      denyButton.isEnabled = true
+      shown = [allowOnceButton, sessionButton, denyButton]
 
     case .denial:
-      askAgainButton.isEnabled = true
+      shown = [askAgainButton]
 
     case nil:
-      break
+      shown = []
     }
 
-    detail.stringValue = row.map(describe) ?? ""
+    for button in shown {
+      button.isHidden = false
+    }
+
+    if let row {
+      detail.stringValue = describe(row)
+    } else {
+      detail.stringValue =
+        rows.isEmpty ? "Nothing waits for your answer." : "Select a request to answer it."
+    }
+  }
+
+  private var allButtons: [NSButton] {
+    [
+      helpButton, grantButton, allowOnceButton, allowInPaneButton, sessionButton,
+      trustVersionButton, trustIdentityButton, denyButton, askAgainButton, revokeButton,
+    ]
   }
 
   /// Every input a launch binds, or the scope a grant covers, in full.
@@ -316,14 +355,17 @@ public final class PendingRequestsWindowController: NSWindowController {
     switch selectedRow {
     case .launch(let request): launches.decide(request.id, .allowOnce)
     case .question(let question): permissions.decide(question.id, .allowOnce)
+    case .review(let review): answer(review, .allowOnce)
     default: break
     }
   }
 
   @objc private func sessionPressed() {
-    guard case .question(let question) = selectedRow else { return }
-
-    permissions.decide(question.id, .allowForSession)
+    switch selectedRow {
+    case .question(let question): permissions.decide(question.id, .allowForSession)
+    case .review(let review): answer(review, .allowForSession)
+    default: break
+    }
   }
 
   @objc private func askAgainPressed() {
@@ -332,25 +374,86 @@ public final class PendingRequestsWindowController: NSWindowController {
     permissions.askAgain(denial.id)
   }
 
-  @objc private func reviewPressed() {
+  @objc private func trustVersionPressed() {
+    guard case .review(let review) = selectedRow,
+      ControllerReviewText.offered(for: review).contains(.trustVersion)
+    else { return }
+
+    answer(review, .trustVersion)
+  }
+
+  @objc private func trustIdentityPressed() {
+    guard case .review(let review) = selectedRow,
+      ControllerReviewText.offered(for: review).contains(.trustIdentity)
+    else { return }
+
+    answer(review, .trustIdentity)
+  }
+
+  /// How wide the help text wraps, about the width of a standard alert's text.
+  private static let helpWidth: CGFloat = 320
+
+  /// Shows what each offered choice covers, or closes the help when it already shows. The text
+  /// is read when the help opens, and the help closes once its review is no longer selected.
+  @objc private func helpPressed() {
+    if let help {
+      help.popover.close()
+      self.help = nil
+
+      return
+    }
+
     guard case .review(let review) = selectedRow else { return }
 
-    Task { @MainActor [weak self] in
-      guard let self else { return }
+    let text = NSTextField(wrappingLabelWithString: ControllerReviewText.choices(for: review))
 
-      guard let choice = await ControllerReviewSheet.present(review, on: window),
-        let scriptHost
+    text.isSelectable = true
+    text.preferredMaxLayoutWidth = Self.helpWidth
+    text.setAccessibilityIdentifier("pending-requests-help-text")
+    text.translatesAutoresizingMaskIntoConstraints = false
+
+    let content = NSView()
+
+    content.addSubview(text)
+
+    NSLayoutConstraint.activate([
+      text.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
+      text.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
+      text.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -14),
+      text.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
+      text.widthAnchor.constraint(equalToConstant: Self.helpWidth),
+    ])
+
+    let controller = NSViewController()
+    let popover = NSPopover()
+
+    controller.view = content
+    popover.contentViewController = controller
+    // A click elsewhere in the panel leaves the help up, so the help button can close it rather
+    // than a transient close followed by the same click opening it again.
+    popover.behavior = .semitransient
+    popover.delegate = self
+    help = (popover, review.id)
+
+    // Above the button, so the help covers the panel and not whatever lies below it.
+    popover.show(
+      relativeTo: helpButton.bounds, of: helpButton,
+      preferredEdge: helpButton.isFlipped ? .minY : .maxY)
+  }
+
+  private func answer(_ review: ControllerReview, _ choice: ControllerReviewChoice) {
+    Task { @MainActor [weak self] in
+      guard let self, let scriptHost,
+        let failure = await scriptHost.decideReview(review.id, choice), let window
       else { return }
 
-      if let failure = await scriptHost.decideReview(review.id, choice), let window {
-        let alert = NSAlert()
+      let alert = NSAlert()
 
-        alert.alertStyle = .warning
-        alert.messageText = "The review was not answered"
-        alert.informativeText = failure
-        alert.addButton(withTitle: "OK")
-        alert.beginSheetModal(for: window) { _ in }
-      }
+      alert.alertStyle = .warning
+      alert.messageText = "The review was not answered"
+      alert.informativeText = failure
+      alert.addButton(withTitle: "OK")
+      alert.beginSheetModal(for: window) { _ in }
     }
   }
 
@@ -371,6 +474,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     case .request(let request): scriptHost?.denyRequest(connection: request.id)
     case .launch(let request): launches.decide(request.id, .deny)
     case .question(let question): permissions.decide(question.id, .deny)
+    case .review(let review): answer(review, .deny)
     default: break
     }
   }
@@ -474,6 +578,14 @@ public final class PendingRequestsWindowController: NSWindowController {
   }
 }
 
+extension PendingRequestsWindowController: NSPopoverDelegate {
+  /// The popover also closes itself, on Escape or a click in another window, so the help forgets
+  /// it here.
+  public func popoverDidClose(_ notification: Notification) {
+    if (notification.object as? NSPopover) === help?.popover { help = nil }
+  }
+}
+
 extension PendingRequestsWindowController: NSTableViewDataSource, NSTableViewDelegate {
   public func numberOfRows(in tableView: NSTableView) -> Int {
     rows.count
@@ -506,7 +618,7 @@ extension PendingRequestsWindowController: NSTableViewDataSource, NSTableViewDel
       return review.waiting.count > 1
         ? "Waits for review, \(review.waiting.count) runs" : "Waits for review"
     case (.question(let question), "program"): return question.subject
-    case (.question, "pid"): return "\u{2014}"
+    case (.question(let question), "pid"): return question.pid.map(String.init) ?? "\u{2014}"
     case (.question(let question), "status"):
       return question.waiting > 1
         ? "\(question.title), \(question.waiting) waiting" : question.title
