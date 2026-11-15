@@ -109,6 +109,15 @@ fixed ones.
   confirmed.
 - Status: unresolved.
 
+### `TerminalSessionIntegrationTests.testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose`
+
+- Seen: 2026-11-15, once, in a local `make test-package` run during a work-queue run that touches no terminal code.
+- Evidence: the test asserted that the system pasteboard held `SECRET-STALE`. It held text another session had just
+  written to it. The test passed alone, and the next full run passed.
+- Suspected cause: the test reads the real, shared system pasteboard. Any other program that writes it mid-run
+  changes what the test sees. Not confirmed.
+- Status: unresolved.
+
 ## Fixed
 
 ### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
