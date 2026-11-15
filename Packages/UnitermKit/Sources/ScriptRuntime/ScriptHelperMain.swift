@@ -1,4 +1,5 @@
 import CJanet
+import ControllerPackage
 import Darwin
 import Foundation
 import ScriptWire
@@ -149,7 +150,7 @@ public enum ScriptHelperMain {
     let source: Data
 
     do {
-      source = try Data(contentsOf: URL(fileURLWithPath: invocation.script))
+      source = try readScript(at: invocation.script)
     } catch {
       return fail(
         "cannot read \(invocation.script): \(error.localizedDescription)", status: Exit.noInput)
@@ -200,6 +201,27 @@ public enum ScriptHelperMain {
     return fail(
       failure.description,
       status: failure.kind == .interrupted ? Exit.interrupted : Exit.scriptFailed)
+  }
+
+  /// Reads an undeclared script until end of file. A pipe, such as process substitution names, has
+  /// no size to ask for up front, so the read cannot be one whole-file call. It stops past the
+  /// same cap a declared file has.
+  static func readScript(at path: String) throws -> Data {
+    let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+
+    defer { try? handle.close() }
+
+    var data = Data()
+
+    while let chunk = try handle.read(upToCount: 1 << 16), !chunk.isEmpty {
+      data.append(chunk)
+
+      if data.count > DeclaredFileSnapshot.maxBytes {
+        throw ScriptReadError.tooLarge(DeclaredFileSnapshot.maxBytes)
+      }
+    }
+
+    return data
   }
 
   #if DEBUG
@@ -361,6 +383,17 @@ public enum ScriptHelperMain {
       }
 
       return .usage("a script file is needed")
+    }
+  }
+}
+
+/// Why an undeclared script could not be read.
+enum ScriptReadError: LocalizedError {
+  case tooLarge(Int)
+
+  var errorDescription: String? {
+    switch self {
+    case .tooLarge(let limit): return "the script is larger than \(limit) bytes"
     }
   }
 }
