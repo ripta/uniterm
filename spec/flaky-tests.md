@@ -81,6 +81,15 @@ fixed ones.
   confirmed.
 - Status: unresolved.
 
+### `TextViewerUITests.testAnEditedFileReloadsInPlaceAndByRename`
+
+- Seen: 2026-11-15, once, in the second CI `app` run of PR #49, which does not touch the open-panel helper.
+- Evidence: the shared open-panel helper at `UnitermUITestCase.swift:308` failed with "the go-to-folder sheet never
+  closed". The other 157 UI tests passed. `TextViewerUITests` then passed 13 of 13 alone. The same message failed
+  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` on PR #43's first CI run.
+- Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
+- Status: unresolved.
+
 ## Fixed
 
 ### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
