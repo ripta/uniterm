@@ -371,6 +371,22 @@ extension ScriptHost {
     launch.snapshot.remove()
   }
 
+  /// Tells the bundled command running a plain script from any other program that begins a
+  /// session.
+  ///
+  /// It runs on the main actor, before the connection's first call, so that call's question is
+  /// already worded for the right kind. The command's file was validated once, and only the
+  /// running code's dynamic signing information is read here. A native controller's process is
+  /// never the command, so it skips the check. A missing setting or token leaves a generic peer.
+  func plainPeerKind(of connection: ScriptConnection) -> SessionKind {
+    guard let settings = controllerSettings, let token = connection.peer.token,
+      nativeLaunches[connection.peer.pid] == nil,
+      settings.helper.isRunningCommand(token)
+    else { return .genericPeer }
+
+    return .bundledRun
+  }
+
   /// Binds a new connection to the native launch it comes from, when it does. A connection from
   /// the command itself, from another process at a reused ID, or from code that is not the
   /// snapshot's entry gets no run.
@@ -403,6 +419,7 @@ extension ScriptHost {
       generation: token.pidVersion, connection: connection.id, sourceRoot: launch.sourceRoot,
       window: launch.window, pane: launch.pane, snapshot: launch.snapshot.directory)
     sessions[connection.id, default: Session()].name = Self.label(for: descriptor.name)
+    sessions[connection.id, default: Session()].kind = .controllerRun
     controllersChanged()
   }
 

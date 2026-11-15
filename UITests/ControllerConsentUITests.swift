@@ -180,6 +180,10 @@ final class ControllerConsentUITests: UnitermUITestCase {
         $0.contains("Control panes it may address")
       }, "the panel does not show the requested power")
 
+    XCTAssertTrue(
+      panel.buttons["Allow for This Run"].exists, "the review does not name its per-run choice")
+    XCTAssertFalse(panel.buttons["Allow for This Session"].exists)
+
     attach(panel, named: "pending-requests-review")
 
     let help = panel.buttons["pending-requests-help"]
@@ -190,6 +194,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertTrue(
       waitFor(helpText, timeout: 5) {
         $0.contains("Trust This Version remembers them") && !$0.contains("Trust This Identity")
+          && $0.contains("Allow for This Run") && !$0.contains("This Session")
       }, "the help does not describe exactly the offered choices")
 
     attach(panel, named: "pending-requests-help")
@@ -288,8 +293,46 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertTrue(pid.exists, "the question row shows no PID")
 
     question.click()
+    XCTAssertTrue(
+      panel.buttons["Allow for This Run"].waitForExistence(timeout: 5),
+      "the question does not name its per-run choice")
     attach(panel, named: "pane-call-question-selected")
     panel.buttons["pending-requests-allow-once"].click()
+
+    XCTAssertEqual(waitForFile(status), "exit=0\n")
+  }
+
+  /// Catches a plain script's question calling its per-run choice by the connection's name. The
+  /// script has no package and no review, so its clipboard question is the first the user sees.
+  func testAPlainScriptsQuestionNamesItsRun() throws {
+    let script = scratch + "-plain-question.janet"
+
+    try write("(import uniterm)\n(print (get (protect (uniterm/read-clipboard)) 0))\n", to: script)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer { try? FileManager.default.removeItem(atPath: script) }
+
+    _ = waitForTerminal(in: app)
+
+    let status = try startRun(script, named: "plain-question", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the question")
+
+    let panel = openPendingRequests(in: app)
+    let question = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(question.waitForExistence(timeout: 30), "the clipboard call never asked")
+    question.click()
+    XCTAssertTrue(
+      panel.buttons["Allow for This Run"].waitForExistence(timeout: 5),
+      "the plain script's question does not name its per-run choice")
+    XCTAssertFalse(panel.buttons["Allow for This Connection"].exists)
+
+    attach(panel, named: "plain-script-question")
+    panel.buttons["Deny"].click()
 
     XCTAssertEqual(waitForFile(status), "exit=0\n")
   }

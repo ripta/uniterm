@@ -139,7 +139,7 @@ extension ScriptHost {
     pendingChanged()
   }
 
-  /// Answers a startup review. Allow once and Allow for this session admit the oldest waiting
+  /// Answers a startup review. Allow once and Allow for this run admit the oldest waiting
   /// run alone. A trust choice saves the policy first, then admits every run the review holds,
   /// since the new policy covers each of them. Returns why nothing happened, for the user.
   @discardableResult
@@ -220,7 +220,7 @@ extension ScriptHost {
       trustChanged()
 
       // A removal that overlapped the save may have taken the policy away again. The user still
-      // approved these runs here, so they start for this session, under no policy.
+      // approved these runs here, so they start for this run, under no policy.
       let approval: ControllerApproval =
         trustRemoved(since: revision) ? .session : .remembered(selector)
 
@@ -469,14 +469,14 @@ extension ScriptHost {
   }
 
   /// Puts an operation that needs the user's answer in the Pending Requests panel. The call is
-  /// answered when the user answers: Allow once runs this call alone, Allow for the session also
-  /// keeps the power for the run or the connection, and Deny refuses it.
+  /// answered when the user answers: Allow once runs this call alone, Allow for This Run or Allow
+  /// for This Connection also keeps the power for the run or the connection, and Deny refuses it.
   func askForOperation(
     _ call: ScriptCall, id: UInt32, on connection: ScriptConnection, power: ControllerPermission
   ) {
     let key = PermissionRequests.Key(requester: .connection(connection.id), power: power.kindName)
     let run = controllerRuns[connection.id]
-    let isRun = run != nil
+    let isRun = run != nil || sessions[connection.id]?.kind.lastsOneRun == true
     let subject = controllerName(connection.id) ?? "a script"
 
     var detail = "\(subject) asks to \(power.displayText.lowercased())."

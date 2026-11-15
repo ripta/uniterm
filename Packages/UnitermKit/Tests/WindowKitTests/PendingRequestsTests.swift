@@ -49,7 +49,7 @@ final class PendingRequestsTests: XCTestCase {
   private func ask(_ power: String, subject: String = "build.janet, PID 42") {
     _ = windows.permissionRequests.ask(
       .init(requester: .terminal(window: 1, pane: 1), power: power), subject: subject,
-      title: "Read the clipboard", detail: "", sessionTitle: "Allow for This Session",
+      title: "Read the clipboard", detail: "", sessionTitle: "Allow for This Run",
       answer: { _ in })
   }
 
@@ -136,7 +136,7 @@ final class PendingRequestsTests: XCTestCase {
 
     table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
 
-    XCTAssertEqual(try shownButtons(panel), ["Allow Once", "Allow for This Session", "Deny"])
+    XCTAssertEqual(try shownButtons(panel), ["Allow Once", "Allow for This Run", "Deny"])
 
     let content = try XCTUnwrap(panel.window?.contentView)
     let shown = content.descendants(of: NSButton.self).filter { !$0.isHiddenOrHasHiddenAncestor }

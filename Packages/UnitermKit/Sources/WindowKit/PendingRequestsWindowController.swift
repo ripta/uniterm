@@ -278,7 +278,7 @@ public final class PendingRequestsWindowController: NSWindowController {
     case .review(let review):
       let offered = ControllerReviewText.offered(for: review)
 
-      sessionButton.title = "Allow for This Session"
+      sessionButton.title = "Allow for This Run"
       shown =
         [helpButton, allowOnceButton, sessionButton]
         + (offered.contains(.trustVersion) ? [trustVersionButton] : [])

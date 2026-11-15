@@ -105,13 +105,15 @@ final class ControllerConsentTests: XCTestCase {
   private static let fsRead = #"{"kind": "capability", "name": "fs-read", "version": 1}"#
 
   /// Runs a plain script, or a package, with the bundle-like command.
-  private func run(_ package: URL, allow: [String] = []) async throws -> HelperRun {
+  private func run(
+    _ package: URL, allow: [String] = [], executable: URL? = nil
+  ) async throws -> HelperRun {
     let process = Process()
     var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
 
     environment["UNITERM_SOCKET"] = nil
     process.environment = environment
-    process.executableURL = try HardenedHelper.url()
+    process.executableURL = try executable ?? HardenedHelper.url()
     process.arguments =
       ["run", "--socket", host.instanceAddress] + allow.flatMap { ["--allow", $0] }
       + [package.path]
@@ -224,10 +226,11 @@ final class ControllerConsentTests: XCTestCase {
     XCTAssertEqual(pids, [reviewed, reviewed])
   }
 
-  /// Catches an ordinary script, which has no controller identity, reaching the clipboard without
-  /// the user, or being offered more than its own connection. Its session answer lasts for its
-  /// connection alone, and its next run asks again.
-  func testAPlainScriptsClipboardAsksForItsConnectionAlone() async throws {
+  /// Catches a plain script, which has no controller identity, reaching the clipboard without the
+  /// user, or being offered more than its own run. The bundled command's connection is its run, so
+  /// the question says Run. The session answer lasts for that run alone, and the next run asks
+  /// again.
+  func testAPlainScriptsClipboardAsksForItsRunAlone() async throws {
     let script = work.appendingPathComponent("plain.janet")
 
     try Data(
@@ -246,12 +249,61 @@ final class ControllerConsentTests: XCTestCase {
 
     XCTAssertEqual(first.status, 0, first.standardError)
     XCTAssertEqual(first.standardOutput, "synthetic clipboard\nsynthetic clipboard\n")
-    XCTAssertEqual(titles, ["Allow for This Connection"])
+    XCTAssertEqual(titles, ["Allow for This Run"])
     XCTAssertEqual(reviewCount, 0, "a plain script was reviewed as a controller")
 
     _ = try await run(script)
 
-    XCTAssertEqual(titles.count, 2, "a connection's session answer covered the next run")
+    XCTAssertEqual(titles.count, 2, "a run's session answer covered the next run")
+  }
+
+  /// Catches a program that is not the bundled command being named a run. Its connection is not a
+  /// run, so its question says Connection. The unsigned SwiftPM helper stands in for any other
+  /// program that speaks the wire.
+  func testAGenericPeersClipboardAsksForItsConnection() async throws {
+    let script = work.appendingPathComponent("generic.janet")
+
+    try Data("(import uniterm)\n(print (uniterm/read-clipboard))\n".utf8).write(to: script)
+
+    var titles: [String] = []
+
+    operationAnswer = { row in
+      titles.append(row.sessionTitle)
+
+      return .allowOnce
+    }
+
+    let result = try await run(script, executable: ScriptFixtures.helper())
+
+    XCTAssertEqual(result.status, 0, result.standardError)
+    XCTAssertEqual(titles, ["Allow for This Connection"])
+  }
+
+  /// Catches a REPL pane's question being named a run. A REPL stays open until its pane closes, so
+  /// its question says Connection.
+  func testAReplPanesClipboardAsksForItsConnection() async throws {
+    var titles: [String] = []
+
+    operationAnswer = { row in
+      titles.append(row.sessionTitle)
+
+      return .deny
+    }
+
+    let channel = openTestRepl(host: host)
+    let events = ReplEvents(channel)
+    let process = try ReplProcess(
+      address: channel.launch.address,
+      environment: [ScriptProtocol.replTokenVariable: channel.launch.token])
+
+    expect(await waitUntil { events.attachedProcess != nil })
+
+    process.write("(uniterm/read-clipboard)\n")
+
+    expect(await waitUntil { !titles.isEmpty }, process.standardOutput + process.standardError)
+    XCTAssertEqual(titles, ["Allow for This Connection"])
+
+    channel.end()
   }
 
   /// Catches a denial that a program escapes by reconnecting. Its connection's rows go when it

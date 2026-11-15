@@ -24,7 +24,7 @@ enum ControllerReviewText {
 
     if review.waiting.count > 1 {
       lines.append(
-        "\(review.waiting.count) runs wait. Allow Once and Allow for This Session start the "
+        "\(review.waiting.count) runs wait. Allow Once and Allow for This Run start the "
           + "oldest alone.")
     }
 
@@ -53,7 +53,7 @@ enum ControllerReviewText {
   static func choices(for review: ControllerReview) -> String {
     var sentences = [
       "Allow Once starts this run, and each later use of a power asks again.",
-      "Allow for This Session gives this run these powers until it ends.",
+      "Allow for This Run gives this run these powers until it ends.",
     ]
     let shown = offered(for: review)
 

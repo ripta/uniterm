@@ -349,13 +349,22 @@ None.
 
 ### M1: Run wording
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The startup review, controller questions, and plain-script questions all name their per-run choice "Allow for This
   Run"
 - The review's help text and the waiting-runs text use the same name
 - A UI test screenshot of the review and of a question row shows the new name
 - A REPL pane's questions and a generic peer's still say "Allow for This Connection"
+
+**As built:**
+
+The app now records what each connection is: a controller run, the bundled command running a plain script, a generic
+peer, or a REPL pane. A plain begin is told from a generic peer on the main actor by comparing the running code's
+dynamic signing information with the command's file, which is validated once off the main actor and kept. A native
+controller's process skips the check. A missing controller setting leaves a plain begin a generic peer. The question
+row reads the kind to pick between "Allow for This Run" and "Allow for This Connection". The controller approval line
+now reads "Allowed for this run".
 
 ### M2: Declared files
 

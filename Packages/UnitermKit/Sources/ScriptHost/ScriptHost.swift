@@ -24,6 +24,27 @@ public final class ScriptHost {
 
     /// The connection presented a token the host turned away. Nothing it sends is answered.
     var refused = false
+
+    var kind = SessionKind.genericPeer
+  }
+
+  /// What a connection is, which decides how long its choices last and what they are called. A
+  /// run's connection is its run. Any other connection is named a connection.
+  enum SessionKind {
+    /// A program that is not the bundled command. It keeps the admission any other program on the
+    /// socket gets.
+    case genericPeer
+
+    /// The bundled command running a plain script file.
+    case bundledRun
+
+    /// A controller run, from a package or a native entry.
+    case controllerRun
+
+    /// A REPL pane's helper.
+    case repl
+
+    var lastsOneRun: Bool { self == .bundledRun || self == .controllerRun }
   }
 
   let listener: ScriptListener
@@ -228,6 +249,10 @@ public final class ScriptHost {
   public func start() {
     guard task == nil else { return }
 
+    if let helper = controllerSettings?.helper {
+      Task.detached { helper.prepare() }
+    }
+
     let events = listener.events
 
     task = Task { [weak self] in
@@ -271,6 +296,7 @@ public final class ScriptHost {
     switch event {
     case .begun(let connection, let name):
       sessions[connection.id, default: Session()].name = Self.label(for: name)
+      sessions[connection.id, default: Session()].kind = plainPeerKind(of: connection)
 
       watchPeer(of: connection)
       bindConnection(connection)
@@ -278,12 +304,15 @@ public final class ScriptHost {
 
     case .controllerBegun(let connection, let request):
       sessions[connection.id, default: Session()].name = "controller"
+      sessions[connection.id, default: Session()].kind = .controllerRun
 
       watchPeer(of: connection)
       bindConnection(connection)
       beginController(connection, request)
 
     case .attached(let connection, let token):
+      sessions[connection.id, default: Session()].kind = .repl
+
       watchPeer(of: connection)
       attach(connection, token: token)
 

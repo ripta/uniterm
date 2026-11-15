@@ -81,7 +81,7 @@ final class ControllersWindowTests: XCTestCase {
     XCTAssertTrue(unsigned.contains("Trust This Version"), unsigned)
     XCTAssertFalse(unsigned.contains("Trust This Identity"), unsigned)
     XCTAssertFalse(unwritable.contains("Trust This"), unwritable)
-    XCTAssertTrue(unwritable.contains("Allow for This Session"), unwritable)
+    XCTAssertTrue(unwritable.contains("Allow for This Run"), unwritable)
   }
 
   /// Catches a review that hides what is new, leaves out a power, or lets a name reorder the text
@@ -93,7 +93,7 @@ final class ControllersWindowTests: XCTestCase {
     XCTAssertTrue(text.contains("Control panes it may address"), text)
     XCTAssertTrue(text.contains("Start /usr/bin/true as a driver, with any arguments"), text)
     XCTAssertTrue(
-      text.contains("2 runs wait. Allow Once and Allow for This Session start the oldest alone."),
+      text.contains("2 runs wait. Allow Once and Allow for This Run start the oldest alone."),
       text)
     XCTAssertTrue(text.contains("Synthetic\\u{202E}Name"), text)
     XCTAssertFalse(text.contains("\u{202E}"), text)
