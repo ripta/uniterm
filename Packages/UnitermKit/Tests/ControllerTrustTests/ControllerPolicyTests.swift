@@ -120,10 +120,14 @@ final class ControllerPolicyTests: XCTestCase {
   /// Catches a widened reader that lets a format 1 file hold a value kind it refused before, or
   /// reads a negative or fractional format or version as a newer one.
   func testCurrentFormatStillRefusesTheNewValueKinds() {
+    let good = String(
+      decoding: ControllerPolicyFile.encode([Self.policy([.paneControl])]), as: UTF8.self)
+
     for extra in ["true", "null", "-1", "0.5"] {
       for text in [
         "{\"format\": 1, \"policies\": [], \"flag\": \(extra)}",
         "{\"format\": \(extra), \"policies\": []}",
+        good.replacingOccurrences(of: "\"version\": 1", with: "\"version\": \(extra)"),
       ] {
         XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(text.utf8)), text) { error in
           guard case .unreadable? = error as? ControllerPolicyFileError else {
@@ -239,6 +243,7 @@ final class ControllerPolicyTests: XCTestCase {
     for newerText in [
       current.replacingOccurrences(of: "\"format\": 1", with: "\"format\": 7"),
       current.replacingOccurrences(of: "\"version\": 1", with: "\"version\": 4"),
+      "{\"format\": 2, \"policies\": [], \"flag\": true}",
     ] {
       let newer = Data(newerText.utf8)
 
