@@ -1,6 +1,8 @@
 # A newer policy file that holds a boolean, null, or fraction is moved aside as broken
 
-**Status:** open
+**Status:** fixed 2026-11-14
+**Estimate:** medium; no open design decisions
+**Fixed:** 2026-11-14
 
 ## Observed
 
@@ -34,3 +36,18 @@ Write a policy file `{"format": 2, "policies": [], "flag": true}` and start the 
 Widen the strict reader to the full JSON value grammar, giving booleans, null, and every number outside today's
 integer domain their own cases. UTERM-022 settles this in "How the spec is decoded", so its M1 fixes this bug. The fix
 needs no other design call. A regression test writes the repro file and expects `.newer`.
+
+## Fix note
+
+Triage on 2026-11-14 reproduced the bug with a new test. It failed for `true`, `false`, `null`, `-1`, `0.5`, and `1e3`.
+Each read as unreadable, not as `format 2`. The bug was fixed in the same run, ahead of UTERM-022 M1. M1 builds on the
+wider reader.
+
+- `StrictJSON` gains `number`, `boolean`, and `null` cases. `integer` keeps its exact domain: unsigned, at most nine
+  digits, no fraction or exponent. Any other valid number is `number`, holding the literal text. A leading zero is
+  still refused.
+- A newer-format policy file holding any of the new kinds now reads as newer, and the trust store keeps it.
+- A format 1 policy file, a descriptor, and a signature still refuse each new kind. The error now names the field, not
+  the byte. The `boolean-value` descriptor fixture moved its boolean to `name`, so it still fails for the boolean.
+- Files: `Packages/UnitermKit/Sources/ControllerPackage/StrictJSON.swift`, `ControllerPolicyTests.swift`,
+  `ControllerDescriptorTests.swift`, and the shared `ControllerFixtures.swift` with its `boolean-value.json`.

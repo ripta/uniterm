@@ -78,12 +78,12 @@ public enum ControllerFixtures {
     ("native-module-capability", "loads native code"),
     ("newer-format", "format 3 is not one this uniterm reads"),
     ("entry-not-listed", "not among the files"),
-    ("boolean-value", "only strings, whole numbers"),
+    ("boolean-value", "must be a string"),
     ("trailing-data", "something follows"),
     ("uppercase-digest", "64 lowercase hex digits"),
     ("file-and-folder", "is a file, so lib/x.janet cannot be inside it"),
     ("reserved-name", "is reserved"),
-    ("byte-order-mark", "only strings, whole numbers"),
+    ("byte-order-mark", "a value must be a string"),
   ]
 
   /// A fresh copy of a fixture package in a temporary folder, which a test may change.
