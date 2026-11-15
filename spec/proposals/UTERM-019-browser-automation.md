@@ -24,6 +24,8 @@
   "Helper names". A byte-string value reaches Janet, and ScriptWire moves to version 9, per "Result encoding".
 - UTERM-001 — "Commands that wait" and "Result encoding": the applet contract gains a pending reply that an applet
   completes later, and a byte carrier beside `JSONValue`.
+- UTERM-022 — "Commands that wait": the Questions applet's form calls are host calls, so its pending reply lives in
+  the host. This proposal's lives in the applet contract. Both follow ADR-11, and neither builds the other's.
 - UTERM-004 — "Exec wire format": the command hook it added can reply later, and exec drivers match such replies by
   request ID. Result chunks reach drivers as base64 strings, per "Result encoding".
 - The follow-up inspector-bridge proposal reuses "Capabilities" and "Page events", and adds private-API capabilities
