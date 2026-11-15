@@ -332,7 +332,7 @@ permissions of their own, and act only on tabs the controller opened.
   The approval review says so for navigation alone, too. A pane-control approval stored before these permissions
   existed cannot cover them, since ADR-09 says a change in permission meaning cannot increase an existing approval.
 - Open and navigate accept only what "Schemes" allows, checked after parsing the URL. No command evaluates script in a
-  page.
+  page. Superseded in part by UTERM-019; see Decision Log.
 - A tab opened by open belongs to that controller for its live grant, even after the user types in it. The pane's
   remote-control marker shows that the pane is driven. Navigate, reload, back, forward, select, and read act only on
   such tabs. Aimed at any other tab, they return a structured error. A tab a page opens from a controller tab, a tab
@@ -1194,6 +1194,9 @@ None.
 Starts after UTERM-004 M6.
 
 - UTERM-004's permission set names browser navigation and browser read before the browser accepts any command
+- Browser navigation and browser read enter controller.json format 2 at version 1, as UTERM-004 "Verified artifact and
+  run binding" defines it. Format 1 and format 2 descriptors both load, each with its own kinds. Amended 2026-11-11;
+  see Decision Log.
 - A controller with pane control alone gets a structured error from every browser command, and so does one whose stored
   approval predates the browser permissions. Browser navigation and browser read each unlock only their own commands
 - A URL seeded through a layout request needs browser navigation and passes "Schemes"
@@ -1572,7 +1575,11 @@ Starts after UTERM-004 M6.
   repros of the crash survived, so the trigger is known only through the ablation. If wrong, a busy process below half a
   core is left running, and a threshold that is too low ends a closed tab's process that was merely busy, which no live
   tab needed.
-
+- 2026-11-11: Superseded in part by UTERM-019: "Control" said no command evaluates script in a page. That stays true
+  for a controller without UTERM-019's browser script permission, and stops being true for one with it.
+- 2026-11-11: M8 amended: browser navigation and browser read enter controller.json format 2 at version 1, per
+  UTERM-019 "Permission descriptor format" and "Who builds descriptor format 2". M8 said nothing about how its kinds
+  enter the descriptor, and format 1 refuses unknown kinds. UTERM-004 M6 builds format 2.
 ## References
 
 - Original write-up: `~/projects/private_specs/uniterm/spec/research/original-writeup.md`, APPLET-3
