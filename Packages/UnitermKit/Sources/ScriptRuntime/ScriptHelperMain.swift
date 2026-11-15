@@ -61,6 +61,7 @@ public enum ScriptHelperMain {
     return """
       usage: uniterm run [--allow CAPABILITY]... [--socket PATH] file.janet [argument...]
              uniterm run [--allow CAPABILITY]... [--socket PATH] package [argument...]
+             uniterm lint file.janet
              uniterm controller --help
 
       Runs a Janet script against the running uniterm. Given a controller package's folder, it
@@ -102,6 +103,10 @@ public enum ScriptHelperMain {
 
     if arguments.dropFirst().first == "repl" {
       return ScriptReplMain.run(arguments: Array(arguments.dropFirst(2)))
+    }
+
+    if arguments.dropFirst().first == "lint" {
+      return ScriptLintCommand.run(arguments: Array(arguments.dropFirst(2)))
     }
 
     if arguments.dropFirst().first == "controller" {

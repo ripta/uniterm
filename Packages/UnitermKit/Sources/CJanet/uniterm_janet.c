@@ -1276,6 +1276,12 @@ static const JanetReg uniterm_cfuns[] = {
      "of :kind and :message, as uniterm/read-clipboard does, and leaves the clipboard as it was."},
     {NULL, NULL, NULL}};
 
+const char *uniterm_janet_module_function(size_t index) {
+    size_t count = sizeof(uniterm_cfuns) / sizeof(uniterm_cfuns[0]) - 1;
+
+    return index < count ? uniterm_cfuns[index].name : NULL;
+}
+
 /*
  * Makes `(import uniterm)` find the module without a file. Janet's import checks the module cache
  * before it looks for a path, so a table placed there is the module.

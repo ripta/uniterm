@@ -430,12 +430,11 @@ extension ScriptHost {
 extension ScriptHost {
   /// The power a call uses, or nil for a call that needs none, such as posting status.
   static func power(for call: ScriptCall) -> ControllerPermission? {
-    switch call {
-    case .postStatus: return nil
-    case .readClipboard: return .clipboardRead
-    case .writeClipboard: return .clipboardWrite
-    case .listWindows, .listPanes, .openPane, .openTab, .send, .sendCommand, .requestLayout:
-      return .paneControl
+    switch call.kind.power {
+    case nil: return nil
+    case .clipboardRead: return .clipboardRead
+    case .clipboardWrite: return .clipboardWrite
+    case .paneControl: return .paneControl
     }
   }
 

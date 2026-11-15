@@ -21,7 +21,7 @@ work is stashed.
 | UTERM-021 M2: Declared files | DONE | "Run a script file's declared powers from a reviewed snapshot" |
 | UTERM-021 M3: Signed files | DONE | "Trust a signed script file by its key and ID" |
 | UTERM-021 M4: Strict and unsafe modes | DONE | "Refuse undeclared script files unless the user chooses unsafe mode" |
-| UTERM-021 M5: The lint | IN PROGRESS | |
+| UTERM-021 M5: The lint | DONE | "Lint a script file's calls against its declaration" |
 
 ## Commands that leave the sandbox
 
@@ -350,3 +350,64 @@ now exits 77. Exit 69 still means no uniterm is reachable.
 The package suite took 211 s before the review fixes and 271 s after, on a machine busy with other work. The new
 `UndeclaredFileTests` has 19 tests. The five touched UI classes, 14 tests, take about 5.5 minutes together, including
 the build.
+
+## UTERM-021 M5: The lint
+
+Commit: "Lint a script file's calls against its declaration".
+
+`uniterm lint file.janet` parses a file with Janet's parser in a VM that evaluates nothing, and opens no socket. It
+reports a literal call whose power the file does not declare, and a declared power the file never uses. A call that
+reaches the module without a literal name reports that the file could make any call. The call-to-power table moved
+into ScriptWire, so the app's call boundary and the lint read one table. A test fails when the C module offers a
+function the table lacks.
+
+### Checks
+
+- `make fmt-check`, `make lint`, and `make check` pass.
+- `make build` passes.
+- `caffeinate -dimsu make test-package` passes, 0 failures, 219.1 s wall after the review fixes. The first run had one
+  failure, the `FindTests` potential flake, which passed alone.
+- `DeclaredScriptFuzzTests` under ASan, 5000 iterations, passes. It now also lints mutated files.
+- `make clean`, then `make test-helper-sandbox`, passes. The review fixes touched only the Swift walker and tests, so
+  it was not rerun after them.
+- `proposals.py check` reports only that the proposal should be implemented and the row should move to
+  `history.md`, which the row's finish does. `freeze` reports nothing.
+- The coordinator ran the built command's `lint` on two sample files. It flagged an aliased `read-clipboard` and an
+  unused clipboard-write. It suggested the declaration for an undeclared file, and the file's side effect never ran.
+- No UI test is needed for a command-line tool.
+
+### Best guesses
+
+- Exit statuses are 0 clean and 1 with findings. An unparsable file, one nested past 512 levels, or one with a
+  declaration that fails to read gives 65. An unopenable file gives 66, and a usage error gives 64.
+- `lint` takes no `--socket`. The integration test proves no connection reaches a live listener.
+- After a dynamic call, no declared power is reported unused. The proposal's lint decision is amended in place, with a
+  Decision Log entry.
+- `apply` is not dynamic. A function reaches it only through a literal reference, which the lint counts.
+- No `uniterm/` call maps to host-launch, since a launch rides inside a layout. A literal `request-layout` whose form
+  holds `exec` as a struct key, in either spelling, needs host-launch. Any `request-layout` counts as using a declared
+  host-launch.
+- A macro defined in the file is walked with its templates. A name built inside one is a dynamic call.
+- A `comment` form is data, unless the file binds its own `comment`.
+
+### Review
+
+- The host-launch heuristic missed a string `"exec"` key, which the layout reader accepts. That gave a false clean on
+  the one launch path the table does not cover. It also flagged `:exec` as a plain value. Fixed: only a struct key
+  counts, in either spelling.
+- `parse`, `parse-all`, and the `parser/*` functions turn text into code inside a macro without a literal call name.
+  They now report that the file could make any call. Fixed.
+- A doc comment wrapped past 100 columns. Fixed.
+- The coordinator added one change: a call inside `(comment ...)` counted as a use. Fixed.
+- These four tests were written with their fixes and were not seen failing first. The defects never shipped, so the
+  tests pin the fixes.
+- Limits recorded in the As built block: `match` and `case` pattern bindings, files the script imports, quoted code
+  outside a macro, a layout held in a variable, and an alias of `request-layout`.
+- `adr-impact` found no conflicts with ADR-07, ADR-09, or ADR-10. It raised the shared call table as a possible ADR.
+  The table is a mechanism, and ADR-09's rule that every entry point uses the same permission boundaries already
+  covers it.
+
+### Test cost
+
+The package suite took 211.7 s before the review fixes and 219.1 s after. `ScriptLintTests` takes about 0.5 s and
+`ScriptLintCommandTests` about 0.7 s.

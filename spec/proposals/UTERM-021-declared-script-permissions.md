@@ -168,7 +168,9 @@ Rationale: a plain script's connection is its run. Three names for one lifetime 
 Decision: uniterm ships a lint that scans a file's literal `uniterm/` calls and compares them with its declaration.
 It reports calls that need an undeclared power, and declared powers the file never uses. It is best effort and
 grants nothing. A dynamic call, such as one built with `symbol` or run through `eval`, makes it report that the file
-could make any call. "The lint's name" says how it is invoked.
+could make any call, and then it reports no declared power as unused. "The lint's name" says how it is invoked. Its
+exit status is 0 when clean, 1 with findings, 65 when the file or its declaration does not read, and 66 when the file
+cannot be opened. Amended 2026-11-15; see Decision Log.
 
 Rationale: enforcement makes a missed call safe. It is refused at run time. A lint moves that error to before the run.
 
@@ -585,7 +587,7 @@ fixtures is in the Decision Log.
 
 ### M5: The lint
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The lint reports a literal call whose power the file does not declare
 - The lint reports a declared power the file never uses
@@ -595,6 +597,47 @@ fixtures is in the Decision Log.
   each resolved or reported as able to make any call
 - A declared capability is never reported as unused, since its uses are Janet's own functions
 - The lint maps calls to powers with the same table the app uses at the call boundary
+
+**As built:**
+
+`uniterm lint file.janet` is a command beside `repl` and `controller`. It takes one file, and `-h` or `--help` shows
+its usage. It refuses a folder, a second file, and any other flag with status 64. It reads the file, parses it, and
+prints one finding per line as `file:line:column: text`. It opens no socket and reads no address, so it never contacts
+the app. It runs none of the file's code.
+
+The shim parses the file with Janet's parser in a VM of its own and copies the forms into plain arrays. The walker is
+Swift. A tuple's position is the parser's own source map, so a reference is reported at the form that holds it. Exit
+status is 0 when clean, 1 with findings, 65 when the file does not parse, nests past 512 levels, or has a declaration
+that fails to read, and 66 when the file cannot be opened. A parse error names its line and column.
+
+The call-to-power table moved into ScriptWire. `ScriptCallKind` lists each wire call with its Janet name and its power,
+and `ScriptCall.kind` is an exhaustive switch over the wire calls. The app's `ScriptHost.power(for:)` reads the table,
+and so does the lint. A test lists every Janet function the module offers and checks it against the table, so
+`api-version` is the only function without a row. No call maps to a host launch in the table. A layout carries its
+launch, so the lint treats a literal `request-layout` call as needing host-launch when a struct inside it has `exec` as
+a key, spelled as a keyword or a string. It treats a declared host-launch as used by any `request-layout` call.
+
+A reference to a module function counts as a use of its power, whether it is called, aliased, or passed. The lint
+resolves `(import uniterm)`, `:as`, `:prefix`, and `(use uniterm)`, from imports found anywhere before the walk. It
+tracks local bindings from `def`, `var`, `defn`, `fn`, `let`, `each`, `for`, `loop`, `with`, and `try`, so a local
+named like a module function is not a call. A macro defined in the file is walked with its templates, so a template
+that names a module function counts, and one that builds a name is a dynamic call. A name that starts with an imported
+prefix and is not a module function is reported as one uniterm does not offer.
+
+These reach a call without its name and are reported as able to make any call: `eval`, `eval-string`, `compile`,
+`run-context`, `dofile`, `load-image`, `unmarshal`, `require`, `import*` or `use` with a computed path, `parse`,
+`parse-all`, the `parser/` functions, `symbol`, `keyword`, `curenv`, `make-env`, `env-lookup`, `root-env`, `resolve`,
+`fiber/getenv`, `fiber/setenv`, the `module/` tables, and `dyn` with a computed key or the environment. `apply` is not
+on the list. A function reaches `apply` only through a literal reference, which is counted where it appears, or through
+one of these. Once a file has a dynamic call, the lint reports no declared power as unused. A declared capability is
+never reported unused.
+
+An undeclared file lints too. Each call reports its power as undeclared, and a last line suggests the declaration to
+add. A `comment` form is data unless the file binds its own `comment`. Limits: `match` and `case` patterns are not seen
+as bindings, a file the script imports is not scanned, quoted code outside a macro is data, and a launch hidden behind
+an alias of `request-layout` is not seen.
+
+The lint walker is in the declaration fuzzer's run: the fuzzer lints mutated files twice and compares the results.
 
 ## Decision Log
 
@@ -691,6 +734,11 @@ fixtures is in the Decision Log.
   connection alone, so the undeclared run does the same. Amended text: the decision now says the user ends the run's
   authority, as for a controller run, and the check says its next call is refused. If a stopped process is wanted,
   Revoke would close the connection for all three kinds of run, which is a separate decision.
+- 2026-11-15 (run best guess): The lint reports no declared power as unused once it finds a dynamic call, and its
+  exit status is 0, 1, 65, or 66. The decision said a dynamic call makes the lint report that the file could make any
+  call, and named no exit status. A file that could make any call may use any declared power, so an unused report
+  would be a claim the lint cannot back. Amended text: "The lint" now says both. If the lint should still list the
+  declared powers it saw no literal use of, only the one suppression changes.
 
 ## References
 

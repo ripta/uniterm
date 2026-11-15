@@ -237,6 +237,80 @@ uniterm_declaration_status uniterm_janet_read_declaration(const uint8_t *source,
 void uniterm_janet_free_declaration(uniterm_declaration *declaration);
 
 /*
+ * The names of the functions the `uniterm` module offers, without a prefix, one for each index from
+ * zero. Returns NULL past the last. The script lint reads them to tell a function uniterm offers
+ * from a name that only looks like one.
+ */
+const char *uniterm_janet_module_function(size_t index);
+
+typedef enum uniterm_form_kind {
+    UNITERM_FORM_SYMBOL = 0,
+    UNITERM_FORM_KEYWORD = 1,
+    UNITERM_FORM_STRING = 2,
+    /* A number, nil, a boolean, or a buffer. `text` is empty. */
+    UNITERM_FORM_ATOM = 3,
+    /* `(...)`. The children are the elements. */
+    UNITERM_FORM_PAREN = 4,
+    /* `[...]`, which reads as a bracketed tuple. */
+    UNITERM_FORM_BRACKET = 5,
+    /* `@[...]`. */
+    UNITERM_FORM_ARRAY = 6,
+    /* `{...}` or `@{...}`. The children alternate key and value. */
+    UNITERM_FORM_STRUCT = 7,
+    UNITERM_FORM_TABLE = 8
+} uniterm_form_kind;
+
+/* One form of a parsed file. The nodes of a file are in pre-order, each followed by its subtree. */
+typedef struct uniterm_form_node {
+    int32_t kind;
+
+    /* The number of direct children, which a struct or table counts as keys plus values. */
+    int32_t children;
+
+    /* Where the form starts, 1-based. A form with no recorded start gets where its parent starts. */
+    int32_t line;
+    int32_t column;
+
+    /* The symbol, keyword, or string bytes, as an offset and length into the file's text. */
+    size_t text_offset;
+    size_t text_length;
+} uniterm_form_node;
+
+typedef struct uniterm_forms {
+    /* Both from malloc, owned by the caller, and released with the function below. */
+    uniterm_form_node *nodes;
+    size_t node_count;
+    char *text;
+    size_t text_length;
+
+    /* Nonempty when the file does not parse. `error_line` and `error_column` are 1-based. */
+    char message[UNITERM_JANET_DECLARATION_MESSAGE_CAPACITY];
+    int32_t error_line;
+    int32_t error_column;
+
+    /* The number of top-level forms, which are the first nodes of the list's roots. */
+    size_t root_count;
+} uniterm_forms;
+
+typedef enum uniterm_forms_status {
+    UNITERM_FORMS_OK = 0,
+    /* The file did not parse, or is nested too deeply. `message` says which. */
+    UNITERM_FORMS_ERROR = 1
+} uniterm_forms_status;
+
+/*
+ * Parses a script file with Janet's own parser, in a VM of its own, and evaluates nothing. It
+ * returns the file's top-level forms as data. A struct's entries come in the parser's order, with
+ * duplicate keys merged and nil entries dropped as the run would see them. Nesting past 512 levels
+ * is an error. The call starts and ends a VM on the calling thread, so no other VM may be running
+ * there.
+ */
+uniterm_forms_status uniterm_janet_parse_forms(const uint8_t *source, size_t length,
+                                               uniterm_forms *forms);
+
+void uniterm_janet_free_forms(uniterm_forms *forms);
+
+/*
  * What the REPL reports to its host. Both callbacks run on the thread that runs the REPL, and must
  * not unwind or trap. `line` gets each non-blank line the user enters, without its newline, before
  * the line is evaluated. `running` gets 1 when a form starts to evaluate and 0 when it ends.

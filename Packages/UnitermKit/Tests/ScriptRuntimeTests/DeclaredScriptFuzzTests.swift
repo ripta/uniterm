@@ -4,8 +4,9 @@ import XCTest
 
 @testable import ScriptRuntime
 
-/// A seeded mutation fuzzer for the command's declaration reader, which runs Janet's parser over a
-/// file's bytes. Each input is a valid or near-valid file with bytes flipped, cut, or inserted.
+/// A seeded mutation fuzzer for the command's declaration reader and the lint, which run Janet's
+/// parser over a file's bytes. Each input is a valid or near-valid file with bytes flipped, cut,
+/// or inserted.
 ///
 /// `make test-package` runs it at a small count. `make fuzz` runs it under the address sanitizer
 /// at a large one, through `UNITERM_FUZZ_ITERATIONS`. `UNITERM_FUZZ_SEED` repeats a run.
@@ -74,6 +75,36 @@ final class DeclaredScriptFuzzTests: XCTestCase {
       if case .declared(let json) = reading {
         _ = try? FileDeclaration.parse(json)
       }
+    }
+  }
+
+  private let lintCorpus = [
+    """
+    (declare-permissions {:kind :pane-control :version 1})
+    (import uniterm :as u)
+    (defmacro m [x] ~(do (u/send ,x "a" "b")))
+    (use uniterm)
+    (defn f [send] (each p [1 2] (loop [i :range [0 3] :let [q i]] (u/open-tab p))))
+    (try (eval '(print 1)) ([err] (read-clipboard)))
+    """,
+    "(import uniterm)\n(def {:a x :b [y z]} @{:c uniterm/write-clipboard})\n(let [a 1] (a))\n",
+  ].map { [UInt8]($0.utf8) }
+
+  /// Catches a mutated file that traps the lint, overruns its form arrays, or lints differently
+  /// the second time.
+  func testMutatedFilesLintWithoutTrapping() {
+    var random = Generator(state: seed ^ 0x11A7)
+
+    for iteration in 0..<iterations {
+      var bytes = (lintCorpus + corpus)[
+        Int(random.next() % UInt64(lintCorpus.count + corpus.count))]
+
+      for _ in 0..<Int(random.next() % 5) { mutate(&bytes, using: &random) }
+
+      let data = Data(bytes)
+
+      XCTAssertEqual(
+        ScriptLint.lint(data), ScriptLint.lint(data), "seed \(seed), iteration \(iteration)")
     }
   }
 
