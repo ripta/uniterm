@@ -71,6 +71,16 @@ fixed ones.
 - Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
 - Status: unresolved.
 
+### `LaunchOpenCoordinatorTests.testAPackageIsRefusedThroughTheLaunchServicesPath`
+
+- Seen: 2026-11-15, once, in the second CI `package` run of PR #49, which does not touch the launch-open code.
+- Evidence: `LaunchOpenCoordinatorTests.swift:280` found no failure message for the refused bundle. The same test passed
+  in the PR's first run.
+- Suspected cause: `settle()` yields a fixed number of times, as in the
+  `testABatchOpensOnePanePerFileAndSummarizesFailures` entry, so a slow runner asserts before the refusal lands. Not
+  confirmed.
+- Status: unresolved.
+
 ## Fixed
 
 ### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
