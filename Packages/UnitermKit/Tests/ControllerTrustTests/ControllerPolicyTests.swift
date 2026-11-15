@@ -104,6 +104,40 @@ final class ControllerPolicyTests: XCTestCase {
     XCTAssertEqual(ControllerPolicyFile.encode(policies.reversed()), bytes)
   }
 
+  /// Catches a reader that takes a newer format's file for a broken one when the file holds a
+  /// boolean, null, negative, or fractional value. It cannot prove that a newer file with other
+  /// values this build refuses to parse is kept.
+  func testNewerFormatWithValuesOutsideTheIntegerDomainReadsAsNewer() throws {
+    for extra in ["true", "false", "null", "-1", "0.5", "1e3"] {
+      let text = "{\"format\": 2, \"policies\": [], \"flag\": \(extra)}"
+
+      XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(text.utf8)), extra) { error in
+        XCTAssertEqual(error as? ControllerPolicyFileError, .newer("format 2"), extra)
+      }
+    }
+  }
+
+  /// Catches a widened reader that lets a format 1 file hold a value kind it refused before, or
+  /// reads a negative or fractional format or version as a newer one.
+  func testCurrentFormatStillRefusesTheNewValueKinds() {
+    let good = String(
+      decoding: ControllerPolicyFile.encode([Self.policy([.paneControl])]), as: UTF8.self)
+
+    for extra in ["true", "null", "-1", "0.5"] {
+      for text in [
+        "{\"format\": 1, \"policies\": [], \"flag\": \(extra)}",
+        "{\"format\": \(extra), \"policies\": []}",
+        good.replacingOccurrences(of: "\"version\": 1", with: "\"version\": \(extra)"),
+      ] {
+        XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(text.utf8)), text) { error in
+          guard case .unreadable? = error as? ControllerPolicyFileError else {
+            return XCTFail("\(text) read as \(error)")
+          }
+        }
+      }
+    }
+  }
+
   /// Catches a reader that reads a newer or unknown meaning as a narrower known one, or that takes
   /// a newer build's file for a broken one. A newer format, and a kind or version this build does
   /// not know, read as newer. A repeated key or an unknown field reads as broken.
@@ -209,6 +243,7 @@ final class ControllerPolicyTests: XCTestCase {
     for newerText in [
       current.replacingOccurrences(of: "\"format\": 1", with: "\"format\": 7"),
       current.replacingOccurrences(of: "\"version\": 1", with: "\"version\": 4"),
+      "{\"format\": 2, \"policies\": [], \"flag\": true}",
     ] {
       let newer = Data(newerText.utf8)
 
