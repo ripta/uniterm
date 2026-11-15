@@ -533,6 +533,22 @@ final class ControllerRunTests: XCTestCase {
     expect(await waitUntil { self.runFolders.isEmpty }, "the snapshot outlived its process")
   }
 
+  /// Catches the one-session rule turning away a native entry's later connections. Once the command
+  /// execs the entry, the whole process is the controller, so every connection it opens is its own
+  /// and is adopted, where a command process would be held to one.
+  func testEveryConnectionANativeEntryOpensAfterTheExecIsAdopted() async throws {
+    let package = try nativePackage(try Data(contentsOf: nativeFixture))
+    let result = try await run(
+      try HardenedHelper.url(),
+      ["controller", "run", "--socket", host.instanceAddress, package.path, "second"], in: work)
+
+    XCTAssertEqual(result.status, 0, result.standardError)
+    XCTAssertTrue(result.standardOutput.contains("call: ok\n"), result.standardOutput)
+    XCTAssertTrue(result.standardOutput.contains("second: ok\n"), result.standardOutput)
+    XCTAssertEqual(seenRuns.filter { $0.entryKind == .native }.count, 2)
+    expect(await waitUntil { self.runFolders.isEmpty }, "the snapshot outlived its process")
+  }
+
   /// Catches a command that stays between the terminal and the native entry. A signal sent to the
   /// command's process reaches the entry, because the entry is that process.
   func testASignalToTheCommandsProcessReachesTheNativeEntry() async throws {

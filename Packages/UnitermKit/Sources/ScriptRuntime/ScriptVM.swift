@@ -120,6 +120,30 @@ extension ScriptVM {
     return scriptFailure(status: status, failure: failure, name: name)
   }
 
+  /// Runs a declared script file's bytes. The loader finds only the bundled uniterm module, so no
+  /// import reaches a file.
+  static func runDeclared(
+    name: String, source: Data, session: ScriptSession, sandbox: UInt32, arguments: [String]
+  ) -> ScriptFailure? {
+    var failure = uniterm_script_failure()
+
+    let status = withExtendedLifetime(session) {
+      let userdata = Unmanaged.passUnretained(session).toOpaque()
+      var host = uniterm_host(
+        userdata: userdata, post_status: postStatusCallback, call: callCallback)
+
+      return withCStrings(arguments) { pointers in
+        source.withUnsafeBytes { raw in
+          uniterm_janet_run_declared(
+            &host, name, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, sandbox, pointers,
+            pointers.count, &failure)
+        }
+      }
+    }
+
+    return scriptFailure(status: status, failure: failure, name: name)
+  }
+
   private static func scriptFailure(
     status: uniterm_script_status, failure: uniterm_script_failure, name: String
   ) -> ScriptFailure? {

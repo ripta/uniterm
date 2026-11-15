@@ -182,6 +182,61 @@ uniterm_script_status uniterm_janet_run_package(const uniterm_host *host, const 
                                                 uniterm_script_failure *failure);
 
 /*
+ * Runs a declared script file as uniterm_janet_run runs a script, with a fixed module loader that
+ * resolves only the bundled uniterm module. No import finds a file, relative or absolute, and
+ * native modules and images have no loader at all. `name` is the file's name in errors.
+ */
+uniterm_script_status uniterm_janet_run_declared(const uniterm_host *host, const char *name,
+                                                 const uint8_t *source, size_t length,
+                                                 uint32_t sandbox_flags,
+                                                 const char *const *arguments,
+                                                 size_t argument_count,
+                                                 uniterm_script_failure *failure);
+
+/* The most bytes of JSON a declaration may convert to. ScriptProtocol holds the same number. */
+#define UNITERM_JANET_MAX_DECLARATION_BYTES (32 * 1024)
+
+/* The most bytes of a declaration refusal, with its terminator. */
+#define UNITERM_JANET_DECLARATION_MESSAGE_CAPACITY 512
+
+typedef enum uniterm_declaration_status {
+    /* The file's first form is not a declaration. The file is not declared. */
+    UNITERM_DECLARATION_NONE = 0,
+
+    /* The first form is a valid declaration, converted to JSON in `json`. */
+    UNITERM_DECLARATION_FOUND = 1,
+
+    /* The file has a declaration problem. `message` says which. */
+    UNITERM_DECLARATION_INVALID = 2
+} uniterm_declaration_status;
+
+typedef struct uniterm_declaration {
+    /* From malloc, owned by the caller, and only for FOUND. Release it with the function below. */
+    char *json;
+    size_t json_length;
+    char message[UNITERM_JANET_DECLARATION_MESSAGE_CAPACITY];
+} uniterm_declaration;
+
+/*
+ * Reads a script file's first form with Janet's own parser, in a VM of its own, and evaluates
+ * nothing. When the form is `(declare-permissions ...)`, it checks that nothing else in the file
+ * declares, converts the declaration to JSON, and returns FOUND. The JSON is
+ * {"header": {...}, "permissions": [{...}, ...]}, with the header absent when the file names none.
+ * A keyword and a string both become a JSON string, after the declaration's field types are
+ * checked. Only literal data is accepted: keywords, strings, whole numbers, bracketed lists, and
+ * structs.
+ *
+ * The reader refuses what Janet's parser would merge or drop, which no later step could see: a
+ * struct that repeats a key, and a nil key or value. It can only refuse. A file that does not
+ * parse reads as NONE, since the run reports the parse error. The call starts and ends a VM on the
+ * calling thread, so no other VM may be running there.
+ */
+uniterm_declaration_status uniterm_janet_read_declaration(const uint8_t *source, size_t length,
+                                                          uniterm_declaration *declaration);
+
+void uniterm_janet_free_declaration(uniterm_declaration *declaration);
+
+/*
  * What the REPL reports to its host. Both callbacks run on the thread that runs the REPL, and must
  * not unwind or trap. `line` gets each non-blank line the user enters, without its newline, before
  * the line is evaluated. `running` gets 1 when a form starts to evaluate and 0 when it ends.

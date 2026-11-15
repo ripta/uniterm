@@ -20,9 +20,13 @@ public enum ControllerPackageError: Error, Equatable, CustomStringConvertible, S
   /// The file system refused a read or a write.
   case io(String)
 
+  /// A script file's declaration is not one this version reads.
+  case declaration(String)
+
   public var description: String {
     switch self {
     case .malformed(let text): return "controller.json: \(text)"
+    case .declaration(let text): return "the file's declaration: \(text)"
     case .contents(let text): return text
     case .signature(let text): return "controller.sig: \(text)"
     case .loadBoundary(let text): return text
@@ -363,7 +367,8 @@ public struct ControllerDescriptor: Equatable, Sendable {
       }
     }
 
-    let permissions = try readPermissions(fields["permissions"]!, kind: kind, format: format)
+    let permissions = try ControllerPermissionReader.read(
+      fields["permissions"]!, allowsCapabilities: kind == .janet, format: format)
 
     return ControllerDescriptor(
       id: id, name: name, entryKind: kind, entryPath: entryPath, files: files,
@@ -393,7 +398,7 @@ public struct ControllerDescriptor: Equatable, Sendable {
     ScriptCapabilityNames.grantable.contains(name) && !refusedCapabilities.contains(name)
   }
 
-  private static func checkID(_ id: String) throws {
+  static func checkID(_ id: String) throws {
     let bytes = Array(id.utf8)
     let allowed = { (byte: UInt8) in
       (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte)
@@ -411,7 +416,7 @@ public struct ControllerDescriptor: Equatable, Sendable {
     }
   }
 
-  private static func checkName(_ name: String) throws {
+  static func checkName(_ name: String) throws {
     let printable = name.unicodeScalars.allSatisfy { scalar in
       !scalar.properties.generalCategory.isControlOrFormat
     }
@@ -521,105 +526,6 @@ public struct ControllerDescriptor: Equatable, Sendable {
     }
 
     return digest
-  }
-
-  private static func readPermissions(
-    _ value: StrictJSON, kind: ControllerEntryKind, format: Int
-  ) throws -> Set<ControllerPermission> {
-    var permissions = Set<ControllerPermission>()
-    var listed = Set<String>()
-
-    for element in try value.array("permissions") {
-      let fields = try element.members(
-        of: "a permission", required: format >= 2 ? ["kind", "version"] : ["kind"],
-        optional: ["name", "executable", "directory", "environment"])
-      let permissionKind = try fields["kind"]!.string("a permission's kind")
-      let version = try fields["version"]?.integer("a permission's version") ?? 1
-
-      guard let meaning = ControllerPermission.meaning(kind: permissionKind, version: version),
-        meaning.format <= format
-      else {
-        throw ControllerPackageError.malformed(
-          format >= 2 && ControllerPermission.meanings.contains { $0.kind == permissionKind }
-            ? "\(permissionKind) version \(version) is not one this uniterm knows"
-            : "the permission kind \"\(permissionKind)\" is not one descriptor format \(format) "
-              + "knows")
-      }
-
-      let launchFields: Set<String> = ["executable", "directory", "environment"]
-
-      guard permissionKind == "host-launch" || launchFields.isDisjoint(with: fields.keys) else {
-        throw ControllerPackageError.malformed(
-          "only host-launch takes an executable, a directory, or an environment")
-      }
-
-      if permissionKind != "capability", fields["name"] != nil {
-        throw ControllerPackageError.malformed("\(permissionKind) takes no name")
-      }
-
-      let permissionValue: ControllerPermissionKind
-
-      switch permissionKind {
-      case "pane-control":
-        permissionValue = .paneControl
-
-      case "clipboard-read":
-        permissionValue = .clipboardRead
-
-      case "clipboard-write":
-        permissionValue = .clipboardWrite
-
-      case "host-launch":
-        guard let executable = fields["executable"], let directory = fields["directory"],
-          let environment = fields["environment"]
-        else {
-          throw ControllerPackageError.malformed(
-            "host-launch needs an executable, a directory, and an environment list")
-        }
-
-        permissionValue = .hostLaunch(
-          try HostLaunchScope(
-            executable: try executable.string("a host launch's executable"),
-            directory: try directory.string("a host launch's directory"),
-            environmentKeys: try environment.array("a host launch's environment").map {
-              try $0.string("an environment key")
-            }))
-
-      default:
-        guard kind == .janet else {
-          throw ControllerPackageError.malformed("only a Janet entry declares capabilities")
-        }
-
-        guard let nameValue = fields["name"] else {
-          throw ControllerPackageError.malformed("a capability needs a name")
-        }
-
-        let name = try nameValue.string("a capability's name")
-
-        guard ScriptCapabilityNames.grantable.contains(name) else {
-          throw ControllerPackageError.malformed(
-            "\(name) is not a capability uniterm run --allow can grant")
-        }
-
-        guard !refusedCapabilities.contains(name) else {
-          throw ControllerPackageError.malformed(
-            "a controller cannot declare \(name), since it loads native code from outside the "
-              + "package")
-        }
-
-        permissionValue = .capability(name)
-      }
-
-      // A kind is listed once, or once for each capability name or host launch executable, at
-      // whatever version. Two versions of one permission would leave its meaning unclear.
-      guard listed.insert(permissionKind + "\u{0}" + permissionValue.scopeName).inserted else {
-        throw ControllerPackageError.malformed("\(permissionKind) is listed twice")
-      }
-
-      permissions.insert(ControllerPermission(permissionValue, version: version))
-    }
-
-    return permissions
   }
 }
 

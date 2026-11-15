@@ -63,7 +63,8 @@ Decision: a file declares its powers with `(declare-permissions ...)`, its first
   unquote refuses the file.
 - The permissions use `controller.json`'s (kind, version) vocabulary and its rules. An unknown kind or version
   refuses the file, and so does one kind listed twice. A scoped kind, such as a capability or a host launch, is
-  listed once for each scope.
+  listed once for each scope: a capability by its name, and a host launch by its executable alone. Amended
+  2026-11-15; see Decision Log.
 - An optional leading struct carries `:id` and `:name`. The ID follows `controller.json`'s ID rules. It is required
   when the file is signed. An unsigned file without a name is shown by its file name.
 - uniterm binds `declare-permissions` before the file loads, so a misspelled form fails as an unbound symbol. At run
@@ -368,7 +369,7 @@ now reads "Allowed for this run".
 
 ### M2: Declared files
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A file with a valid declaration shows a review listing its powers before any of its code runs
 - A second declaration, a declaration after another form, a non-literal value, an unknown kind or version, and a
@@ -402,6 +403,68 @@ now reads "Allowed for this run".
 - The file policy file's kept-aside copies and temporary files are named apart from the controller policy file's
   `policy.aside-*.json` and `policy.json.tmp-*`, so neither store prunes or sweeps the other's
 - Every connection a native entry opens after `uniterm controller run` execs it is still admitted
+
+**As built:**
+
+A script file with a valid first-form declaration now runs end to end. The command parses the file's first form
+with Janet's own parser, in a VM of its own that evaluates nothing, and sends a file begin that names the resolved
+path. The app authenticates the command, and only then opens the path without following a link. It requires a regular
+file within a size cap, copies it into the run's private folder while hashing it, checks the copy, and makes it
+read-only. It answers with the copy's path and the file's SHA-256. The command reads the copy once, checks the hash
+before it parses, reads the declaration from those bytes, and reports it as JSON in the permission structure
+`controller.json` uses. The app reads that JSON again with the strict reader that packages use, looks up trust by the
+version, and admits the run or queues the review. Only then does the command run the bytes it hashed, with a module
+loader that finds nothing but the bundled `uniterm` module. `declare-permissions` is bound as a macro that expands to
+nil in every run, so a misspelled form fails as an unbound symbol.
+
+The size cap is a packaged file's, 32 MiB. The declaration message is capped at 32 KiB of JSON. ScriptWire is at
+version 10, which adds the file begin, the file-admitted answer, and the declaration message. The final admission
+reuses the controller admitted answer.
+
+The check for what Janet's parser would merge or drop reads the parser's state before each `}`. It ends a token still
+open with a space first, so the state shows every value. It mirrors three parser-private flag bits of the pinned Janet
+release, and the duplicate-key and nil tests fail if an upgrade moves them. It applies only to the first form, and
+only when that form is the declaration, so a plain script's own structs are never refused. A later declaration is a
+parenthesized form whose head is the symbol `declare-permissions`, found at any depth outside a quote or a quasiquote.
+A bracketed list that starts with the name, quoted data, and a docstring are data, so an undeclared script may mention
+the name. The reader stops walking forms past 512 levels of nesting. A file that does not parse reads as undeclared,
+and the run reports the parse error.
+
+A struct with no `:kind` that holds a key within two edits of `kind`, of three letters or more, is marked in the JSON
+by the command's reader. That reader alone judges what looks misspelled. The Swift reader only words the message from
+the mark.
+
+The shared permission reader moved out of the descriptor reader into its own type. A file declaration and a
+descriptor read the same list through it, and only the wording of the native-code refusal differs.
+
+An undeclared file still sends the plain begin, as before. The undeclared begin and strict mode belong to the later
+milestone that adds them.
+
+File approvals live in their own `files.json`, beside `policy.json`, with their own lock, `files.aside-N.json` copies,
+`files.json.tmp-*` sweep, and 256-record limit. Both selectors exist now: the file version, which names only the
+SHA-256, and the file identity, which names an ID and a key fingerprint. Nothing creates an identity approval yet,
+since an unsigned file has no key. A policy file of one kind that holds a selector of the other is unreadable, so
+neither store can be read as the other. An unsigned file with no declared name is titled by its file name in the
+review, cleaned as a descriptor name is, and a file name that cannot pass that is shown as "script file". The window
+lists an unsigned file's approval as "script file" too.
+
+The app keeps one table of command processes, keyed by process ID, start time, and process ID version. A plain begin
+from the bundled command, a controller begin, a file begin, and a REPL attach with a token the app issued each claim an
+entry first, and a second claim is refused. A bad token gets the attach's own refusal and costs the process nothing. A
+controller or file begin claims only when the cheap check on the main actor says the peer is the bundled command, and
+before the admission starts. A second begin from the command is therefore refused while the first still authenticates,
+and a program that is not the command takes no place, so it cannot fill the table. The table outlives the connection.
+At 1024 entries it drops those whose process has exited, and past that it refuses a new begin. A generic peer's plain
+begins are not counted, and a native entry's connections are generic peers, so every connection one opens after the
+exec is still adopted.
+
+The app refuses any path under `/dev`. The command resolves a path and the app opens it, so `/dev/fd/N` would name the
+app's own descriptor and copy whatever file the app holds open. A file name that is too long for a review title keeps
+its start and its extension, with an ellipsis between, so the cut shows. A name that cannot pass the descriptor name
+rules is shown as "script file".
+
+`uniterm run` on a pipe fails in the command's own read, as it did before, so the app's refusal of a pipe, a device,
+and an oversize file is proved against raw peers and the snapshot itself.
 
 ### M3: Signed files
 
@@ -521,6 +584,11 @@ now reads "Allowed for this run".
 - 2026-11-14: Scheduled as M1-M5 in queue.md.
 - 2026-11-14: ADR candidate (cuts across the system): one session per command process, for files, packages, and REPL
   helpers. Declined: ADR-09's authenticated binding to the actual run already covers it.
+- 2026-11-15 (run best guess): A host launch is listed once for each executable alone, as `controller.json` lists
+  it, so two host launches of one executable in different directories are a repeated kind. The decision said "once for
+  each scope" and did not say what a host launch's scope is. Amended text: "A scoped kind, such as a capability or a
+  host launch, is listed once for each scope." It now says a capability is listed by its name and a host launch by its
+  executable alone. A declaration that wants two directories for one executable lists the broader directory.
 
 ## References
 

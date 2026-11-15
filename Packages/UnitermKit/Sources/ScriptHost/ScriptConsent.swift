@@ -8,8 +8,7 @@ import StatusKit
 /// snapshot is kept until the run is admitted or refused.
 struct WaitingAdmission {
   let connection: ScriptConnection
-  let request: ControllerBegin
-  let snapshot: ControllerSnapshot
+  let artifact: RunArtifact
   let entryHash: Data?
   let entryPath: String?
   let requested: Set<ControllerPermission>
@@ -20,7 +19,8 @@ struct WaitingAdmission {
 public struct ControllerReview: Identifiable, Equatable, Sendable {
   public let id: UInt64
 
-  /// The descriptor's display name, which proves nothing.
+  /// The descriptor's display name, or a script file's declared name or file name. It proves
+  /// nothing.
   public let name: String
 
   public let identity: ControllerIdentity
@@ -110,7 +110,7 @@ extension ScriptHost {
   /// Puts a verified run before the user. A review of the same version and powers that already
   /// waits takes the run too, so a run started again joins the first question.
   func queueReview(_ waiting: WaitingAdmission, trust: TrustLookup) {
-    let identity = waiting.snapshot.controller.identity
+    let identity = waiting.artifact.identity
     let requested = waiting.requested.sorted()
     let peer = (waiting.connection.id, waiting.connection.peer.pid)
 
@@ -124,7 +124,7 @@ extension ScriptHost {
       lastReviewID += 1
       controllerReviews.append(
         ControllerReview(
-          id: lastReviewID, name: waiting.snapshot.controller.descriptor.name,
+          id: lastReviewID, name: waiting.artifact.name,
           identity: identity, requested: requested,
           added: trust.nearest.map { $0.uncovered(waiting.requested) } ?? requested,
           revises: trust.nearest?.selector,
@@ -167,19 +167,27 @@ extension ScriptHost {
     case .trustVersion, .trustIdentity:
       let selector: ControllerSelector
 
+      let isFile = review.identity.artifact == .file
+
       if choice == .trustIdentity {
         guard let fingerprint = review.identity.keyFingerprint else {
-          return "This controller is not signed, so only its version can be trusted."
+          return "This \(isFile ? "file" : "controller") is not signed, so only its version can "
+            + "be trusted."
         }
 
-        selector = .identity(
-          controllerID: review.identity.controllerID, keyFingerprint: fingerprint)
+        selector =
+          isFile
+          ? .fileIdentity(fileID: review.identity.controllerID, keyFingerprint: fingerprint)
+          : .identity(controllerID: review.identity.controllerID, keyFingerprint: fingerprint)
       } else {
-        selector = .version(
-          controllerID: review.identity.controllerID, version: review.identity.version)
+        selector =
+          isFile
+          ? .fileVersion(version: review.identity.version)
+          : .version(controllerID: review.identity.controllerID, version: review.identity.version)
       }
 
-      guard review.canRemember, let store = controllerSettings?.trust else {
+      guard review.canRemember, let store = controllerSettings?.trust(for: selector.artifact)
+      else {
         return review.notice ?? "uniterm cannot save trust now."
       }
 
@@ -242,10 +250,12 @@ extension ScriptHost {
       for connection in connections {
         guard let waiting = waitingAdmissions.removeValue(forKey: connection) else { continue }
 
-        waiting.snapshot.remove()
+        let subject = waiting.artifact.identity.artifact == .file ? "script file" : "controller"
+
+        waiting.artifact.remove()
         refuseController(
           waiting.connection,
-          "You denied this controller. To be asked again, choose Ask Again in Window > Pending "
+          "You denied this \(subject). To be asked again, choose Ask Again in Window > Pending "
             + "Requests, then run it again.")
       }
     }
@@ -269,7 +279,7 @@ extension ScriptHost {
     guard let waiting = waitingAdmissions.removeValue(forKey: id) else { return }
 
     removeFromReviews([id])
-    waiting.snapshot.remove()
+    waiting.artifact.remove()
 
     if let refusal, !waiting.connection.isClosed { refuseController(waiting.connection, refusal) }
   }
@@ -280,12 +290,19 @@ extension ScriptHost {
 extension ScriptHost {
   /// The policy file as it is now. It is read off the main actor.
   public func rememberedTrust() async -> ControllerTrustState {
-    guard let store = controllerSettings?.trust else {
+    guard let settings = controllerSettings, let packages = settings.trust,
+      let files = settings.fileTrust
+    else {
       return ControllerTrustState(
         policies: [], writable: false, notice: "This uniterm remembers no controller trust.")
     }
 
-    return await Task.detached { store.read() }.value
+    let (first, second) = await Task.detached { (packages.read(), files.read()) }.value
+    let notices = [first.notice, second.notice].compactMap { $0 }
+
+    return ControllerTrustState(
+      policies: first.policies + second.policies, writable: first.writable && second.writable,
+      notice: notices.isEmpty ? nil : notices.joined(separator: "\n"))
   }
 
   /// Removes a remembered policy, then ends the authority of every live run it admitted, with the
@@ -293,7 +310,9 @@ extension ScriptHost {
   /// removed leaves the runs as they were, so the window never shows a revoke that did not happen.
   @discardableResult
   public func forgetPolicy(_ selector: ControllerSelector) async -> String? {
-    guard let store = controllerSettings?.trust else { return "No trust is remembered." }
+    guard let store = controllerSettings?.trust(for: selector.artifact) else {
+      return "No trust is remembered."
+    }
 
     trustRemovals += 1
     trustRemovalsUnderWay += 1
@@ -429,7 +448,9 @@ extension ScriptHost {
     _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission? = nil
   ) -> PowerCheck {
     if controllerAdmissions.contains(connection.id) || waitingAdmissions[connection.id] != nil {
-      return .refused(.failure(.refused, "uniterm has not admitted this controller yet."))
+      let subject = sessions[connection.id]?.kind == .fileRun ? "script" : "controller"
+
+      return .refused(.failure(.refused, "uniterm has not admitted this \(subject) yet."))
     }
 
     let power = Self.power(for: call)
@@ -452,10 +473,14 @@ extension ScriptHost {
     guard let power else { return .allowed }
 
     guard run.scopes.contains(power) else {
+      let isFile = run.identity.artifact == .file
+      let subject = isFile ? "script" : "controller"
+      let place = isFile ? "its (declare-permissions ...) form" : "its controller.json"
+
       return .refused(
         .failure(
           .refused,
-          "This controller did not declare \(power.kindName) in its controller.json, so it "
+          "This \(subject) did not declare \(power.kindName) in \(place), so it "
             + "cannot \(power == .paneControl ? "act on panes" : Self.verb(for: power))."))
     }
 

@@ -21,6 +21,10 @@ public enum ScriptRefusal: Sendable, Equatable {
   /// The peer stopped reading replies, so the app ended the connection.
   case peerNotReading
 
+  /// A program that already has a script or a REPL connected tried to begin another. A command
+  /// opens its session before any script code runs, so a second one comes from script code.
+  case secondSession
+
   /// What the user is told.
   public var text: String {
     switch self {
@@ -32,6 +36,8 @@ public enum ScriptRefusal: Sendable, Equatable {
       return "A REPL presented a token that uniterm did not issue, or had already accepted."
     case .tooManyConnections: return "Too many scripts are connected to uniterm."
     case .peerNotReading: return "A script stopped reading uniterm's replies and was disconnected."
+    case .secondSession:
+      return "A program that already has a script or a REPL connected tried to begin another."
     }
   }
 }
@@ -43,6 +49,13 @@ public enum ScriptEvent: Sendable {
 
   /// A helper declared the connection a controller run, in place of naming a script.
   case controllerBegun(ScriptConnection, ControllerBegin)
+
+  /// A helper declared the connection a run of a declared script file.
+  case fileBegun(ScriptConnection, FileBegin)
+
+  /// A helper reported what the app's copy of its file declares, as JSON text. The app reads it
+  /// strictly before it believes any of it.
+  case fileDeclared(ScriptConnection, json: String)
   case request(ScriptConnection, id: UInt32, call: ScriptCall)
 
   /// A REPL's helper presented its token. It is the first message of the connection.

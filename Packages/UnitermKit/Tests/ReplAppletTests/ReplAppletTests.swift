@@ -161,6 +161,13 @@ final class ReplAppletTests: XCTestCase {
     let address = try XCTUnwrap(launch.program?.last)
     let hex = try XCTUnwrap(launch.environment[ScriptProtocol.replTokenVariable])
     let token = try XCTUnwrap(Self.decode(hex))
+
+    // Every helper this plays is the test process, and the app lets a process attach once. A
+    // real restart starts another process.
+    host.processSessions = [:]
+
+    for extra in extraHosts { extra.host.processSessions = [:] }
+
     let peer = try Self.connect(address)
 
     try peer.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())

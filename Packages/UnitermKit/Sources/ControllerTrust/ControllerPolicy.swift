@@ -2,7 +2,8 @@ import ControllerPackage
 import Foundation
 
 /// What a remembered approval names: one exact verified version of a controller, or a signing
-/// key together with a controller ID, across every version that key signs.
+/// key together with a controller ID, across every version that key signs. A script file has
+/// selectors of its own, which never match a package, and a package's never match a file.
 public enum ControllerSelector: Hashable, Sendable {
   /// The descriptor's SHA-256 as lowercase hex. It covers the packaged code too.
   case version(controllerID: String, version: String)
@@ -10,9 +11,26 @@ public enum ControllerSelector: Hashable, Sendable {
   /// The SHA-256 of the signing public key as lowercase hex.
   case identity(controllerID: String, keyFingerprint: String)
 
+  /// The SHA-256 of a whole script file as lowercase hex. A file needs no ID to be trusted by its
+  /// version.
+  case fileVersion(version: String)
+
+  /// The SHA-256 of the signing public key as lowercase hex, with the ID the file declares.
+  case fileIdentity(fileID: String, keyFingerprint: String)
+
+  /// A package's ID, or a signed file's declared ID. An unsigned file has none, so a file version
+  /// names the empty string.
   public var controllerID: String {
     switch self {
-    case .version(let id, _), .identity(let id, _): return id
+    case .version(let id, _), .identity(let id, _), .fileIdentity(let id, _): return id
+    case .fileVersion: return ""
+    }
+  }
+
+  public var artifact: ControllerArtifact {
+    switch self {
+    case .version, .identity: return .package
+    case .fileVersion, .fileIdentity: return .file
     }
   }
 
@@ -20,28 +38,33 @@ public enum ControllerSelector: Hashable, Sendable {
   /// on a name, a path, or a digest a peer claims: the identity comes from the app's own reading
   /// of the snapshot.
   public func matches(_ identity: ControllerIdentity) -> Bool {
+    guard identity.artifact == artifact else { return false }
+
     switch self {
     case .version(let id, let version):
       return identity.controllerID == id && identity.version == version
 
-    case .identity(let id, let fingerprint):
+    case .identity(let id, let fingerprint), .fileIdentity(let id, let fingerprint):
       return identity.controllerID == id && identity.keyFingerprint == fingerprint
+
+    case .fileVersion(let version):
+      return identity.version == version
     }
   }
 
   /// The selector's kind as the policy file spells it.
   public var kindName: String {
     switch self {
-    case .version: return "version"
-    case .identity: return "identity"
+    case .version, .fileVersion: return "version"
+    case .identity, .fileIdentity: return "identity"
     }
   }
 
   /// The version digest or the key fingerprint.
   public var value: String {
     switch self {
-    case .version(_, let version): return version
-    case .identity(_, let fingerprint): return fingerprint
+    case .version(_, let version), .fileVersion(let version): return version
+    case .identity(_, let fingerprint), .fileIdentity(_, let fingerprint): return fingerprint
     }
   }
 }

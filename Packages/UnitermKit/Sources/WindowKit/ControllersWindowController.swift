@@ -64,7 +64,8 @@ public final class ControllersWindowController: NSWindowController {
     guard let contentView = window?.contentView else { return }
 
     let heading = NSTextField(
-      labelWithString: "Remembered controller approvals, and the controller runs live now:")
+      labelWithString:
+        "Remembered controller and script file approvals, and the runs live now:")
 
     heading.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
 
@@ -199,7 +200,18 @@ public final class ControllersWindowController: NSWindowController {
     switch selector {
     case .version(_, let version): return "Version \(version.prefix(16))\u{2026}"
     case .identity(_, let fingerprint): return "Key \(fingerprint.prefix(16))\u{2026}"
+    case .fileVersion(let version): return "File version \(version.prefix(16))\u{2026}"
+    case .fileIdentity(_, let fingerprint): return "File key \(fingerprint.prefix(16))\u{2026}"
     }
+  }
+
+  /// A policy's name with what it names: a controller's ID, a signed file's ID, or "script file"
+  /// for an unsigned file, which has no ID.
+  static func subjectText(_ policy: ControllerPolicy) -> String {
+    let id =
+      policy.selector.controllerID.isEmpty ? "script file" : policy.selector.controllerID
+
+    return "\(LaunchApprovalText.escaped(policy.name)) (\(id))"
   }
 
   static func describe(_ row: Row) -> String {
@@ -214,6 +226,14 @@ public final class ControllersWindowController: NSWindowController {
       case .identity(let id, let fingerprint):
         selector =
           "Trusted identity: \(id), every version this key signs\nKey fingerprint: \(fingerprint)"
+
+      case .fileVersion(let version):
+        selector = "Trusted version of a script file\nVersion: \(version)"
+
+      case .fileIdentity(let id, let fingerprint):
+        selector =
+          "Trusted identity of a script file: \(id), every version this key signs\n"
+          + "Key fingerprint: \(fingerprint)"
       }
 
       return
@@ -282,7 +302,7 @@ extension ControllersWindowController: NSTableViewDataSource, NSTableViewDelegat
 
     switch (rows[row], tableColumn?.identifier.rawValue) {
     case (.policy(let policy), "controller"):
-      return "\(LaunchApprovalText.escaped(policy.name)) (\(policy.selector.controllerID))"
+      return Self.subjectText(policy)
     case (.policy(let policy), "selector"): return Self.selectorText(policy.selector)
     case (.policy(let policy), "scopes"):
       return policy.scopes.sorted().map(\.kindName).joined(separator: ", ")

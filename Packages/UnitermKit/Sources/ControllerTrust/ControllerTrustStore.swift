@@ -1,4 +1,5 @@
 import AtomicFile
+import ControllerPackage
 import Darwin
 import Foundation
 
@@ -32,7 +33,11 @@ public enum ControllerTrustStoreError: Error, Equatable, Sendable, CustomStringC
   }
 }
 
-/// The controller policy file, `policy.json`, in a folder only the user can read.
+/// The controller policy file, `policy.json`, in a folder only the user can read. A script file's
+/// approvals live in a policy file of their own, `files.json`, in the same folder. It has its own
+/// lock, its own kept-aside copies, its own temporary files, and its own record limit, and neither
+/// store reads, counts, or sweeps the other's names. An older build never reads `files.json`, so
+/// its controller approvals keep working.
 ///
 /// It holds remembered approvals and nothing else: no key, no connection, no pane. Layout files
 /// hold none of it. Every read and every change takes an exclusive lock on the folder's lock file,
@@ -48,11 +53,30 @@ public enum ControllerTrustStoreError: Error, Equatable, Sendable, CustomStringC
 public struct ControllerTrustStore: Sendable {
   public let directory: URL
 
+  /// Which approvals the store holds, and so which files it names.
+  public let artifact: ControllerArtifact
+
   /// How many kept-aside files stay. The oldest go first.
   public static let keepAsideLimit = 5
 
-  public init(directory: URL) {
+  public init(directory: URL, artifact: ControllerArtifact = .package) {
     self.directory = directory
+    self.artifact = artifact
+  }
+
+  /// The start of every name the store owns: `policy` for packages and `files` for script files.
+  private var baseName: String {
+    switch artifact {
+    case .package: return "policy"
+    case .file: return "files"
+    }
+  }
+
+  private var subject: String {
+    switch artifact {
+    case .package: return "controller"
+    case .file: return "script file"
+    }
   }
 
   /// `~/Library/Application Support/uniterm/controllers`.
@@ -64,8 +88,8 @@ public struct ControllerTrustStore: Sendable {
       .appendingPathComponent("controllers", isDirectory: true)
   }
 
-  public var fileURL: URL { directory.appendingPathComponent("policy.json") }
-  private var lockURL: URL { directory.appendingPathComponent("policy.lock") }
+  public var fileURL: URL { directory.appendingPathComponent("\(baseName).json") }
+  private var lockURL: URL { directory.appendingPathComponent("\(baseName).lock") }
 
   /// The kept-aside files, oldest first.
   public var keptAsideFiles: [URL] { asideEntries().map(\.url) }
@@ -76,7 +100,7 @@ public struct ControllerTrustStore: Sendable {
     } catch {
       return ControllerTrustState(
         policies: [], writable: false,
-        notice: "uniterm cannot read its controller policies, so it remembers no trust: \(error)")
+        notice: "uniterm cannot read its \(subject) policies, so it remembers no trust: \(error)")
     }
   }
 
@@ -92,14 +116,14 @@ public struct ControllerTrustStore: Sendable {
 
         guard loaded.state.writable else {
           throw ControllerTrustStoreError.readOnly(
-            loaded.state.notice ?? "uniterm cannot write its controller policies")
+            loaded.state.notice ?? "uniterm cannot write its \(subject) policies")
         }
 
         let policies = change(loaded.state.policies)
 
         guard policies.count <= ControllerPolicyFile.maxPolicies else {
           throw ControllerTrustStoreError.io(
-            "uniterm remembers at most \(ControllerPolicyFile.maxPolicies) controller approvals. "
+            "uniterm remembers at most \(ControllerPolicyFile.maxPolicies) \(subject) approvals. "
               + "Revoke some in Controllers & Permissions first.")
         }
 
@@ -137,13 +161,14 @@ public struct ControllerTrustStore: Sendable {
     do {
       return Loaded(
         state: ControllerTrustState(
-          policies: try ControllerPolicyFile.decode(data), writable: true, notice: nil))
+          policies: try ControllerPolicyFile.decode(data, artifact: artifact), writable: true,
+          notice: nil))
     } catch .newer(let what) {
       return Loaded(
         state: ControllerTrustState(
           policies: [], writable: false,
           notice:
-            "A newer uniterm wrote the controller policy file, with \(what), so this one "
+            "A newer uniterm wrote the \(subject) policy file, with \(what), so this one "
             + "remembers no trust and saves none. The file is left as it is."))
     } catch {
       let kept = try moveAside()
@@ -152,7 +177,7 @@ public struct ControllerTrustStore: Sendable {
         state: ControllerTrustState(
           policies: [], writable: true,
           notice:
-            "The controller policy file could not be used (\(error)), so it grants nothing. It "
+            "The \(subject) policy file could not be used (\(error)), so it grants nothing. It "
             + "was kept as \(kept.lastPathComponent)."))
     }
   }
@@ -201,16 +226,16 @@ public struct ControllerTrustStore: Sendable {
 
   // MARK: Kept-aside files
 
-  private static let asidePrefix = "policy.aside-"
+  private var asidePrefix: String { "\(baseName).aside-" }
   private static let asideSuffix = ".json"
 
   private func asideEntries() -> [(index: Int, url: URL)] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
 
     return names.compactMap { name in
-      guard name.hasPrefix(Self.asidePrefix), name.hasSuffix(Self.asideSuffix) else { return nil }
+      guard name.hasPrefix(asidePrefix), name.hasSuffix(Self.asideSuffix) else { return nil }
 
-      let digits = name.dropFirst(Self.asidePrefix.count).dropLast(Self.asideSuffix.count)
+      let digits = name.dropFirst(asidePrefix.count).dropLast(Self.asideSuffix.count)
 
       guard let index = Int(digits) else { return nil }
 
@@ -220,7 +245,7 @@ public struct ControllerTrustStore: Sendable {
 
   private func moveAside() throws -> URL {
     let next = (asideEntries().last?.index ?? 0) + 1
-    let target = directory.appendingPathComponent("\(Self.asidePrefix)\(next)\(Self.asideSuffix)")
+    let target = directory.appendingPathComponent("\(asidePrefix)\(next)\(Self.asideSuffix)")
 
     guard rename(fileURL.path, target.path) == 0 else {
       throw ControllerTrustStoreError.io(
@@ -293,7 +318,7 @@ public struct ControllerTrustStore: Sendable {
   private func removeStaleTempFiles() {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
 
-    for name in names where name.hasPrefix("policy.json" + AtomicFile.tempMarker) {
+    for name in names where name.hasPrefix("\(baseName).json" + AtomicFile.tempMarker) {
       try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
     }
   }

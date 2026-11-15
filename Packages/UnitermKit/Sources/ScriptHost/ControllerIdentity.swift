@@ -18,11 +18,23 @@ public struct ControllerSettings: Sendable {
   /// for this run are offered.
   let trust: ControllerTrustStore?
 
-  /// `trustDirectory` is the folder of the private policy file, or nil to remember nothing.
+  /// The remembered approvals of declared script files, in a policy file of their own.
+  let fileTrust: ControllerTrustStore?
+
+  /// `trustDirectory` is the folder of the private policy files, or nil to remember nothing.
   public init(runsRoot: URL, helper: any ControllerHelperIdentity, trustDirectory: URL? = nil) {
     self.runsRoot = runsRoot
     self.helper = helper
-    trust = trustDirectory.map(ControllerTrustStore.init(directory:))
+    trust = trustDirectory.map { ControllerTrustStore(directory: $0, artifact: .package) }
+    fileTrust = trustDirectory.map { ControllerTrustStore(directory: $0, artifact: .file) }
+  }
+
+  /// The store that holds the approvals of `artifact`.
+  func trust(for artifact: ControllerArtifact) -> ControllerTrustStore? {
+    switch artifact {
+    case .package: return trust
+    case .file: return fileTrust
+    }
   }
 
   /// The policy folder under the user's Application Support, which layout files never share.
@@ -306,8 +318,8 @@ public enum ControllerApproval: Sendable, Equatable {
     case .nothingRequested: return "No powers requested"
     case .once: return "Allowed once"
     case .session: return "Allowed for this run"
-    case .remembered(.version): return "Trusted version"
-    case .remembered(.identity): return "Trusted identity"
+    case .remembered(.version), .remembered(.fileVersion): return "Trusted version"
+    case .remembered(.identity), .remembered(.fileIdentity): return "Trusted identity"
     }
   }
 }

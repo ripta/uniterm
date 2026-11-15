@@ -46,9 +46,14 @@ public enum ControllerPolicyFile {
   public static let maxBytes = 1 << 20
   public static let maxPolicies = 256
 
-  public static func decode(_ bytes: Data) throws(ControllerPolicyFileError) -> [ControllerPolicy] {
+  /// Reads the policy file of `artifact`. A package's file holds package selectors and a script
+  /// file's holds file selectors. A selector of the other kind makes the file unreadable, so the
+  /// two stores can never be read as each other's.
+  public static func decode(
+    _ bytes: Data, artifact: ControllerArtifact = .package
+  ) throws(ControllerPolicyFileError) -> [ControllerPolicy] {
     do {
-      return try read(bytes)
+      return try read(bytes, artifact: artifact)
     } catch let error as ControllerPolicyFileError {
       throw error
     } catch let error as StrictJSONError {
@@ -60,7 +65,8 @@ public enum ControllerPolicyFile {
     }
   }
 
-  private static func read(_ bytes: Data) throws -> [ControllerPolicy] {
+  private static func read(_ bytes: Data, artifact: ControllerArtifact) throws -> [ControllerPolicy]
+  {
     let document = try StrictJSONReader.parse(bytes, maxBytes: maxBytes)
 
     guard case .object(let top) = document else {
@@ -91,7 +97,7 @@ public enum ControllerPolicyFile {
     var selectors = Set<ControllerSelector>()
 
     for entry in entries {
-      let policy = try readPolicy(entry)
+      let policy = try readPolicy(entry, artifact: artifact)
 
       guard selectors.insert(policy.selector).inserted else {
         throw ControllerPolicyFileError.unreadable("a selector is listed twice")
@@ -103,7 +109,9 @@ public enum ControllerPolicyFile {
     return policies
   }
 
-  private static func readPolicy(_ value: StrictJSON) throws -> ControllerPolicy {
+  private static func readPolicy(
+    _ value: StrictJSON, artifact: ControllerArtifact
+  ) throws -> ControllerPolicy {
     let fields = try value.members(
       of: "a policy", required: ["selector", "name", "scopes", "approved"])
 
@@ -128,40 +136,49 @@ public enum ControllerPolicyFile {
     }
 
     return ControllerPolicy(
-      selector: try readSelector(fields["selector"]!), name: name, scopes: scopes,
+      selector: try readSelector(fields["selector"]!, artifact: artifact), name: name,
+      scopes: scopes,
       approved: approved)
   }
 
-  private static func readSelector(_ value: StrictJSON) throws -> ControllerSelector {
+  private static func readSelector(
+    _ value: StrictJSON, artifact: ControllerArtifact
+  ) throws -> ControllerSelector {
     guard case .object(let members) = value,
       case .string(let kind)? = members.first(where: { $0.key == "kind" })?.value
     else {
       throw ControllerPolicyFileError.unreadable("a selector needs a kind")
     }
 
-    let valueKey = kind == "version" ? "version" : "key"
-
     guard kind == "version" || kind == "identity" else {
       throw ControllerPolicyFileError.unreadable("the selector kind \"\(kind)\" is unknown")
     }
 
+    let valueKey = kind == "version" ? "version" : "key"
+    let idKey = artifact == .package ? "controller" : "id"
+    let wantsID = artifact == .package || kind == "identity"
     let fields = try value.members(
-      of: "a selector", required: ["kind", "controller", valueKey])
-    let controller = try fields["controller"]!.string("a selector's controller")
+      of: "a selector", required: wantsID ? ["kind", idKey, valueKey] : ["kind", valueKey])
     let digest = try fields[valueKey]!.string("a selector's \(valueKey)")
-
-    guard ControllerDescriptor.isValidID(controller) else {
-      throw ControllerPolicyFileError.unreadable("a selector's controller is not a controller ID")
-    }
 
     guard isDigest(digest) else {
       throw ControllerPolicyFileError.unreadable(
         "a selector's \(valueKey) must be 64 lowercase hex digits")
     }
 
-    return kind == "version"
-      ? .version(controllerID: controller, version: digest)
-      : .identity(controllerID: controller, keyFingerprint: digest)
+    guard wantsID else { return .fileVersion(version: digest) }
+
+    let id = try fields[idKey]!.string("a selector's \(idKey)")
+
+    guard ControllerDescriptor.isValidID(id) else {
+      throw ControllerPolicyFileError.unreadable("a selector's \(idKey) is not a controller ID")
+    }
+
+    switch (artifact, kind) {
+    case (.package, "version"): return .version(controllerID: id, version: digest)
+    case (.package, _): return .identity(controllerID: id, keyFingerprint: digest)
+    case (.file, _): return .fileIdentity(fileID: id, keyFingerprint: digest)
+    }
   }
 
   private static func readScope(_ value: StrictJSON) throws -> ControllerPermission {
@@ -270,6 +287,14 @@ public enum ControllerPolicyFile {
     case .identity(let id, let fingerprint):
       return .object([
         ("controller", .string(id)), ("key", .string(fingerprint)), ("kind", .string("identity")),
+      ])
+
+    case .fileVersion(let version):
+      return .object([("kind", .string("version")), ("version", .string(version))])
+
+    case .fileIdentity(let id, let fingerprint):
+      return .object([
+        ("id", .string(id)), ("key", .string(fingerprint)), ("kind", .string("identity")),
       ])
     }
   }

@@ -124,6 +124,65 @@ final class ScriptSession: @unchecked Sendable {
     }
   }
 
+  /// Connects and asks the app to admit a declared script file. The app authenticates this process,
+  /// reads and copies the file itself, and answers with the copy's path and the SHA-256 of the whole
+  /// file, or with a refusal, which throws `ScriptSessionError.failed`. The run is not admitted
+  /// yet. The caller reads the copy, then reports what it declares with `declare`.
+  static func openFile(path: String, begin: FileBegin) throws -> (
+    session: ScriptSession, snapshot: String, version: Data
+  ) {
+    let session = try connect(path: path)
+
+    do {
+      try session.socket.send(ScriptHelperMessage.fileBegin(begin).frame())
+
+      switch try session.readMessage() {
+      case .fileAdmitted(let snapshot, let version):
+        return (session, snapshot, version)
+
+      case .controllerRefused(let text):
+        throw ScriptSessionError.failed(.refused, text)
+
+      default:
+        throw WireError.badValue("the app answered a file run with something else")
+      }
+    } catch {
+      session.close()
+
+      throw error
+    }
+  }
+
+  /// Reports what the file declares, and waits for the app's decision. A run whose powers wait for
+  /// the user's review is told so once, and `onReview` shows it. The app admits the run or refuses
+  /// it, and a refusal throws `ScriptSessionError.failed`.
+  func declare(
+    _ json: String,
+    onReview: (String) -> Void = { FileHandle.standardError.write(Data("uniterm: \($0)\n".utf8)) }
+  ) throws {
+    try socket.send(ScriptHelperMessage.fileDeclaration(json).frame())
+
+    var told = false
+
+    while true {
+      switch try readMessage() {
+      case .controllerAdmitted:
+        return
+
+      case .controllerRefused(let text):
+        throw ScriptSessionError.failed(.refused, text)
+
+      // The user may take as long as they like, so the wait has no timeout.
+      case .controllerReviewing(let text) where !told:
+        told = true
+        onReview(text)
+
+      default:
+        throw WireError.badValue("the app answered a declaration with something else")
+      }
+    }
+  }
+
   /// Connects as a REPL's helper does. After the version, it presents the token and waits for the
   /// app to accept it. The app answers with the history to recall, oldest first, or with a refusal
   /// that says why. A refusal throws `ScriptSessionError.failed`.

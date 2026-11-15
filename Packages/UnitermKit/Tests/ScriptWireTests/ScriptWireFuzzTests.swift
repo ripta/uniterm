@@ -35,6 +35,11 @@ final class ScriptWireFuzzTests: XCTestCase {
       ScriptHelperMessage.controllerBegin(
         ControllerBegin(entry: .janet, package: "/synthetic/package", capabilities: ["fs-read"])
       ).frame(),
+      ScriptHelperMessage.fileBegin(
+        FileBegin(path: "/synthetic/tidy.janet", capabilities: ["fs-read"])
+      ).frame(),
+      ScriptHelperMessage.fileDeclaration(#"{"permissions":[{"kind":"pane-control","version":1}]}"#)
+        .frame(),
       ScriptHelperMessage.request(id: 3, call: .postStatus(level: .warning, text: "synthetic"))
         .frame(),
     ]
@@ -54,6 +59,9 @@ final class ScriptWireFuzzTests: XCTestCase {
         ).frame(),
         ScriptAppMessage.controllerRefused("synthetic refusal").frame(),
         ScriptAppMessage.controllerReviewing("synthetic review notice").frame(),
+        ScriptAppMessage.fileAdmitted(
+          snapshot: "/synthetic/run/script.janet", version: Data(repeating: 0x3C, count: 32)
+        ).frame(),
       ]
   }
 

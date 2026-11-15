@@ -17,6 +17,7 @@ public enum ScriptHelperMain {
     public static let ok: Int32 = 0
     public static let scriptFailed: Int32 = 1
     public static let usage: Int32 = 64
+    public static let dataError: Int32 = 65
     public static let noInput: Int32 = 66
     public static let unavailable: Int32 = 69
     public static let protocolMismatch: Int32 = 70
@@ -60,6 +61,10 @@ public enum ScriptHelperMain {
       Runs a Janet script against the running uniterm. Given a controller package's folder, it
       runs the package's Janet entry from uniterm's verified copy of the package, and each
       --allow must name a capability the package's controller.json declares.
+
+      A file whose first form is (declare-permissions ...) declares the powers it needs. uniterm
+      shows them for review, then runs its own copy of the file with no import of any other file.
+      Each --allow must name a capability the declaration lists.
 
         --allow CAPABILITY  let the script use a capability. Repeat it to allow more. The
                             names are Janet's own, and each is denied by default.
@@ -148,6 +153,19 @@ public enum ScriptHelperMain {
     } catch {
       return fail(
         "cannot read \(invocation.script): \(error.localizedDescription)", status: Exit.noInput)
+    }
+
+    switch DeclaredScript.read(source) {
+    case .declared:
+      return DeclaredFileCommands.run(
+        script: invocation.script, allowed: invocation.allowed, denied: denied,
+        arguments: invocation.arguments, address: address)
+
+    case .invalid(let text):
+      return fail("\(invocation.script): \(text)", status: Exit.dataError)
+
+    case .undeclared:
+      break
     }
 
     let name = URL(fileURLWithPath: invocation.script).lastPathComponent

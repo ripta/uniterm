@@ -41,10 +41,13 @@ public final class ScriptHost {
     /// A controller run, from a package or a native entry.
     case controllerRun
 
+    /// The bundled command running a declared script file.
+    case fileRun
+
     /// A REPL pane's helper.
     case repl
 
-    var lastsOneRun: Bool { self == .bundledRun || self == .controllerRun }
+    var lastsOneRun: Bool { self == .bundledRun || self == .controllerRun || self == .fileRun }
   }
 
   let listener: ScriptListener
@@ -144,6 +147,25 @@ public final class ScriptHost {
 
   /// Verified runs that wait for the user's startup review, by connection.
   var waitingAdmissions: [UInt64: WaitingAdmission] = [:]
+
+  /// Declared files whose copy the app made and whose declaration has not come, by connection.
+  var pendingDeclarations: [UInt64: PendingDeclaration] = [:]
+
+  /// How long the command has to report a declaration once the app has answered its file begin.
+  var fileDeclarationTimeout: TimeInterval = ScriptListener.declarationTimeout
+
+  /// The command processes that have begun a session, admitted or not, and the REPL helpers that
+  /// attached. A command opens its session before any script code runs, so a second begin from the
+  /// same process comes from script code. Entries outlive the connection that made them, and go
+  /// only when their process has exited and the table needs the room.
+  var processSessions: [ProcessSessionKey: UInt64] = [:]
+
+  /// Whether a process is still running. Only a test replaces it, to fill the table with processes
+  /// that live and with processes that do not.
+  var processIsLive: (pid_t, Int) -> Bool = { ProcessInspection.isRunning(pid: $0, started: $1) }
+
+  /// The most processes the table keeps. A begin that finds it full of live processes is refused.
+  static let maxProcessSessions = 1024
 
   /// The startup reviews that wait, oldest first.
   public internal(set) var controllerReviews: [ControllerReview] = []
@@ -276,6 +298,7 @@ public final class ScriptHost {
     }
 
     sessions = [:]
+    processSessions = [:]
     stopControllers()
 
     for watch in peerWatches.values { watch.cancel() }
@@ -295,8 +318,16 @@ public final class ScriptHost {
   func handle(_ event: ScriptEvent) {
     switch event {
     case .begun(let connection, let name):
+      let kind = plainPeerKind(of: connection)
+
       sessions[connection.id, default: Session()].name = Self.label(for: name)
-      sessions[connection.id, default: Session()].kind = plainPeerKind(of: connection)
+      sessions[connection.id, default: Session()].kind = kind
+
+      // Only the bundled command is held to one session. A generic peer keeps the admission any
+      // program on the socket gets, and a native entry's connections are adopted as before.
+      if kind == .bundledRun, !claimProcessSession(connection) {
+        return refuseSecondSession(connection)
+      }
 
       watchPeer(of: connection)
       bindConnection(connection)
@@ -306,12 +337,45 @@ public final class ScriptHost {
       sessions[connection.id, default: Session()].name = "controller"
       sessions[connection.id, default: Session()].kind = .controllerRun
 
+      guard claimIfBundledCommand(connection) else {
+        refuseController(connection, Self.secondSessionText)
+        onRefusal(.secondSession)
+
+        return
+      }
+
       watchPeer(of: connection)
       bindConnection(connection)
       beginController(connection, request)
 
+    case .fileBegun(let connection, let request):
+      sessions[connection.id, default: Session()].name = "script"
+      sessions[connection.id, default: Session()].kind = .fileRun
+
+      guard claimIfBundledCommand(connection) else {
+        refuseController(connection, Self.secondSessionText)
+        onRefusal(.secondSession)
+
+        return
+      }
+
+      watchPeer(of: connection)
+      bindConnection(connection)
+      beginFile(connection, request)
+
+    case .fileDeclared(let connection, let json):
+      receiveDeclaration(connection, json: json)
+
     case .attached(let connection, let token):
       sessions[connection.id, default: Session()].kind = .repl
+
+      // A token the host did not issue is refused by the attach itself. Only a valid attach counts
+      // as the process's session, so a bad token never costs a REPL helper its place.
+      if pendingRepls[token] != nil, !claimProcessSession(connection) {
+        refuseSecondAttach(connection)
+
+        return
+      }
 
       watchPeer(of: connection)
       attach(connection, token: token)
@@ -614,6 +678,7 @@ public final class ScriptHost {
     declined.insert(connection.id)
     controllerRuns[connection.id] = nil
     dropWaitingAdmission(connection.id)
+    dropPendingDeclaration(connection.id)
     authorityEnded(connection.id)
   }
 
@@ -716,7 +781,9 @@ public final class ScriptHost {
     let name = sessions[id]?.name ?? "script"
 
     if let run = controllerRuns[id] {
-      return "\(name), controller \(run.identity.controllerID) (PID \(connection.peer.pid))"
+      let kind = run.identity.artifact == .file ? "declared file" : "controller"
+
+      return "\(name), \(kind) \(run.identity.controllerID) (PID \(connection.peer.pid))"
     }
 
     return "\(name) (PID \(connection.peer.pid))"

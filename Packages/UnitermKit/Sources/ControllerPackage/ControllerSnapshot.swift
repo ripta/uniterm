@@ -2,9 +2,19 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Who a verified controller is. Version trust names the version digest. Identity trust names the
-/// key fingerprint and the controller ID together, and only a signed controller has a fingerprint.
+/// What a verified run was made from. A package and a script file are different artifacts, and a
+/// remembered approval of one never covers the other, whatever ID and key they share.
+public enum ControllerArtifact: String, Hashable, Sendable, CaseIterable {
+  case package
+  case file
+}
+
+/// Who a verified controller or script file is. Version trust names the version digest. Identity
+/// trust names the key fingerprint and the ID together, and only a signed artifact has a
+/// fingerprint.
 public struct ControllerIdentity: Hashable, Sendable {
+  /// A package's ID. A file's declared ID, or its file name when it declares none, which is for
+  /// display and matches nothing.
   public let controllerID: String
 
   /// SHA-256 over the descriptor's bytes, as lowercase hex.
@@ -13,10 +23,16 @@ public struct ControllerIdentity: Hashable, Sendable {
   /// SHA-256 over the signer's public key, as lowercase hex. Nil for an unsigned controller.
   public let keyFingerprint: String?
 
-  public init(controllerID: String, version: String, keyFingerprint: String?) {
+  public let artifact: ControllerArtifact
+
+  public init(
+    controllerID: String, version: String, keyFingerprint: String?,
+    artifact: ControllerArtifact = .package
+  ) {
     self.controllerID = controllerID
     self.version = version
     self.keyFingerprint = keyFingerprint
+    self.artifact = artifact
   }
 }
 
@@ -444,7 +460,7 @@ public struct ControllerSnapshot: Sendable {
 
   // MARK: Writing
 
-  private static func makeRunDirectory(in root: URL) throws -> URL {
+  static func makeRunDirectory(in root: URL) throws -> URL {
     try prepareRunsRoot(root)
 
     var template = Array(root.appendingPathComponent(runPrefix + "XXXXXXXX").path.utf8CString)

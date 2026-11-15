@@ -326,6 +326,8 @@ public final class ScriptListener: @unchecked Sendable {
   /// not declared by then is closed. A declared connection reads without a bound.
   private func readCalls(from connection: ScriptConnection, descriptor: Int32, deadline: Date) {
     var role = Role.undeclared
+    var fileBegun = false
+    var fileDeclared = false
 
     while !connection.isClosed {
       do {
@@ -352,6 +354,22 @@ public final class ScriptListener: @unchecked Sendable {
           role = .script
           setReadTimeout(0, on: descriptor)
           continuation.yield(.controllerBegun(connection, begin))
+
+        case .fileBegin(let begin):
+          guard role == .undeclared else { throw WireError.badValue("a second begin") }
+
+          role = .script
+          fileBegun = true
+          setReadTimeout(0, on: descriptor)
+          continuation.yield(.fileBegun(connection, begin))
+
+        case .fileDeclaration(let json):
+          guard fileBegun, !fileDeclared else {
+            throw WireError.badValue("a declaration from a connection that began no file, or twice")
+          }
+
+          fileDeclared = true
+          continuation.yield(.fileDeclared(connection, json: json))
 
         case .attach(let token):
           guard role == .undeclared else {

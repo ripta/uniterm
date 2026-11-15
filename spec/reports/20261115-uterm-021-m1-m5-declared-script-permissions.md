@@ -18,8 +18,8 @@ work is stashed.
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-021 M1: Run wording | DONE | "Name every one-run choice Allow for This Run" |
-| UTERM-021 M2: Declared files | IN PROGRESS | |
-| UTERM-021 M3: Signed files | QUEUED | |
+| UTERM-021 M2: Declared files | DONE | "Run a script file's declared powers from a reviewed snapshot" |
+| UTERM-021 M3: Signed files | IN PROGRESS | |
 | UTERM-021 M4: Strict and unsafe modes | QUEUED | |
 | UTERM-021 M5: The lint | QUEUED | |
 
@@ -114,3 +114,88 @@ say "Allow for This Run". REPL and generic-peer questions keep "Allow for This C
 
 The package suite took 218 s before the review fixes and 237 s after. The three new wording tests take under 0.2 s
 each. `ControllerConsentUITests` takes about 130 s, including its build.
+
+## UTERM-021 M2: Declared files
+
+Commits: "Record the stale clipboard answer test as a potential flake", then "Run a script file's declared powers
+from a reviewed snapshot".
+
+A file whose first form is `(declare-permissions ...)` now runs from an app-made snapshot after a review or a
+remembered version approval. The command parses the declaration with Janet's own parser in a VM that evaluates
+nothing, and reports it as JSON. The app reads it again with the strict reader packages use. ScriptWire is at version
+10. File approvals live in their own `files.json`. One table of command processes refuses a second begin or attach
+from the same process. The proposal's As built block has the details.
+
+### Checks
+
+- `make fmt-check`, `make lint`, and `make check` pass.
+- `make build` passes.
+- `caffeinate -dimsu make test-package` passes, 206 s wall after the review fixes.
+- Scoped `make fuzz` under ASan, 5000 iterations: `ScriptWireFuzzTests`, `ControllerFormatFuzzTests`,
+  `ControllerPolicyFuzzTests`, and the new `DeclaredScriptFuzzTests`. All pass.
+- `make clean`, then `make test-helper-sandbox`, passes.
+- `proposals.py check` and `freeze` report nothing.
+- The coordinator ran `ControllerConsentUITests` before and after the review fixes. Both runs passed, 6 of 6,
+  including the new declared-file test. The coordinator viewed the declared file's review and its row in Controllers &
+  Permissions. No crash report appeared during either run.
+
+### Best guesses
+
+- An undeclared first form keeps today's plain begin. A near-miss first form is refused. A later declaration is a
+  parenthesized form headed by the symbol, outside quote and quasiquote. Mentions in data, quotes, and docstrings are
+  not declarations. If a declaration inside quoted data should also refuse, the reader widens.
+- A file that does not parse reads as undeclared, so the run reports Janet's own parse error.
+- A struct with no `:kind` holding a key within two edits of `kind` is reported as a likely typo. Only the command's
+  reader judges this. The app only words the message.
+- The snapshot's size cap is a packaged file's, 32 MiB. The declaration wait reuses the listener's 5-second deadline.
+- The process table holds 1024 entries. When full, it drops exited processes, then refuses a new begin. Controller and
+  file begins claim a slot only after the cheap check says the peer is the bundled command.
+- The app refuses any path under `/dev`. It does not require a canonical path, so a link in a middle component still
+  passes. `O_NOFOLLOW` guards only the last component, and the command already sent a `realpath`.
+- A long file name keeps its start and its extension, with an ellipsis between.
+- The host-launch duplicate rule is the plan's best guess 2. The proposal text is amended in place, with a Decision Log
+  entry marked as a run best guess.
+- The Makefile's `fuzz` target gained the new `DeclaredScriptFuzzTests` filter.
+
+### Review
+
+- An As built line was 212 columns, and it named four parser flag bits where the code mirrors three. Fixed.
+- The table test proved only pruning. Tests now cover a table full of live processes and an exact count after pruning.
+  Fixed.
+- A protocol test repeated the snapshot test's five-case table. It is now one case proving the wire refusal and the
+  empty run folder. Fixed.
+- A public snapshot API carried a test-only hook. It moved to an internal function. Fixed.
+- The misspelled-kind heuristic existed in C and in Swift. Only the C reader judges it now. Fixed.
+- The coordinator saw the review cut a file name mid-extension, `...declared-file.ja`. Fixed with the elided name.
+- A declaration's name in a parameter list, a quote, a quasiquote, a docstring, or a bracketed list refused an
+  undeclared file. The trace confirmed it. Fixed.
+- `/dev/fd/N` would make the app open its own descriptor. The trace confirmed it. Fixed with the `/dev` refusal.
+- Controller and file begins claimed a table slot before authentication, so a generic peer could fill the table. The
+  trace confirmed it. Fixed.
+- The Decision Log tag "(run best guess)": dismissed. `/work-queue` says to mark a run's amendment as a run best
+  guess.
+- `adr-impact` found no conflicts with ADR-07, ADR-09, or ADR-10, and `check-janet-isolation.sh` passes. It raised a
+  separate trust store per artifact kind as a possible ADR. It does not pass the bar. A separate file is a mechanism.
+  The invariant behind it, that an approval for one artifact kind never authorizes another, sits within ADR-09's rule
+  that an approval is a policy for a verified version or identity. It also raised one session per command process,
+  which the proposal's Decision Log already declined as an ADR.
+
+### Bugs found
+
+- `uniterm run` on a FIFO or `/dev/fd/N`, such as `uniterm run <(...)`, fails with "cannot read ... you don't have
+  permission to view it". The coordinator reproduced it outside the sandbox with the built command. The command's
+  `Data(contentsOf:)` read is unchanged since before this run. M4 must keep `uniterm run <(...)` working in unsafe
+  mode, so the M4 implementer fixes it as its own commit, with the regression test first.
+
+### Unowned failures
+
+- `TerminalSessionIntegrationTests.testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose` failed once in a full
+  package run. The system pasteboard held text another session had written, where the test expected `SECRET-STALE`. It
+  passed alone and in the next full run. It was not reproduced on the base commit. It is listed as a potential flake
+  in `spec/flaky-tests.md`.
+
+### Test cost
+
+The package suite took 199 s before the review fixes and 206 s after. `DeclaredFileRunTests` spawns the real command,
+14 tests in about 2.1 s. `DeclaredFileProtocolTests` takes about 0.8 s, with the declaration-bound test the slowest at
+0.3 s. The other new test files each take under 0.2 s. The new fuzz test runs 400 iterations in the package suite.

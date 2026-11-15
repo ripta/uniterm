@@ -7,8 +7,9 @@ import ScriptHost
 enum ControllerReviewText {
   /// Everything the review shows: who asks, what is new, and every requested power.
   static func summary(_ review: ControllerReview) -> String {
+    let subject = review.identity.artifact == .file ? "Script file" : "Controller"
     var lines = [
-      "Controller: \(LaunchApprovalText.escaped(review.name)) (\(review.identity.controllerID))",
+      "\(subject): \(LaunchApprovalText.escaped(review.name)) (\(review.identity.controllerID))",
       "Version: \(review.identity.version)",
       review.identity.keyFingerprint.map { "Signed by key: \($0)" }
         ?? "Unsigned: only this exact version can be trusted.",

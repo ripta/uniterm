@@ -282,6 +282,9 @@ final class ScriptHelperIntegrationTests: XCTestCase {
       case .controllerBegun:
         XCTFail("a script helper asked for a controller run")
 
+      case .fileBegun, .fileDeclared:
+        XCTFail("an undeclared script helper asked for a declared file run")
+
       case .pong:
         break
 

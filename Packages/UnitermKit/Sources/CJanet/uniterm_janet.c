@@ -13,6 +13,7 @@
 
 #include "janet.h"
 #include "uniterm_line.h"
+#include "uniterm_text.h"
 
 /*
  * The allocator wrapper. janetconf.h routes every Janet allocation here. The count is the heap's
@@ -293,7 +294,7 @@ static void put_id(JanetBuffer *buffer, uint64_t value) {
 }
 
 /* Strict UTF-8: no overlong forms, no surrogates, nothing above U+10FFFF. */
-static int valid_utf8(const uint8_t *bytes, int32_t length) {
+int uniterm_valid_utf8(const uint8_t *bytes, int32_t length) {
     int32_t index = 0;
 
     while (index < length) {
@@ -445,7 +446,7 @@ static void check_text(JanetString text, const char *what, int32_t limit, int fo
         janet_panicf("%s must be a name, not a path", what);
     }
 
-    if (!valid_utf8(text, length)) janet_panicf("%s is not UTF-8", what);
+    if (!uniterm_valid_utf8(text, length)) janet_panicf("%s is not UTF-8", what);
 }
 
 static void put_text(JanetBuffer *buffer, JanetString text) {
@@ -565,7 +566,7 @@ static int skip_value(const uint8_t **cursor, const uint8_t *end, int depth) {
         for (int step = 0; step < 4; step++) length = (length << 8) | *(*cursor)++;
 
         if (length > MAX_VALUE_STRING || (size_t)(end - *cursor) < length) return 0;
-        if (!valid_utf8(*cursor, (int32_t)length)) return 0;
+        if (!uniterm_valid_utf8(*cursor, (int32_t)length)) return 0;
 
         *cursor += length;
 
@@ -767,7 +768,7 @@ static Janet invoke_reply(JanetBuffer *request, int structured, int raw) {
     if (raw) {
         int readable = reply != NULL && reply_length > 0 && reply[0] <= 1
                        && (reply[0] == 1 || reply_length == 1)
-                       && valid_utf8(reply + 1, (int32_t)(reply_length - 1));
+                       && uniterm_valid_utf8(reply + 1, (int32_t)(reply_length - 1));
 
         if (!readable) {
             free(reply);
@@ -939,7 +940,7 @@ typedef struct json_context {
 
 static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length,
                       const json_context *context) {
-    if (!valid_utf8(text, length)) janet_panicf("a string in %s is not UTF-8", context->what);
+    if (!uniterm_valid_utf8(text, length)) janet_panicf("a string in %s is not UTF-8", context->what);
 
     janet_buffer_push_u8(out, '"');
 
@@ -1201,7 +1202,7 @@ static Janet cfun_write_clipboard(int32_t argc, Janet *argv) {
                      UNITERM_JANET_MAX_CLIPBOARD_BYTES);
     }
 
-    if (!valid_utf8(text, length)) janet_panic("the text is not UTF-8");
+    if (!uniterm_valid_utf8(text, length)) janet_panic("the text is not UTF-8");
 
     JanetBuffer *request = janet_buffer(length + 8);
 
@@ -1550,6 +1551,20 @@ uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *na
 }
 
 /*
+ * `declare-permissions` expands to nothing. The declaration grants nothing at run time, because
+ * the app read it before the file ran. The binding exists so that a misspelled form fails as an
+ * unbound symbol instead of running as an ordinary call.
+ */
+static void bind_declaration_form(JanetTable *env) {
+    Janet ignored;
+
+    if (janet_dostring(env, "(defmacro declare-permissions [& _] nil)", "uniterm-declare",
+                       &ignored) != 0) {
+        janet_panic("the declaration form did not install");
+    }
+}
+
+/*
  * The package loader.
  *
  * One package runs per VM, on the VM's thread, so its files are kept in statics for the run. The
@@ -1820,6 +1835,29 @@ uniterm_script_status uniterm_janet_run_package(const uniterm_host *host, const 
 }
 
 /*
+ * A declared file runs with the package loader and no package files, so an import finds only the
+ * bundled uniterm module.
+ */
+uniterm_script_status uniterm_janet_run_declared(const uniterm_host *host, const char *name,
+                                                 const uint8_t *source, size_t length,
+                                                 uint32_t sandbox_flags,
+                                                 const char *const *arguments,
+                                                 size_t argument_count,
+                                                 uniterm_script_failure *failure) {
+    static const uniterm_package none = {NULL, NULL, NULL, 0};
+
+    active_package = &none;
+
+    uniterm_script_status status = run_entry(host, name, source, length, &none, sandbox_flags,
+                                             arguments, argument_count, failure);
+
+    active_package = NULL;
+    package_env = NULL;
+
+    return status;
+}
+
+/*
  * Every entry into Janet happens under one boundary. A panic in the core environment, the module
  * registration, or the evaluation lands here and comes back as a failure, so a longjmp never
  * leaves this function.
@@ -1855,6 +1893,7 @@ static uniterm_script_status run_entry(const uniterm_host *host, const char *nam
         }
 
         janet_table_put(env, janet_ckeywordv("args"), janet_wrap_array(args));
+        bind_declaration_form(env);
 
         if (package != NULL) {
             package_env = env;

@@ -337,6 +337,83 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertEqual(waitForFile(status), "exit=0\n")
   }
 
+  /// Catches a declared script file whose review never reaches the panel, one that lists powers
+  /// the file did not declare or omits one, one titled as a controller, and a remembered file
+  /// approval that the window hides or that survives Revoke. The file ran no code until the panel
+  /// answered, and runs without a review once its version is trusted.
+  func testADeclaredFilesReviewAndApprovalReachThePanelAndTheWindow() throws {
+    let script = scratch + "-declared-file.janet"
+
+    try write(
+      """
+      (declare-permissions {:name "Synthetic Tidy"}
+        {:kind :pane-control :version 1}
+        {:kind :clipboard-read :version 1})
+
+      (print "declared file ran")
+
+      """, to: script)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer { try? FileManager.default.removeItem(atPath: script) }
+
+    _ = waitForTerminal(in: app)
+
+    let first = try startRun(script, named: "declared-first", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the review")
+
+    let panel = openPendingRequests(in: app)
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    row.click()
+
+    XCTAssertTrue(
+      waitFor(panel.staticTexts["pending-requests-detail"], timeout: 5) {
+        $0.contains("Script file: Synthetic Tidy") && $0.contains("Control panes it may address")
+          && $0.contains("Read the clipboard") && !$0.contains("Replace the clipboard")
+      }, "the panel does not show the file and exactly the powers it declared")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: first), "the file ran before the answer")
+
+    let trustVersion = panel.buttons["pending-requests-trust-version"]
+
+    XCTAssertTrue(trustVersion.waitForExistence(timeout: 5), "the panel offers no version trust")
+    XCTAssertFalse(
+      panel.buttons["pending-requests-trust-identity"].exists,
+      "an unsigned file was offered identity trust")
+    XCTAssertTrue(panel.buttons["Allow for This Run"].exists)
+
+    attach(panel, named: "declared-file-review")
+    trustVersion.click()
+
+    XCTAssertEqual(waitForFile(first), "exit=0\n")
+    XCTAssertEqual(
+      try String(contentsOfFile: first + ".out", encoding: .utf8), "declared file ran\n")
+
+    let second = try startRun(script, named: "declared-second", in: app)
+
+    XCTAssertEqual(waitForFile(second), "exit=0\n", "the trusted file version asked again")
+
+    let controllers = openControllers(in: app)
+    let approval = controllers.tables["controllers-table"].tableRows.firstMatch
+
+    XCTAssertTrue(approval.waitForExistence(timeout: 10), "the file approval is not listed")
+    approval.click()
+    XCTAssertTrue(
+      waitFor(controllers.staticTexts["controllers-detail"], timeout: 5) {
+        $0.contains("Trusted version of a script file")
+      }, "the detail does not name a script file approval")
+
+    attach(controllers, named: "controllers-and-permissions-file-approval")
+    controllers.buttons["controllers-revoke"].click()
+
+    XCTAssertTrue(waitUntilGone(approval, timeout: 10), "the file approval stayed after Revoke")
+  }
+
   /// Catches a Controllers & Permissions window that hides a remembered approval, and a Revoke
   /// that leaves it covering the next run.
   func testControllersAndPermissionsShowsAndRevokesTheApproval() throws {

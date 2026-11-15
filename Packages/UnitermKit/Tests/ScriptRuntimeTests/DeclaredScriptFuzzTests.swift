@@ -1,0 +1,100 @@
+import ControllerPackage
+import Foundation
+import XCTest
+
+@testable import ScriptRuntime
+
+/// A seeded mutation fuzzer for the command's declaration reader, which runs Janet's parser over a
+/// file's bytes. Each input is a valid or near-valid file with bytes flipped, cut, or inserted.
+///
+/// `make test-package` runs it at a small count. `make fuzz` runs it under the address sanitizer
+/// at a large one, through `UNITERM_FUZZ_ITERATIONS`. `UNITERM_FUZZ_SEED` repeats a run.
+///
+/// It proves that no mutated file traps the reader or reads out of bounds, that a file reads the
+/// same way twice, and that a declaration the reader passes is one the shared reader either reads
+/// or refuses. It cannot prove that a refusal names the right fault, which the reader's own tests
+/// hold.
+final class DeclaredScriptFuzzTests: XCTestCase {
+  private var iterations: Int {
+    ProcessInfo.processInfo.environment["UNITERM_FUZZ_ITERATIONS"].flatMap(Int.init) ?? 400
+  }
+
+  private var seed: UInt64 {
+    ProcessInfo.processInfo.environment["UNITERM_FUZZ_SEED"].flatMap(UInt64.init) ?? 0xDEC1
+  }
+
+  private struct Generator {
+    var state: UInt64
+
+    mutating func next() -> UInt64 {
+      state = state &+ 0x9E37_79B9_7F4A_7C15
+
+      var value = state
+
+      value = (value ^ (value >> 30)) &* 0xBF58_476D_1CE4_E5B9
+      value = (value ^ (value >> 27)) &* 0x94D0_49BB_1331_11EB
+
+      return value ^ (value >> 31)
+    }
+  }
+
+  private let corpus = [
+    """
+    #!/usr/bin/env -S uniterm run
+    # comment
+    (declare-permissions {:id "dev.example.tidy" :name "Tidy"}
+      {:kind :pane-control :version 1}
+      {:kind :capability :version 1 :name :fs-read}
+      {:kind :host-launch :version 1 :executable "/usr/bin/git" :directory "/tmp"
+       :environment ["HOME" "PATH"]})
+    (print "ok")
+    """,
+    "(declare-permissions {:kind :pane-control :kind :pane-control :version 1})\n",
+    "(declare-permissions {:kind :clipboard-read :version nil})\n(print 1)\n",
+    "(print 1)\n(declare-permissions)\n",
+    "(declare-permisions {:kind :pane-control :version 1})\n",
+    "(def x {:a 1 :b @[1 2 3] :c @{:d \"e\"}})\n(print x)\n",
+    "(declare-permissions {:kynd :pane-control})\n",
+  ].map { [UInt8]($0.utf8) }
+
+  /// Catches a mutated file that traps the reader, or whose second reading differs from its first.
+  func testMutatedFilesReadWithoutTrapping() {
+    var random = Generator(state: seed)
+
+    for iteration in 0..<iterations {
+      var bytes = corpus[Int(random.next() % UInt64(corpus.count))]
+
+      for _ in 0..<Int(random.next() % 5) { mutate(&bytes, using: &random) }
+
+      let data = Data(bytes)
+      let reading = DeclaredScript.read(data)
+
+      XCTAssertEqual(DeclaredScript.read(data), reading, "seed \(seed), iteration \(iteration)")
+
+      if case .declared(let json) = reading {
+        _ = try? FileDeclaration.parse(json)
+      }
+    }
+  }
+
+  private static let punctuation = Array("(){}[]\"@~',;#\\ \n:".utf8)
+
+  private func mutate(_ bytes: inout [UInt8], using random: inout Generator) {
+    guard !bytes.isEmpty else { return }
+
+    let at = Int(random.next() % UInt64(bytes.count))
+
+    switch random.next() % 6 {
+    case 0: bytes[at] ^= UInt8(truncatingIfNeeded: random.next())
+    case 1: bytes[at] = Self.punctuation[Int(random.next() % UInt64(Self.punctuation.count))]
+    case 2: bytes.removeSubrange(at..<min(bytes.count, at + 1 + Int(random.next() % 8)))
+    case 3: bytes.insert(UInt8(truncatingIfNeeded: random.next()), at: at)
+    case 4:
+      let chunk = Array(bytes[at..<min(bytes.count, at + 1 + Int(random.next() % 24))])
+
+      bytes.insert(contentsOf: chunk, at: at)
+
+    default: bytes.append(contentsOf: [UInt8](repeating: 0x7D, count: Int(random.next() % 8)))
+    }
+  }
+}
