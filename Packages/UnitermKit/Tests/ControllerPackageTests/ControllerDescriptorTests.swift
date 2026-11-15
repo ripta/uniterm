@@ -119,9 +119,9 @@ final class ControllerDescriptorTests: XCTestCase {
   /// Catches strict JSON that lets an escape, a surrogate, or a number spell a value two ways.
   func testStrictJSONRefusesAmbiguousSpellings() {
     let refused = [
-      #"{"a": "\ud800"}"#, #"{"a": "\u0000"}"#, #"{"a": 01}"#, #"{"a": 1.0}"#, #"{"a": 1e2}"#,
-      #"{"a": -1}"#, #"{"a": null}"#, #"{"a": "x"} x"#, #"[[[[[[[[[1]]]]]]]]]"#,
-      "{\"a\": \"\u{01}\"}",
+      #"{"a": "\ud800"}"#, #"{"a": "\u0000"}"#, #"{"a": 01}"#, #"{"a": -01}"#, #"{"a": 1.}"#,
+      #"{"a": 1e}"#, #"{"a": -}"#, #"{"a": tru}"#, #"{"a": nul}"#, #"{"a": "x"} x"#,
+      #"[[[[[[[[[1]]]]]]]]]"#, "{\"a\": \"\u{01}\"}",
     ]
 
     for text in refused {
@@ -131,6 +131,50 @@ final class ControllerDescriptorTests: XCTestCase {
     XCTAssertEqual(
       try StrictJSONReader.parse(Data(#"{"a": "😀", "b": [1, 23]}"#.utf8), maxBytes: 64),
       .object([("a", .string("\u{1F600}")), ("b", .array([.integer(1), .integer(23)]))]))
+  }
+
+  /// Catches a widened reader that reads a boolean, null, negative, fraction, or exponent as the
+  /// integer case, or an integer outside the controller domain as one. A reader that matches
+  /// `integer` must never see them.
+  func testStrictJSONGivesEachNewValueKindItsOwnCase() throws {
+    func value(_ text: String) throws -> StrictJSON {
+      try StrictJSONReader.parse(Data(text.utf8), maxBytes: 1024)
+    }
+
+    XCTAssertEqual(try value("true"), .boolean(true))
+    XCTAssertEqual(try value("false"), .boolean(false))
+    XCTAssertEqual(try value("null"), .null)
+    XCTAssertEqual(try value("999999999"), .integer(999_999_999))
+    XCTAssertEqual(try value("0"), .integer(0))
+
+    for text in ["-1", "-0", "1.0", "0.5", "1e2", "1E+2", "2.5e-3", "1000000000"] {
+      XCTAssertEqual(try value(text), .number(text), text)
+    }
+  }
+
+  /// Catches a widened reader that lets a descriptor, a signature, or a format 1 policy file
+  /// accept a value kind it refused before. Each holds the new kinds where an integer, a string,
+  /// or an unknown field would sit.
+  func testControllerFormatsStillRefuseTheNewValueKinds() {
+    let hash = String(repeating: "a", count: 64)
+
+    for extra in ["true", "null", "-1", "0.5", "1e2"] {
+      let descriptors = [
+        #"{"format": \#(extra), "id": "dev.uniterm.fixture.x", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": {"main.janet": "sha256:\#(hash)"}, "permissions": []}"#,
+        #"{"format": 1, "id": "dev.uniterm.fixture.x", "name": \#(extra), "entry": {"kind": "janet", "path": "main.janet"}, "files": {"main.janet": "sha256:\#(hash)"}, "permissions": []}"#,
+        #"{"format": 1, "id": "dev.uniterm.fixture.x", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": {"main.janet": "sha256:\#(hash)"}, "permissions": [], "flag": \#(extra)}"#,
+        #"{"format": 1, "id": "dev.uniterm.fixture.x", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": {"main.janet": \#(extra)}, "permissions": []}"#,
+      ]
+
+      for text in descriptors {
+        XCTAssertThrowsError(try ControllerDescriptor.parse(Data(text.utf8)), text)
+      }
+
+      let signature =
+        #"{"format": \#(extra), "algorithm": "ed25519", "public-key": "AA==", "signature": "AA=="}"#
+
+      XCTAssertThrowsError(try ControllerSignature.parse(Data(signature.utf8)), signature)
+    }
   }
 
   /// Catches a format 2 reader that drops a permission's version, reads a kind format 1 lacks in

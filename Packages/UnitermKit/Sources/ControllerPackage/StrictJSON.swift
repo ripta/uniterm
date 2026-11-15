@@ -1,10 +1,19 @@
 import Foundation
 
-/// A JSON value as the controller formats read it. Only strings, whole numbers, arrays, and
-/// objects exist, so a field can never be read two ways, such as a number as a string.
+/// A JSON value as the controller formats read it. Every kind has its own case, so a field can
+/// never be read two ways, such as a number as a string.
+///
+/// `integer` holds exactly the whole numbers the controller formats use: unsigned, at most nine
+/// digits, with no fraction or exponent. Any other number is `number`, so a reader that matches
+/// `integer` never takes a negative or a fraction for a version.
 public indirect enum StrictJSON: Equatable, Sendable {
   case string(String)
   case integer(Int)
+
+  /// A number outside the `integer` domain, as the validated literal from the document.
+  case number(String)
+  case boolean(Bool)
+  case null
   case array([StrictJSON])
 
   /// The members in the order the bytes hold them. No key repeats.
@@ -14,6 +23,9 @@ public indirect enum StrictJSON: Equatable, Sendable {
     switch (lhs, rhs) {
     case (.string(let a), .string(let b)): return a == b
     case (.integer(let a), .integer(let b)): return a == b
+    case (.number(let a), .number(let b)): return a == b
+    case (.boolean(let a), .boolean(let b)): return a == b
+    case (.null, .null): return true
     case (.array(let a), .array(let b)): return a == b
     case (.object(let a), .object(let b)):
       return a.count == b.count && zip(a, b).allSatisfy { $0.key == $1.key && $0.value == $1.value }
@@ -33,8 +45,8 @@ public struct StrictJSONError: Error, Equatable, CustomStringConvertible, Sendab
 /// Reads RFC 8259 JSON more strictly than Foundation does. Foundation keeps the last of two equal
 /// keys, which lets two readers of one file see two documents. This reader refuses a repeated key,
 /// a byte order mark, bytes that are not UTF-8, an unpaired surrogate, an escaped NUL, a number
-/// with a fraction, an exponent, a sign, or more than nine digits, `true`, `false`, `null`, and
-/// anything after the value. Keys repeat when they are equal after their escapes are decoded.
+/// with a leading zero, and anything after the value. Keys repeat when they are equal after their
+/// escapes are decoded.
 public enum StrictJSONReader {
   /// The deepest nesting a document may have.
   public static let maxDepth = 8
@@ -86,9 +98,28 @@ public enum StrictJSONReader {
       case UInt8(ascii: "{"): return try object(depth: depth)
       case UInt8(ascii: "["): return try array(depth: depth)
       case UInt8(ascii: "\""): return .string(try string())
-      case UInt8(ascii: "0")...UInt8(ascii: "9"): return .integer(try integer())
-      default: throw error("only strings, whole numbers, arrays, and objects are allowed")
+      case UInt8(ascii: "0")...UInt8(ascii: "9"), UInt8(ascii: "-"): return try number()
+      case UInt8(ascii: "t"):
+        try literal("true")
+        return .boolean(true)
+      case UInt8(ascii: "f"):
+        try literal("false")
+        return .boolean(false)
+      case UInt8(ascii: "n"):
+        try literal("null")
+        return .null
+      default: throw error("a value must be a string, number, boolean, null, array, or object")
       }
+    }
+
+    mutating func literal(_ word: String) throws {
+      let expected = Array(word.utf8)
+
+      guard bytes.count - index >= expected.count,
+        Array(bytes[index..<index + expected.count]) == expected
+      else { throw error("a value must be a string, number, boolean, null, array, or object") }
+
+      index += expected.count
     }
 
     mutating func object(depth: Int) throws -> StrictJSON {
@@ -173,28 +204,53 @@ public enum StrictJSONReader {
       }
     }
 
-    mutating func integer() throws -> Int {
+    mutating func digits() -> Range<Int> {
       let start = index
 
       while index < bytes.count, (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(bytes[index]) {
         index += 1
       }
 
-      let digits = bytes[start..<index]
+      return start..<index
+    }
 
-      guard digits.count <= 9 else { throw error("a number has more than nine digits") }
+    mutating func number() throws -> StrictJSON {
+      let start = index
+      let negative = bytes[index] == UInt8(ascii: "-")
 
-      guard digits.count == 1 || digits.first != UInt8(ascii: "0") else {
+      if negative { index += 1 }
+
+      let whole = digits()
+
+      guard !whole.isEmpty else { throw error("a number needs digits") }
+
+      guard whole.count == 1 || bytes[whole.lowerBound] != UInt8(ascii: "0") else {
         throw error("a number has a leading zero")
       }
 
-      if index < bytes.count,
-        [UInt8(ascii: "."), UInt8(ascii: "e"), UInt8(ascii: "E")].contains(bytes[index])
-      {
-        throw error("only whole numbers are allowed")
+      var plain = !negative && whole.count <= 9
+
+      if index < bytes.count, bytes[index] == UInt8(ascii: ".") {
+        index += 1
+        plain = false
+
+        guard !digits().isEmpty else { throw error("a fraction needs digits") }
       }
 
-      return digits.reduce(0) { $0 * 10 + Int($1 - UInt8(ascii: "0")) }
+      if index < bytes.count, [UInt8(ascii: "e"), UInt8(ascii: "E")].contains(bytes[index]) {
+        index += 1
+        plain = false
+
+        if index < bytes.count, [UInt8(ascii: "+"), UInt8(ascii: "-")].contains(bytes[index]) {
+          index += 1
+        }
+
+        guard !digits().isEmpty else { throw error("an exponent needs digits") }
+      }
+
+      guard plain else { return .number(String(decoding: bytes[start..<index], as: UTF8.self)) }
+
+      return .integer(bytes[whole].reduce(0) { $0 * 10 + Int($1 - UInt8(ascii: "0")) })
     }
 
     mutating func string() throws -> String {
