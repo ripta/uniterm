@@ -1,6 +1,6 @@
 # A loader variable reaches the hardened `uniterm` command on a Mac with SIP off
 
-**Status:** open, cause not confirmed
+**Status:** open
 **Estimate:** small to medium; one design decision
 
 ## Observed
@@ -21,8 +21,8 @@ The same builds pass all three tests on a Mac with SIP on. Both are signed ad ho
 ## Cause
 
 The kernel strips dyld variables from a hardened process only while System Integrity Protection is on. GitHub's macOS
-runners are believed to turn SIP off. Not confirmed. The fix commit below makes each probe print `csrutil status` when
-it skips, so the next CI log settles it.
+runners turn SIP off. PR 49's second CI run printed "System Integrity Protection status: disabled." when the probes
+skipped.
 
 The app trusts a controller run only from the bundle's own command, matched by its code hash (UTERM-004, ADR-10). That
 match proves nothing about code dyld loaded into the command first. With SIP off, any process that can set the
