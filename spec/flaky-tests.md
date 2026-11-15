@@ -120,6 +120,29 @@ fixed ones.
   changes what the test sees. Not confirmed.
 - Status: unresolved.
 
+### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
+
+- Seen: 2026-11-15, in four local runs during the work-queue run that added strict and unsafe script modes. Each run
+  failed a different test, and every test passed in at least one other run of the same code:
+  - `testAPlainScriptsQuestionNamesItsRun`, `testControllersAndPermissionsShowsAndRevokesTheApproval`, and
+    `testThePanelAllowsOnceAndDeniesAReview` failed in one five-class run. All three passed together when run alone.
+  - `testThePanelTrustsAVersionThatThenRunsWithoutAsking` failed with "the window never showed the review. The shell
+    wrote none. Standard output: none Standard error: none". The typed shell line never ran.
+  - `testADeclaredFilesReviewAndApprovalReachThePanelAndTheWindow` exceeded its 1-minute allowance as the first test of
+    a class-only run.
+- Evidence: the class passed 7 of 7, four times, before the change. The change made each test's run wait for a review,
+  and added two tests. The failure messages now report what the shell and the command wrote.
+- Suspected cause: lost keystrokes or focus races between app instances, or a system prompt holding the first test.
+  Not confirmed, and not reproduced on the commit before the change.
+- Status: unresolved.
+
+### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
+
+- Seen: 2026-11-15, once, in a five-class local run. It passed in the run before.
+- Evidence: "Unable to find hit point for ScrollView, {{20.0, 749.0}, {739.0, 180.0}}".
+- Suspected cause: the scroll view was covered or still moving when the test clicked it. Not confirmed.
+- Status: unresolved.
+
 ## Fixed
 
 ### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
