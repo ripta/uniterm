@@ -326,6 +326,8 @@ final class ControllerRunTests: XCTestCase {
 
     XCTAssertTrue(control.standardError.contains("GuardMalloc"), "the marker never loads")
 
+    try skipUnlessSystemIntegrityIsOn()
+
     // Xcode sets __XPC_DYLD_ variables for an app under test, and a terminal in it passes them on.
     // dyld never reads them, so they stop nothing.
     let result = try await runJanet(
@@ -605,6 +607,8 @@ final class ControllerRunTests: XCTestCase {
   /// Catches a loader variable that reaches the native entry through the command's exec, where
   /// it would load code the package does not hold into a process that has the run's authority.
   func testALoaderVariableNeverReachesTheNativeEntry() async throws {
+    try skipUnlessSystemIntegrityIsOn()
+
     let package = try nativePackage(try Data(contentsOf: nativeFixture))
     let result = try await run(
       try HardenedHelper.url(),

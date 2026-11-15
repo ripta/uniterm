@@ -279,3 +279,28 @@ func waitUntilBlocked(_ pid: pid_t, timeout: Duration = .seconds(10)) async -> B
 func recordTestProcessAsSessionRoot(_ host: ScriptHost) {
   TestSessionRoot.record(in: host)
 }
+
+/// Skips the rest of a test that proves dyld drops a loader variable from a hardened process. The
+/// kernel strips those variables only while System Integrity Protection is on. GitHub's macOS
+/// runners turn it off, so the probe loads there whatever the signature says.
+///
+/// Only a plain "disabled" skips. Any other status, or one that cannot be read, still runs the
+/// probe, so a wrong guess about the cause fails loudly.
+func skipUnlessSystemIntegrityIsOn() throws {
+  let process = Process()
+  let output = Pipe()
+
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/csrutil")
+  process.arguments = ["status"]
+  process.standardOutput = output
+  process.standardError = output
+  try process.run()
+  process.waitUntilExit()
+
+  let status = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+  if status.contains("status: disabled") {
+    throw XCTSkip("The injection probe needs System Integrity Protection on. \(status)")
+  }
+}

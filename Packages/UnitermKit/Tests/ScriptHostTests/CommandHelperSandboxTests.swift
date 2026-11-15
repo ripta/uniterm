@@ -36,6 +36,8 @@ final class CommandHelperSandboxTests: XCTestCase {
     XCTAssertTrue(identity.hasHardenedRuntime, "the shipped command has no hardened runtime")
     XCTAssertFalse(identity.allowsLoaderVariables, "the shipped command lets dyld variables in")
 
+    try skipUnlessSystemIntegrityIsOn()
+
     let process = Process()
     let errors = Pipe()
 
