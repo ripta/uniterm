@@ -34,6 +34,13 @@ public struct ScriptPeer: Sendable, Equatable {
       throw ScriptListenerError.peer(errno)
     }
 
+    return ScriptPeer(uid: credentials.cr_uid, pid: pid, token: liveToken(descriptor: descriptor))
+  }
+
+  /// The audit token of the process that last used the other end of `descriptor`, read now. The
+  /// kernel looks the process up when asked, so the token's process ID version is the one the
+  /// process holds at this moment, and it changes when the process starts another executable.
+  static func liveToken(descriptor: Int32) -> AuditToken? {
     var token = [UInt8](repeating: 0, count: AuditToken.byteCount)
     var tokenSize = socklen_t(token.count)
 
@@ -41,9 +48,9 @@ public struct ScriptPeer: Sendable, Equatable {
       getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERTOKEN, $0.baseAddress, &tokenSize) == 0
     }
 
-    return ScriptPeer(
-      uid: credentials.cr_uid, pid: pid,
-      token: tokenRead && tokenSize == socklen_t(token.count) ? AuditToken(data: Data(token)) : nil)
+    guard tokenRead, tokenSize == socklen_t(token.count) else { return nil }
+
+    return AuditToken(data: Data(token))
   }
 }
 

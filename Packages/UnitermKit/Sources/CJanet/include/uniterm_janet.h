@@ -26,6 +26,17 @@
 #define UNITERM_JANET_MAX_DIRECTORY_BYTES 1024
 #define UNITERM_JANET_MAX_FILE_NAME_BYTES 255
 #define UNITERM_JANET_MAX_SEND_BYTES (1024 * 1024)
+#define UNITERM_JANET_MAX_COMMAND_NAME_BYTES 64
+#define UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES (32 * 1024)
+#define UNITERM_JANET_MAX_LAYOUT_BYTES (32 * 1024)
+#define UNITERM_JANET_MAX_CLIPBOARD_BYTES (32 * 1024)
+
+/*
+ * A call callback returns this plus a failure kind when the app answered with a failure, so a
+ * function that raises a structured error can name the kind. Any other nonzero status is a
+ * failure on the helper's side.
+ */
+#define UNITERM_JANET_APP_FAILURE_BASE 16
 
 /* Levels as scripts name them: :info, :warning, :error. */
 #define UNITERM_STATUS_INFO 0
@@ -141,6 +152,34 @@ uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *na
                                         const uint8_t *source, size_t length,
                                         uint32_t sandbox_flags, const char *const *arguments,
                                         size_t argument_count, uniterm_script_failure *failure);
+
+/*
+ * The files of a verified controller package, by their packaged paths. The caller keeps the
+ * memory alive for the run.
+ */
+typedef struct uniterm_package {
+    const char *const *names;
+    const uint8_t *const *sources;
+    const size_t *lengths;
+    size_t count;
+} uniterm_package;
+
+/*
+ * Runs a controller package's Janet entry, `entry`, as uniterm_janet_run runs a script, with a
+ * fixed module loader in place of Janet's own.
+ *
+ * Before any of the package's code runs, the loader replaces every module path and every module
+ * loader. An import then finds only the bundled uniterm module and the package's own files, held
+ * in memory, never a file on disk. A relative import resolves against the importing file's place
+ * in the package. Native modules and images have no loader at all, so neither loads from anywhere.
+ * The sandbox is applied after the loader is in place and before the entry runs.
+ */
+uniterm_script_status uniterm_janet_run_package(const uniterm_host *host, const char *entry,
+                                                const uniterm_package *package,
+                                                uint32_t sandbox_flags,
+                                                const char *const *arguments,
+                                                size_t argument_count,
+                                                uniterm_script_failure *failure);
 
 /*
  * What the REPL reports to its host. Both callbacks run on the thread that runs the REPL, and must

@@ -31,6 +31,7 @@
 		7A0000000000000000000072 /* uniterm in Embed helpers */ = {isa = PBXBuildFile; fileRef = 7A0000000000000000000073 /* uniterm */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		7A000000000000000000007D /* ScriptHost in Frameworks */ = {isa = PBXBuildFile; productRef = 7A000000000000000000007E /* ScriptHost */; };
 		7A000000000000000000007F /* ReplApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000080 /* ReplApplet */; };
+		7A0000000000000000000081 /* AppletFixtures in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000082 /* AppletFixtures */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,6 +103,7 @@
 				DocumentDecoder/DocumentDecoder.entitlements,
 				DocumentDecoder/main.swift,
 				ImageDecoder/ImageDecoder.entitlements,
+				UnitermCLI/UnitermCLI.entitlements,
 				UnitermCLI/main.swift,
 			);
 			target = 7A0000000000000000000055 /* ImageDecoder */;
@@ -112,6 +114,7 @@
 				DocumentDecoder/DocumentDecoder.entitlements,
 				ImageDecoder/ImageDecoder.entitlements,
 				ImageDecoder/main.swift,
+				UnitermCLI/UnitermCLI.entitlements,
 				UnitermCLI/main.swift,
 			);
 			target = 7A0000000000000000000069 /* DocumentDecoder */;
@@ -123,6 +126,7 @@
 				DocumentDecoder/main.swift,
 				ImageDecoder/ImageDecoder.entitlements,
 				ImageDecoder/main.swift,
+				UnitermCLI/UnitermCLI.entitlements,
 			);
 			target = 7A0000000000000000000077 /* UnitermCLI */;
 		};
@@ -177,6 +181,7 @@
 				7A0000000000000000000064 /* TextViewerApplet in Frameworks */,
 				7A000000000000000000007D /* ScriptHost in Frameworks */,
 				7A000000000000000000007F /* ReplApplet in Frameworks */,
+				7A0000000000000000000081 /* AppletFixtures in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -280,6 +285,7 @@
 				7A0000000000000000000065 /* TextViewerApplet */,
 				7A000000000000000000007E /* ScriptHost */,
 				7A0000000000000000000080 /* ReplApplet */,
+				7A0000000000000000000082 /* AppletFixtures */,
 			);
 			productName = uniterm;
 			productReference = 7A0000000000000000000006 /* uniterm.app */;
@@ -739,12 +745,15 @@
 		7A000000000000000000007A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Helpers/UnitermCLI/UnitermCLI.entitlements;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1.0;
+				OTHER_CODE_SIGN_FLAGS = "--options=runtime";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.uniterm.app.UnitermCLI;
 				PRODUCT_MODULE_NAME = UnitermCLI;
 				PRODUCT_NAME = uniterm;
@@ -755,12 +764,15 @@
 		7A000000000000000000007B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Helpers/UnitermCLI/UnitermCLI.entitlements;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1.0;
+				OTHER_CODE_SIGN_FLAGS = "--options=runtime";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.uniterm.app.UnitermCLI;
 				PRODUCT_MODULE_NAME = UnitermCLI;
 				PRODUCT_NAME = uniterm;
@@ -918,6 +930,10 @@
 		7A0000000000000000000080 /* ReplApplet */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ReplApplet;
+		};
+		7A0000000000000000000082 /* AppletFixtures */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppletFixtures;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

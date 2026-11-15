@@ -42,6 +42,7 @@ class UnitermUITestCase: XCTestCase {
     try? FileManager.default.removeItem(atPath: scratch + "-terminal")
     try? FileManager.default.removeItem(atPath: scratch + "-layout")
     try? FileManager.default.removeItem(atPath: scratch + "-browser")
+    try? FileManager.default.removeItem(atPath: scratch + "-controller-policy")
     try? FileManager.default.removeItem(atPath: scriptDirectory)
   }
 
@@ -85,6 +86,8 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UNITERM_BROWSER_DIR"] = scratch + "-browser"
     app.launchEnvironment["UNITERM_BROWSER_STORE"] = "memory"
     app.launchEnvironment["UNITERM_SCRIPT_DIR"] = scriptDirectory
+    app.launchEnvironment["UNITERM_CONTROLLER_RUNS_DIR"] = scratch + "-controller-runs"
+    app.launchEnvironment["UNITERM_CONTROLLER_POLICY_DIR"] = scratch + "-controller-policy"
     app.launchEnvironment["SHELL"] = "/bin/zsh"
     app.launchEnvironment["ZDOTDIR"] = scratch + "-shell"
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""
@@ -118,6 +121,65 @@ class UnitermUITestCase: XCTestCase {
     // activation may not have landed yet. Activate once, then wait for the state to settle.
     XCTAssertTrue(waitForForeground(app, activating: true), "the app never became frontmost")
     return terminal
+  }
+
+  /// The bundled `uniterm` command of the app the tests drive. The app sits beside the test runner
+  /// in the build products folder. `UNITERM_APP_PATH` names another build.
+  func bundledCommand() throws -> String {
+    if let path = ProcessInfo.processInfo.environment["UNITERM_APP_PATH"], !path.isEmpty {
+      return path + "/Contents/Helpers/uniterm"
+    }
+
+    var folder = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
+
+    for _ in 0..<8 {
+      let app = folder.appendingPathComponent("uniterm.app")
+
+      if FileManager.default.fileExists(atPath: app.path) {
+        return app.path + "/Contents/Helpers/uniterm"
+      }
+
+      folder.deleteLastPathComponent()
+    }
+
+    throw XCTSkip("uniterm.app was not found beside the test runner")
+  }
+
+  /// The test instance's well-known socket, in the folder the app listens in.
+  var testSocket: String { scriptDirectory + "/uniterm.sock" }
+
+  /// Types the path of a shell script into the terminal and runs it.
+  func runInTerminal(_ script: String, in app: XCUIApplication) {
+    app.typeText("sh \(script)\n")
+  }
+
+  func write(_ text: String, to path: String) throws {
+    try Data(text.utf8).write(to: URL(fileURLWithPath: path))
+  }
+
+  /// Waits for a file the shell writes, and returns what it holds. A file that has not appeared in
+  /// 60 seconds fails the test, so a script that never ran cannot hang it.
+  func waitForFile(_ path: String, timeout: TimeInterval = 60) -> String? {
+    let deadline = Date().addingTimeInterval(timeout)
+
+    while Date() < deadline {
+      if let text = try? String(contentsOfFile: path, encoding: .utf8) { return text }
+
+      Thread.sleep(forTimeInterval: 0.25)
+    }
+
+    return nil
+  }
+
+  /// Enables remote control on the focused pane from the File menu, as a user does, and waits for
+  /// the pane's control badge. Every new pane starts disconnected, so a script that acts from it
+  /// needs this first.
+  func enableRemoteControl(pane: Int, in app: XCUIApplication, window number: Int = 1) {
+    app.menuBars.menuItems["Enable Remote Control"].click()
+
+    XCTAssertTrue(
+      mainWindow(number, in: app).buttons["pane-control-\(pane)"].waitForExistence(timeout: 10),
+      "the pane never showed its control badge")
   }
 
   /// Waits until the app reports `runningForeground`. State reads lag a window change, so a single

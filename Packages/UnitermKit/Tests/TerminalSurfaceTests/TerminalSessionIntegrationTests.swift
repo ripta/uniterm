@@ -100,17 +100,19 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     savedEnvironment = [:]
   }
 
-  private func startShell() throws -> any TerminalSession {
+  private func startShell(policy: TerminalClipboardPolicy = .interactive) throws
+    -> any TerminalSession
+  {
     let launch = TerminalLaunch.loginShell(
       workingDirectory: sandbox.appending(path: "work").path,
       environment: ["HOME": sandbox.appending(path: "home").path])
-    return host(try engine.makeSession(launch: launch))
+    return host(try engine.makeSession(launch: launch, clipboardPolicy: policy))
   }
 
   private func startProgram(_ words: [String]) throws -> any TerminalSession {
     let launch = TerminalLaunch.program(
       words, workingDirectory: sandbox.appending(path: "work").path)
-    return host(try engine.makeSession(launch: launch))
+    return host(try engine.makeSession(launch: launch, clipboardPolicy: .interactive))
   }
 
   private func host(_ session: any TerminalSession) -> any TerminalSession {
@@ -510,6 +512,178 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     XCTAssertTrue(requests.isEmpty, "a clipboard write asked the user")
   }
 
+  /// Catches a controlled session whose OSC 52 write lands without asking, a denial that still
+  /// writes, and a session permission that does not cover the next write. The writes arrive
+  /// through libghostty's own write callback, with its confirm flag set. A controlled read asks
+  /// too, and its session permission answers the next read without asking.
+  func testAControlledSessionAsksBeforeOSC52WritesAndReads() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("BEFORE", forType: .string)
+
+    let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    func write(_ text: String) throws {
+      try run("printf '\\033]52;c;\(Data(text.utf8).base64EncodedString())\\a'", in: session)
+    }
+
+    try write("W-DENIED")
+    try await waitUntil("the first write request") { requests.count == 1 }
+    XCTAssertEqual(requests[0].kind, .write)
+    XCTAssertTrue(requests[0].offersSession)
+    requests[0].resolve(.deny)
+
+    try await Task.sleep(for: .milliseconds(500))
+    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE", "a denied write landed")
+
+    try write("W-ONCE")
+    try await waitUntil("the second write request") { requests.count == 2 }
+    requests[1].resolve(.allowOnce)
+    try await waitUntil("the write allowed once") {
+      NSPasteboard.general.string(forType: .string) == "W-ONCE"
+    }
+
+    try write("W-SESSION")
+    try await waitUntil("a write after allow once to ask again") { requests.count == 3 }
+    requests[2].resolve(.allowForSession)
+    try await waitUntil("the write allowed for the session") {
+      NSPasteboard.general.string(forType: .string) == "W-SESSION"
+    }
+
+    try write("W-FREE")
+    try await waitUntil("a write the session covers") {
+      NSPasteboard.general.string(forType: .string) == "W-FREE"
+    }
+    XCTAssertEqual(requests.count, 3, "a write the session covers asked again")
+
+    let encoded = Data("W-FREE".utf8).base64EncodedString()
+    let ask =
+      "printf '\\033]52;c;?\\a'; IFS= read -rs -t 8 -d $'\\\\' reply; echo \"G:${reply#*;c;}:\""
+
+    try run(ask, in: session)
+    try await waitUntil("the read request") { requests.count == 4 }
+    XCTAssertEqual(requests[3].kind, .read)
+    XCTAssertTrue(requests[3].offersSession)
+    requests[3].resolve(.allowForSession)
+    try await waitUntil("the read allowed for the session") {
+      self.screen(session).contains("G:\(encoded)")
+    }
+
+    try run(ask.replacingOccurrences(of: "G:", with: "H:"), in: session)
+    try await waitUntil("a read the session covers") {
+      self.screen(session).contains("H:\(encoded)")
+    }
+    XCTAssertEqual(requests.count, 4, "a read the session covers asked again")
+  }
+
+  /// Catches a program that floods a controlled session with OSC 52 writes and queues one prompt
+  /// for each. While a write's prompt waits, every later write is denied at once, with no prompt,
+  /// and none of them reaches the clipboard. Once the prompt is answered, the next write asks.
+  func testAFloodOfControlledWritesAsksOnceAndChangesNothing() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("BEFORE-FLOOD", forType: .string)
+
+    let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    let flood = (1...20).map { "\\033]52;c;\(Data("FLOOD-\($0)".utf8).base64EncodedString())\\a" }
+
+    try run("printf '\(flood.joined())'; echo FLOOD-$((1 + 1))-DONE", in: session)
+    try await waitUntil("the flood to finish") { self.screen(session).contains("FLOOD-2-DONE") }
+    try await Task.sleep(for: .milliseconds(500))
+
+    XCTAssertEqual(requests.count, 1, "a flood of writes queued a prompt for each")
+    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE-FLOOD")
+
+    requests[0].resolve(.deny)
+    try await Task.sleep(for: .milliseconds(300))
+    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE-FLOOD")
+
+    try run("printf '\\033]52;c;\(Data("AFTER".utf8).base64EncodedString())\\a'", in: session)
+    try await waitUntil("a write after the answer to ask") { requests.count == 2 }
+    requests[1].resolve(.deny)
+  }
+
+  /// Catches an answer that releases data or writes after the session's policy changed under it,
+  /// or after the session closed. A pending write and a pending read are each answered allow once
+  /// after the change, and neither the clipboard nor the program gets anything.
+  func testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose() async throws {
+    let saved = NSPasteboard.general.string(forType: .string)
+    defer {
+      NSPasteboard.general.clearContents()
+      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
+    }
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString("SECRET-STALE", forType: .string)
+
+    let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
+    var requests: [TerminalClipboardRequest] = []
+    session.onEvent = { event in
+      if case .clipboardRequest(let request) = event { requests.append(request) }
+    }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    let encoded = Data("SECRET-STALE".utf8).base64EncodedString()
+    let ask =
+      "printf '\\033]52;c;?\\a'; IFS= read -rs -t 8 -d $'\\\\' reply; echo \"G:${reply#*;c;}:\""
+
+    try run(ask, in: session)
+    try await waitUntil("the read request") { requests.count == 1 }
+
+    session.setClipboardPolicy(TerminalClipboardPolicy(controlled: false, generation: 2))
+    requests[0].resolve(.allowOnce)
+
+    try await waitUntil("the read to finish after a stale answer") {
+      !session.isRunningSomething
+    }
+    XCTAssertFalse(screen(session).contains(encoded), "a stale read sent the clipboard")
+
+    let written = Data("W-STALE".utf8).base64EncodedString()
+
+    session.setClipboardPolicy(TerminalClipboardPolicy(controlled: true, generation: 3))
+    try run("printf '\\033]52;c;\(written)\\a'", in: session)
+    try await waitUntil("the write request") { requests.count == 2 }
+
+    session.setClipboardPolicy(TerminalClipboardPolicy(controlled: true, generation: 4))
+    requests[1].resolve(.allowOnce)
+
+    try await Task.sleep(for: .milliseconds(500))
+    XCTAssertEqual(
+      NSPasteboard.general.string(forType: .string), "SECRET-STALE", "a stale write landed")
+
+    try run("printf '\\033]52;c;\(written)\\a'", in: session)
+    try await waitUntil("the write request before the close") { requests.count == 3 }
+
+    session.close()
+    requests[2].resolve(.allowOnce)
+
+    try await Task.sleep(for: .milliseconds(500))
+    XCTAssertEqual(
+      NSPasteboard.general.string(forType: .string), "SECRET-STALE",
+      "an answer after the session closed wrote the clipboard")
+  }
+
   /// Catches libghostty bindings that survive in the generated config. With them, Cmd-Z, Cmd-W,
   /// Cmd-T, Cmd-D, and Cmd-Q would be taken by the terminal before uniterm's menu.
   func testBuiltInBindingsAreCleared() throws {
@@ -877,5 +1051,144 @@ final class TerminalSessionIntegrationTests: XCTestCase {
       }
       XCTAssertTrue(screen(session).contains("ZI:42:no"), "\(command): integration applied")
     }
+  }
+
+  /// Catches a backend patch that reports no child, or reports some other process, such as the
+  /// pty's foreground group. The event names a direct child of this process, and that child is
+  /// `login`, the session root a shell runs under.
+  func testProcessStartedEventReportsTheDirectChild() async throws {
+    try await assertReportsLogin(try startShell())
+  }
+
+  /// Catches the same for program mode, where libghostty spawns `login` for the program too.
+  func testProcessStartedEventReportsTheDirectChildInProgramMode() async throws {
+    try await assertReportsLogin(try startProgram(["/bin/sleep", "30"]))
+  }
+
+  /// Catches a closed session's queued exit reaching the session that reuses its address.
+  ///
+  /// libghostty queues each surface's messages for the main thread. The allocator often gives a
+  /// freed surface's address to the next surface, as when a REPL restarts. A stale exit would end
+  /// the new session's REPL, and libghostty would close it on the next key press.
+  ///
+  /// The main thread does not yield until the second session exists, so libghostty cannot drain
+  /// the first session's exit before then. That exit is queued ahead of the second session's
+  /// start, so it has had its turn once the start arrives.
+  ///
+  /// A pair whose second surface lands at another address proves nothing. The test makes another
+  /// pair, and skips only when none of five pairs reuses an address.
+  func testAClosedSessionsQueuedExitNeverReachesTheSessionThatReusesItsAddress() async throws {
+    var reused: (any TerminalSession)?
+
+    for _ in 0..<5 {
+      let second = try startSecondAfterAQueuedExit()
+
+      if second.reusedAddress {
+        reused = second.session
+
+        break
+      }
+
+      second.session.close()
+    }
+
+    guard let second = reused else {
+      throw XCTSkip("no second surface reused the first's address, so nothing was proved")
+    }
+
+    var events: [String] = []
+
+    second.onEvent = { event in
+      switch event {
+      case .exited: events.append("exited")
+      case .processStarted: events.append("started")
+      default: break
+      }
+    }
+
+    try await waitUntil("the second session's start") { events.contains("started") }
+
+    XCTAssertEqual(events, ["started"], "the second session got the first session's exit")
+  }
+
+  /// Starts a session whose program ends at once, waits on this thread until libghostty has reaped
+  /// its child, closes it, and starts a second session. Nothing yields the main thread meanwhile.
+  private func startSecondAfterAQueuedExit() throws -> (
+    session: any TerminalSession, reusedAddress: Bool
+  ) {
+    let before = Set(children(of: getpid()))
+    let first = try startProgram(["/usr/bin/true"])
+    let deadline = ContinuousClock.now + .seconds(10)
+    var login: pid_t?
+
+    // libghostty reaps its child on its IO thread and queues the exit right after. Once the child
+    // is gone, freeing the surface joins that thread, so the exit is in the queue on return.
+    while ContinuousClock.now < deadline {
+      let current = Set(children(of: getpid())).subtracting(before)
+
+      if login == nil { login = current.first }
+
+      if let login, !current.contains(login) { break }
+
+      sched_yield()
+    }
+
+    let reaped = try XCTUnwrap(login, "the first session never started a child")
+
+    XCTAssertFalse(children(of: getpid()).contains(reaped), "the first session's child never ended")
+
+    let freed = try XCTUnwrap(Self.address(of: first), "the first session has no surface")
+
+    first.close()
+
+    let second = try startProgram(["/bin/sleep", "30"])
+
+    return (second, Self.address(of: second) == freed)
+  }
+
+  /// The libghostty surface a session draws, read by reflection, so the view exports nothing for
+  /// the test.
+  private static func address(of session: any TerminalSession) -> UnsafeMutableRawPointer? {
+    Mirror(reflecting: session).children.first { $0.label == "surface" }
+      .flatMap { $0.value as? UnsafeMutableRawPointer }
+  }
+
+  /// Waits for the session's identity event, then checks the PID it names: a direct child of
+  /// this process, running `login`, and started at the second the event reports.
+  private func assertReportsLogin(
+    _ session: any TerminalSession, file: StaticString = #filePath, line: UInt = #line
+  ) async throws {
+    var reported: TerminalProcessIdentity?
+
+    session.onEvent = { event in
+      if case .processStarted(let identity) = event { reported = identity }
+    }
+
+    try await waitUntil("the processStarted event") { reported != nil }
+
+    let identity = try XCTUnwrap(reported, file: file, line: line)
+
+    XCTAssertTrue(
+      children(of: getpid()).contains(identity.pid), "the PID is not a direct child", file: file,
+      line: line)
+
+    // The child is setuid-root login, which proc_pidinfo refuses for this user, so read it with
+    // sysctl.
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, identity.pid]
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.size
+
+    XCTAssertEqual(
+      sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0), 0, "no process info", file: file,
+      line: line)
+
+    let command = withUnsafeBytes(of: info.kp_proc.p_comm) { bytes in
+      String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+    }
+
+    XCTAssertEqual(command, "login", "the direct child is not login", file: file, line: line)
+    XCTAssertEqual(
+      Int(info.kp_proc.p_starttime.tv_sec), identity.started, "the start time is not the child's",
+      file: file, line: line)
   }
 }

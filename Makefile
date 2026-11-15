@@ -83,27 +83,34 @@ test-package: ghostty ## Run the package tests with swift test, each test under 
 # against each helper inside the built app, and it fails when a helper is missing, so a lost copy
 # phase cannot pass quietly. Run it outside an agent sandbox, where the helpers can start.
 .PHONY: test-helper-sandbox
-test-helper-sandbox: build ## Run each helper's sandbox probe and samples against the helper in the built app
+test-helper-sandbox: build ## Run each helper's sandbox probe and samples, and the command's hardened runtime check, against the built app
 	test -x "$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/ImageDecoder"
 	test -x "$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/DocumentDecoder"
 	test -x "$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/uniterm"
 	cd $(PACKAGE_DIR) && \
 		UNITERM_IMAGE_HELPER="$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/ImageDecoder" \
 		UNITERM_DOCUMENT_HELPER="$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/DocumentDecoder" \
+		UNITERM_COMMAND_HELPER="$(abspath $(DERIVED_DATA))/Build/Products/$(CONFIGURATION)/uniterm.app/Contents/Helpers/uniterm" \
 		../../scripts/run-swift-tests.sh $(TEST_TIME_LIMIT) \
 		swift test --scratch-path ../../$(SWIFTPM_SCRATCH) --filter HelperSandboxTests
 
 .PHONY: fuzz
-fuzz: ghostty ## Fuzz the table, GeoJSON, wire, and PDF readers under ASan. Slow, so make ci skips it
+fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, and PDF readers under ASan. Slow, so make ci skips it
 	cd $(PACKAGE_DIR) && UNITERM_FUZZ_ITERATIONS=$(FUZZ_ITERATIONS) \
 		swift test --sanitize=address --scratch-path ../../$(FUZZ_SCRATCH) \
 		--filter TableFuzzTests --filter GeoJSONFuzzTests --filter ImageWireFuzzTests \
-		--filter DocumentWireFuzzTests --filter PDFFuzzTests --filter ScriptWireFuzzTests
+		--filter DocumentWireFuzzTests --filter PDFFuzzTests --filter ScriptWireFuzzTests \
+		--filter ExecFrameFuzzTests --filter ControllerFormatFuzzTests --filter ControllerPolicyFuzzTests
 
+# A failing UI test would otherwise attach a recording of the whole screen, with whatever else is
+# on it. The tests keep screenshots of uniterm's own elements instead. The scheme also keeps no
+# system attachments and captures screenshots, not recordings, so a direct xcodebuild test
+# records nothing either.
 .PHONY: test-app
 test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission
 	scripts/run-ui-tests.sh $(XCODEBUILD) -test-timeouts-enabled YES \
-		-default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120 test
+		-default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120 \
+		-collect-test-diagnostics never test
 
 .PHONY: ghostty-offline-check
 ghostty-offline-check: ## Rebuild the pinned Ghostty with the network off, from the kept caches

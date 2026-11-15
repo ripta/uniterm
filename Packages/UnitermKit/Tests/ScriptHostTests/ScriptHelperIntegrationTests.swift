@@ -37,6 +37,8 @@ final class ScriptHelperIntegrationTests: XCTestCase {
         self?.refused?.fulfill()
       })
     host.start()
+
+    recordTestProcessAsSessionRoot(host)
   }
 
   override func tearDown() async throws {
@@ -276,6 +278,9 @@ final class ScriptHelperIntegrationTests: XCTestCase {
 
       case .attached, .replLine, .replEvaluating, .replMemoryLimit:
         XCTFail("a script helper acted as a REPL")
+
+      case .controllerBegun:
+        XCTFail("a script helper asked for a controller run")
 
       case .pong:
         break

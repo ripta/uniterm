@@ -3,15 +3,144 @@ import AppletKit
 import PaneModel
 import Theme
 
+/// What the pane's control badge shows. The window builds it from its own control table and the
+/// pane tree, never from the applet.
+struct PaneControlMark: Equatable {
+  var access: PaneAccessMode
+  var driver: PaneDriverKind
+
+  /// What pane chrome calls the controller that owns a group the pane is a member of. Nil when no
+  /// live controller owns one.
+  var owner: String?
+
+  /// The pane is a member of a group that no live controller owns now.
+  var inUnownedGroup: Bool
+
+  /// What pane chrome calls each controller with authority over the pane, the ones acting from it
+  /// included. Revoke Controller ends all of them.
+  var controllers: [String] = []
+
+  /// The control the pane had when the layout was saved. It is inactive until the user enables it.
+  var savedIntent: PaneAccessMode?
+
+  var enableAvailable: Bool
+  var revokeAvailable: Bool
+
+  /// A live controller the user may give the pane's group to, when the pane is a member of a group
+  /// with no owner.
+  struct Adoption: Equatable {
+    let owner: GroupOwner
+    let name: String
+  }
+
+  /// The controllers the badge offers the pane's unowned group to. It is empty when the pane is in
+  /// no such group, or no controller acts in the window.
+  var adoptions: [Adoption] = []
+
+  /// The badge shows only on a pane that is not in the default state.
+  var isShown: Bool {
+    access != .disconnected || driver != .none || owner != nil || inUnownedGroup
+      || savedIntent != nil
+  }
+
+  /// The lines the badge's menu and tooltip show: the mode, the owner, and the driver.
+  var summary: [String] {
+    var lines: [String] = []
+
+    switch access {
+    case .remoteControlled: lines.append("Remote-controlled")
+    case .disconnected: lines.append("Disconnected")
+    }
+
+    if let owner {
+      lines.append("Owner: \(owner)")
+    } else if inUnownedGroup {
+      lines.append("Owner: none, the controller is gone")
+    }
+
+    for controller in controllers where controller != owner {
+      lines.append("Controller: \(controller)")
+    }
+
+    lines.append(driver == .none ? "Driver: none" : "Driver: \(driver.rawValue)")
+
+    if let savedIntent, access == .disconnected {
+      lines.append("Saved as \(savedIntent.rawValue). Enable it again to resume.")
+    }
+
+    return lines
+  }
+
+  /// The value accessibility reads, and the UI tests with it.
+  var accessibilityValue: String {
+    [access.rawValue, owner.map { "owned by \($0)" }].compactMap { $0 }.joined(separator: ", ")
+  }
+}
+
+/// What the pane's exec strip shows: where its driver stands, and the action the user can take.
+/// The window builds it from the pane's exec attachment, never from the applet or the driver.
+struct PaneExecStatus: Equatable {
+  var text: String
+
+  /// Run or Restart, or nil while nothing can be started.
+  var action: String?
+}
+
+/// The control actions the badge's menu offers. The window runs each one for this pane.
+enum PaneControlAction: Equatable {
+  case enable
+  case disconnect
+  case revoke
+
+  /// Gives the unowned group the pane is a member of to a live controller.
+  case adopt(GroupOwner)
+}
+
 /// Hosts one applet's view inside a pane. A gutter around the applet holds the focus marker.
 @MainActor
 final class PaneFrameView: NSView {
   static let gutter: CGFloat = 2
 
+  /// The badge's side, in points.
+  static let badgeSize: CGFloat = 20
+
   let paneID: NodeID
   private(set) var applet: any Applet
 
   private var palette: ThemePalette = .latte
+
+  /// The host's own badge, above the applet's view. It opens the pane's control actions with the
+  /// mouse, so they stay reachable when the applet takes every key.
+  let controlBadge = NSButton()
+
+  var controlMark: PaneControlMark? {
+    didSet {
+      if controlMark != oldValue { refreshBadge() }
+    }
+  }
+
+  /// The host's strip at the pane's foot, for a pane that declares an exec driver. Its button is
+  /// the only way to start the driver, so a run is always the user's own action.
+  let execStrip = NSView()
+  private let execLabel = NSTextField(labelWithString: "")
+  private let execButton = NSButton(title: "Run", target: nil, action: nil)
+
+  static let execStripHeight: CGFloat = 28
+
+  var execStatus: PaneExecStatus? {
+    didSet {
+      if execStatus != oldValue { refreshExecStrip() }
+    }
+  }
+
+  var onExecAction: (() -> Void)?
+
+  /// Runs a control action the user chose from the badge's menu.
+  var onControlAction: ((PaneControlAction) -> Void)?
+
+  /// Builds the badge's mark from the window's live state. The menu reads it as it opens, so it
+  /// never shows a controller that has gone or misses one that has come.
+  var currentControlMark: (() -> PaneControlMark?)?
 
   var isFocused = false {
     didSet { refresh() }
@@ -28,14 +157,47 @@ final class PaneFrameView: NSView {
 
   override var mouseDownCanMoveWindow: Bool { false }
 
-  init(paneID: NodeID, applet: any Applet) {
+  /// `frame` is the pane's frame, so the applet's view starts at its size.
+  init(paneID: NodeID, applet: any Applet, frame: NSRect = .zero) {
     self.paneID = paneID
     self.applet = applet
-    super.init(frame: .zero)
+    super.init(frame: frame)
 
     wantsLayer = true
     applet.view.frame = innerFrame
     addSubview(applet.view)
+
+    controlBadge.isBordered = false
+    controlBadge.bezelStyle = .regularSquare
+    controlBadge.imagePosition = .imageOnly
+    controlBadge.image = NSImage(
+      systemSymbolName: "antenna.radiowaves.left.and.right",
+      accessibilityDescription: "Pane control")
+    controlBadge.wantsLayer = true
+    controlBadge.layer?.cornerRadius = 4
+    controlBadge.target = self
+    controlBadge.action = #selector(showControlMenu(_:))
+    controlBadge.setAccessibilityIdentifier("pane-control-\(paneID)")
+    controlBadge.setAccessibilityLabel("Pane control")
+    controlBadge.isHidden = true
+    addSubview(controlBadge)
+
+    execStrip.wantsLayer = true
+    execStrip.isHidden = true
+    execStrip.setAccessibilityElement(true)
+    execStrip.setAccessibilityRole(.group)
+    execStrip.setAccessibilityIdentifier("pane-exec-\(paneID)")
+    execLabel.lineBreakMode = .byTruncatingTail
+    execLabel.font = .systemFont(ofSize: 11)
+    execLabel.setAccessibilityIdentifier("pane-exec-status-\(paneID)")
+    execButton.controlSize = .small
+    execButton.bezelStyle = .push
+    execButton.target = self
+    execButton.action = #selector(runExecAction)
+    execButton.setAccessibilityIdentifier("pane-exec-run-\(paneID)")
+    execStrip.addSubview(execLabel)
+    execStrip.addSubview(execButton)
+    addSubview(execStrip)
 
     setAccessibilityElement(true)
     setAccessibilityRole(.group)
@@ -54,12 +216,18 @@ final class PaneFrameView: NSView {
     applet = replacement
 
     replacement.view.frame = innerFrame
-    addSubview(replacement.view)
+    addSubview(replacement.view, positioned: .below, relativeTo: controlBadge)
     replacement.apply(palette)
   }
 
   private var innerFrame: NSRect {
-    Self.appletFrame(in: bounds)
+    var frame = Self.appletFrame(in: bounds)
+
+    if execStatus != nil {
+      frame.size.height = max(0, frame.height - Self.execStripHeight)
+    }
+
+    return frame
   }
 
   /// The applet's frame for a pane with these bounds: the bounds less the gutter on every side.
@@ -74,12 +242,135 @@ final class PaneFrameView: NSView {
 
   override func resizeSubviews(withOldSize oldSize: NSSize) {
     applet.view.frame = innerFrame
+    controlBadge.frame = Self.badgeFrame(in: bounds)
+    layoutExecStrip()
+  }
+
+  private func layoutExecStrip() {
+    let inner = Self.appletFrame(in: bounds)
+
+    execStrip.frame = NSRect(
+      x: inner.minX, y: max(inner.minY, inner.maxY - Self.execStripHeight), width: inner.width,
+      height: min(inner.height, Self.execStripHeight))
+
+    let button = execButton.isHidden ? 0 : min(execStrip.bounds.width / 3, 90)
+
+    execButton.frame = NSRect(
+      x: execStrip.bounds.width - button - 6, y: 3, width: button, height: 22)
+    execLabel.frame = NSRect(
+      x: 8, y: 6, width: max(0, execStrip.bounds.width - button - 20), height: 16)
+  }
+
+  private func refreshExecStrip() {
+    guard let status = execStatus else {
+      execStrip.isHidden = true
+      applet.view.frame = innerFrame
+      return
+    }
+
+    execStrip.isHidden = false
+    execLabel.stringValue = status.text
+    execLabel.toolTip = status.text
+    execButton.isHidden = status.action == nil
+    execButton.title = status.action ?? ""
+    execStrip.layer?.backgroundColor = palette[.mantle].cgColor
+    applet.view.frame = innerFrame
+    layoutExecStrip()
+  }
+
+  @objc private func runExecAction() {
+    onExecAction?()
+  }
+
+  /// The badge sits in the pane's top right corner, inside the gutter.
+  static func badgeFrame(in bounds: NSRect) -> NSRect {
+    NSRect(
+      x: max(0, bounds.maxX - gutter - badgeSize - 4), y: bounds.minY + gutter + 4,
+      width: badgeSize, height: badgeSize)
+  }
+
+  private func refreshBadge() {
+    guard let mark = controlMark, mark.isShown else {
+      controlBadge.isHidden = true
+      return
+    }
+
+    let active = mark.access == .remoteControlled || mark.driver != .none
+
+    controlBadge.isHidden = false
+    controlBadge.frame = Self.badgeFrame(in: bounds)
+    controlBadge.toolTip = mark.summary.joined(separator: "\n")
+    controlBadge.setAccessibilityValue(mark.accessibilityValue)
+    controlBadge.contentTintColor = active ? palette[.peach].nsColor : palette[.overlay1].nsColor
+    controlBadge.layer?.backgroundColor = palette[.surface0].cgColor
+  }
+
+  /// The menu names the mode, the owner, and the driver, then offers the actions that apply.
+  func controlMenu() -> NSMenu {
+    let menu = NSMenu()
+    let mark = controlMark
+
+    for line in mark?.summary ?? [] {
+      let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
+      item.isEnabled = false
+      menu.addItem(item)
+    }
+
+    menu.addItem(.separator())
+
+    let actions: [(String, PaneControlAction, Bool, String)] = [
+      ("Enable Remote Control", .enable, mark?.enableAvailable == true, "enable"),
+      ("Disconnect", .disconnect, mark?.access == .remoteControlled, "disconnect"),
+      ("Revoke Controller", .revoke, mark?.revokeAvailable == true, "revoke"),
+    ]
+
+    menu.autoenablesItems = false
+
+    for (title, action, enabled, name) in actions {
+      let item = NSMenuItem(
+        title: title, action: #selector(runControlAction(_:)), keyEquivalent: "")
+      item.setAccessibilityIdentifier("pane-control-\(name)")
+      item.target = self
+      item.representedObject = action
+      item.isEnabled = enabled
+      menu.addItem(item)
+    }
+
+    let adoptions = mark?.adoptions ?? []
+
+    if !adoptions.isEmpty { menu.addItem(.separator()) }
+
+    for (index, adoption) in adoptions.enumerated() {
+      let item = NSMenuItem(
+        title: "Give Group to \(adoption.name)", action: #selector(runControlAction(_:)),
+        keyEquivalent: "")
+      item.setAccessibilityIdentifier("pane-control-adopt-\(index)")
+      item.target = self
+      item.representedObject = PaneControlAction.adopt(adoption.owner)
+      menu.addItem(item)
+    }
+
+    return menu
+  }
+
+  @objc private func showControlMenu(_ sender: NSButton) {
+    if let mark = currentControlMark?() { controlMark = mark }
+
+    controlMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
+  }
+
+  @objc private func runControlAction(_ item: NSMenuItem) {
+    guard let action = item.representedObject as? PaneControlAction else { return }
+
+    onControlAction?(action)
   }
 
   func apply(_ palette: ThemePalette) {
     self.palette = palette
     applet.apply(palette)
     refresh()
+    refreshBadge()
+    refreshExecStrip()
   }
 
   private func refresh() {

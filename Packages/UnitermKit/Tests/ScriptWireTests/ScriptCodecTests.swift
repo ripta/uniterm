@@ -11,20 +11,38 @@ final class ScriptCodecTests: XCTestCase {
   /// One of each call, with and without its optional parts, and an ID at the top of the range.
   static let calls: [ScriptCall] = {
     let top = ScriptProtocol.maxID
-    let pane = ScriptPaneReference(window: top, pane: 3)
-    let tab = ScriptPaneReference(window: 1, pane: 2, tab: top)
+    let pane = ScriptTarget.pane(ScriptPaneReference(window: top, pane: 3))
+    let tab = ScriptTarget.pane(ScriptPaneReference(window: 1, pane: 2, tab: top))
+    let nearest = ScriptTarget.nearest(kind: "data-viewer")
 
     return [
       .listWindows,
       .listPanes(window: 0),
       .listPanes(window: top),
-      .openPane(kind: "terminal", beside: pane, axis: nil, directory: nil),
-      .openPane(kind: "data-viewer", beside: tab, axis: .row, directory: "/synthetic/dir"),
-      .openPane(kind: "browser", beside: pane, axis: .column, directory: nil),
+      .openPane(kind: "terminal", beside: pane, axis: nil, directory: nil, access: .disconnected),
+      .openPane(
+        kind: "data-viewer", beside: tab, axis: .row, directory: "/synthetic/dir",
+        access: .remoteControlled),
+      .openPane(
+        kind: "browser", beside: nearest, axis: .column, directory: nil, access: .disconnected),
       .openTab(pane: pane, directory: nil),
       .openTab(pane: tab, directory: "/synthetic/tab"),
+      .openTab(pane: nearest, directory: nil),
       .send(pane: pane, name: "report.csv", content: Data("a,b\n1,2\n".utf8)),
       .send(pane: tab, name: "empty.txt", content: Data()),
+      .send(pane: nearest, name: "near.csv", content: Data("a\n".utf8)),
+      .sendCommand(
+        pane: pane, appletType: "fixture-slides", schemaVersion: 1, command: "show-slide",
+        arguments: #"{"index":2}"#),
+      .sendCommand(
+        pane: nearest, appletType: "fixture-chart", schemaVersion: UInt32(Int32.max),
+        command: "set-series", arguments: "{}"),
+      .requestLayout(
+        pane: pane, layout: #"{"split":"row","children":[{"pane":3},{"open":"fixture-notes"}]}"#),
+      .requestLayout(pane: nearest, layout: "{}"),
+      .readClipboard,
+      .writeClipboard(text: ""),
+      .writeClipboard(text: String(repeating: "x", count: ScriptProtocol.maxClipboardBytes)),
     ]
   }()
 
@@ -49,7 +67,7 @@ final class ScriptCodecTests: XCTestCase {
   /// Catches a field that is encoded but decoded into a different value.
   func testEveryHelperMessageRoundTrips() throws {
     var messages: [ScriptHelperMessage] = [
-      .hello(version: 7),
+      .hello(version: ScriptProtocol.version),
       .begin(name: "tidy-up.janet"),
       .begin(name: ""),
       .attach(token: Data((0..<UInt8(ScriptProtocol.tokenBytes)).map { $0 })),
@@ -60,6 +78,10 @@ final class ScriptCodecTests: XCTestCase {
       .pong(0),
       .pong(UInt32.max),
       .memoryLimit,
+      .controllerBegin(ControllerBegin(entry: .janet, package: "/Users/synthetic/slides")),
+      .controllerBegin(
+        ControllerBegin(
+          entry: .native, package: "/tmp/caf\u{00E9}", capabilities: ["fs-read", "net-connect"])),
     ]
 
     for level in ScriptStatusLevel.allCases {
@@ -76,7 +98,7 @@ final class ScriptCodecTests: XCTestCase {
   /// Catches a reply whose request ID, failure kind, or payload is lost on the wire.
   func testEveryAppMessageRoundTrips() throws {
     let messages: [ScriptAppMessage] = [
-      .hello(version: 7),
+      .hello(version: ScriptProtocol.version),
       .reply(id: 41, result: .ok(Data())),
       .reply(id: 42, result: .ok(Data([1, 2, 3]))),
       .reply(id: 43, result: .failure(.badArgument, "the level is not known")),
@@ -89,11 +111,24 @@ final class ScriptCodecTests: XCTestCase {
       .ping(0),
       .ping(UInt32.max),
       .stop,
+      .controllerAdmitted(
+        snapshot: "/tmp/run.synthetic", version: Data(repeating: 0xA5, count: 32)),
+      .controllerRefused("synthetic refusal"),
+      .controllerReviewing("synthetic review notice"),
     ]
 
     for message in messages {
       XCTAssertEqual(try roundTrip(message), message)
     }
+  }
+
+  /// Catches an old command or an old app that the version 9 side accepts. Version 8 knows neither
+  /// the typed clipboard calls nor the review notice, so each side refuses the other at the hello,
+  /// before any call or admission.
+  func testTheClipboardAndReviewVersionRefusesTheVersionBeforeIt() {
+    XCTAssertEqual(ScriptProtocol.version, 9)
+    XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: 8)))
+    XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: 8)))
   }
 
   /// Catches a hello that accepts another version, in either direction. The refusal names both
@@ -207,7 +242,7 @@ extension ScriptCodecTests {
   /// every other call has, or an ordinary call that rides in the large frame, which would let any
   /// call make the reader allocate a megabyte.
   func testOnlyASendHasTheLargeFrame() throws {
-    let pane = ScriptPaneReference(window: 1, pane: 2)
+    let pane = ScriptTarget.pane(ScriptPaneReference(window: 1, pane: 2))
     let send = ScriptHelperMessage.request(
       id: 1, call: .send(pane: pane, name: "a.txt", content: Data("x".utf8)))
     let other = ScriptHelperMessage.request(id: 1, call: .listWindows)
@@ -233,7 +268,7 @@ extension ScriptCodecTests {
   /// Catches content past the limit that the decoder still carries, and the largest content that
   /// it refuses.
   func testSentContentIsHeldToItsLimit() throws {
-    let pane = ScriptPaneReference(window: 1, pane: 2)
+    let pane = ScriptTarget.pane(ScriptPaneReference(window: 1, pane: 2))
     let largest = Data(repeating: 0x61, count: ScriptProtocol.maxSendBytes)
 
     let message = ScriptHelperMessage.request(
@@ -277,27 +312,57 @@ extension ScriptCodecTests {
     }
   }
 
-  /// Catches a reader that guesses at a split axis or a tab flag it does not know.
+  /// Catches a reader that guesses at a split axis, a tab flag, a target form, or a pane access it
+  /// does not know.
   func testUnknownAxisAndFlagsAreRefused() {
     var axis = ByteWriter()
     axis.put(UInt32(1))
     axis.put(UInt16(4))
     axis.put(string: "terminal", limit: 32)
-    axis.put(reference: ScriptPaneReference(window: 1, pane: 2))
+    axis.put(target: .pane(ScriptPaneReference(window: 1, pane: 2)))
     axis.put(UInt8(3))
     axis.put(UInt8(0))
+    axis.put(UInt8(0))
 
-    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: axis.bytes))
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: axis.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("an unknown split axis"))
+    }
 
     var flag = ByteWriter()
     flag.put(UInt32(1))
     flag.put(UInt16(5))
+    flag.put(UInt8(0))
     flag.put(id: 1)
     flag.put(id: 2)
     flag.put(UInt8(2))
     flag.put(UInt8(0))
 
-    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: flag.bytes))
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: flag.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("a reference has an unknown tab flag"))
+    }
+
+    var form = ByteWriter()
+    form.put(UInt32(1))
+    form.put(UInt16(5))
+    form.put(UInt8(2))
+    form.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: form.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("a target has an unknown form"))
+    }
+
+    var access = ByteWriter()
+    access.put(UInt32(1))
+    access.put(UInt16(4))
+    access.put(string: "terminal", limit: 32)
+    access.put(target: .nearest(kind: "terminal"))
+    access.put(UInt8(0))
+    access.put(UInt8(0))
+    access.put(UInt8(2))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 3, body: access.bytes)) {
+      XCTAssertEqual($0 as? WireError, .badValue("an unknown pane access"))
+    }
   }
 
   /// Catches a reply value that does not survive the bytes the shim reads, including the largest
@@ -309,6 +374,9 @@ extension ScriptCodecTests {
       .bool(false),
       .integer(0),
       .integer(ScriptProtocol.maxID),
+      .number(-1.5),
+      .number(0.1),
+      .number(-Double.greatestFiniteMagnitude),
       .string(""),
       .string("caf\u{00E9} \u{1F600}"),
       .array([]),
@@ -325,12 +393,75 @@ extension ScriptCodecTests {
     }
   }
 
+  /// Catches a send-command whose arguments pass the bound, or whose schema version is past the
+  /// largest a script can name, being read as a call.
+  func testSendCommandBoundsAreRefusedWhenDecoded() {
+    var body = ByteWriter()
+
+    body.put(UInt16(7))
+    body.put(target: .nearest(kind: "fixture-slides"))
+    body.put(string: "fixture-slides", limit: ScriptProtocol.maxKindBytes)
+    body.put(UInt32(1))
+    body.put(string: "status", limit: ScriptProtocol.maxCommandNameBytes)
+    body.put(UInt32(ScriptProtocol.maxCommandArgumentBytes + 1))
+    body.put(raw: Data(repeating: 0x20, count: ScriptProtocol.maxCommandArgumentBytes + 1))
+
+    var reader = ByteReader(body.bytes)
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &reader))
+
+    var version = ByteWriter()
+
+    version.put(UInt16(7))
+    version.put(target: .nearest(kind: "fixture-slides"))
+    version.put(string: "fixture-slides", limit: ScriptProtocol.maxKindBytes)
+    version.put(UInt32(ScriptProtocol.maxSchemaVersion) + 1)
+    version.put(string: "status", limit: ScriptProtocol.maxCommandNameBytes)
+    version.put(UInt32(2))
+    version.put(raw: Data("{}".utf8))
+
+    var versionReader = ByteReader(version.bytes)
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &versionReader))
+  }
+
+  /// Catches a layout past its bound, or one whose length runs past the body, being read as a
+  /// call. A layout exactly at the bound is read.
+  func testRequestLayoutBoundsAreRefusedWhenDecoded() throws {
+    func body(declared: Int, actual: Int) -> Data {
+      var body = ByteWriter()
+
+      body.put(UInt16(8))
+      body.put(target: .nearest(kind: "terminal"))
+      body.put(UInt32(declared))
+      body.put(raw: Data(repeating: 0x20, count: actual))
+
+      return body.bytes
+    }
+
+    let limit = ScriptProtocol.maxLayoutBytes
+    var over = ByteReader(body(declared: limit + 1, actual: limit + 1))
+    var short = ByteReader(body(declared: 10, actual: 9))
+    var exact = ByteReader(body(declared: limit, actual: limit))
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &over))
+    XCTAssertThrowsError(try ScriptCall.decode(from: &short))
+
+    guard case .requestLayout(_, let layout) = try ScriptCall.decode(from: &exact) else {
+      return XCTFail("a layout at the bound was not read")
+    }
+
+    XCTAssertEqual(layout.utf8.count, limit)
+  }
+
   /// Catches a value the shim could not read being sent anyway: an integer a Janet number cannot
   /// hold, a key that is not a name, and nesting past the depth the shim allows.
   func testValuesThatCannotBeSentAreRefusedWhenEncoded() {
     XCTAssertThrowsError(try ScriptValue.integer(ScriptProtocol.maxID + 1).encoded())
     XCTAssertThrowsError(try ScriptValue.record(["two words": .null]).encoded())
     XCTAssertThrowsError(try ScriptValue.record(["": .null]).encoded())
+    XCTAssertThrowsError(try ScriptValue.number(.infinity).encoded())
+    XCTAssertThrowsError(try ScriptValue.number(.nan).encoded())
 
     var deep = ScriptValue.null
 

@@ -63,7 +63,46 @@ fixed ones.
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.
 
+### `BrowserUITests.testCommandWClosesTheTabAndCommandShiftTReopensIt`
+
+- Seen: 2026-11-12, once, as the first test of a full `make test-app`.
+- Evidence: `BrowserUITests.swift:166` failed with "Cmd-Shift-T brought no tab" after 49.8 seconds. The other 157
+  tests passed. `BrowserUITests` then passed 12 of 12 alone, this test in 11.6 seconds.
+- Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
+- Status: unresolved.
+
+### `LaunchOpenCoordinatorTests.testAPackageIsRefusedThroughTheLaunchServicesPath`
+
+- Seen: 2026-11-15, once, in the second CI `package` run of PR #49, which does not touch the launch-open code.
+- Evidence: `LaunchOpenCoordinatorTests.swift:280` found no failure message for the refused bundle. The same test passed
+  in the PR's first run.
+- Suspected cause: `settle()` yields a fixed number of times, as in the
+  `testABatchOpensOnePanePerFileAndSummarizesFailures` entry, so a slow runner asserts before the refusal lands. Not
+  confirmed.
+- Status: unresolved.
+
+### `TextViewerUITests.testAnEditedFileReloadsInPlaceAndByRename`
+
+- Seen: 2026-11-15, once, in the second CI `app` run of PR #49, which does not touch the open-panel helper.
+- Evidence: the shared open-panel helper at `UnitermUITestCase.swift:308` failed with "the go-to-folder sheet never
+  closed". The other 157 UI tests passed. `TextViewerUITests` then passed 13 of 13 alone. The same message failed
+  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` on PR #43's first CI run.
+- Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
+- Status: unresolved.
+
 ## Fixed
+
+### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
+
+Fixed by: "Measure the stalled-driver flood against the same clicks with no driver"
+
+- Seen: 2026-11-15, twice, in both CI `package` runs of PR #49, at 5.47 s and 8.62 s against a 5 s bound.
+- Evidence: locally the 20,000 clicks took 1.61 s with no driver and 1.72 s with the stalled one. The main thread's
+  turn came 11 ms after the flood.
+- Cause: the bound timed the clicks themselves, which AppKit makes cost about 80 µs each. A CI runner is several times
+  slower. The driver was right.
+- Fix: the test times the same clicks with no driver first, and the flood must cost less than twice that. A send made
+  to sleep 200 µs fails it, at 9.8 s against 3.2 s.
 
 ### `FileWatcherTests.testChangesToOtherFilesInTheFolderDeliverNothing`
 

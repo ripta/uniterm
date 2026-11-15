@@ -13,7 +13,9 @@ private final class RecordingEngine: TerminalEngine {
   var failure: (any Error)?
   var anySessionRunningSomething = false
 
-  func makeSession(launch: TerminalLaunch) throws -> any TerminalSession {
+  func makeSession(launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
+    -> any TerminalSession
+  {
     throw CocoaError(.featureUnsupported)
   }
 

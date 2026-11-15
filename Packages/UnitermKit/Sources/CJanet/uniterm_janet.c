@@ -256,7 +256,11 @@ enum {
     CALL_LIST_PANES = 3,
     CALL_OPEN_PANE = 4,
     CALL_OPEN_TAB = 5,
-    CALL_SEND = 6
+    CALL_SEND = 6,
+    CALL_SEND_COMMAND = 7,
+    CALL_REQUEST_LAYOUT = 8,
+    CALL_READ_CLIPBOARD = 9,
+    CALL_WRITE_CLIPBOARD = 10
 };
 
 /* The largest ID a script may hold. Every integer below it is exact in a double. */
@@ -265,6 +269,9 @@ enum {
 #define MAX_VALUE_STRING 4096
 #define MAX_VALUE_KEY 32
 #define MAX_VALUE_FIELDS 64
+#define MAX_JSON_DEPTH 16
+#define MAX_JSON_FIELDS 64
+#define MAX_SCHEMA_VERSION 2147483647.0
 
 static void put_u8(JanetBuffer *buffer, uint8_t value) {
     janet_buffer_push_u8(buffer, value);
@@ -390,6 +397,41 @@ static void put_pane_reference(JanetBuffer *buffer, Janet reference) {
     }
 }
 
+static void check_text(JanetString text, const char *what, int32_t limit, int forbid_slash);
+static void put_text(JanetBuffer *buffer, JanetString text);
+
+/*
+ * A target is a pane reference, or {:nearest kind} for the nearest pane of an applet type to the
+ * caller's own pane. The app picks the nearest pane among those the caller may control, in the
+ * caller's window, so a nearest target names no window.
+ */
+static void put_target(JanetBuffer *buffer, Janet reference) {
+    require_reference(reference);
+
+    Janet nearest = janet_get(reference, janet_ckeywordv("nearest"));
+
+    if (janet_checktype(nearest, JANET_NIL)) {
+        put_u8(buffer, 0);
+        put_pane_reference(buffer, reference);
+        return;
+    }
+
+    if (!janet_checktype(janet_get(reference, janet_ckeywordv("window")), JANET_NIL) ||
+        !janet_checktype(janet_get(reference, janet_ckeywordv("pane")), JANET_NIL)) {
+        janet_panic("a :nearest target names no :window or :pane");
+    }
+
+    if (!janet_checktype(nearest, JANET_KEYWORD)) {
+        janet_panic("the :nearest kind must be a keyword such as :browser");
+    }
+
+    JanetString kind = janet_unwrap_keyword(nearest);
+
+    check_text(kind, "the :nearest kind", UNITERM_JANET_MAX_KIND_BYTES, 1);
+    put_u8(buffer, 1);
+    put_text(buffer, kind);
+}
+
 static void check_text(JanetString text, const char *what, int32_t limit, int forbid_slash) {
     int32_t length = janet_string_length(text);
 
@@ -445,12 +487,15 @@ static void put_optional_directory(JanetBuffer *buffer, Janet value) {
 typedef struct call_options {
     Janet axis;
     Janet directory;
+    Janet control;
 } call_options;
 
+/* A call that splits takes :axis and :control too. Every call that opens takes :directory. */
 static call_options parse_options(int32_t argc, Janet *argv, int32_t first, int allow_axis) {
-    call_options options = {janet_wrap_nil(), janet_wrap_nil()};
+    call_options options = {janet_wrap_nil(), janet_wrap_nil(), janet_wrap_nil()};
     int seen_axis = 0;
     int seen_directory = 0;
+    int seen_control = 0;
 
     if ((argc - first) % 2 != 0) janet_panic("each option needs a value, as in :directory \"/tmp\"");
 
@@ -459,12 +504,16 @@ static call_options parse_options(int32_t argc, Janet *argv, int32_t first, int 
             if (seen_axis++) janet_panic("the :axis is given twice");
 
             options.axis = argv[index + 1];
+        } else if (allow_axis && janet_keyeq(argv[index], "control")) {
+            if (seen_control++) janet_panic("the :control is given twice");
+
+            options.control = argv[index + 1];
         } else if (janet_keyeq(argv[index], "directory")) {
             if (seen_directory++) janet_panic("the :directory is given twice");
 
             options.directory = argv[index + 1];
         } else {
-            janet_panic(allow_axis ? "the options are :axis and :directory"
+            janet_panic(allow_axis ? "the options are :axis, :control, and :directory"
                                    : "the only option is :directory");
         }
     }
@@ -492,6 +541,20 @@ static int skip_value(const uint8_t **cursor, const uint8_t *end, int depth) {
         for (int step = 0; step < 8; step++) value = (value << 8) | *(*cursor)++;
 
         return value <= (uint64_t)MAX_ID;
+    }
+
+    case 7: {
+        if (end - *cursor < 8) return 0;
+
+        uint64_t bits = 0;
+
+        for (int step = 0; step < 8; step++) bits = (bits << 8) | *(*cursor)++;
+
+        double number;
+
+        memcpy(&number, &bits, sizeof(number));
+
+        return isfinite(number);
     }
 
     case 4: {
@@ -586,6 +649,18 @@ static Janet decode_value(const uint8_t **cursor) {
         return janet_wrap_number((double)value);
     }
 
+    case 7: {
+        uint64_t bits = 0;
+
+        for (int step = 0; step < 8; step++) bits = (bits << 8) | *(*cursor)++;
+
+        double number;
+
+        memcpy(&number, &bits, sizeof(number));
+
+        return janet_wrap_number(number);
+    }
+
     case 4: {
         uint32_t length = 0;
 
@@ -636,8 +711,27 @@ static Janet decode_value(const uint8_t **cursor) {
     }
 }
 
-/* Runs one call through the host and turns its reply into a Janet value. */
-static Janet invoke(JanetBuffer *request) {
+/* The keyword a failure kind from the app goes by in a structured error. */
+static const char *failure_kind_name(int32_t status) {
+    switch (status - UNITERM_JANET_APP_FAILURE_BASE) {
+    case 1: return "bad-argument";
+    case 2: return "refused";
+    case 4: return "not-found";
+    case 5: return "unsupported";
+    case 6: return "reply-lost";
+    case 7: return "busy";
+    default: return "failed";
+    }
+}
+
+/*
+ * Runs one call through the host and turns its reply into a Janet value. A failure raises the
+ * app's text. With `structured`, it raises a struct of :kind and :message instead, so a script
+ * can tell a refusal from its own mistake without reading the words. With `raw`, the reply is not
+ * a value: its first byte is 1 when text follows and 0 when there is none, and the text is
+ * returned as a string of any length the frame holds.
+ */
+static Janet invoke_reply(JanetBuffer *request, int structured, int raw) {
     const uniterm_host *host = active_host;
 
     if (host == NULL || host->call == NULL) janet_panic("this function is not available");
@@ -655,7 +749,37 @@ static Janet invoke(JanetBuffer *request) {
 
     if (status != 0) {
         free(reply);
-        janet_panicf("%s", error[0] != '\0' ? error : "the host refused the call");
+
+        const char *text = error[0] != '\0' ? error : "the host refused the call";
+
+        if (structured) {
+            JanetKV *record = janet_struct_begin(2);
+
+            janet_struct_put(record, janet_ckeywordv("kind"),
+                             janet_ckeywordv(failure_kind_name(status)));
+            janet_struct_put(record, janet_ckeywordv("message"), janet_cstringv(text));
+            janet_panicv(janet_wrap_struct(janet_struct_end(record)));
+        }
+
+        janet_panicf("%s", text);
+    }
+
+    if (raw) {
+        int readable = reply != NULL && reply_length > 0 && reply[0] <= 1
+                       && (reply[0] == 1 || reply_length == 1)
+                       && valid_utf8(reply + 1, (int32_t)(reply_length - 1));
+
+        if (!readable) {
+            free(reply);
+            janet_panic("uniterm sent a reply that could not be read");
+        }
+
+        Janet text = reply[0] == 1 ? janet_stringv(reply + 1, (int32_t)(reply_length - 1))
+                                   : janet_wrap_nil();
+
+        free(reply);
+
+        return text;
     }
 
     if (reply == NULL || reply_length == 0) {
@@ -680,6 +804,14 @@ static Janet invoke(JanetBuffer *request) {
     free(reply);
 
     return value;
+}
+
+static Janet invoke_call(JanetBuffer *request, int structured) {
+    return invoke_reply(request, structured, 0);
+}
+
+static Janet invoke(JanetBuffer *request) {
+    return invoke_call(request, 0);
 }
 
 static Janet cfun_list_windows(int32_t argc, Janet *argv) {
@@ -720,7 +852,7 @@ static Janet cfun_open_pane(int32_t argc, Janet *argv) {
 
     put_u16(request, CALL_OPEN_PANE);
     put_text(request, kind);
-    put_pane_reference(request, argv[1]);
+    put_target(request, argv[1]);
 
     if (janet_checktype(options.axis, JANET_NIL)) {
         put_u8(request, 0);
@@ -734,6 +866,14 @@ static Janet cfun_open_pane(int32_t argc, Janet *argv) {
 
     put_optional_directory(request, options.directory);
 
+    if (janet_checktype(options.control, JANET_NIL) || janet_keyeq(options.control, "disconnected")) {
+        put_u8(request, 0);
+    } else if (janet_keyeq(options.control, "remote-controlled")) {
+        put_u8(request, 1);
+    } else {
+        janet_panic("the :control must be :disconnected or :remote-controlled");
+    }
+
     return invoke(request);
 }
 
@@ -744,7 +884,7 @@ static Janet cfun_open_tab(int32_t argc, Janet *argv) {
     JanetBuffer *request = janet_buffer(64);
 
     put_u16(request, CALL_OPEN_TAB);
-    put_pane_reference(request, argv[0]);
+    put_target(request, argv[0]);
     put_optional_directory(request, options.directory);
 
     return invoke(request);
@@ -784,11 +924,291 @@ static Janet cfun_send(int32_t argc, Janet *argv) {
     JanetBuffer *request = janet_buffer(length + 64);
 
     put_u16(request, CALL_SEND);
-    put_pane_reference(request, argv[0]);
+    put_target(request, argv[0]);
     put_text(request, name);
     janet_buffer_push_bytes(request, bytes, length);
 
     return invoke(request);
+}
+
+/* Names what the JSON writer writes, such as "the arguments", in its errors, and holds its limit. */
+typedef struct json_context {
+    const char *what;
+    int32_t limit;
+} json_context;
+
+static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length,
+                      const json_context *context) {
+    if (!valid_utf8(text, length)) janet_panicf("a string in %s is not UTF-8", context->what);
+
+    janet_buffer_push_u8(out, '"');
+
+    for (int32_t index = 0; index < length; index++) {
+        uint8_t byte = text[index];
+
+        if (byte == '"' || byte == '\\') {
+            janet_buffer_push_u8(out, '\\');
+            janet_buffer_push_u8(out, byte);
+        } else if (byte < 0x20) {
+            char escaped[8];
+
+            snprintf(escaped, sizeof(escaped), "\\u%04x", byte);
+            janet_buffer_push_cstring(out, escaped);
+        } else {
+            janet_buffer_push_u8(out, byte);
+        }
+    }
+
+    janet_buffer_push_u8(out, '"');
+}
+
+static void json_too_large(const json_context *context) {
+    janet_panicf("%s would be more than %d bytes as JSON", context->what, context->limit);
+}
+
+/*
+ * Writes a Janet value as JSON, for an applet command's arguments or a layout. A struct or table
+ * becomes an object whose keys are keywords or strings, an array or tuple becomes an array, and a
+ * keyword value becomes a string. Anything else, a number that is not finite, text that is not
+ * UTF-8, a repeated key, or a value past the bounds is the script's mistake, and nothing is sent.
+ */
+static void json_value(JanetBuffer *out, Janet value, int depth, const json_context *context) {
+    if (depth > MAX_JSON_DEPTH) janet_panicf("too many levels of nesting in %s", context->what);
+
+    if (out->count > context->limit) json_too_large(context);
+
+    switch (janet_type(value)) {
+    case JANET_NIL:
+        janet_buffer_push_cstring(out, "null");
+        return;
+
+    case JANET_BOOLEAN:
+        janet_buffer_push_cstring(out, janet_unwrap_boolean(value) ? "true" : "false");
+        return;
+
+    case JANET_NUMBER: {
+        double number = janet_unwrap_number(value);
+        char text[40];
+
+        if (!isfinite(number)) janet_panicf("a number in %s is not finite", context->what);
+
+        if (number == floor(number) && fabs(number) <= MAX_ID) {
+            snprintf(text, sizeof(text), "%.0f", number);
+        } else {
+            snprintf(text, sizeof(text), "%.17g", number);
+        }
+
+        janet_buffer_push_cstring(out, text);
+        return;
+    }
+
+    case JANET_STRING:
+    case JANET_KEYWORD:
+    case JANET_SYMBOL: {
+        const uint8_t *text = janet_unwrap_string(value);
+
+        json_text(out, text, janet_string_length(text), context);
+        return;
+    }
+
+    case JANET_BUFFER: {
+        JanetBuffer *buffer = janet_unwrap_buffer(value);
+
+        json_text(out, buffer->data, buffer->count, context);
+        return;
+    }
+
+    case JANET_ARRAY:
+    case JANET_TUPLE: {
+        const Janet *items = NULL;
+        int32_t count = 0;
+
+        janet_indexed_view(value, &items, &count);
+        janet_buffer_push_u8(out, '[');
+
+        for (int32_t index = 0; index < count; index++) {
+            if (index > 0) janet_buffer_push_u8(out, ',');
+
+            json_value(out, items[index], depth + 1, context);
+        }
+
+        janet_buffer_push_u8(out, ']');
+        return;
+    }
+
+    case JANET_STRUCT:
+    case JANET_TABLE: {
+        const JanetKV *entries = NULL;
+        int32_t count = 0;
+        int32_t capacity = 0;
+        const uint8_t *keys[MAX_JSON_FIELDS];
+        int32_t key_lengths[MAX_JSON_FIELDS];
+        int32_t written = 0;
+
+        janet_dictionary_view(value, &entries, &count, &capacity);
+
+        if (count > MAX_JSON_FIELDS) {
+            janet_panicf("an object in %s has more than %d fields", context->what, MAX_JSON_FIELDS);
+        }
+
+        janet_buffer_push_u8(out, '{');
+
+        for (const JanetKV *entry = janet_dictionary_next(entries, capacity, NULL); entry != NULL;
+             entry = janet_dictionary_next(entries, capacity, entry)) {
+            if (!janet_checktypes(entry->key, JANET_TFLAG_KEYWORD | JANET_TFLAG_STRING)) {
+                janet_panicf("a key in %s must be a keyword or a string", context->what);
+            }
+
+            const uint8_t *key = janet_unwrap_string(entry->key);
+            int32_t length = janet_string_length(key);
+
+            for (int32_t earlier = 0; earlier < written; earlier++) {
+                if (key_lengths[earlier] == length && memcmp(keys[earlier], key, (size_t)length) == 0) {
+                    janet_panicf("a key in %s is given twice", context->what);
+                }
+            }
+
+            keys[written] = key;
+            key_lengths[written] = length;
+
+            if (written > 0) janet_buffer_push_u8(out, ',');
+
+            written++;
+            json_text(out, key, length, context);
+            janet_buffer_push_u8(out, ':');
+            json_value(out, entry->value, depth + 1, context);
+        }
+
+        janet_buffer_push_u8(out, '}');
+        return;
+    }
+
+    default:
+        janet_panicf("%s cannot hold a %T", context->what, value);
+    }
+}
+
+/* Writes a struct or table as one JSON object, within the context's limit. */
+static JanetBuffer *json_object(Janet value, const json_context *context) {
+    JanetBuffer *json = janet_buffer(64);
+
+    json_value(json, value, 0, context);
+
+    if (json->count > context->limit) json_too_large(context);
+
+    return json;
+}
+
+static Janet cfun_send_command(int32_t argc, Janet *argv) {
+    janet_arity(argc, 4, 5);
+
+    if (!janet_checktype(argv[1], JANET_KEYWORD)) {
+        janet_panic("the applet type must be a keyword such as :fixture-slides");
+    }
+
+    JanetString type = janet_unwrap_keyword(argv[1]);
+
+    check_text(type, "the applet type", UNITERM_JANET_MAX_KIND_BYTES, 1);
+
+    if (!janet_checktype(argv[2], JANET_NUMBER)) janet_panic("the schema version must be a number");
+
+    double version = janet_unwrap_number(argv[2]);
+
+    if (!isfinite(version) || version != floor(version) || version < 0 ||
+        version > MAX_SCHEMA_VERSION) {
+        janet_panic("the schema version must be a whole number that is not negative");
+    }
+
+    if (!janet_checktypes(argv[3], JANET_TFLAG_KEYWORD | JANET_TFLAG_STRING)) {
+        janet_panic("the command must be a keyword or a string such as :show-slide");
+    }
+
+    JanetString command = janet_unwrap_string(argv[3]);
+
+    check_text(command, "the command", UNITERM_JANET_MAX_COMMAND_NAME_BYTES, 1);
+
+    Janet arguments = argc > 4 ? argv[4] : janet_wrap_nil();
+    json_context context = {"the arguments", UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES};
+    JanetBuffer *json;
+
+    if (janet_checktype(arguments, JANET_NIL)) {
+        json = janet_buffer(4);
+        janet_buffer_push_cstring(json, "{}");
+    } else if (janet_checktypes(arguments, JANET_TFLAG_STRUCT | JANET_TFLAG_TABLE)) {
+        json = json_object(arguments, &context);
+    } else {
+        janet_panic("the arguments must be a struct or a table");
+    }
+
+    JanetBuffer *request = janet_buffer(json->count + 128);
+
+    put_u16(request, CALL_SEND_COMMAND);
+    put_target(request, argv[0]);
+    put_text(request, type);
+    put_u32(request, (uint32_t)version);
+    put_text(request, command);
+    put_u32(request, (uint32_t)json->count);
+    janet_buffer_push_bytes(request, json->data, json->count);
+
+    return invoke_call(request, 1);
+}
+
+/*
+ * A layout is a struct or table the app reads as JSON: {:split :row :children [...]} for a split,
+ * {:pane id} for a pane already open, and {:open kind ...} for a new one. The shim checks only
+ * that it is data it can write. The app checks its meaning, since the app trusts no helper.
+ */
+static Janet cfun_request_layout(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 2);
+
+    if (!janet_checktypes(argv[1], JANET_TFLAG_STRUCT | JANET_TFLAG_TABLE)) {
+        janet_panic("the layout must be a struct or a table such as {:split :row :children [...]}");
+    }
+
+    json_context context = {"the layout", UNITERM_JANET_MAX_LAYOUT_BYTES};
+    JanetBuffer *json = json_object(argv[1], &context);
+    JanetBuffer *request = janet_buffer(json->count + 64);
+
+    put_u16(request, CALL_REQUEST_LAYOUT);
+    put_target(request, argv[0]);
+    put_u32(request, (uint32_t)json->count);
+    janet_buffer_push_bytes(request, json->data, json->count);
+
+    return invoke_call(request, 1);
+}
+
+static Janet cfun_read_clipboard(int32_t argc, Janet *argv) {
+    (void)argv;
+    janet_fixarity(argc, 0);
+
+    JanetBuffer *request = janet_buffer(8);
+
+    put_u16(request, CALL_READ_CLIPBOARD);
+
+    return invoke_reply(request, 1, 1);
+}
+
+/* The text may be empty. A longer text is refused rather than cut, so the clipboard never holds
+ * a part of what the script meant. */
+static Janet cfun_write_clipboard(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    JanetString text = janet_getstring(argv, 0);
+    int32_t length = janet_string_length(text);
+
+    if (length > UNITERM_JANET_MAX_CLIPBOARD_BYTES) {
+        janet_panicf("the text is %d bytes, and the most is %d", length,
+                     UNITERM_JANET_MAX_CLIPBOARD_BYTES);
+    }
+
+    if (!valid_utf8(text, length)) janet_panic("the text is not UTF-8");
+
+    JanetBuffer *request = janet_buffer(length + 8);
+
+    put_u16(request, CALL_WRITE_CLIPBOARD);
+    put_text(request, text);
+
+    return invoke_call(request, 1);
 }
 
 static const JanetReg uniterm_cfuns[] = {
@@ -799,25 +1219,60 @@ static const JanetReg uniterm_cfuns[] = {
      "(uniterm/post-status level text)\n\nPosts a message to the status bar. The level is "
      ":info, :warning, or :error."},
     {"list-windows", cfun_list_windows,
-     "(uniterm/list-windows)\n\nReturns the open windows, oldest first, as an array of "
-     "{:window id :title text :key bool}."},
+     "(uniterm/list-windows)\n\nReturns the script's own window as an array of one "
+     "{:window id :pane id :control mode}, with :title and :key when its pane is "
+     "remote-controlled. A script outside any pane gets an error."},
     {"list-panes", cfun_list_panes,
-     "(uniterm/list-panes window)\n\nReturns the panes of a window as an array of structs with "
-     ":window, :pane, :applet, :title, :focused, :tabs, and :directory when the applet reports "
-     "one. Returns nil when the window is not open."},
+     "(uniterm/list-panes window)\n\nReturns the panes the script may control in its own window "
+     "as an array of structs with :window, :pane, :applet, :control, :title, :focused, :tabs, and "
+     ":directory when the applet reports one. Returns nil for any other window."},
     {"open-pane", cfun_open_pane,
-     "(uniterm/open-pane kind pane &named axis directory)\n\nSplits a pane and starts an applet "
-     "in the new one. The kind is :terminal, :data-viewer, :map-viewer, :image-viewer, "
-     ":text-viewer, or :browser. The axis is :row or :column. The directory is an absolute path, "
-     "and defaults to the one the pane reports. Returns the new pane's reference."},
+     "(uniterm/open-pane kind pane &named axis control directory)\n\nSplits a pane the script "
+     "may control and starts an applet in the new one, in the script's group. The kind is "
+     ":terminal, :data-viewer, :map-viewer, :image-viewer, :text-viewer, or :browser. The axis "
+     "is :row or :column. The control is :disconnected, the default, or :remote-controlled. The "
+     "directory is an absolute path, and defaults to the one the pane reports. The pane may be "
+     "{:nearest kind}. Returns the new pane's reference."},
     {"open-tab", cfun_open_tab,
      "(uniterm/open-tab pane &named directory)\n\nOpens a tab in a pane that has tabs and "
      "returns the tab's reference. The directory is an absolute path, and defaults to the one the "
-     "pane reports."},
+     "pane reports. The pane may be {:nearest kind}."},
     {"send", cfun_send,
      "(uniterm/send pane name content)\n\nSends content to a viewer pane. The name is a file "
      "name such as \"report.csv\", and its extension picks how the viewer reads the content. "
-     "The pane of a terminal refuses it."},
+     "The pane of a terminal refuses it. The pane may be {:nearest kind}, such as "
+     "{:nearest :data-viewer}."},
+    {"send-command", cfun_send_command,
+     "(uniterm/send-command pane applet-type schema-version command &opt arguments)\n\nSends one "
+     "command to the applet of a pane the script may control, and returns the applet's reply. "
+     "The applet type and the command schema version are the ones the script was written for, "
+     "and a pane that does not support them refuses. The command is a keyword or a string, and "
+     "the arguments a struct or a table. A failure raises a struct of :kind and :message, where "
+     ":kind is :bad-argument, :refused, :not-found, :unsupported, or :failed, or :reply-lost "
+     "when the command ran and its reply could not reach the script. The pane may be "
+     "{:nearest kind}."},
+    {"request-layout", cfun_request_layout,
+     "(uniterm/request-layout pane layout)\n\nLays out the script's own subtree, starting from a "
+     "pane the script may control, and returns {:window id :panes [...]} with one reference for "
+     "each leaf of the layout, in order. A split is {:split :row or :column :children [...]}, an "
+     "open pane is {:pane id}, and a new pane is {:open kind} with :control, :directory, and :exec "
+     "{:argv [...] :directory path :environment-keys [...]} as options. Any node may take "
+     ":weight. The first layout holds the starting pane and new panes, and wraps them in a group "
+     "the script owns. A later one from the same pane places every pane of that group once. A "
+     "driver a layout declares runs only once the user chooses Run. A failure raises a struct of "
+     ":kind and :message, and nothing changes. The kind is :busy while another layout from the "
+     "script is still being prepared."},
+    {"read-clipboard", cfun_read_clipboard,
+     "(uniterm/read-clipboard)\n\nReturns the clipboard's plain text, or nil when it holds none. "
+     "Reading is a permission of its own, apart from writing and from pane control. The user "
+     "approves it in uniterm, and the call waits until the user answers. A failure raises a struct "
+     "of :kind and :message, where :kind is :refused when the user denied it or the script may not "
+     "ask, :busy while too many of the script's requests wait, or :failed."},
+    {"write-clipboard", cfun_write_clipboard,
+     "(uniterm/write-clipboard text)\n\nReplaces the clipboard with plain text, at most 32 KiB. "
+     "Writing is a permission of its own, apart from reading and from pane control. The user "
+     "approves it in uniterm, and the call waits until the user answers. A failure raises a struct "
+     "of :kind and :message, as uniterm/read-clipboard does, and leaves the clipboard as it was."},
     {NULL, NULL, NULL}};
 
 /*
@@ -1079,15 +1534,301 @@ static uniterm_script_status evaluate(JanetTable *env, const char *name, const u
     return result;
 }
 
+static uniterm_script_status run_entry(const uniterm_host *host, const char *name,
+                                       const uint8_t *source, size_t length,
+                                       const uniterm_package *package, uint32_t sandbox_flags,
+                                       const char *const *arguments, size_t argument_count,
+                                       uniterm_script_failure *failure);
+
+/* A plain script keeps Janet's own module paths and loaders. */
+uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *name,
+                                        const uint8_t *source, size_t length,
+                                        uint32_t sandbox_flags, const char *const *arguments,
+                                        size_t argument_count, uniterm_script_failure *failure) {
+    return run_entry(host, name, source, length, NULL, sandbox_flags, arguments, argument_count,
+                     failure);
+}
+
+/*
+ * The package loader.
+ *
+ * One package runs per VM, on the VM's thread, so its files are kept in statics for the run. The
+ * resolver and the loader are host functions with names no script would choose, reached through
+ * the one module path and the one loader this file installs. A script that calls them directly
+ * gets nothing the import could not give it.
+ */
+static const uniterm_package *active_package;
+static JanetTable *package_env;
+
+static int package_index(const char *name) {
+    if (active_package == NULL) return -1;
+
+    for (size_t index = 0; index < active_package->count; index++) {
+        if (strcmp(active_package->names[index], name) == 0) return (int)index;
+    }
+
+    return -1;
+}
+
+/*
+ * Joins `base`, the importing file's folder, with a relative import path, folding `.` and `..`.
+ * Returns 0 and leaves `out` empty when the path climbs out of the package or does not fit.
+ */
+static int package_join(const char *base, const char *relative, char *out, size_t capacity) {
+    char joined[1024];
+    int written = snprintf(joined, sizeof(joined), "%s%s%s", base, base[0] ? "/" : "", relative);
+
+    out[0] = '\0';
+
+    if (written < 0 || (size_t)written >= sizeof(joined)) return 0;
+
+    const char *parts[64];
+    size_t lengths[64];
+    size_t depth = 0;
+    const char *cursor = joined;
+
+    while (*cursor) {
+        const char *end = strchr(cursor, '/');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+
+        if (length == 0 || (length == 1 && cursor[0] == '.')) {
+        } else if (length == 2 && cursor[0] == '.' && cursor[1] == '.') {
+            if (depth == 0) return 0;
+
+            depth--;
+        } else {
+            if (depth == 64) return 0;
+
+            parts[depth] = cursor;
+            lengths[depth] = length;
+            depth++;
+        }
+
+        if (!end) break;
+
+        cursor = end + 1;
+    }
+
+    size_t used = 0;
+
+    for (size_t index = 0; index < depth; index++) {
+        if (used + lengths[index] + 2 > capacity) return 0;
+
+        if (index > 0) out[used++] = '/';
+
+        memcpy(out + used, parts[index], lengths[index]);
+        used += lengths[index];
+    }
+
+    out[used] = '\0';
+
+    return used > 0;
+}
+
+/*
+ * The one module path. `uniterm` is the bundled module. A path that starts with ./ or ../ is a
+ * file of the package, as `<path>.janet` or `<path>/init.janet`. Anything else, such as a bare
+ * name Janet would look for on its system path or an absolute path, finds nothing.
+ */
+static Janet cfun_package_resolve(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    const char *path = (const char *)janet_getstring(argv, 0);
+
+    if (strcmp(path, "uniterm") == 0) return janet_cstringv("uniterm");
+
+    if (strncmp(path, "./", 2) != 0 && strncmp(path, "../", 3) != 0) return janet_wrap_nil();
+
+    char base[1024] = "";
+    Janet current = janet_dyn("current-file");
+
+    if (janet_checktype(current, JANET_STRING)) {
+        const char *file = (const char *)janet_unwrap_string(current);
+        const char *slash = strrchr(file, '/');
+
+        if (slash != NULL && (size_t)(slash - file) < sizeof(base)) {
+            memcpy(base, file, (size_t)(slash - file));
+            base[slash - file] = '\0';
+        }
+    }
+
+    char joined[1024];
+
+    if (!package_join(base, path, joined, sizeof(joined) - 16)) return janet_wrap_nil();
+
+    static const char *const suffixes[] = {".janet", "/init.janet"};
+    char candidate[1040];
+
+    for (size_t index = 0; index < 2; index++) {
+        snprintf(candidate, sizeof(candidate), "%s%s", joined, suffixes[index]);
+
+        if (package_index(candidate) >= 0) return janet_cstringv(candidate);
+    }
+
+    return janet_wrap_nil();
+}
+
+/*
+ * The one module loader. It runs a package file in a fresh environment whose current file is the
+ * file's packaged path, as Janet's own source loader does, and returns that environment. A failure
+ * in the module raises in the importing code.
+ */
+static Janet cfun_package_load(int32_t argc, Janet *argv) {
+    janet_arity(argc, 1, -1);
+
+    const char *name = (const char *)janet_getstring(argv, 0);
+    int index = package_index(name);
+
+    if (index < 0 || package_env == NULL) janet_panicf("%s is not a file of the package", name);
+
+    JanetTable *env = janet_table(0);
+
+    env->proto = package_env;
+    janet_table_put(env, janet_ckeywordv("current-file"), janet_cstringv(name));
+    janet_table_put(env, janet_ckeywordv("source"), janet_cstringv(name));
+
+    Janet rooted = janet_wrap_table(env);
+
+    janet_gcroot(rooted);
+
+    const uint8_t *source = active_package->sources[index];
+    size_t length = active_package->lengths[index];
+    JanetParser *parser = janet_abstract(&janet_parser_type, sizeof(JanetParser));
+    Janet parser_value = janet_wrap_abstract(parser);
+    JanetString where = janet_cstring(name);
+    Janet where_value = janet_wrap_string(where);
+    size_t offset = 0;
+    JanetSignal failed = JANET_SIGNAL_OK;
+    Janet failure = janet_wrap_nil();
+
+    janet_gcroot(parser_value);
+    janet_gcroot(where_value);
+    janet_parser_init(parser);
+
+    while (failed == JANET_SIGNAL_OK) {
+        while (failed == JANET_SIGNAL_OK && janet_parser_has_more(parser)) {
+            Janet form = janet_parser_produce(parser);
+            JanetCompileResult compiled = janet_compile(form, env, where);
+
+            if (compiled.status != JANET_COMPILE_OK) {
+                failure = janet_wrap_string(janet_formatc("%s:%d:%d: compile error: %S", name,
+                                                          compiled.error_mapping.line,
+                                                          compiled.error_mapping.column,
+                                                          compiled.error));
+                failed = JANET_SIGNAL_ERROR;
+
+                break;
+            }
+
+            JanetFiber *fiber = janet_fiber(janet_thunk(compiled.funcdef), 64, 0, NULL);
+            Janet value = janet_wrap_nil();
+
+            fiber->env = env;
+
+            JanetSignal signal = janet_continue(fiber, janet_wrap_nil(), &value);
+
+            if (signal != JANET_SIGNAL_OK && signal != JANET_SIGNAL_EVENT) {
+                failed = signal == JANET_SIGNAL_INTERRUPT ? JANET_SIGNAL_INTERRUPT
+                                                          : JANET_SIGNAL_ERROR;
+                failure = value;
+            }
+        }
+
+        if (failed != JANET_SIGNAL_OK) break;
+
+        enum JanetParserStatus status = janet_parser_status(parser);
+
+        if (status == JANET_PARSE_DEAD) break;
+
+        if (status == JANET_PARSE_ERROR) {
+            failure = janet_wrap_string(janet_formatc("%s:%d:%d: parse error: %s", name,
+                                                      (int32_t)parser->line,
+                                                      (int32_t)parser->column,
+                                                      janet_parser_error(parser)));
+            failed = JANET_SIGNAL_ERROR;
+
+            break;
+        }
+
+        if (offset >= length) {
+            janet_parser_eof(parser);
+        } else {
+            janet_parser_consume(parser, source[offset++]);
+        }
+    }
+
+    janet_gcunroot(parser_value);
+    janet_gcunroot(where_value);
+    janet_gcunroot(rooted);
+
+    if (failed != JANET_SIGNAL_OK) janet_signalv(failed, failure);
+
+    return janet_wrap_table(env);
+}
+
+static const JanetReg package_cfuns[] = {
+    {"_uniterm/package-resolve", cfun_package_resolve, NULL},
+    {"_uniterm/package-load", cfun_package_load, NULL},
+    {NULL, NULL, NULL}};
+
+/*
+ * Replaces Janet's module paths and loaders with the package's, in the arrays every import reads.
+ * Janet's source, native, and image loaders are removed, not only bypassed.
+ */
+static void install_package_loader(JanetTable *env) {
+    janet_cfuns(env, NULL, package_cfuns);
+
+    static const char setup[] =
+        "(array/clear module/paths)\n"
+        "(array/push module/paths [(fn [path] (_uniterm/package-resolve path)) :uniterm-package])\n"
+        "(each loader (keys module/loaders) (put module/loaders loader nil))\n"
+        "(put module/loaders :uniterm-package (fn [path & _] (_uniterm/package-load path)))\n";
+    Janet ignored;
+
+    if (janet_dostring(env, setup, "uniterm-package-loader", &ignored) != 0) {
+        janet_panic("the package loader did not install");
+    }
+}
+
+uniterm_script_status uniterm_janet_run_package(const uniterm_host *host, const char *entry,
+                                                const uniterm_package *package,
+                                                uint32_t sandbox_flags,
+                                                const char *const *arguments,
+                                                size_t argument_count,
+                                                uniterm_script_failure *failure) {
+    memset(failure, 0, sizeof(*failure));
+
+    active_package = package;
+
+    int index = package_index(entry);
+
+    if (index < 0) {
+        active_package = NULL;
+        fill_failure(failure, 0, 0, "the entry is not a file of the package");
+
+        return UNITERM_SCRIPT_START_FAILED;
+    }
+
+    uniterm_script_status status =
+        run_entry(host, entry, package->sources[index], package->lengths[index], package,
+                  sandbox_flags, arguments, argument_count, failure);
+
+    active_package = NULL;
+    package_env = NULL;
+
+    return status;
+}
+
 /*
  * Every entry into Janet happens under one boundary. A panic in the core environment, the module
  * registration, or the evaluation lands here and comes back as a failure, so a longjmp never
  * leaves this function.
  */
-uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *name,
-                                        const uint8_t *source, size_t length,
-                                        uint32_t sandbox_flags, const char *const *arguments,
-                                        size_t argument_count, uniterm_script_failure *failure) {
+static uniterm_script_status run_entry(const uniterm_host *host, const char *name,
+                                       const uint8_t *source, size_t length,
+                                       const uniterm_package *package, uint32_t sandbox_flags,
+                                       const char *const *arguments, size_t argument_count,
+                                       uniterm_script_failure *failure) {
     memset(failure, 0, sizeof(*failure));
 
     if (janet_init() != 0) {
@@ -1114,6 +1855,13 @@ uniterm_script_status uniterm_janet_run(const uniterm_host *host, const char *na
         }
 
         janet_table_put(env, janet_ckeywordv("args"), janet_wrap_array(args));
+
+        if (package != NULL) {
+            package_env = env;
+            janet_table_put(env, janet_ckeywordv("current-file"), janet_cstringv(name));
+            install_package_loader(env);
+        }
+
         janet_sandbox(sandbox_flags);
 
         if (run_sigint_requested) {

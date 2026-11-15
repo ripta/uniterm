@@ -66,10 +66,14 @@ final class ReplUITests: UnitermUITestCase {
 
   /// Catches a REPL that does not evaluate what is typed, one whose host calls do not reach the
   /// app, and one whose results never reach the screen. A sum prints, a status post reaches the
-  /// status bar, and a listing through the host API counts the window's two panes.
+  /// status bar, and a listing through the host API counts the one pane the REPL may control: its
+  /// own, once the user enables it. The shell's pane beside it is not the REPL's.
   func testTypingAnExpressionShowsItsResultAndHostCallsTakeEffect() {
     let app = launchApp()
     let (window, terminal) = openRepl(in: app)
+
+    enableRemoteControl(pane: 2, in: app)
+    terminal.click()
 
     app.typeText("(+ 1 2)\n")
     XCTAssertTrue(
@@ -85,7 +89,7 @@ final class ReplUITests: UnitermUITestCase {
 
     app.typeText("(length (uniterm/list-panes (first (uniterm/list-windows))))\n")
     XCTAssertTrue(
-      waitFor(terminal, timeout: 20) { self.hasLine("2", in: $0) },
+      waitFor(terminal, timeout: 20) { self.hasLine("1", in: $0) },
       "the listing through the host API never printed")
   }
 
@@ -209,12 +213,15 @@ final class ReplUITests: UnitermUITestCase {
   }
 
   /// Catches a history that does not survive close and undo, a restore that runs a saved line, and
-  /// a restored REPL that cannot recall. The first line opens a pane through the host API, and a
-  /// repeat would make a fourth. After Cmd-W and Cmd-Shift-T the REPL is back with a fresh helper,
+  /// a restored REPL that cannot recall. The user enables the REPL's pane, and the first line opens
+  /// a pane beside it through the host API. A repeat would make a fourth. After Cmd-W and Cmd-Shift-T the REPL is back with a fresh helper,
   /// no pane was opened again, and Up Arrow recalls the newest line.
   func testHistorySurvivesCloseAndUndoWithoutRunningAgain() throws {
     let app = launchApp()
     let (window, terminal) = openRepl(in: app)
+
+    enableRemoteControl(pane: 2, in: app)
+    terminal.click()
 
     app.typeText(
       "(uniterm/open-pane :text-viewer (first (uniterm/list-panes (first (uniterm/list-windows)))))\n"

@@ -14,7 +14,7 @@ enum StandardCommands {
   private static let commandOption: NSEvent.ModifierFlags = [.command, .option]
 
   static func make(app: AppCommandHooks) -> [Command] {
-    appCommands(app) + paneCommands() + windowCommands()
+    appCommands(app) + paneCommands() + windowCommands(app)
   }
 
   private static func appCommands(_ app: AppCommandHooks) -> [Command] {
@@ -85,6 +85,18 @@ enum StandardCommands {
           context.controller?.reopenClosed()
         }
       ),
+      control(
+        .enableRemoteControl, "Enable Remote Control",
+        isAvailable: { $0.controller?.canEnableRemoteControl($0.pane) == true },
+        run: { $0.controller?.enableRemoteControl($0.pane) }),
+      control(
+        .disconnectPane, "Disconnect Pane",
+        isAvailable: { $0.controller?.canDisconnect($0.pane) == true },
+        run: { $0.controller?.disconnect($0.pane) }),
+      control(
+        .revokeController, "Revoke Controller",
+        isAvailable: { $0.controller?.canRevokeController($0.pane) == true },
+        run: { $0.controller?.revokeController($0.pane) }),
       focus(.focusNextPane, "Focus Next Pane", KeyChord("]"), .next, 2),
       focus(.focusPreviousPane, "Focus Previous Pane", KeyChord("["), .previous, 2),
       focus(.focusPaneLeft, "Focus Pane Left", arrow(NSLeftArrowFunctionKey), .toward(.left), 3),
@@ -93,6 +105,17 @@ enum StandardCommands {
       focus(.focusPaneUp, "Focus Pane Up", arrow(NSUpArrowFunctionKey), .toward(.up), 3),
       focus(.focusPaneDown, "Focus Pane Down", arrow(NSDownArrowFunctionKey), .toward(.down), 3),
     ]
+  }
+
+  /// The control actions have no key, so no input an applet takes can trigger them. They stay
+  /// available while a sheet shows, since none of them changes the pane tree.
+  private static func control(
+    _ id: CommandID, _ title: String, isAvailable: @escaping @MainActor (CommandContext) -> Bool,
+    run: @escaping @MainActor (CommandContext) -> Void
+  ) -> Command {
+    Command(
+      id, title, scope: .pane, menu: MenuPlacement(.file, section: 3), isAvailable: isAvailable,
+      run: run)
   }
 
   private static func arrow(_ code: Int) -> KeyChord {
@@ -116,7 +139,7 @@ enum StandardCommands {
     }
   }
 
-  private static func windowCommands() -> [Command] {
+  private static func windowCommands(_ app: AppCommandHooks) -> [Command] {
     [
       Command(
         .minimizeWindow, "Minimize", scope: .window, key: KeyChord("m"),
@@ -124,6 +147,14 @@ enum StandardCommands {
       ) { context in
         context.controller?.window?.performMiniaturize(nil)
       },
+      Command(
+        .showPendingRequests, "Pending Requests", scope: .app,
+        menu: MenuPlacement(.window, section: 0, title: "Pending Requests\u{2026}")
+      ) { _ in app.showPendingRequests() },
+      Command(
+        .showControllers, "Controllers & Permissions", scope: .app,
+        menu: MenuPlacement(.window, section: 0, title: "Controllers & Permissions\u{2026}")
+      ) { _ in app.showControllers() },
       Command(
         .showCommandPalette, "Show Command Palette", scope: .window,
         key: KeyChord("k"), menu: MenuPlacement(.view, section: 1),

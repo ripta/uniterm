@@ -12,7 +12,7 @@ public struct Divider: Sendable, Equatable {
 
 /// Where every node sits. Frames use a top-left origin, so y grows downward.
 public struct PaneLayout: Sendable, Equatable {
-  /// A frame for every node, splits and panes alike.
+  /// A frame for every node: panes, splits, and groups alike. A group's frame is its content's.
   public var frames: [NodeID: CGRect] = [:]
   public var dividers: [Divider] = []
 }
@@ -125,6 +125,10 @@ extension Node {
 
     case .split(let split):
       split.place(in: rect, metrics: metrics, clamped: clamped, into: &layout)
+
+    case .group(let group):
+      layout.frames[group.id] = rect
+      group.content.place(in: rect, metrics: metrics, clamped: clamped, into: &layout)
     }
   }
 }

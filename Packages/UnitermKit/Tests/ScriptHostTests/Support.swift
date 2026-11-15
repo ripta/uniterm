@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ScriptTestSupport
 import ScriptWire
 import XCTest
 
@@ -51,6 +52,10 @@ enum ScriptFixtures {
       socket.rawDescriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout,
       socklen_t(MemoryLayout<timeval>.size))
 
+    _ = setsockopt(
+      socket.rawDescriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+      socklen_t(MemoryLayout<timeval>.size))
+
     return socket
   }
 
@@ -64,10 +69,12 @@ enum ScriptFixtures {
   /// `memoryCap` is the allocator's cap in bytes, which only a debug helper accepts. A test that
   /// leaves a helper running is ended by SIGTERM after 60 seconds and by SIGKILL after 70, since a
   /// helper that handles SIGINT is not always ended by the first.
+  ///
+  /// `executable` is the command to start, and nil means `helper()`.
   static func start(
     socket: String?, script: URL, allow: [String] = [], arguments: [String] = [],
     environment: [String: String] = [:], memoryCap: UInt64? = nil, input: Pipe? = nil,
-    onExit: (@Sendable () -> Void)? = nil
+    executable: URL? = nil, onExit: (@Sendable () -> Void)? = nil
   ) throws -> Process {
     let process = Process()
 
@@ -80,7 +87,7 @@ enum ScriptFixtures {
     inherited["UNITERM_SOCKET"] = nil
 
     process.environment = inherited.merging(environment) { _, new in new }
-    process.executableURL = helper()
+    process.executableURL = executable ?? helper()
     process.arguments =
       ["run"] + (memoryCap.map { ["--memory-cap", String($0)] } ?? [])
       + allow.flatMap { ["--allow", $0] } + (socket.map { ["--socket", $0] } ?? [])
@@ -128,12 +135,12 @@ enum ScriptFixtures {
 
   static func run(
     socket: String?, script: URL, allow: [String] = [], arguments: [String] = [],
-    environment: [String: String] = [:], memoryCap: UInt64? = nil
+    environment: [String: String] = [:], memoryCap: UInt64? = nil, executable: URL? = nil
   ) async throws -> HelperRun {
     await finish(
       try start(
         socket: socket, script: script, allow: allow, arguments: arguments,
-        environment: environment, memoryCap: memoryCap))
+        environment: environment, memoryCap: memoryCap, executable: executable))
   }
 
   /// The footprint of a process in bytes, or nil when it cannot be read.
@@ -264,4 +271,36 @@ func mainThreadIsWaiting(_ pid: pid_t) -> Bool {
 /// Waits until the process's main thread is blocked, for at most `timeout`.
 func waitUntilBlocked(_ pid: pid_t, timeout: Duration = .seconds(10)) async -> Bool {
   await pollUntil(timeout: timeout, interval: .milliseconds(10)) { mainThreadIsWaiting(pid) }
+}
+
+/// Records the test process as a session root, so the helpers a test starts are bound to window
+/// 1's pane 1.
+@MainActor
+func recordTestProcessAsSessionRoot(_ host: ScriptHost) {
+  TestSessionRoot.record(in: host)
+}
+
+/// Skips the rest of a test that proves dyld drops a loader variable from a hardened process. The
+/// kernel strips those variables only while System Integrity Protection is on. GitHub's macOS
+/// runners turn it off, so the probe loads there whatever the signature says.
+///
+/// Only a plain "disabled" skips. Any other status, or one that cannot be read, still runs the
+/// probe, so a wrong guess about the cause fails loudly.
+func skipUnlessSystemIntegrityIsOn() throws {
+  let process = Process()
+  let output = Pipe()
+
+  process.executableURL = URL(fileURLWithPath: "/usr/bin/csrutil")
+  process.arguments = ["status"]
+  process.standardOutput = output
+  process.standardError = output
+  try process.run()
+  process.waitUntilExit()
+
+  let status = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+  if status.contains("status: disabled") {
+    throw XCTSkip("The injection probe needs System Integrity Protection on. \(status)")
+  }
 }

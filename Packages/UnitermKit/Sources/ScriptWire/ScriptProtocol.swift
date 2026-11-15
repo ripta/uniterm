@@ -7,7 +7,7 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 4
+  public static let version: UInt16 = 9
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -16,6 +16,13 @@ public enum ScriptProtocol {
 
   /// The largest body any message may declare. The reader checks it before it allocates.
   public static let maxControlBody = 64 * 1024
+
+  /// The most clipboard text one typed clipboard call reads or writes, in UTF-8 bytes. A larger
+  /// clipboard is refused, never cut.
+  public static let maxClipboardBytes = 32 * 1024
+
+  /// The size of a controller's version digest, a SHA-256.
+  public static let versionDigestBytes = 32
 
   /// The longest script name a peer may announce, in UTF-8 bytes.
   public static let maxNameBytes = 128
@@ -33,6 +40,20 @@ public enum ScriptProtocol {
 
   /// The longest applet kind a script may name, in UTF-8 bytes.
   public static let maxKindBytes = 32
+
+  /// The longest applet command name a script may send, in UTF-8 bytes.
+  public static let maxCommandNameBytes = 64
+
+  /// The most bytes of JSON one applet command's arguments may hold. It leaves room in the control
+  /// frame for the rest of the call.
+  public static let maxCommandArgumentBytes = 32 * 1024
+
+  /// The most bytes of JSON one layout request may hold. It leaves room in the control frame for
+  /// the rest of the call.
+  public static let maxLayoutBytes = 32 * 1024
+
+  /// The largest command schema version a script may name.
+  public static let maxSchemaVersion: UInt32 = 1 << 31 - 1
 
   /// The longest directory a script may name, in UTF-8 bytes. It matches the system's path limit.
   public static let maxDirectoryBytes = 1024
@@ -100,7 +121,36 @@ public struct ScriptPaneReference: Sendable, Equatable {
   }
 }
 
+/// The pane a call acts on: one a script names, or the nearest pane of an applet type to the
+/// caller's own pane. The app resolves a nearest target when it runs the call, among the panes the
+/// caller may control, and never opens one when none matches.
+public enum ScriptTarget: Sendable, Equatable {
+  case pane(ScriptPaneReference)
+
+  /// The kind is an applet type, such as `browser`.
+  case nearest(kind: String)
+}
+
+/// The access a pane a script opens starts with. A script can enable control only on a pane it
+/// creates in its own group, never on a pane that exists.
+public enum ScriptPaneAccess: UInt8, Sendable, Equatable, CaseIterable {
+  case disconnected = 0
+  case remoteControlled = 1
+}
+
 extension ByteWriter {
+  mutating func put(target: ScriptTarget) {
+    switch target {
+    case .pane(let reference):
+      put(UInt8(0))
+      put(reference: reference)
+
+    case .nearest(let kind):
+      put(UInt8(1))
+      put(string: kind, limit: ScriptProtocol.maxKindBytes)
+    }
+  }
+
   mutating func put(id: UInt64) {
     put(UInt32(truncatingIfNeeded: id >> 32))
     put(UInt32(truncatingIfNeeded: id))
@@ -156,6 +206,34 @@ extension ByteReader {
     }
   }
 
+  mutating func target() throws -> ScriptTarget {
+    switch try u8() {
+    case 0: return .pane(try reference())
+    case 1: return .nearest(kind: try string(limit: ScriptProtocol.maxKindBytes))
+    default: throw WireError.badValue("a target has an unknown form")
+    }
+  }
+
+  /// JSON text with a 32-bit length before it. The length is checked against `limit` before any
+  /// byte is read. `what` names the text in the error, such as "the layout is".
+  mutating func json(limit: Int, what: String) throws -> String {
+    let count = Int(try u32())
+
+    guard count <= limit else { throw WireError.tooLong(declared: count, limit: limit) }
+
+    guard remaining >= count else { throw WireError.truncated }
+
+    var bytes = Data()
+
+    for _ in 0..<count { bytes.append(try u8()) }
+
+    guard let text = String(data: bytes, encoding: .utf8) else {
+      throw WireError.badValue("\(what) not UTF-8")
+    }
+
+    return text
+  }
+
   mutating func optionalString(limit: Int) throws -> String? {
     switch try u8() {
     case 0: return nil
@@ -179,9 +257,28 @@ public enum ScriptCall: Equatable, Sendable {
   case listWindows
   case listPanes(window: UInt64)
   case openPane(
-    kind: String, beside: ScriptPaneReference, axis: ScriptAxis?, directory: String?)
-  case openTab(pane: ScriptPaneReference, directory: String?)
-  case send(pane: ScriptPaneReference, name: String, content: Data)
+    kind: String, beside: ScriptTarget, axis: ScriptAxis?, directory: String?,
+    access: ScriptPaneAccess)
+  case openTab(pane: ScriptTarget, directory: String?)
+  case send(pane: ScriptTarget, name: String, content: Data)
+
+  /// One applet command for a pane. It names the applet type and the command schema version the
+  /// script was written for, and the app refuses either when the pane does not support it. The
+  /// arguments are a JSON object as text, which the app checks against the applet's schema.
+  case sendCommand(
+    pane: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    arguments: String)
+
+  /// A layout for the caller's subtree, anchored at a pane it may control. The layout is a JSON
+  /// object as text, which the app parses and checks.
+  case requestLayout(pane: ScriptTarget, layout: String)
+
+  /// Reads the clipboard's plain text. It is a power of its own, which the user grants apart from
+  /// pane control and apart from writes.
+  case readClipboard
+
+  /// Replaces the clipboard with plain text. It is a power of its own, apart from reads.
+  case writeClipboard(text: String)
 
   var code: UInt16 {
     switch self {
@@ -191,6 +288,10 @@ public enum ScriptCall: Equatable, Sendable {
     case .openPane: return 4
     case .openTab: return 5
     case .send: return 6
+    case .sendCommand: return 7
+    case .requestLayout: return 8
+    case .readClipboard: return 9
+    case .writeClipboard: return 10
     }
   }
 
@@ -211,20 +312,45 @@ public enum ScriptCall: Equatable, Sendable {
     case .listPanes(let window):
       body.put(id: window)
 
-    case .openPane(let kind, let beside, let axis, let directory):
+    case .openPane(let kind, let beside, let axis, let directory, let access):
       body.put(string: kind, limit: ScriptProtocol.maxKindBytes)
-      body.put(reference: beside)
+      body.put(target: beside)
       body.put(axis?.rawValue ?? 0)
       body.put(optional: directory, limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(access.rawValue)
 
     case .openTab(let pane, let directory):
-      body.put(reference: pane)
+      body.put(target: pane)
       body.put(optional: directory, limit: ScriptProtocol.maxDirectoryBytes)
 
     case .send(let pane, let name, let content):
-      body.put(reference: pane)
+      body.put(target: pane)
       body.put(string: name, limit: ScriptProtocol.maxFileNameBytes)
       body.put(raw: content)
+
+    case .sendCommand(let pane, let type, let version, let command, let arguments):
+      body.put(target: pane)
+      body.put(string: type, limit: ScriptProtocol.maxKindBytes)
+      body.put(version)
+      body.put(string: command, limit: ScriptProtocol.maxCommandNameBytes)
+      let bytes = Data(arguments.utf8.prefix(ScriptProtocol.maxCommandArgumentBytes))
+
+      body.put(UInt32(bytes.count))
+      body.put(raw: bytes)
+
+    case .requestLayout(let pane, let layout):
+      body.put(target: pane)
+
+      let bytes = Data(layout.utf8.prefix(ScriptProtocol.maxLayoutBytes))
+
+      body.put(UInt32(bytes.count))
+      body.put(raw: bytes)
+
+    case .readClipboard:
+      break
+
+    case .writeClipboard(let text):
+      body.put(string: text, limit: ScriptProtocol.maxClipboardBytes)
     }
   }
 
@@ -247,24 +373,30 @@ public enum ScriptCall: Equatable, Sendable {
 
     case 4:
       let kind = try reader.string(limit: ScriptProtocol.maxKindBytes)
-      let beside = try reader.reference()
+      let beside = try reader.target()
       let axisByte = try reader.u8()
 
       guard axisByte == 0 || ScriptAxis(rawValue: axisByte) != nil else {
         throw WireError.badValue("an unknown split axis")
       }
 
+      let directory = try reader.optionalString(limit: ScriptProtocol.maxDirectoryBytes)
+
+      guard let access = ScriptPaneAccess(rawValue: try reader.u8()) else {
+        throw WireError.badValue("an unknown pane access")
+      }
+
       return .openPane(
-        kind: kind, beside: beside, axis: ScriptAxis(rawValue: axisByte),
-        directory: try reader.optionalString(limit: ScriptProtocol.maxDirectoryBytes))
+        kind: kind, beside: beside, axis: ScriptAxis(rawValue: axisByte), directory: directory,
+        access: access)
 
     case 5:
       return .openTab(
-        pane: try reader.reference(),
+        pane: try reader.target(),
         directory: try reader.optionalString(limit: ScriptProtocol.maxDirectoryBytes))
 
     case 6:
-      let pane = try reader.reference()
+      let pane = try reader.target()
       let name = try reader.string(limit: ScriptProtocol.maxFileNameBytes)
       let content = reader.rest()
 
@@ -273,6 +405,35 @@ public enum ScriptCall: Equatable, Sendable {
       }
 
       return .send(pane: pane, name: name, content: content)
+
+    case 7:
+      let pane = try reader.target()
+      let type = try reader.string(limit: ScriptProtocol.maxKindBytes)
+      let version = try reader.u32()
+
+      guard version <= ScriptProtocol.maxSchemaVersion else {
+        throw WireError.badValue("a schema version is too large")
+      }
+
+      let command = try reader.string(limit: ScriptProtocol.maxCommandNameBytes)
+      let arguments = try reader.json(
+        limit: ScriptProtocol.maxCommandArgumentBytes, what: "the arguments are")
+
+      return .sendCommand(
+        pane: pane, appletType: type, schemaVersion: version, command: command,
+        arguments: arguments)
+
+    case 8:
+      let pane = try reader.target()
+      let layout = try reader.json(limit: ScriptProtocol.maxLayoutBytes, what: "the layout is")
+
+      return .requestLayout(pane: pane, layout: layout)
+
+    case 9:
+      return .readClipboard
+
+    case 10:
+      return .writeClipboard(text: try reader.string(limit: ScriptProtocol.maxClipboardBytes))
 
     default:
       throw WireError.badValue("an unknown host function")
@@ -294,6 +455,18 @@ public enum ScriptFailureKind: UInt8, Sendable, Equatable {
   /// The window, pane, or tab the call names is not open in this launch. It may have closed, or
   /// the reference may come from an earlier launch. The text never names another pane.
   case notFound = 4
+
+  /// The pane runs another applet type than the call names, or does not support the command
+  /// schema version it names. Nothing ran.
+  case unsupported = 5
+
+  /// The applet command ran, and its reply could not be sent to the script. The command's effect
+  /// stands, so the script must not take this for a refusal.
+  case replyLost = 6
+
+  /// The app is still working on another call of the same kind from this caller, such as a layout
+  /// it is preparing. Nothing ran, and the call may be sent again once the other one is answered.
+  case busy = 7
 }
 
 /// The app's answer to one call.
@@ -303,6 +476,38 @@ public enum ScriptResult: Equatable, Sendable {
   case ok(Data)
 
   case failure(ScriptFailureKind, String)
+}
+
+/// A run of a controller package, which the bundle's own command asks the app to admit. It names
+/// the package by path and nothing else. The app reads, verifies, and copies the package itself, so
+/// a digest or a name the peer could claim never reaches it.
+public struct ControllerBegin: Equatable, Sendable {
+  public enum Entry: UInt8, Sendable, Equatable, CaseIterable {
+    /// The command runs the package's Janet entry in its own VM, once the app admits it.
+    case janet = 1
+
+    /// The command execs the package's native entry from the app's snapshot.
+    case native = 2
+  }
+
+  /// The most capabilities one run may ask for, and the longest name of one.
+  public static let maxCapabilities = 32
+  public static let maxCapabilityBytes = 32
+
+  public let entry: Entry
+
+  /// The package folder's absolute path, with every link resolved by the command.
+  public let package: String
+
+  /// The Janet capabilities the user granted the run with `--allow`. Each must be one the
+  /// descriptor declares.
+  public let capabilities: [String]
+
+  public init(entry: Entry, package: String, capabilities: [String] = []) {
+    self.entry = entry
+    self.package = package
+    self.capabilities = capabilities
+  }
 }
 
 /// A message from a script helper. The app validates each one and trusts none of them.
@@ -335,6 +540,10 @@ public enum ScriptHelperMessage: Equatable, Sendable {
   /// writes this frame itself, in one write, before it exits.
   case memoryLimit
 
+  /// Declares the connection a controller run, in place of `begin`. The app answers with
+  /// `controllerAdmitted` or `controllerRefused`, and no call is answered before that.
+  case controllerBegin(ControllerBegin)
+
   /// The frame type of the one call that carries content.
   static let sendType: UInt8 = 4
 
@@ -351,6 +560,7 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .replEvaluating: return 7
     case .pong: return 8
     case .memoryLimit: return 9
+    case .controllerBegin: return 10
     }
   }
 
@@ -365,6 +575,15 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .pong(let nonce): body.put(nonce)
 
     case .memoryLimit: break
+
+    case .controllerBegin(let begin):
+      body.put(begin.entry.rawValue)
+      body.put(string: begin.package, limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(UInt8(min(begin.capabilities.count, ControllerBegin.maxCapabilities)))
+
+      for name in begin.capabilities.prefix(ControllerBegin.maxCapabilities) {
+        body.put(string: name, limit: ControllerBegin.maxCapabilityBytes)
+      }
 
     case .attach(let token): body.put(raw: token)
 
@@ -431,6 +650,27 @@ public enum ScriptHelperMessage: Equatable, Sendable {
 
     case 9: message = .memoryLimit
 
+    case 10:
+      guard let entry = ControllerBegin.Entry(rawValue: try reader.u8()) else {
+        throw WireError.badValue("an unknown controller entry kind")
+      }
+
+      let package = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
+      let count = Int(try reader.u8())
+
+      guard count <= ControllerBegin.maxCapabilities else {
+        throw WireError.tooLong(declared: count, limit: ControllerBegin.maxCapabilities)
+      }
+
+      var capabilities: [String] = []
+
+      for _ in 0..<count {
+        capabilities.append(try reader.string(limit: ControllerBegin.maxCapabilityBytes))
+      }
+
+      message = .controllerBegin(
+        ControllerBegin(entry: entry, package: package, capabilities: capabilities))
+
     default: throw WireError.unknownType(type)
     }
 
@@ -474,6 +714,18 @@ public enum ScriptAppMessage: Equatable, Sendable {
   /// when no form is running.
   case stop
 
+  /// The app verified the controller and admitted the run. `snapshot` is the folder of the run's
+  /// private copy, and `version` the SHA-256 of its descriptor. The command loads only what that
+  /// folder holds, and only when its descriptor has that digest.
+  case controllerAdmitted(snapshot: String, version: Data)
+
+  /// The app refused the run. The text says why, and the command shows it and runs nothing.
+  case controllerRefused(String)
+
+  /// The run waits for the user's review of its requested powers. The command shows the text and
+  /// keeps waiting for the admission or the refusal. It may come once, before either.
+  case controllerReviewing(String)
+
   var wireType: UInt8 {
     switch self {
     case .hello: return 1
@@ -482,6 +734,9 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .history: return 4
     case .ping: return 5
     case .stop: return 6
+    case .controllerAdmitted: return 7
+    case .controllerRefused: return 8
+    case .controllerReviewing: return 9
     }
   }
 
@@ -510,6 +765,13 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .ping(let nonce): body.put(nonce)
 
     case .stop: break
+
+    case .controllerAdmitted(let snapshot, let version):
+      body.put(string: snapshot, limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(raw: version.prefix(ScriptProtocol.versionDigestBytes))
+
+    case .controllerRefused(let text), .controllerReviewing(let text):
+      body.put(string: text, limit: ScriptProtocol.maxFailureBytes)
 
     case .history(let lines, let final):
       body.put(final ? UInt8(1) : UInt8(0))
@@ -595,6 +857,29 @@ public enum ScriptAppMessage: Equatable, Sendable {
       try reader.finished()
 
       return .stop
+
+    case 7:
+      let snapshot = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
+      let version = reader.rest()
+
+      guard version.count == ScriptProtocol.versionDigestBytes else {
+        throw WireError.badValue(
+          "a controller version is not \(ScriptProtocol.versionDigestBytes) bytes")
+      }
+
+      return .controllerAdmitted(snapshot: snapshot, version: version)
+
+    case 8:
+      let text = try reader.string(limit: ScriptProtocol.maxFailureBytes)
+      try reader.finished()
+
+      return .controllerRefused(text)
+
+    case 9:
+      let text = try reader.string(limit: ScriptProtocol.maxFailureBytes)
+      try reader.finished()
+
+      return .controllerReviewing(text)
 
     default:
       throw WireError.unknownType(type)

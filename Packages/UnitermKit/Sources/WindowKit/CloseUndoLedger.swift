@@ -20,6 +20,10 @@ struct ClosedPane: Equatable {
   let placement: PanePlacement
   let description: AppletDescription
   let title: String
+
+  /// The pane's exec declaration, with no environment value. A reopened pane gets it back inert,
+  /// and runs nothing until the user chooses Run.
+  var exec: ExecDeclaration? = nil
 }
 
 /// One window's stack of closed panes, newest last.

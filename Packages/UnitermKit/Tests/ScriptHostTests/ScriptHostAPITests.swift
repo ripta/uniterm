@@ -34,6 +34,8 @@ final class ScriptHostAPITests: XCTestCase {
       listener: listener, issueProducer: { center.issueProducer(kind: .script, name: $0) },
       windows: windows, sentContent: try ScriptSentContent(root: sentRoot))
     host.start()
+
+    recordTestProcessAsSessionRoot(host)
   }
 
   override func tearDown() async throws {
@@ -65,19 +67,28 @@ final class ScriptHostAPITests: XCTestCase {
       ])
   }
 
-  /// Catches an open-pane that drops the kind, the axis, the directory, or the tab of a reference,
-  /// or that turns a directory the script left out into one it did not name.
+  /// Catches an open-pane that drops the kind, the axis, the directory, the control, or the tab of
+  /// a reference, that turns a directory the script left out into one it did not name, or that
+  /// loses a nearest target's kind.
   func testOpenPaneCarriesItsArgumentsToTheApp() async throws {
     try await run("open-pane")
 
     XCTAssertEqual(
       windows.calls,
       [
-        .openPane(kind: "terminal", beside: pane, axis: nil, directory: nil),
         .openPane(
-          kind: "data-viewer", beside: ScriptPaneReference(window: 7, pane: 1, tab: 2),
-          axis: .column, directory: "/synthetic/work"),
-        .openPane(kind: "browser", beside: pane, axis: .row, directory: nil),
+          kind: "terminal", beside: .pane(pane), axis: nil, directory: nil, access: .disconnected),
+        .openPane(
+          kind: "data-viewer", beside: .pane(ScriptPaneReference(window: 7, pane: 1, tab: 2)),
+          axis: .column, directory: "/synthetic/work", access: .disconnected),
+        .openPane(
+          kind: "browser", beside: .pane(pane), axis: .row, directory: nil, access: .disconnected),
+        .openPane(
+          kind: "map-viewer", beside: .nearest(kind: "data-viewer"), axis: nil, directory: nil,
+          access: .remoteControlled),
+        .openPane(
+          kind: "text-viewer", beside: .pane(pane), axis: nil, directory: nil,
+          access: .disconnected),
       ])
   }
 
@@ -88,8 +99,8 @@ final class ScriptHostAPITests: XCTestCase {
     XCTAssertEqual(
       windows.calls,
       [
-        .openTab(pane: pane, directory: nil),
-        .openTab(pane: pane, directory: "/synthetic/tab"),
+        .openTab(pane: .pane(pane), directory: nil),
+        .openTab(pane: .pane(pane), directory: "/synthetic/tab"),
       ])
   }
 
@@ -150,10 +161,89 @@ final class ScriptHostAPITests: XCTestCase {
     XCTAssertEqual(windows.sent.first?.content.count, ScriptProtocol.maxSendBytes)
   }
 
+  /// Catches a send-command that loses its target, applet type, schema version, or command, that
+  /// writes arguments the app reads as other JSON, or a refusal that reaches the script as plain
+  /// text in place of a struct naming its kind.
+  func testSendCommandCarriesItsCallAndRaisesStructuredErrors() async throws {
+    try await run("send-command")
+
+    let sent = windows.calls.compactMap { call -> (ScriptTarget, String, UInt32, String, String)? in
+      guard case .sendCommand(let pane, let type, let version, let command, let arguments) = call
+      else { return nil }
+
+      return (pane, type, version, command, arguments)
+    }
+
+    XCTAssertEqual(sent.count, 8)
+    XCTAssertEqual(sent.map(\.0).first, .pane(pane))
+    XCTAssertEqual(
+      sent.map(\.1),
+      [
+        "fixture-slides", "fixture-slides", "fixture-slides", "fixture-chart", "fixture-slides",
+        "fixture-slides", "fixture-slides", "fixture-slides",
+      ])
+    XCTAssertEqual(sent.map(\.2), [1, 1, 1, 1, 2, 1, 1, 1])
+    XCTAssertEqual(sent[1].0, .nearest(kind: "fixture-slides"))
+    XCTAssertEqual(sent[1].3, "status")
+    XCTAssertEqual(sent[1].4, "{}")
+    XCTAssertEqual(sent[2].4, "{}")
+
+    let arguments = try JSONSerialization.jsonObject(with: Data(sent[0].4.utf8)) as? NSDictionary
+    let expected: NSDictionary = [
+      "index": 2, "label": "two\n\"quoted\"", "ratio": 0.5, "below": -3,
+      "flags": [true, false, NSNull()], "nested": ["inner": [1, 2]], "mode": "row",
+    ]
+
+    XCTAssertEqual(arguments, expected)
+  }
+
+  /// Catches a request-layout that loses its anchor or a nearest anchor's kind, that writes a
+  /// layout the app reads as other JSON, or a refusal that reaches the script as plain text.
+  func testRequestLayoutCarriesItsLayoutAndRaisesStructuredErrors() async throws {
+    try await run("request-layout")
+
+    let sent = windows.calls.compactMap { call -> (ScriptTarget, String)? in
+      guard case .requestLayout(let pane, let layout) = call else { return nil }
+
+      return (pane, layout)
+    }
+
+    XCTAssertEqual(
+      sent.map(\.0),
+      [
+        .pane(pane), .nearest(kind: "fixture-slides"), .pane(pane), .pane(pane),
+        .pane(ScriptPaneReference(window: 7, pane: 404)),
+      ])
+    XCTAssertEqual(sent[1].1, #"{"pane":2}"#)
+
+    let layout = try JSONSerialization.jsonObject(with: Data(sent[0].1.utf8)) as? NSDictionary
+    let expected: NSDictionary = [
+      "split": "row",
+      "children": [
+        ["pane": 1, "weight": 2],
+        [
+          "split": "column",
+          "children": [
+            ["open": "fixture-notes", "control": "remote-controlled"],
+            [
+              "open": "fixture-chart", "directory": "/synthetic/charts",
+              "exec": ["argv": ["/usr/bin/perl", "chart.pl"], "environment-keys": ["TOKEN"]],
+            ],
+          ],
+        ],
+      ],
+    ]
+
+    XCTAssertEqual(layout, expected)
+  }
+
   /// Catches a function that passes a bad argument on to the app. Each fixture holds the error
   /// cases of one function, and no call may reach the app.
   func testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem() async throws {
-    for fixture in ["bad-list-panes", "bad-open-pane", "bad-open-tab", "bad-send"] {
+    for fixture in [
+      "bad-list-panes", "bad-open-pane", "bad-open-tab", "bad-send", "bad-send-command",
+      "bad-request-layout",
+    ] {
       try await run(fixture)
     }
 
@@ -191,6 +281,7 @@ final class ScriptHostAPITests: XCTestCase {
       listener: other, issueProducer: { center.issueProducer(kind: .script, name: $0) })
 
     bare.start()
+    recordTestProcessAsSessionRoot(bare)
     defer { bare.stop() }
 
     let run = try await ScriptFixtures.run(

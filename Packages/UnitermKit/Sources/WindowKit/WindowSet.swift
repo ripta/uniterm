@@ -1,6 +1,9 @@
 import AppKit
 import AppletKit
+import Foundation
 import LayoutKit
+import PaneModel
+import ScriptHost
 import StatusKit
 
 /// Where a new window lands when it cascades from an existing one.
@@ -93,6 +96,16 @@ public final class WindowSet {
   /// Runs when a window opens or closes, and when anything a saved layout holds changes in one.
   public var onLayoutChange: (() -> Void)?
 
+  /// Runs when a terminal or REPL session starts, with the window's script ID, the pane, the tab,
+  /// the spawned process and its start time, and the session generation.
+  private var onSessionStarted: ((UInt64, NodeID, AppletTabID, pid_t, Int, UInt64) -> Void)?
+
+  /// Runs when a session ends, with the window's script ID, the pane, the tab, and the process.
+  private var onSessionEnded: ((UInt64, NodeID, AppletTabID, pid_t, Int) -> Void)?
+
+  /// Runs after a window closed, with its script ID. Every session in it has ended by then.
+  private var onScriptWindowClosed: ((UInt64) -> Void)?
+
   /// The states that belong to the window rather than to a pane, as the instance sees them.
   /// Every window shows them, including one that opens later. They live here, above any one
   /// window, and the set never writes them to the layout file.
@@ -109,6 +122,18 @@ public final class WindowSet {
   public func clearWindowState(_ kind: WindowStateKind) {
     windowStates.clear(kind)
     publishWindowStates()
+  }
+
+  /// Sends each window's session starts and ends, and each window close, to the given handlers.
+  /// The app wires them to the script host once it has one.
+  public func wireSessionReporting(
+    onStarted: @escaping (UInt64, NodeID, AppletTabID, pid_t, Int, UInt64) -> Void,
+    onEnded: @escaping (UInt64, NodeID, AppletTabID, pid_t, Int) -> Void,
+    onWindowClosed: @escaping (UInt64) -> Void
+  ) {
+    onSessionStarted = onStarted
+    onSessionEnded = onEnded
+    onScriptWindowClosed = onWindowClosed
   }
 
   private func publishWindowStates() {
@@ -340,8 +365,70 @@ public final class WindowSet {
     controllers.first { $0.scriptWindowID == id }
   }
 
+  /// Who may launch which exec driver, for every window. The Pending Requests panel lists its
+  /// requests and grants, and only the panel decides them.
+  public let launchAuthority = ExecLaunchAuthority()
+
+  /// The permission questions of every window, its drivers, and its terminals. The script host
+  /// takes the same one, so the Pending Requests panel lists them all in one place.
+  public let permissionRequests = PermissionRequests()
+
+  /// The clipboard drivers' typed clipboard requests reach. The app sets the general pasteboard.
+  public var clipboard: (any ScriptClipboard)? {
+    didSet {
+      for controller in controllers { controller.clipboard = clipboard }
+    }
+  }
+
+  /// How long the quit waits, in all, for drivers to end on SIGTERM before their groups get
+  /// SIGKILL. ADR-08 lets the main thread wait this long because the bound is fixed.
+  public static let driverQuitGrace: TimeInterval = 0.5
+
+  /// Ends every running exec driver as the app quits. Each group gets SIGTERM at once, then one
+  /// shared wait of at most `driverQuitGrace`, then SIGKILL for every group still there. The
+  /// delayed SIGKILL of an ordinary close would never run, since the app exits first.
+  public func endDriversForQuit() {
+    let channels = controllers.flatMap { $0.execAttachments.values.compactMap(\.channel) }
+
+    for channel in channels { channel.close() }
+
+    let deadline = Date().addingTimeInterval(Self.driverQuitGrace)
+
+    for channel in channels { channel.finishForQuit(by: deadline) }
+  }
+
+  /// Which connections act for which pane. Every window gets it as it opens.
+  public weak var controllerAuthority: (any ControllerAuthority)? {
+    didSet {
+      for controller in controllers { controller.controllerAuthority = controllerAuthority }
+    }
+  }
+
+  /// Makes the scripting host this set's authority on controllers, and wires its reports. A
+  /// controller's end takes its groups away in every window, and any change to who acts for a
+  /// pane refreshes every pane's badge.
+  public func wireControllers(to host: ScriptHost) {
+    controllerAuthority = host
+    host.onControllerEnded = { [weak self] id in self?.controllerEnded(id) }
+    host.onControllersChanged = { [weak self] in self?.refreshControlMarks() }
+  }
+
+  /// Tells every pane's badge what to show now.
+  public func refreshControlMarks() {
+    for controller in controllers { controller.refreshControlMarks() }
+  }
+
+  /// A controller's authority ended. Every window takes away the groups it owned.
+  public func controllerEnded(_ id: UInt64) {
+    for controller in controllers { controller.controllerEnded(id) }
+  }
+
   private func register(_ controller: MainWindowController) {
     controller.scriptWindowID = windowIDs.next()
+    controller.controllerAuthority = controllerAuthority
+    controller.launchAuthority = launchAuthority
+    controller.permissionRequests = permissionRequests
+    controller.clipboard = clipboard
     controller.onClose = { [weak self] controller in
       self?.windowDidClose(controller)
     }
@@ -350,6 +437,12 @@ public final class WindowSet {
     }
     controller.onBecomeKey = { [weak self] controller in
       self?.noteKey(controller)
+    }
+    controller.onSessionStarted = { [weak self] windowID, pane, tab, pid, started, generation in
+      self?.onSessionStarted?(windowID, pane, tab, pid, started, generation)
+    }
+    controller.onSessionEnded = { [weak self] windowID, pane, tab, pid, started in
+      self?.onSessionEnded?(windowID, pane, tab, pid, started)
     }
     controller.visibleFrameProvider = visibleFrame
     controller.windowStates = windowStates
@@ -423,6 +516,17 @@ public final class WindowSet {
 
   private func windowDidClose(_ controller: MainWindowController) {
     controllers.removeAll { $0 === controller }
+    onScriptWindowClosed?(controller.scriptWindowID)
+    launchAuthority.windowClosed(controller.scriptWindowID)
+
+    let window = controller.scriptWindowID
+
+    permissionRequests.end { requester in
+      switch requester {
+      case .driver(let id, _, _), .terminal(let id, _), .paneScripts(let id, _): return id == window
+      case .connection, .controllerVersion: return false
+      }
+    }
 
     keyOrder.removeAll { $0 === controller }
     closing.append(controller)

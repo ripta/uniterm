@@ -1,7 +1,14 @@
 import AppKit
 import AppletCatalog
 import AppletKit
+import BrowserApplet
+import DataViewerApplet
 import FileRouting
+import ImageViewerApplet
+import MapViewerApplet
+import ReplApplet
+import TerminalApplet
+import TextViewerApplet
 import XCTest
 
 /// Proves the production catalog against the system's real type database. The Info.plist drift
@@ -10,14 +17,15 @@ final class BuiltInAppletsTests: XCTestCase {
   /// Catches a declaration that changes without a deliberate edit here. The terminal opens folders
   /// as the owner, the data viewer opens CSV, JSON, and `.xlsx` as the owner, the map viewer
   /// opens GeoJSON as the owner, the text viewer opens PDF, RTF, and Word as the owner, and the
-  /// REPL opens nothing.
+  /// REPL opens nothing. Only the terminal and the REPL declare remote control.
   func testTheCatalogIsTheTerminalOpeningFoldersAndTheDataViewerOpeningTables() {
     XCTAssertEqual(
       BuiltInApplets.declarations,
       [
         AppletTypeDeclaration(
           typeID: "terminal", displayName: "Terminal", symbolName: "terminal",
-          opens: [OpenedType("public.folder", rank: .owner)]),
+          opens: [OpenedType("public.folder", rank: .owner)],
+          controlSupport: [.disconnected, .remoteControlled]),
         AppletTypeDeclaration(
           typeID: "data-viewer", displayName: "Data Viewer", symbolName: "tablecells",
           opens: [
@@ -46,8 +54,52 @@ final class BuiltInAppletsTests: XCTestCase {
             OpenedType("net.daringfireball.markdown", rank: .owner),
           ]),
         AppletTypeDeclaration(
-          typeID: "repl", displayName: "REPL", symbolName: "curlybraces", opens: []),
+          typeID: "repl", displayName: "REPL", symbolName: "curlybraces", opens: [],
+          controlSupport: [.disconnected, .remoteControlled]),
       ])
+  }
+
+  /// Catches a type whose control is known only once a pane is built, a type that declares nothing
+  /// but resolves to more than disconnected, and a driver combination no applet supports yet. Each
+  /// answer is read from the declarations alone, so no applet starts and no driver launches.
+  func testEveryTypesSupportedControlIsReadableFromItsDeclaration() {
+    let remote: Set<ControlCombination> = [.disconnected, .remoteControlled]
+
+    let expected: [String: Set<ControlCombination>] = [
+      "terminal": remote, "repl": remote, "data-viewer": [.disconnected],
+      "map-viewer": [.disconnected], "browser": [.disconnected],
+      "image-viewer": [.disconnected], "text-viewer": [.disconnected],
+    ]
+
+    XCTAssertEqual(Set(BuiltInApplets.declarations.map(\.typeID)), Set(expected.keys))
+
+    for declaration in BuiltInApplets.declarations {
+      XCTAssertEqual(
+        AppletTypeDeclaration.supportedControl(
+          forType: declaration.typeID, in: BuiltInApplets.declarations),
+        expected[declaration.typeID], declaration.typeID)
+    }
+
+    XCTAssertEqual(
+      AppletTypeDeclaration.supportedControl(
+        forType: "launcher", in: BuiltInApplets.declarations),
+      [.disconnected])
+  }
+
+  /// Catches a shipped applet that takes applet commands before its own proposal designs them. The
+  /// terminal and the REPL may be remote-controlled, and still refuse every command, since only an
+  /// applet that adopts the command hook can take one.
+  func testNoShippedAppletAdoptsTheCommandHook() {
+    let types: [(String, any Applet.Type)] = [
+      ("terminal", TerminalApplet.self), ("repl", ReplApplet.self),
+      ("data-viewer", DataViewerApplet.self), ("map-viewer", MapViewerApplet.self),
+      ("browser", BrowserApplet.self), ("image-viewer", ImageViewerApplet.self),
+      ("text-viewer", TextViewerApplet.self),
+    ]
+
+    for (name, type) in types {
+      XCTAssertFalse(type is any AppletCommandHandling.Type, name)
+    }
   }
 
   /// Catches an image that routes anywhere but the image viewer, and a folder that stops routing to

@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "id": "dev.uniterm.fixture.hello",
+  "name": "Hello Fixture",
+  "entry": {"kind": "janet", "path": "main.janet"},
+  "files": {
+    "lib/greet.janet": "sha256:ba3701f34d91051ae697ef082c6c5460ea45a912210584bfd74253aa9e54c503",
+    "main.janet": "sha256:ee948b2a8a1d46f583949438cf23a7992c324f053661f7b144823c037f48b8e0"
+  },
+  "permissions": [{"kind": "pane-control"}, {"kind": "capability", "name": "fs-read"}]
+}

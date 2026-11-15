@@ -3,14 +3,15 @@ import AppletKit
 import AppletTestSupport
 import Darwin
 import Preferences
+import ScriptTestSupport
 import ScriptWire
 import StatusKit
-import TerminalSurface
 import Theme
 import XCTest
 
 @testable import ReplApplet
 @testable import ScriptHost
+@testable import TerminalSurface
 @testable import WindowKit
 
 @MainActor
@@ -35,6 +36,11 @@ final class ReplFakeSession: TerminalSession {
   func resize(to size: CGSize) {}
   func setFocused(_ focused: Bool) {}
   func setVisible(_ visible: Bool) {}
+
+  var clipboardPolicies: [TerminalClipboardPolicy] = []
+  var clipboardPolicy: TerminalClipboardPolicy { clipboardPolicies.last ?? .interactive }
+  func setClipboardPolicy(_ policy: TerminalClipboardPolicy) { clipboardPolicies.append(policy) }
+
   func close() { closed = true }
 }
 
@@ -43,8 +49,11 @@ final class ReplFakeEngine: TerminalEngine {
   var sessions: [ReplFakeSession] = []
   var anySessionRunningSomething = false
 
-  func makeSession(launch: TerminalLaunch) throws -> any TerminalSession {
+  func makeSession(launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
+    -> any TerminalSession
+  {
     let session = ReplFakeSession(launch: launch)
+    session.clipboardPolicies = [clipboardPolicy]
     sessions.append(session)
 
     return session
@@ -84,6 +93,9 @@ final class ReplAppletTests: XCTestCase {
       listener: try ScriptListener.start(directory: directory),
       issueProducer: { _ in nil }, reaper: reaper)
     host.start()
+
+    TestSessionRoot.record(in: host)
+
     engine = ReplFakeEngine()
   }
 
@@ -114,7 +126,16 @@ final class ReplAppletTests: XCTestCase {
   private var services: ReplServices {
     ReplServices(
       helper: { URL(fileURLWithPath: "/synthetic/uniterm") },
-      openChannel: { [host] history in host?.admitRepl(history: history) ?? .refused(.scriptingOff)
+      openChannel: { [host] history in
+        guard let host else { return .refused(.scriptingOff) }
+
+        let opening = host.admitRepl(history: history)
+
+        if case .channel(let channel) = opening {
+          TestSessionRoot.set(on: channel)
+        }
+
+        return opening
       })
   }
 
@@ -315,6 +336,46 @@ final class ReplAppletTests: XCTestCase {
     XCTAssertEqual(saved.history, ["(+ 1 2)", "(def x 1)", "(print x)"])
   }
 
+  // MARK: Clipboard questions
+
+  /// Catches a controlled REPL's clipboard question with no scope. Each request then asks on its
+  /// own, so a denial never holds and one program can fill the Pending Requests panel. Requests
+  /// of one kind under one control generation share a scope, and another kind or generation
+  /// gets another.
+  func testControlledClipboardQuestionsShareAScopePerKindAndGeneration() async throws {
+    let recorder = RecordingHost()
+    let applet = makeApplet(host: recorder)
+    let session = try XCTUnwrap(engine.sessions.first)
+
+    applet.controlDidChange(PaneControl(access: .remoteControlled, driver: .none, generation: 5))
+
+    let ask: (TerminalClipboardRequest.Kind) -> Void = { kind in
+      session.onEvent?(
+        .clipboardRequest(
+          TerminalClipboardRequest(kind: kind, text: "synthetic", offersSession: true) { _ in }))
+    }
+
+    ask(.read)
+    ask(.read)
+    ask(.write)
+
+    _ = await waitUntil(timeout: .seconds(5)) { recorder.permissions.count == 3 }
+
+    applet.controlDidChange(PaneControl(access: .remoteControlled, driver: .none, generation: 6))
+    ask(.read)
+
+    _ = await waitUntil(timeout: .seconds(5)) { recorder.permissions.count == 4 }
+
+    let scopes = recorder.permissions.map(\.scope)
+
+    guard scopes.count == 4 else { return XCTFail("asked \(scopes.count) questions, not 4") }
+
+    XCTAssertNotNil(scopes[0], "a controlled question has no scope")
+    XCTAssertEqual(scopes[0], scopes[1], "two reads in one generation asked apart")
+    XCTAssertNotEqual(scopes[0], scopes[2], "a read and a write share a denial")
+    XCTAssertNotEqual(scopes[0], scopes[3], "a denial outlived its control generation")
+  }
+
   // MARK: Helper death
 
   /// Catches a pane that stays open after its helper ends by itself, as with Ctrl-D or
@@ -485,6 +546,70 @@ final class ReplAppletTests: XCTestCase {
     XCTAssertTrue(reaped)
   }
 
+  // MARK: Capabilities
+
+  /// Catches a capability restart that widens the running helper, keeps its channel, or leaks the
+  /// chosen capabilities past that one helper. The restart ends the old helper's session and
+  /// connection, and starts a fresh helper on a new token with exactly the chosen flags. Nothing is
+  /// saved, and the next restart and a restored pane start with none.
+  func testACapabilityRestartStartsAFreshHelperWithOnlyTheChosenCapabilities() async throws {
+    let recorder = RecordingHost()
+    let applet = makeApplet(host: recorder)
+    let first = try XCTUnwrap(engine.sessions.first)
+    let (oldPeer, _) = try await attach(first)
+    let login = TerminalProcessIdentity(
+      pid: getpid(), started: testRoot.started, sessionGeneration: 1)
+
+    first.onEvent?(.processStarted(login))
+    XCTAssertEqual(applet.helperCapabilities, [])
+
+    applet.restart(withCapabilities: ["fs-read", "net"])
+
+    XCTAssertTrue(first.closed)
+    XCTAssertEqual(
+      recorder.endedSessions.map(\.pid), [getpid()], "the old helper's session never ended")
+    XCTAssertThrowsError(try oldPeer.readFrame(limit: ScriptAppMessage.bodyLimit(type:))) {
+      XCTAssertEqual($0 as? WireError, .closed)
+    }
+
+    XCTAssertEqual(engine.sessions.count, 2)
+
+    let second = engine.sessions[1].launch
+
+    XCTAssertEqual(
+      second.program,
+      [
+        "/synthetic/uniterm", "repl", "--allow", "fs-read", "--allow", "net", "--socket",
+        host.instanceAddress,
+      ])
+    XCTAssertNotEqual(
+      second.environment[ScriptProtocol.replTokenVariable],
+      first.launch.environment[ScriptProtocol.replTokenVariable])
+    XCTAssertEqual(applet.helperCapabilities, ["fs-read", "net"])
+
+    _ = try await attach(engine.sessions[1])
+
+    let saved = applet.describe()
+
+    XCTAssertEqual(try ReplDescription.decode(saved).history, [])
+    XCTAssertFalse(String(describing: saved.payload).contains("fs-read"))
+
+    applet.restart(withCapabilities: [])
+
+    XCTAssertFalse(try XCTUnwrap(engine.sessions.last?.launch.program).contains("--allow"))
+    XCTAssertEqual(applet.helperCapabilities, [])
+
+    let restored = try ReplApplet(
+      engine: engine, services: services, restoring: saved, home: "/synthetic/home")
+
+    applets.append(restored)
+    restored.start(origin: .restore)
+
+    XCTAssertFalse(try XCTUnwrap(engine.sessions.last?.launch.program).contains("--allow"))
+  }
+
+  private var testRoot: ProcessIdentity { TestSessionRoot.identity }
+
   // MARK: Restore
 
   /// Catches a restore that runs a saved line, or carries the history anywhere but the channel. A
@@ -532,6 +657,7 @@ final class ReplAppletTests: XCTestCase {
       makeController: { [weak self] identifier, directory in
         let controller = try MainWindowController(
           appearance: appearance, settings: store, identifier: identifier, startingIn: directory,
+          appletTypes: [ReplApplet.typeDeclaration],
           restoreApplet: { description in
             try ReplApplet(
               engine: engine, services: services, restoring: description, home: "/synthetic/home")
@@ -563,18 +689,24 @@ final class ReplAppletTests: XCTestCase {
   private var asked = 0
 
   /// Catches a script that can type into a REPL. The refusal is the property the REPL declares,
-  /// proved against a real REPL applet in a real window set, and nothing is written.
+  /// proved against a real REPL applet in a real window set, and nothing is written. The script
+  /// acts for the REPL pane itself, which the user made remote-controlled, so only the input
+  /// rule can refuse it.
   func testAScriptsSendToARealReplPaneIsRefused() async throws {
     let (set, controller) = try makeWindows()
     let pane = try XCTUnwrap(controller.openPane(.repl, axis: .row, from: controller.focusedPane))
     let reference = ScriptPaneReference(window: controller.scriptWindowID, pane: pane.rawValue)
     let scripting = WindowScripting(windows: set, directoryExists: { _ in true })
 
+    controller.enableRemoteControl(pane)
+
+    let caller = ScriptCaller(connection: 1, window: controller.scriptWindowID, pane: pane)
+
     XCTAssertTrue(controller.paneArea.applet(for: pane) is ReplApplet)
     XCTAssertTrue((controller.paneArea.applet(for: pane) as Any) is any InputOwning)
 
     do {
-      try scripting.prepareSend(to: reference)
+      _ = try scripting.prepareSend(to: .pane(reference), caller: caller)
       XCTFail("a send to a REPL pane was prepared")
     } catch let error as ScriptCallError {
       XCTAssertEqual(error.kind, .refused)
@@ -690,11 +822,22 @@ extension ReplAppletTests {
       replProbes: ReplProbes(footprint: { _ in knobs.footprint }, now: { knobs.now }))
 
     limited.start()
+
+    TestSessionRoot.record(in: limited)
+
     extraHosts.append((limited, local))
 
     return ReplServices(
       helper: { URL(fileURLWithPath: "/synthetic/uniterm") },
-      openChannel: { [limited] history in limited.admitRepl(history: history) })
+      openChannel: { [limited] history in
+        let opening = limited.admitRepl(history: history)
+
+        if case .channel(let channel) = opening {
+          TestSessionRoot.set(on: channel)
+        }
+
+        return opening
+      })
   }
 
   private func makeApplet(services: ReplServices, host recorder: RecordingHost? = nil) -> ReplApplet

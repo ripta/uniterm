@@ -1,4 +1,6 @@
 import AppKit
+import Darwin
+import ProcessInspection
 import Theme
 
 /// What a terminal session starts. The directory and environment are applied to the child process.
@@ -68,6 +70,37 @@ public struct TerminalGridSize: Sendable, Equatable {
   }
 }
 
+/// How a session treats programmatic clipboard use. The host sets it per session, before the
+/// session starts and before any change to the pane's control takes effect.
+///
+/// An interactive session asks before an OSC 52 read and lets an OSC 52 write through. A
+/// controlled session asks before both, and its prompt can allow the rest of the session. Kitty
+/// clipboard requests are denied either way, and the user's own copy and paste never ask.
+public struct TerminalClipboardPolicy: Sendable, Equatable {
+  public var controlled: Bool
+
+  /// The pane's authority generation. A prompt answered under another generation is stale and
+  /// counts as a denial.
+  public var generation: UInt64
+
+  public init(controlled: Bool, generation: UInt64) {
+    self.controlled = controlled
+    self.generation = generation
+  }
+
+  public static let interactive = TerminalClipboardPolicy(controlled: false, generation: 0)
+}
+
+/// The user's answer to a clipboard request.
+public enum TerminalClipboardAnswer: Sendable, Equatable {
+  case deny
+  case allowOnce
+
+  /// Allows this request and later ones of the same kind for the rest of the session, under the
+  /// same policy. Only a request that `offersSession` honors it. Any other treats it as once.
+  case allowForSession
+}
+
 /// A request from the program in the terminal to use the clipboard. The user's answer completes it
 /// exactly once. A request that is dropped without an answer stays unanswered.
 public final class TerminalClipboardRequest: @unchecked Sendable {
@@ -76,28 +109,63 @@ public final class TerminalClipboardRequest: @unchecked Sendable {
     case read
     /// A paste that libghostty judged unsafe.
     case unsafePaste
+    /// A program in a controlled session asked to write the clipboard with OSC 52. The text is
+    /// what it would write.
+    case write
   }
 
   public let kind: Kind
   public let text: String
 
-  private let lock = NSLock()
-  private var completion: (@Sendable (Bool) -> Void)?
+  /// True when the session is controlled, so the prompt may offer this-session permission. It
+  /// covers every program in the terminal session, which is all an escape sequence can name.
+  public let offersSession: Bool
 
-  init(kind: Kind, text: String, completion: @escaping @Sendable (Bool) -> Void) {
+  private let lock = NSLock()
+  private var completion: (@Sendable (TerminalClipboardAnswer) -> Void)?
+
+  init(
+    kind: Kind, text: String, offersSession: Bool = false,
+    completion: @escaping @Sendable (TerminalClipboardAnswer) -> Void
+  ) {
     self.kind = kind
     self.text = text
+    self.offersSession = offersSession
     self.completion = completion
   }
 
   /// Answers the request. A second call does nothing.
-  public func resolve(allow: Bool) {
+  public func resolve(_ answer: TerminalClipboardAnswer) {
     lock.lock()
     let completion = self.completion
     self.completion = nil
     lock.unlock()
 
-    completion?(allow)
+    completion?(answer)
+  }
+
+  /// Allows the one request, or denies it.
+  public func resolve(allow: Bool) {
+    resolve(allow ? .allowOnce : .deny)
+  }
+}
+
+/// The process a terminal session spawned: its PID, the second it started, and the session's
+/// generation within its surface. The PID alone can be reused, so the start time tells a later
+/// process with the same PID apart.
+public struct TerminalProcessIdentity: Sendable, Equatable {
+  public let pid: pid_t
+  public let started: Int
+  public let sessionGeneration: UInt64
+
+  public init(pid: pid_t, started: Int, sessionGeneration: UInt64) {
+    self.pid = pid
+    self.started = started
+    self.sessionGeneration = sessionGeneration
+  }
+
+  static func startTime(of pid: pid_t) -> Int? {
+    ProcessInspection.startTime(of: pid)
   }
 }
 
@@ -107,6 +175,11 @@ public enum TerminalEvent: Sendable {
 
   /// The shell reported its directory with OSC 7. The value is a path.
   case workingDirectoryChanged(String)
+
+  /// The session's child process started. The identity names the process libghostty spawned,
+  /// never one a program claims. It arrives on the main actor shortly after the session starts,
+  /// so no identity exists at launch.
+  case processStarted(TerminalProcessIdentity)
 
   /// The shell reported that a command ended, with OSC 133. This is the only prompt mark that
   /// libghostty passes to its embedder. Whether the cursor sits at a prompt is answered by
@@ -157,6 +230,14 @@ public protocol TerminalSession: AnyObject {
   /// Tells the renderer whether the view can be seen.
   func setVisible(_ visible: Bool)
 
+  /// How the session treats programmatic clipboard use now.
+  var clipboardPolicy: TerminalClipboardPolicy { get }
+
+  /// Replaces the session's clipboard policy. It applies to every request answered from now on,
+  /// including one already waiting for the user, whose answer is then stale if the generation or
+  /// the mode changed. A session permission the user gave ends with the old policy.
+  func setClipboardPolicy(_ policy: TerminalClipboardPolicy)
+
   /// Hangs up the child and releases the session. The session is unusable afterwards.
   func close()
 }
@@ -164,7 +245,10 @@ public protocol TerminalSession: AnyObject {
 /// Owns the engine and makes sessions.
 @MainActor
 public protocol TerminalEngine: AnyObject {
-  func makeSession(launch: TerminalLaunch) throws -> any TerminalSession
+  /// Makes a session that runs `launch`. The clipboard policy is in place before the child can
+  /// write any output, so its first escape sequence already meets it.
+  func makeSession(launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
+    -> any TerminalSession
 
   /// Updates the palette of every running session, and of sessions made later.
   func apply(palette: ThemePalette) throws

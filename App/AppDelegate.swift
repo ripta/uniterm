@@ -18,6 +18,10 @@ import TerminalSurface
 import TextViewerApplet
 import WindowKit
 
+#if DEBUG
+  import AppletFixtures
+#endif
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private let logger = Logger(subsystem: "dev.uniterm.app", category: "app")
@@ -40,6 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var commandMenu: CommandMenu?
   private var layoutPersistence: LayoutPersistence?
   private var settingsWindowController: SettingsWindowController?
+  private var pendingRequestsWindowController: PendingRequestsWindowController?
+  private var controllersWindowController: ControllersWindowController?
+  private let clipboard = PasteboardClipboard()
+  private var pendingObserver: ChangeObservers.Token?
   private var browserWebsiteData: BrowserWebsiteData?
   private var scriptHost: ScriptHost?
   private var askingToQuit = false
@@ -161,6 +169,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// UI tests set `UNITERM_CONTROLLER_RUNS_DIR` so the snapshots of controller runs stay out of the
+  /// developer's caches folder. Only debug builds honor it, for the same reason as the layout
+  /// folder.
+  private func controllerRunsDirectory() throws -> URL {
+    #if DEBUG
+      if let path = debugEnvironment["UNITERM_CONTROLLER_RUNS_DIR"] {
+        return URL(fileURLWithPath: path, isDirectory: true)
+      }
+    #endif
+
+    return try ControllerSettings.defaultRunsRoot()
+  }
+
+  /// Where remembered controller approvals live.
+  ///
+  /// UI tests set `UNITERM_CONTROLLER_POLICY_DIR` so remembered controller approvals stay out of
+  /// the developer's own policy file. Only debug builds honor it, for the same reason as the
+  /// layout folder.
+  private func controllerPolicyDirectory() -> URL? {
+    #if DEBUG
+      if let path = debugEnvironment["UNITERM_CONTROLLER_POLICY_DIR"] {
+        return URL(fileURLWithPath: path, isDirectory: true)
+      }
+    #endif
+
+    do {
+      return try ControllerSettings.defaultTrustDirectory()
+    } catch {
+      logger.error("controller trust is off: \(String(describing: error), privacy: .public)")
+      return nil
+    }
+  }
+
+  /// Where controller runs keep their snapshots, and the bundle command that may ask for one. The
+  /// snapshots that ended instances left are removed first. A failure leaves scripting running
+  /// without controller packages, and says so in the log.
+  private func makeControllerSettings() -> ControllerSettings? {
+    do {
+      return try ControllerSettings.atLaunch(
+        root: try controllerRunsDirectory(), trustDirectory: controllerPolicyDirectory())
+    } catch {
+      logger.error("controller runs are off: \(String(describing: error), privacy: .public)")
+      return nil
+    }
+  }
+
   /// Starts the listener that script helpers connect to. A failure leaves the app running without
   /// scripting, and says so.
   private func startScripting(windows: WindowSet) {
@@ -177,14 +231,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onRefusal: { [weak self] refusal in
           self?.logger.error("a script connection was refused: \(refusal.text, privacy: .public)")
           self?.windowSet?.post(level: .warning, text: refusal.text)
-        })
+        },
+        controllers: makeControllerSettings(), clipboard: clipboard,
+        permissionRequests: windows.permissionRequests)
 
       host.start()
       scriptHost = host
+
+      windows.wireControllers(to: host)
+
+      host.onPendingRequestsActiveChanged = { [weak self] _ in self?.refreshPendingSlot() }
+      pendingObserver = windows.permissionRequests.changes.add { [weak self] in
+        self?.refreshPendingSlot()
+      }
+
+      windows.wireSessionReporting(
+        onStarted: { [weak host] windowID, pane, _, pid, started, generation in
+          host?.recordSessionRoot(
+            ProcessIdentity(pid: pid, started: started), sessionGeneration: generation,
+            window: windowID, pane: pane)
+        },
+        onEnded: { [weak host] windowID, pane, _, pid, started in
+          host?.removeSessionRoot(
+            ProcessIdentity(pid: pid, started: started), window: windowID, pane: pane)
+        },
+        onWindowClosed: { [weak host] windowID in host?.windowClosed(windowID) }
+      )
     } catch {
       logger.error("scripting did not start: \(String(describing: error), privacy: .public)")
       windows.post(level: .warning, text: "Scripts cannot connect to uniterm: \(error)")
     }
+  }
+
+  /// UI tests set `UNITERM_TEST_APPLETS` to 1 to register the hosted slide, notes, and chart
+  /// fixtures, so an exec pane can be driven in the real app. Only debug builds compile the
+  /// registration in, so no release applet gains exec support through it.
+  private var testAppletsEnabled: Bool {
+    #if DEBUG
+      return debugEnvironment["UNITERM_TEST_APPLETS"] == "1"
+    #else
+      return false
+    #endif
+  }
+
+  /// The applet types this build's windows know: the built-in ones, and the fixtures when a debug
+  /// build is asked for them.
+  private var appletDeclarations: [AppletTypeDeclaration] {
+    #if DEBUG
+      if testAppletsEnabled { return BuiltInApplets.declarations + AppletFixtures.declarations }
+    #endif
+
+    return BuiltInApplets.declarations
   }
 
   /// UI tests set `UNITERM_BROWSER_DIR` so the browser's own files stay out of the developer's
@@ -263,6 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       app: AppCommandHooks(
         newWindow: { [weak self] in self?.openWindow() },
         showSettings: { [weak self] in self?.presentSettings() },
+        showPendingRequests: { [weak self] in self?.presentPendingRequests() },
+        showControllers: { [weak self] in self?.presentControllers() },
         installCommandLineTool: { [weak self] in self?.installCommandLineTool() },
         openFile: { [weak self] anchor in
           Task { await self?.fileOpens?.open(from: anchor) }
@@ -307,6 +406,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       },
       traceSigint: debugEnvironment["UNITERM_REPL_TRACE_SIGINT"] == "1")
 
+    #if DEBUG
+      let testApplets = testAppletsEnabled
+    #endif
+
+    let declarations = appletDeclarations
+
     let restoreApplet: AppletRestorer = { description in
       switch description.type {
       case TerminalDescription.typeID:
@@ -333,6 +438,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try ReplApplet(engine: engine, services: replServices, restoring: description)
 
       default:
+        #if DEBUG
+          if testApplets, AppletFixtures.typeIDs.contains(description.type) {
+            return try AppletFixtures.restore(description)
+          }
+        #endif
+
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
       }
     }
@@ -363,6 +474,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
       case .repl:
         return ReplApplet(engine: engine, services: replServices)
+
+      case .hosted(let typeID):
+        #if DEBUG
+          if testApplets, let applet = AppletFixtures.make(typeID: typeID) { return applet }
+        #endif
+
+        throw AppletRestoreError.unsupported("uniterm cannot open a \(typeID) pane here")
       }
     }
 
@@ -370,25 +488,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       makeRestoredController: { identifier, restored in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          commands: commands, appletTypes: BuiltInApplets.declarations, restoring: restored,
+          commands: commands, appletTypes: declarations, restoring: restored,
           restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       },
       makeRoutedController: { identifier, applet in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          commands: commands, appletTypes: BuiltInApplets.declarations, startingWith: applet,
+          commands: commands, appletTypes: declarations, startingWith: applet,
           restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       },
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: settings, identifier: identifier,
-          startingIn: directory, commands: commands, appletTypes: BuiltInApplets.declarations,
+          startingIn: directory, commands: commands, appletTypes: declarations,
           restoreApplet: restoreApplet,
           places: places, makeApplet: makeApplet)
       })
     windowSet = windows
+    windows.clipboard = clipboard
+    windows.launchAuthority.onActiveChanged = { [weak self] _ in self?.refreshPendingSlot() }
 
     // Scripting starts before any window, so a REPL that a window restores finds the listener.
     startScripting(windows: windows)
@@ -529,6 +649,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    windowSet?.endDriversForQuit()
     scriptHost?.stop()
     layoutPersistence?.saveForQuit()
     terminalEngine?.removeConfigFile()
@@ -684,5 +805,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     settingsWindowController = controller
     controller.present()
+  }
+
+  /// The pending-permissions slot shows while a program waits for a pane, a controller waits for
+  /// its review, a driver waits to run, or any program waits for a permission.
+  private func refreshPendingSlot() {
+    guard let windows = windowSet else { return }
+
+    let waiting =
+      scriptHost?.hasPendingWork == true || !windows.launchAuthority.requests.isEmpty
+      || windows.permissionRequests.isWaiting
+
+    if waiting {
+      windows.setWindowState(.pendingPermissions, text: "Pending permission requests")
+    } else {
+      windows.clearWindowState(.pendingPermissions)
+    }
+  }
+
+  /// Opens Controllers & Permissions. Without scripting there is nothing to list, so it says so.
+  private func presentControllers() {
+    guard let scriptHost else {
+      let alert = NSAlert()
+
+      alert.messageText = "No controllers can run"
+      alert.informativeText = "Scripting did not start, so no controller runs or approvals exist."
+      alert.addButton(withTitle: "OK")
+      alert.runModal()
+
+      return
+    }
+
+    let controller =
+      controllersWindowController ?? ControllersWindowController(scriptHost: scriptHost)
+    controllersWindowController = controller
+    controller.present()
+  }
+
+  private func presentPendingRequests() {
+    guard let windows = windowSet else { return }
+
+    let controller =
+      pendingRequestsWindowController
+      ?? PendingRequestsWindowController(scriptHost: scriptHost, windows: windows)
+    pendingRequestsWindowController = controller
+    controller.showWindow(nil)
   }
 }

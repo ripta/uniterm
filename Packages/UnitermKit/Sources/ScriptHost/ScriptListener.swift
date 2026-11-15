@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import ProcessInspection
 import ScriptWire
 
 /// The app's listening socket for script helpers.
@@ -239,7 +240,9 @@ public final class ScriptListener: @unchecked Sendable {
   private func serve(descriptor: Int32, id: UInt64) {
     let socket = FramedSocket(descriptor: descriptor)
 
-    guard let peer = try? readPeer(descriptor) else {
+    // The audit token carries the process ID version that every call is checked against, so a
+    // peer without one has no generation to keep and is turned away.
+    guard let peer = try? readPeer(descriptor), peer.token != nil else {
       continuation.yield(
         .refused(nil, .protocolViolation("the peer's credentials were unreadable")))
       socket.shutdownAndClose()
@@ -272,8 +275,16 @@ public final class ScriptListener: @unchecked Sendable {
       return
     }
 
+    guard let peerStartTime = ProcessInspection.startTime(of: peer.pid) else {
+      continuation.yield(
+        .refused(peer, .protocolViolation("the peer process is no longer running")))
+      socket.shutdownAndClose()
+
+      return
+    }
+
     let connection = ScriptConnection(
-      id: id, peer: peer, socket: socket,
+      id: id, peer: peer, peerStartTime: peerStartTime, socket: socket,
       onOverflow: { [continuation] connection in
         continuation.yield(.refused(connection.peer, .peerNotReading))
       })
@@ -334,6 +345,13 @@ public final class ScriptListener: @unchecked Sendable {
           role = .script
           setReadTimeout(0, on: descriptor)
           continuation.yield(.begun(connection, name: name))
+
+        case .controllerBegin(let begin):
+          guard role == .undeclared else { throw WireError.badValue("a second begin") }
+
+          role = .script
+          setReadTimeout(0, on: descriptor)
+          continuation.yield(.controllerBegun(connection, begin))
 
         case .attach(let token):
           guard role == .undeclared else {
@@ -405,5 +423,13 @@ public final class ScriptListener: @unchecked Sendable {
 
     _ = setsockopt(
       descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+  }
+
+  /// Finds a connection by its ID. Returns nil when the connection is not found or has closed.
+  public func findConnection(_ id: UInt64) -> ScriptConnection? {
+    lock.lock()
+    defer { lock.unlock() }
+
+    return connections[id]
   }
 }

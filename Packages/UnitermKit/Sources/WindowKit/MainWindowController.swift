@@ -1,9 +1,11 @@
 import AppKit
 import AppletKit
+import ExecDriver
 import LayoutKit
 import PaneModel
 import PlaceSearch
 import Preferences
+import ScriptHost
 import StatusKit
 import Theme
 
@@ -72,10 +74,52 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   var isPaletteVisible: Bool { paletteTarget != nil }
 
-  /// Who owns the groups of panes a controller drives. The window asks it nothing yet, and tells
-  /// it about every ordinary split. A routed split is never reported, so a routed pane joins no
-  /// group.
-  var paneGroups: any PaneGroupOwnership = NoPaneGroups()
+  /// The access mode of each pane. The window holds it, never an applet.
+  var paneControls = PaneControlTable()
+
+  /// Which connections act for which pane, and their names. The set of windows gives it to each
+  /// window. Without one, no connection acts for any pane.
+  weak var controllerAuthority: (any ControllerAuthority)?
+
+  /// Each pane's exec driver declaration and where it stands, keyed by pane.
+  var execAttachments: [NodeID: ExecAttachment] = [:]
+
+  /// The last owner ID given to a driver run in this window. Each run that starts takes the next.
+  var lastDriverOwner: UInt64 = 0
+
+  /// The owners whose layout is being prepared now. Each owner has at most one, so a controller
+  /// that sends layouts faster than they finish cannot hold more than one layout's applets.
+  var layoutsInPreparation = Set<GroupOwner>()
+
+  /// Decides whether a directory a driver's layout names is a folder here. Tests replace it.
+  var directoryExists: @Sendable (String) -> Bool = WindowScripting.isDirectory
+
+  /// The one dispatch every applet command in this window goes through, from a remote caller or
+  /// an exec driver. Tests replace it with one they step by hand.
+  var dispatcher = ControlDispatcher()
+
+  /// Who may launch which driver. The window set gives every window the same one, so the
+  /// Pending Requests panel lists them all.
+  var launchAuthority = ExecLaunchAuthority()
+
+  /// The base a driver's environment starts from. Tests replace it.
+  var execEnvironment = ExecEnvironment.current()
+
+  /// How long a driver has after SIGTERM before SIGKILL.
+  var execKillGrace: DispatchTimeInterval = .seconds(2)
+
+  /// Asks the user for a driver's environment values. Tests replace it.
+  var execValuesAsker: ExecValuesAsker = ExecValuesSheet.present
+
+  /// The permission questions every window and the script host share. The window set gives every
+  /// window the same one.
+  var permissionRequests = PermissionRequests()
+
+  /// The clipboard a driver's typed clipboard requests reach. Without one, they are refused.
+  weak var clipboard: (any ScriptClipboard)?
+
+  /// Counts permission questions with no scope, so each gets a key of its own.
+  var lastPermissionScope: UInt64 = 0
 
   /// The tabs that took focus, newest first. It lives in memory only. A tab ID is never reused,
   /// so an entry for a tab that closed is harmless and the palette prunes it when it lists.
@@ -131,6 +175,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// or an applet's description.
   var onLayoutChange: (() -> Void)?
 
+  /// Runs when a terminal or REPL session starts in a pane. Reports to the session registry for
+  /// authority checking.
+  var onSessionStarted:
+    (
+      (UInt64, NodeID, AppletTabID, pid_t, Int, UInt64) -> Void
+    )?
+
+  /// Runs when a session ends.
+  var onSessionEnded: ((UInt64, NodeID, AppletTabID, pid_t, Int) -> Void)?
+
   /// The visible area of the screen the window is on. A window never asks for more room than that.
   /// Tests replace it.
   var visibleFrameProvider: @MainActor (NSWindow) -> NSRect? = { window in
@@ -175,13 +229,21 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     let panes = try restored.map { try PaneRestoration.restore($0, restorer: restoreApplet) }
 
+    for (pane, intent) in panes?.intents ?? [:] {
+      paneControls.remember(SavedPaneControl(access: intent.access, driver: .none), for: pane)
+    }
+
+    let contentSize = NSSize(width: 960, height: 640)
+
     if let panes {
       launchRestored = Set(panes.applets.values.map { ObjectIdentifier($0) })
-      paneArea = PaneAreaView(restoring: panes.tree, applets: panes.applets, focus: panes.focus)
+      paneArea = PaneAreaView(
+        restoring: panes.tree, applets: panes.applets, focus: panes.focus, size: contentSize)
     } else if let routed {
-      paneArea = PaneAreaView(firstApplet: routed)
+      paneArea = PaneAreaView(firstApplet: routed, size: contentSize)
     } else {
-      paneArea = PaneAreaView(firstApplet: try makeApplet(.terminalShell, directory))
+      paneArea = PaneAreaView(
+        firstApplet: try makeApplet(.terminalShell, directory), size: contentSize)
     }
 
     contentController = MainContentViewController(
@@ -189,7 +251,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       palette: palettePlacement.value)
 
     let window = MainWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+      contentRect: NSRect(origin: .zero, size: contentSize),
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false)
@@ -200,7 +262,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     window.isRestorable = false
     window.setAccessibilityIdentifier(identifier)
     window.contentViewController = contentController
-    window.setContentSize(NSSize(width: 960, height: 640))
+    window.setContentSize(contentSize)
     window.center()
 
     super.init(window: window)
@@ -211,6 +273,12 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       if let applet = paneArea.applet(for: pane) { bindHost(of: applet, to: pane) }
     }
 
+    refreshControlMarks()
+
+    for (pane, intent) in panes?.intents ?? [:] {
+      if let exec = intent.exec { try? declareExecDriver(exec, for: pane, restored: true) }
+    }
+
     for applet in paneArea.applets { adopt(applet) }
 
     paneArea.onAppletPlaced = { [weak self] applet, pane in
@@ -218,6 +286,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     paneArea.onTreeChange = { [weak self] in
+      self?.refreshControlMarks()
       self?.updateMinimumSize()
       self?.refreshCommandPalette()
       self?.commands.menu?.sync()
@@ -465,12 +534,27 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   ///
   /// The window holds each host for as long as its applet lives. Entries for applets that are gone
   /// are dropped here, so the table stays as small as the applets that can still post.
+  ///
+  /// The applet learns its pane's control here too, before anything can start it. The badge's
+  /// actions are wired to the pane at the same time.
   private func bindHost(of applet: any Applet, to pane: NodeID) {
     hosts = hosts.filter { $0.value.applet != nil }
 
     let host = PaneStatusHost(pane: pane, applet: applet, window: self)
     hosts[ObjectIdentifier(applet)] = HostEntry(applet: applet, host: host)
     applet.host = host
+    applet.controlDidChange(paneControls.control(of: pane))
+
+    paneArea.paneView(for: pane)?.onControlAction = { [weak self] action in
+      self?.runControlAction(action, on: pane)
+    }
+    paneArea.paneView(for: pane)?.currentControlMark = { [weak self] in
+      self?.controlMark(for: pane)
+    }
+    paneArea.paneView(for: pane)?.onExecAction = { [weak self] in
+      self?.runExecDriver(pane)
+    }
+    paneArea.paneView(for: pane)?.execStatus = execStatus(of: pane)
   }
 
   /// Makes the applet ready for the window. A launcher also learns how to open its choice, and gets
@@ -637,10 +721,171 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       return nil
     }
 
-    paneGroups.paneSplit(created, from: pane)
     startPendingApplets()
     paneArea.focus(created)
     return created
+  }
+
+  /// Splits `pane` for a controller and starts the chosen applet in the new pane, which joins the
+  /// controller's group. The new pane starts with `access`, which its applet type must support,
+  /// and its applet learns that before it starts. Returns nil when the type does not support the
+  /// access, the pane is too small, or the applet could not start. A refusal of the access
+  /// builds nothing.
+  @discardableResult
+  func openPane(
+    _ choice: AppletChoice, typeID: String, axis: Axis, from pane: NodeID, directory: String?,
+    owner: GroupOwner, access: PaneAccessMode
+  ) -> NodeID? {
+    let combination = ControlCombination(access: access, driver: .none)
+
+    guard
+      AppletTypeDeclaration.supportedControl(forType: typeID, in: appletTypes).contains(
+        combination)
+    else { return nil }
+
+    contentController.view.layoutSubtreeIfNeeded()
+
+    let applet: any Applet
+    do {
+      applet = try makeApplet(choice, directory)
+    } catch {
+      statusCenter.post(level: .error, text: "The pane did not open: \(error.localizedDescription)")
+      return nil
+    }
+
+    adopt(applet)
+
+    let created: NodeID
+    do {
+      created = try paneArea.split(pane, axis, adding: applet, for: owner)
+    } catch {
+      applet.close()
+      postNoRoom()
+      return nil
+    }
+
+    if access != .disconnected {
+      let control = paneControls.set(access, for: created)
+      applet.controlDidChange(control)
+    }
+
+    refreshControlMarks()
+    startPendingApplets()
+    paneArea.focus(created)
+    return created
+  }
+
+  // MARK: Layout requests
+
+  /// Checks the layout against the tree as it is now, then builds the applets it opens, one per
+  /// slot. A layout the tree refuses builds nothing. Nothing is placed or started, and the tree
+  /// does not change. Each applet must be of a type that supports the control asked of it, and
+  /// one that takes a driver must take commands.
+  ///
+  /// A new pane with no directory starts in the one the anchor reports. Any failure closes every
+  /// applet built and throws.
+  func stageLayout(_ request: LayoutRequest, anchor: NodeID, owner: GroupOwner)
+    throws(ScriptCallError) -> StagedLayout
+  {
+    contentController.view.layoutSubtreeIfNeeded()
+
+    var candidate = paneArea.tree
+
+    do {
+      _ = try candidate.layOut(
+        request.plan, anchoredAt: anchor, for: owner, slots: request.panes.count,
+        in: paneArea.bounds.size)
+    } catch {
+      throw Self.layoutFailure(error)
+    }
+
+    let staged = StagedLayout(request: request, anchor: anchor, owner: owner)
+    let start = directory(of: anchor)
+
+    for pane in request.panes {
+      let applet: any Applet
+
+      do {
+        applet = try makeApplet(pane.choice, pane.directory ?? start)
+      } catch {
+        staged.discard()
+        throw .refused("a \(pane.kind) pane did not open: \(error.localizedDescription)")
+      }
+
+      staged.applets.append(applet)
+
+      let supported = AppletTypeDeclaration.supportedControl(
+        forType: applet.typeID, in: appletTypes)
+
+      guard supported.contains(pane.combination),
+        pane.exec == nil || applet is any AppletCommandHandling
+      else {
+        staged.discard()
+        throw .refused("a \(pane.kind) pane does not support \(pane.combination) control")
+      }
+    }
+
+    return staged
+  }
+
+  /// Publishes a staged layout: the tree changes, each new pane takes its applet and its control,
+  /// a declared driver attaches inert, and the new applets start. The tree checks the layout
+  /// again against the tree as it is now, so a change while the layout was staged refuses it.
+  /// Returns the pane at each leaf of the layout, in order.
+  ///
+  /// The caller checks the controller's authority right before it calls this, with nothing
+  /// suspended between. A driver runs only once the user chooses Run, so no program starts here.
+  /// A refusal closes every staged applet and changes nothing.
+  func publish(_ staged: StagedLayout) throws(ScriptCallError) -> [NodeID] {
+    guard paneActionsEnabled else {
+      staged.discard()
+      throw .refused("the window is waiting for an answer to a question")
+    }
+
+    let request = staged.request
+
+    for applet in staged.applets { adopt(applet) }
+
+    contentController.view.layoutSubtreeIfNeeded()
+
+    let outcome: PaneLayoutOutcome
+
+    do {
+      outcome = try paneArea.layOut(
+        request.plan, anchoredAt: staged.anchor, for: staged.owner, adding: staged.applets)
+    } catch {
+      staged.discard()
+      throw Self.layoutFailure(error)
+    }
+
+    staged.published = true
+
+    for (pane, (applet, asked)) in zip(outcome.created, zip(staged.applets, request.panes)) {
+      if asked.access != .disconnected {
+        applet.controlDidChange(paneControls.set(asked.access, for: pane))
+      }
+
+      if let exec = asked.exec {
+        do {
+          try declareExecDriver(exec, for: pane)
+        } catch {
+          statusCenter.post(level: .warning, text: "A pane's driver could not attach: \(error).")
+        }
+      }
+    }
+
+    refreshControlMarks()
+    startPendingApplets()
+    return outcome.panes(of: request.plan)
+  }
+
+  private static func layoutFailure(_ error: any Error) -> ScriptCallError {
+    switch error {
+    case PaneLayoutError.refused(let reason): return .refused(reason)
+    case PaneLayoutError.noRoom: return .refused("the layout does not fit in the window")
+    case PaneTreeError.unknownPane: return .notFound("the pane is not open in that window")
+    default: return .failed("the layout failed: \(error)")
+    }
   }
 
   /// Runs the choice in the launcher's pane. The pane keeps its ID and its place, and the launcher
@@ -825,11 +1070,13 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     let closed = ClosedPane(
       stamp: issueCloseStamp(), placement: removed.placement, description: applet.describe(),
-      title: applet.title)
+      title: applet.title, exec: execAttachments[pane]?.declaration)
 
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
+    execPaneClosed(pane)
     applet.close()
+    paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)
 
     if let next = removed.refocus {
@@ -846,7 +1093,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
+    execPaneClosed(pane)
     applet.close()
+    paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)
 
     if let next = removed.refocus {
@@ -931,6 +1180,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     ledger.remove(stamp: closed.stamp)
+
+    if let exec = closed.exec { try? declareExecDriver(exec, for: id, restored: true) }
+
     startPendingApplets()
     paneArea.focus(id)
 
@@ -1055,6 +1307,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       focusedPane: paneArea.focusedPane, highWaterMark: paneArea.tree.highWaterMark)
   }
 
+  /// A pane saves the control it has as intent, or the intent it was restored with while the user
+  /// has not changed it. A group saves its structure with no owner.
   private func savedNode(_ node: Node, described: inout [NodeID: AppletDescription]) -> SavedNode? {
     switch node {
     case .pane(let pane):
@@ -1062,7 +1316,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
       let description = applet.describe().withoutUndoState
       described[pane.id] = description
-      return .pane(id: pane.id, applet: description)
+      return .pane(id: pane.id, applet: description, control: savedControl(of: pane.id))
+
+    case .group(let group):
+      guard let inner = savedNode(group.content, described: &described) else { return nil }
+
+      let members = group.members.filter { inner.paneIDs.contains($0) }
+
+      guard !members.isEmpty else { return inner }
+
+      return .group(id: group.id, source: group.source, members: Array(members), node: inner)
 
     case .split(let split):
       var children: [SavedChild] = []
@@ -1126,6 +1389,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     panesClosed = true
 
+    for pane in paneArea.tree.paneIDs { execPaneClosed(pane) }
+
     for applet in paneArea.applets { applet.close() }
 
     ledger.removeAll()
@@ -1170,11 +1435,62 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     schedulePaletteRefresh()
   }
 
+  /// The question names what asked: the subject the applet gives, such as a background tab, or
+  /// else the applet's title.
   public func applet(_ applet: any Applet, confirm request: AppletConfirmation) async -> Bool {
+    let name = request.subject ?? applet.title
+
     let question = CloseConfirmation(
-      title: request.title, detail: "Pane \u{201C}\(applet.title)\u{201D}. \(request.detail)",
+      title: request.title, detail: "Pane \u{201C}\(name)\u{201D}. \(request.detail)",
       confirmTitle: request.confirmTitle, cancelTitle: request.cancelTitle)
 
     return await confirmer(question, window)
+  }
+
+  public func applet(_ applet: any Applet, askPermission request: AppletPermissionRequest) async
+    -> AppletPermissionAnswer
+  {
+    let name = request.subject ?? applet.title
+
+    var named = request
+    named.detail = "Pane \u{201C}\(name)\u{201D}. \(request.detail)"
+
+    guard let pane = paneArea.paneID(for: applet) else { return .deny }
+
+    let requester = PermissionRequests.Requester.terminal(
+      window: scriptWindowID, pane: pane.rawValue)
+
+    lastPermissionScope += 1
+
+    let key = PermissionRequests.Key(
+      requester: requester, power: named.scope ?? "question \(lastPermissionScope)")
+
+    return await withCheckedContinuation { continuation in
+      let outcome = permissionRequests.ask(
+        key, subject: "Programs in \u{201C}\(name)\u{201D}", title: named.title,
+        detail: named.detail, sessionTitle: named.sessionTitle
+      ) { answer in
+        switch answer {
+        case .allowOnce: continuation.resume(returning: .allowOnce)
+        case .allowForSession: continuation.resume(returning: .allowForSession)
+        case .deny, .withdrawn: continuation.resume(returning: .deny)
+        }
+      }
+
+      if outcome != .waiting { continuation.resume(returning: .deny) }
+    }
+  }
+
+  func applet(
+    _ applet: any Applet, in pane: NodeID, sessionStarted tab: AppletTabID, pid: pid_t,
+    started: Int, generation: UInt64
+  ) {
+    onSessionStarted?(scriptWindowID, pane, tab, pid, started, generation)
+  }
+
+  func applet(
+    _ applet: any Applet, in pane: NodeID, sessionEnded tab: AppletTabID, pid: pid_t, started: Int
+  ) {
+    onSessionEnded?(scriptWindowID, pane, tab, pid, started)
   }
 }

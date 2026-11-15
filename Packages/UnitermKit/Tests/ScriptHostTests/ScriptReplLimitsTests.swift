@@ -67,6 +67,7 @@ final class ScriptReplLimitsTests: XCTestCase {
       replProbes: ReplProbes(footprint: { footprints.read($0) }, now: { clock.now }))
 
     host.start()
+    recordTestProcessAsSessionRoot(host)
     hosts.append(host)
 
     return host
@@ -107,7 +108,7 @@ final class ScriptReplLimitsTests: XCTestCase {
   /// the end.
   func testTheAppsStopRequestInterruptsAFormAndKeepsTheDefinitions() async throws {
     let host = try makeHost()
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -140,7 +141,7 @@ final class ScriptReplLimitsTests: XCTestCase {
   /// instruction. Three requests arrive at an idle prompt, and the form typed after them runs.
   func testAStopRequestAtAnIdlePromptChangesNothing() async throws {
     let host = try makeHost()
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -177,7 +178,7 @@ final class ScriptReplLimitsTests: XCTestCase {
     let clock = ManualClock()
     let killed = KilledPIDs()
     let host = try makeHost(clock: clock, killed: killed)
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -214,7 +215,7 @@ final class ScriptReplLimitsTests: XCTestCase {
     let clock = ManualClock()
     let killed = KilledPIDs()
     let host = try makeHost(clock: clock, killed: killed)
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -246,8 +247,8 @@ final class ScriptReplLimitsTests: XCTestCase {
       pongGrace: .seconds(3))
     let host = try makeHost(limits: limits, footprints: footprints, killed: killed)
 
-    let first = host.openRepl(history: [])
-    let second = host.openRepl(history: [])
+    let first = openTestRepl(host: host, history: [])
+    let second = openTestRepl(host: host, history: [])
     let firstEvents = ReplEvents(first)
     let secondEvents = ReplEvents(second)
     let firstRepl = try start(first)
@@ -306,7 +307,7 @@ final class ScriptReplLimitsTests: XCTestCase {
       helperCap: 1000, killMargin: 250, budget: 100_000, sampleInterval: .seconds(3600),
       pongGrace: .seconds(3))
     let host = try makeHost(limits: limits, footprints: footprints, killed: killed)
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -373,7 +374,7 @@ final class ScriptReplLimitsTests: XCTestCase {
       helperCap: 1 << 30, killMargin: 1 << 28, budget: 1000, startingFloor: 10,
       sampleInterval: .seconds(3600), pongGrace: .seconds(3))
     let host = try makeHost(limits: limits, footprints: footprints)
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -401,7 +402,7 @@ final class ScriptReplLimitsTests: XCTestCase {
       helperCap: 1 << 30, killMargin: 1 << 28, budget: 1000, startingFloor: 10,
       sampleInterval: .seconds(3600), pongGrace: .seconds(3))
     let host = try makeHost(limits: limits, footprints: footprints)
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -439,7 +440,7 @@ final class ScriptReplLimitsTests: XCTestCase {
     let clock = ManualClock()
     let killed = KilledPIDs()
     let host = try makeHost(clock: clock, killed: killed)
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -478,7 +479,7 @@ final class ScriptReplLimitsTests: XCTestCase {
     let clock = ManualClock()
     let killed = KilledPIDs()
     let host = try makeHost(clock: clock, killed: killed)
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -525,7 +526,7 @@ final class ScriptReplLimitsTests: XCTestCase {
   /// app hears it say so before the connection closes.
   func testARunawayAllocationEndsTheHelperWithANoticeTheAppHears() async throws {
     let host = try makeHost()
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel, arguments: ["--memory-cap", String(64 << 20)])
 
@@ -551,7 +552,7 @@ final class ScriptReplLimitsTests: XCTestCase {
   /// error, and the REPL goes on afterwards.
   func testADeniedOperationFailsInTheReplToo() async throws {
     let host = try makeHost()
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let repl = try start(channel)
 
@@ -585,7 +586,7 @@ final class ScriptReplLimitsTests: XCTestCase {
   /// assertion only holds the footprint under the per-helper cap.
   func testTheReplHelperRestingFootprintAndStartupTime() async throws {
     let host = try makeHost()
-    let channel = host.openRepl(history: [])
+    let channel = openTestRepl(host: host, history: [])
     let events = ReplEvents(channel)
     let clock = ContinuousClock()
     let launch = clock.now

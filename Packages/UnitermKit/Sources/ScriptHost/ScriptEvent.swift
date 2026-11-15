@@ -40,6 +40,9 @@ public enum ScriptRefusal: Sendable, Equatable {
 /// checked.
 public enum ScriptEvent: Sendable {
   case begun(ScriptConnection, name: String)
+
+  /// A helper declared the connection a controller run, in place of naming a script.
+  case controllerBegun(ScriptConnection, ControllerBegin)
   case request(ScriptConnection, id: UInt32, call: ScriptCall)
 
   /// A REPL's helper presented its token. It is the first message of the connection.

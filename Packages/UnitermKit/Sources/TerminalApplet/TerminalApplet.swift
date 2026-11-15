@@ -37,6 +37,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     var title: String
     var workingDirectory: String?
     var failedExitCode: Int?
+    var processIdentity: (pid: pid_t, started: Int)?
 
     /// A program-mode tab restored from a description. It has no session until the user runs it.
     var awaitingRun = false
@@ -88,6 +89,14 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   /// Notifications reach the status bar through this. It records them in the history when they
   /// arrive and holds them back while the applet is detached.
   private var alerts = AppletAlerts()
+
+  /// The pane's control state, as the host last pushed it. Every session gets the clipboard policy
+  /// it implies, from its creation on.
+  private var control = PaneControl.disconnected
+
+  private var clipboardPolicy: TerminalClipboardPolicy {
+    TerminalClipboardPolicy(controlled: control.isControlled, generation: control.generation)
+  }
 
   /// A shell in one tab, with the launch as given.
   public convenience init(engine: any TerminalEngine, launch: TerminalLaunch) {
@@ -313,6 +322,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     alerts.discard()
 
     for tab in tabs {
+      if let identity = tab.processIdentity {
+        host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
+        tab.processIdentity = nil
+      }
       tab.session?.view.removeFromSuperview()
       tab.session?.close()
       tab.session = nil
@@ -349,6 +362,16 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   public func apply(_ palette: ThemePalette) {
     tabBar.apply(palette)
     runPrompt.apply(palette)
+  }
+
+  /// Every running tab takes the new clipboard policy before this returns, so a tab in the
+  /// background is covered as soon as the pane is.
+  public func controlDidChange(_ control: PaneControl) {
+    self.control = control
+
+    for tab in tabs {
+      tab.session?.setClipboardPolicy(clipboardPolicy)
+    }
   }
 
   /// True while the selected tab shows its command and waits for the user to run it.
@@ -584,6 +607,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     let hadFocus = hasFocus
     let tab = tabs.remove(at: index)
 
+    if let identity = tab.processIdentity {
+      host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
+      tab.processIdentity = nil
+    }
     tab.session?.view.removeFromSuperview()
     tab.session?.close()
     tab.session = nil
@@ -603,7 +630,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   }
 
   private func startSession(for tab: Tab) throws {
-    let session = try engine.makeSession(launch: tab.launch)
+    let session = try engine.makeSession(launch: tab.launch, clipboardPolicy: clipboardPolicy)
     tab.session = session
     session.onEvent = { [weak self, weak tab] event in
       guard let self, let tab else { return }
@@ -686,6 +713,12 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
         host?.appletDidChange(self)
       }
 
+    case .processStarted(let identity):
+      tab.processIdentity = (pid: identity.pid, started: identity.started)
+      host?.applet(
+        self, sessionStarted: tab.id, pid: identity.pid, started: identity.started,
+        generation: identity.sessionGeneration)
+
     case .commandFinished(let exitCode, _):
       tab.failedExitCode = exitCode.flatMap { $0 != 0 ? $0 : nil }
 
@@ -699,13 +732,18 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       alerts.deliver(.info, text, from: self, to: host)
 
     case .clipboardRequest(let request):
-      confirm(request)
+      confirm(request, from: tab)
 
     case .bell:
       break
 
     case .exited:
       guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
+
+      if let identity = tab.processIdentity {
+        host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
+        tab.processIdentity = nil
+      }
 
       if tabs.count == 1 {
         host?.appletDidExit(self)
@@ -750,10 +788,28 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     return sanitized(last.isEmpty ? path : last, limit: 40)
   }
 
-  /// A request is never answered without the user's say. With no host to ask, it is refused.
-  private func confirm(_ request: TerminalClipboardRequest) {
+  /// A request is never answered without the user's say. With no host to ask, it is refused. The
+  /// question names the tab the request came from, which need not be the selected one.
+  private func confirm(_ request: TerminalClipboardRequest, from tab: Tab) {
     guard let host else {
-      request.resolve(allow: false)
+      request.resolve(.deny)
+      return
+    }
+
+    let subject = label(of: tab)
+
+    if var permission = Self.permission(for: request, subject: subject) {
+      permission.scope = "tab \(tab.id) \(request.kind) generation \(control.generation)"
+
+      Task { @MainActor [weak self] in
+        guard let self else {
+          request.resolve(.deny)
+          return
+        }
+
+        request.resolve(Self.answer(await host.applet(self, askPermission: permission)))
+      }
+
       return
     }
 
@@ -764,25 +820,70 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       confirmation = AppletConfirmation(
         title: "Allow a program to read your clipboard?",
         detail:
-          "A program in this pane asked for the clipboard with an escape sequence. It would receive: \(Self.preview(request.text))",
-        confirmTitle: "Allow", cancelTitle: "Deny")
+          "A program in this tab asked for the clipboard with an escape sequence. It would receive: \(Self.preview(request.text))",
+        confirmTitle: "Allow", cancelTitle: "Deny", subject: subject)
+
+    case .write:
+      confirmation = AppletConfirmation(
+        title: "Allow a program to replace your clipboard?",
+        detail:
+          "A program in this tab asked to replace the clipboard with an escape sequence. It would write: \(Self.preview(request.text))",
+        confirmTitle: "Allow", cancelTitle: "Deny", subject: subject)
 
     case .unsafePaste:
       confirmation = AppletConfirmation(
         title: "Paste text that could run commands?",
         detail:
           "The text holds control characters or a newline. It would be pasted as: \(Self.preview(request.text))",
-        confirmTitle: "Paste", cancelTitle: "Cancel")
+        confirmTitle: "Paste", cancelTitle: "Cancel", subject: subject)
     }
 
     Task { @MainActor [weak self] in
       guard let self else {
-        request.resolve(allow: false)
+        request.resolve(.deny)
         return
       }
 
       let allowed = await host.applet(self, confirm: confirmation)
       request.resolve(allow: allowed)
+    }
+  }
+
+  /// The question for a request from a controlled session, which can allow the rest of the
+  /// session. Nil for a request that asks the plain question.
+  ///
+  /// An escape sequence names no program, so the session answer is labelled as covering every
+  /// program in the tab, not the one that asked.
+  static func permission(for request: TerminalClipboardRequest, subject: String)
+    -> AppletPermissionRequest?
+  {
+    guard request.offersSession else { return nil }
+
+    switch request.kind {
+    case .read:
+      return AppletPermissionRequest(
+        title: "Allow a program to read your clipboard?",
+        detail:
+          "This pane is controlled by another program. A program in this tab asked for the clipboard with an escape sequence. It would receive: \(preview(request.text))",
+        subject: subject, sessionTitle: "Allow Reads in This Tab")
+
+    case .write:
+      return AppletPermissionRequest(
+        title: "Allow a program to replace your clipboard?",
+        detail:
+          "This pane is controlled by another program. A program in this tab asked to replace the clipboard with an escape sequence. It would write: \(preview(request.text))",
+        subject: subject, sessionTitle: "Allow Writes in This Tab")
+
+    case .unsafePaste:
+      return nil
+    }
+  }
+
+  static func answer(_ answer: AppletPermissionAnswer) -> TerminalClipboardAnswer {
+    switch answer {
+    case .deny: return .deny
+    case .allowOnce: return .allowOnce
+    case .allowForSession: return .allowForSession
     }
   }
 

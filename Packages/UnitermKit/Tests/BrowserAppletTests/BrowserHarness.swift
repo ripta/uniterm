@@ -46,6 +46,20 @@ final class EventHost: AppletHost {
 
   func issueCloseStamp() -> UInt64 { recording.issueCloseStamp() }
 
+  func applet(
+    _ applet: any Applet, sessionStarted tab: AppletTabID, pid: pid_t, started: Int,
+    generation: UInt64
+  ) {
+    recording.applet(
+      applet, sessionStarted: tab, pid: pid, started: started, generation: generation)
+    events.continuation.yield()
+  }
+
+  func applet(_ applet: any Applet, sessionEnded tab: AppletTabID, pid: pid_t, started: Int) {
+    recording.applet(applet, sessionEnded: tab, pid: pid, started: started)
+    events.continuation.yield()
+  }
+
   /// Returns once `condition` holds. It checks first, then waits for the applet's next report. A
   /// condition that never holds ends the test with a failure after `seconds`, so a hung page fails
   /// instead of hanging the run. The timer runs only on that path.
