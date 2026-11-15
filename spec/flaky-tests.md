@@ -71,16 +71,19 @@ fixed ones.
 - Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
 - Status: unresolved.
 
+## Fixed
+
 ### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
 
-- Seen: 2026-11-15, once, in the first CI `package` run of PR #49.
-- Evidence: `ExecPaneTests.swift:606` measured 5.47 s against its 5 s bound. The main thread's turn arrived within its
-  2 s wait. Locally the whole test took 1.97 s.
-- Suspected cause: the bound covers the 20,000 synthesized clicks as well as the turn, and the CI runner is several
-  times slower. Not confirmed. A driver that slowed each click would look the same.
-- Status: unresolved.
+Fixed by: "Measure the stalled-driver flood against the same clicks with no driver"
 
-## Fixed
+- Seen: 2026-11-15, twice, in both CI `package` runs of PR #49, at 5.47 s and 8.62 s against a 5 s bound.
+- Evidence: locally the 20,000 clicks took 1.61 s with no driver and 1.72 s with the stalled one. The main thread's
+  turn came 11 ms after the flood.
+- Cause: the bound timed the clicks themselves, which AppKit makes cost about 80 µs each. A CI runner is several times
+  slower. The driver was right.
+- Fix: the test times the same clicks with no driver first, and the flood must cost less than twice that. A send made
+  to sleep 200 µs fails it, at 9.8 s against 3.2 s.
 
 ### `FileWatcherTests.testChangesToOtherFilesInTheFolderDeliverNothing`
 

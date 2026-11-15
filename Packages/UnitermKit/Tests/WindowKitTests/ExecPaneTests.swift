@@ -581,12 +581,25 @@ final class ExecPaneTests: XCTestCase {
 
   /// Catches a stalled driver that holds the main thread: while it neither reads nor writes, and
   /// the applet floods it with events, main-thread work still runs within a turn.
+  ///
+  /// The clicks themselves cost the main thread time on any machine, and a CI runner is several
+  /// times slower. So the flood is measured against the same clicks with no driver running, not
+  /// against a fixed time.
   func testAStalledDriverNeverHoldsTheMainThread() async throws {
     let fixture = try makeFixture()
     let controller = try fixture.openWindow()
     let pane = controller.focusedPane
+    let clicks = 20_000
 
     try controller.declareExecDriver(fixture.declaration("stall"), for: pane)
+
+    let idle = try XCTUnwrap(fixture.slides(controller, pane))
+    let idleStarted = Date()
+
+    for _ in 0..<clicks { idle.button.performClick(nil) }
+
+    let idleCost = Date().timeIntervalSince(idleStarted)
+
     controller.runExecDriver(pane)
     fixture.windows.launchAuthority.decide(
       try XCTUnwrap(fixture.windows.launchAuthority.requests.first?.id), .allowOnce)
@@ -596,14 +609,17 @@ final class ExecPaneTests: XCTestCase {
     let applet = try XCTUnwrap(fixture.slides(controller, pane))
     let started = Date()
 
-    for _ in 0..<20_000 { applet.button.performClick(nil) }
+    for _ in 0..<clicks { applet.button.performClick(nil) }
+
+    let floodCost = Date().timeIntervalSince(started)
+
+    XCTAssertLessThan(
+      floodCost, 2 * idleCost, "the flood cost \(floodCost) s against \(idleCost) s with no driver")
 
     let turned = Flag(false)
     DispatchQueue.main.async { MainActor.assumeIsolated { turned.on = true } }
 
     await waitUntil("the main thread takes another turn", timeout: 2) { turned.on }
-
-    XCTAssertLessThan(Date().timeIntervalSince(started), 5)
   }
 }
 
