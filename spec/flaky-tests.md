@@ -86,8 +86,27 @@ fixed ones.
 - Seen: 2026-11-15, once, in the second CI `app` run of PR #49, which does not touch the open-panel helper.
 - Evidence: the shared open-panel helper at `UnitermUITestCase.swift:308` failed with "the go-to-folder sheet never
   closed". The other 157 UI tests passed. `TextViewerUITests` then passed 13 of 13 alone. The same message failed
-  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` on PR #43's first CI run.
+  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` on PR #43's first CI run. It failed
+  `DataViewerUITests.testCommandOOpensAWorkbookAndTheSheetPickerSwitchesSheets` on PR #53's first CI run, which does
+  not touch the helper either. The rerun passed.
 - Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
+- Status: unresolved.
+
+### `ScriptReplTests.testRestoredHistoryIsNeverEvaluated`
+
+- Seen: 2026-11-15, once, in the first CI `package` run of PR #53, which does not touch the REPL.
+- Evidence: `ScriptReplTests.swift:554` found `events.lines` empty where `["(+ 20 22)"]` was expected. The test
+  passed 20 of 20 alone, and the rerun passed.
+- Suspected cause: the test reads `events.lines` as soon as `42` shows on the pty. The `.line` event comes over the
+  host's socket, a separate path, so it can arrive after the output. Not confirmed.
+- Status: unresolved.
+
+### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
+
+- Seen: 2026-11-15, once, in the first CI `app` run of PR #53, which does not touch the launcher.
+- Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list". The rerun passed.
+- Suspected cause: the test checks `isHittable` right after the scroll, with no wait for the list to settle. Not
+  confirmed.
 - Status: unresolved.
 
 ## Fixed
