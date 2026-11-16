@@ -206,3 +206,39 @@ test, timed out once in a full run and passed alone in 8.5 s. Neither was compar
 
 Test cost: `TextViewerRemoteTests`, `RemoteHandleTests`, and `TextViewerRemoteWindowTests` ran together in 8.1 s.
 The PDF match-cap test is 3.3 s of that. It is the only proof that a PDF find past the cap ends.
+
+## Row review and final review
+
+The run has one row, so the row review and the run's final review cover the same range, from the run's base to the
+commit "Let a controller drive a text viewer pane". One `reviewer` pass did both, with an ADR review, beside one
+`adr-impact` pass. A fresh implementer fixed the findings. Commit: "Record UTERM-007's contract addition and wire
+skew, and name the exec version in a refusal".
+
+Findings and dispositions:
+
+- "The applet contract" still said the viewer needs no contract change, while the range added
+  `Applet.hostBadgeReachDidChange(_:)`. Fixed: the decision is amended, with a Decision Log entry tagged
+  `(work-queue best guess, addition)` that names the alternative not taken, a host inset of the applet's view.
+- "Control levels" lacked the skew analysis for ScriptWire 11 to 12 and the exec wire 3 to 4. Fixed. Writing it found a
+  bug: a v4 app read a protocol-3 driver's hello as malformed, since it decoded `schema` before checking the protocol,
+  and its message named no version. The hello now decodes for any other protocol, and the refusal says "The driver
+  speaks exec protocol 3, and this uniterm speaks 4. Update the driver or uniterm so they match." A test covers it. It
+  was not run against the unfixed code. A v4 driver against a shipped v3 app still gets v3's malformed-line message,
+  since that build cannot change. The proposal records it.
+- ADR-11's completion event against UTERM-004's rule that remote callers receive no events. Fixed: "Control levels" now
+  says `wait` stands in for it.
+- UTERM-019 still said the pending reply was to be built, that schema versions match exactly, and that ScriptWire moves
+  to 9. Fixed in place, with one Decision Log entry. UTERM-019's own minor-version policy now follows UTERM-007's rule.
+  That is a best guess UTERM-019 may revisit.
+- `pushControl`'s comment claimed every control change goes through it. `enableRemoteControl` now revalidates pending
+  replies too. Pane-creation paths stay direct, since a pane being created holds no pending reply. The comment now
+  says so.
+- Impacts edits carry no marker. Dismissed: markers attach to decisions and milestones, and M5's one marker covers its
+  checks.
+
+`adr-impact` on the whole range: no conflicts and no supersessions. Its ADR candidates are the schema compatibility
+rule, already `Undecided` in the Decision Log; the badge-reach hook, which falls below the bar unless more host overlays
+follow; and the pending-reply cap and revalidation policy, which is ADR-11's mechanism and does not pass the bar alone.
+
+Checks after the fixes: `make fmt`, `make lint`, `make check`, `make build`, and `caffeinate -dimsu make test-package`
+passed. `proposals.py freeze` reported nothing.

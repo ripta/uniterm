@@ -21,9 +21,10 @@
   join the descriptor's permission set. Descriptor format 2 adds a version to every permission, and each (kind,
   version) has one meaning, per "Permission descriptor format".
 - UTERM-003 — "The API is one Janet module": a second built-in module, `uniterm/browser`, joins `uniterm`, per
-  "Helper names". A byte-string value reaches Janet, and ScriptWire moves to version 9, per "Result encoding".
-- UTERM-001 — "Commands that wait" and "Result encoding": the applet contract gains a pending reply that an applet
-  completes later, and a byte carrier beside `JSONValue`.
+  "Helper names". A byte-string value reaches Janet, and ScriptWire takes the next version after the one it is at when this
+  lands, per "Result encoding". It is 12 after UTERM-007 M5.
+- UTERM-001 — "Commands that wait" and "Result encoding": the applet contract has a pending reply that an applet
+  completes later, built by UTERM-007 M5. This proposal adds a byte carrier beside `JSONValue`.
 - UTERM-022 — "Commands that wait": the Questions applet's form calls are host calls, so its pending reply lives in
   the host. This proposal's lives in the applet contract. Both follow ADR-11, and neither builds the other's.
 - UTERM-004 — "Exec wire format": the command hook it added can reply later, and exec drivers match such replies by
@@ -310,7 +311,7 @@ capability returns a new applet code, `unsupported-capability`, carried on the e
   `:browser/snapshot`, `:browser/pdf`, `:browser/find`, `:browser/page-settings`, `:browser/cookie-store`,
   `:browser/pointer-input`, and `:browser/key-input`.
 - A name never changes meaning. A dropped feature leaves the set. A rename adds one name and drops the other.
-  None of this bumps the browser command schema version. Together with UTERM-020, the set stays within 64 names, the
+  None of this bumps the browser command schema's major version. Together with UTERM-020, the set stays within 64 names, the
   most fields a script record holds.
 - `unsupported-capability` comes back only for a capability missing from the set, and only when nothing ran. A listed
   capability that cannot run now returns `failed`, which also means nothing ran. A failure after an effect is
@@ -318,14 +319,15 @@ capability returns a new applet code, `unsupported-capability`, carried on the e
 - The message names the capability. Janet sees `:unsupported`, as it does for a wrong applet type or schema version.
   The script already knows which type and version it sent.
 - Any caller that may command the pane may call the capabilities command. It needs no browser permission.
-- Skew: new commands and new reply keys leave the browser schema version alone. A script on a build without this
-  proposal gets `:bad-argument` from the capabilities command, and nothing runs. The shipped helpers read that as an
-  empty set. An older script on this build keeps working, since the version did not move.
+- Skew: the schema version is a major and a minor, per UTERM-007 M5. New commands and new reply keys bump the minor,
+  never the major. A script on a build without this proposal gets `:bad-argument` from the capabilities command, and
+  nothing runs. The shipped helpers read that as an empty set. An older script on this build keeps working, since its
+  major is the same and its minor is no higher than the applet's. Amended 2026-11-15; see Decision Log.
 
 Rationale: an unknown command already maps to `:bad-argument`, so the open question's premise, that a script cannot
 tell "this build cannot" from "no such command", does not hold. A new wire kind would buy a distinction no current
-caller needs, at the cost of a ScriptWire bump. Command schema versions match exactly, so a bump for a rename would
-break every browser script, including scripts that never check capabilities. UTERM-020 can fail a capability the
+caller needs, at the cost of a ScriptWire bump. A command schema version matches on its major, so a major bump for a
+rename would break every browser script, including scripts that never check capabilities. UTERM-020 can fail a capability the
 startup set lists, so the error kind follows membership in the set. Judge after 3 passes, on budget. The critic moved
 from bare error reuse, to a symbol set with schema bumps, to this record. Each move rested on code facts the judge
 re-checked.
@@ -571,7 +573,7 @@ Rationale: helpers that skip a dialog would stall on the exact `confirm()` that 
 handle. A start point taken when the helper is called misses a load that finishes before the first read. A start
 point at the oldest event returns an earlier load's events. A hidden cursor shared per tab would let one helper eat
 another's events, and would be hidden state the script cannot see. Pinning the build's schema version inside the
-helpers would bypass exact-match versions, so a changed event shape would reach an old script with no refusal. A
+helpers would bypass the version check, so a changed event shape would reach an old script with no refusal. A
 separate module keeps UTERM-020's console and network helpers, and later applets' helpers, out of `uniterm`. A second
 version number would guard no skew, since the helpers and the C functions ship in one binary. Blocking wrappers for
 each handle command would hide the handle, and an interrupted wrapper would leave a slot nobody can free. Converged
@@ -661,9 +663,11 @@ text form. Janet callers get Janet data notation, and exec drivers get JSON. (au
 - The app's serializer enforces the bounds that ScriptValue's limits enforced before: the per-result byte cap, and a
   nesting cap that is the same for both forms. A result past either is refused with a structured error.
 - A handle reads in the form of the caller kind that made it. The byte size, the cap, and the offsets count that form.
-- Skew: ScriptWire moves to version 9. App and helper ship in one bundle, and a mismatch is refused at the hello in
-  either direction. On the exec wire, base64 appears only in replies to new commands, so the exec protocol version
-  does not move.
+- Skew: ScriptWire takes the next version after the one it is at when this lands. It is at 12 after UTERM-007 M5, which
+  moved it from 11 and the exec protocol from 3 to 4. App and helper ship in one bundle, and a mismatch is refused at
+  the hello in either direction. On the exec wire, base64 appears only in replies to new commands, so this proposal
+  does not move the exec protocol version, which stays at 4 unless another change moves it. Amended 2026-11-15; see
+  Decision Log.
 
 Rationale: a byte type carries images, PDFs, and UTERM-020's 16 KiB body chunks at full size. Each caller reads with
 a parser it already has and trusts: Janet's core `parse`, or the driver's own JSON library. The only new code that
@@ -1017,6 +1021,14 @@ Starts after UTERM-005 M8.
   before the reply goes out, failure on any control change of the pane as well as on revocation, run end, and close,
   and a cap of 64 pending replies for each window. M2 reuses it and adds its own marked command. (work-queue best
   guess)
+- 2026-11-15: Amended "Capability names and the unavailable error" (the skew bullet and its rationale) and "Result
+  encoding" (the skew bullet), and corrected Impacts and the "Helper names" rationale. UTERM-007 M5 changed what they
+  rely on. The text said the applet contract gains a pending reply, that a command schema version matches exactly and
+  new commands and reply keys leave it alone, that ScriptWire moves to version 9, and that the exec protocol stays
+  where it is. The pending reply exists. A schema version is now a major and a minor, a new command or reply key
+  bumps the minor, and a controller with the same major and a minor up to the applet's is accepted. ScriptWire is at
+  version 12 and the exec protocol at 4, so this proposal's own bump starts from there and the exec protocol does not
+  move. This changes nothing this proposal decided about the byte type or the helpers. (work-queue best guess)
 
 ## References
 

@@ -147,9 +147,11 @@ it, so it is not written yet. Every applet implements:
 For the text viewer: a description likely holds the file path and the scroll position. A read-only viewer likely never
 counts as running something.
 
-Decision: the text viewer needs no change to the applet contract or the factory. Its description holds a path, a
-bookmark fallback, a start directory, and the view state, and never any of the file's contents. This follows UTERM-009's
-applet contract decision.
+Decision: the text viewer needs no change to the factory, and one addition to the applet contract: a
+`hostBadgeReachDidChange(_:)` call, with a no-op default, that the pane frame makes when its remote-control badge
+changes how far into the pane's top-right corner it reaches. The viewer's find bar uses it to keep its Done button
+clear of the badge. Its description holds a path, a bookmark fallback, a start directory, and the view state, and never
+any of the file's contents. This follows UTERM-009's applet contract decision. Amended 2026-11-15; see Decision Log.
 
 - The payload holds the file's absolute path, a macOS bookmark of the file, the view state, whether the contents
   sidebar is shown, and whether inline content was showing. It has its own version, per ADR-06. The inline flag is a
@@ -277,6 +279,23 @@ are refused before anything starts. Amended 2026-11-15; see Decision Log.
   controllers and the app; UTERM-003's helper ships inside the app. The rule holds across every wire that carries a
   version: the script wire is at version 12, the exec wire is at version 4, a Janet call names `[major minor]` or a
   bare whole number that means minor 0, and the dispatcher applies the rule once for every applet.
+- Version skew on the two wires this work changed, in both directions. Each wire refuses at the hello, before any
+  command runs. The script wire moved from 11 to 12. Its hello is one field in every version, so each side can read the
+  other's and name the failure. An old `uniterm` command or helper against a new app, and a new one against an old app,
+  both stop at the hello. The command prints "The uniterm command and the app come from different versions. Relaunch
+  uniterm." The app side logs the same refusal for the peer. The two are one bundle, so the usual cause is an app
+  replaced on disk while it ran, and a relaunch is the fix. The exec wire moved from 3 to 4, which writes `schema` as
+  `[major, minor]` and lets replies arrive in any order, matched by request ID. A driver written for protocol 3
+  against a v4 app is refused at the hello: the app answers an `unsupported-version` error, "The driver speaks exec
+  protocol 3, and this uniterm speaks 4. Update the driver or uniterm so they match." The app reads a hello of another
+  protocol whatever shape its `schema` has, so the old driver's whole-number schema does not turn the refusal into a
+  malformed-line error. A v4 driver against a v3 app is refused at the hello by the v3 app. That app's decoder expects
+  a whole-number `schema`, so it ends the channel with "the driver wrote a line that is not a message", not with a
+  version error. That build is already shipped and cannot change. The failing side is the driver, and the fix is to
+  run it against a uniterm of the same protocol.
+- ADR-11 says a completion event names the handle. UTERM-004 says remote callers receive no applet events. The `wait`
+  command stands in for the completion event for a remote caller: it reports the same outcome, by handle, and the
+  viewer emits no event.
 - Inline Markdown is the viewer's second source, beside a file. It renders like a file, with no relative resources:
   its relative images show their alt text. Showing it clears the stored path and stops the watch, and the pane reports
   its start directory as `currentDirectory`. It is never saved in the layout file. The payload records only that inline
@@ -1050,6 +1069,20 @@ None.
   own. Controllers in other processes, scripts in users' files, and exec drivers depend on it across ScriptWire,
   the exec wire, and the dispatcher. Changing the rule later would break controllers written against it. Undecided.
   Found in UTERM-007 M5.
+- 2026-11-15: Amended "The applet contract" (the decision). The text said the text viewer needs no change to the applet
+  contract or the factory. The contract now has `hostBadgeReachDidChange(_:)`, with a no-op default, which the pane
+  frame calls when its remote-control badge changes how far it reaches into the pane's top-right corner. The viewer's
+  find bar uses it to keep its Done button clear. In a remote-controlled pane the badge overlapped Done, as the real
+  app's screenshot showed. Not taken: the host insets the applet's view. That keeps the contract unchanged, but it costs
+  every applet its top-right strip, including those that have nothing there. (work-queue best guess, addition)
+- 2026-11-15: Amended "Control levels" with the version-skew analysis for the script wire (11 to 12) and the exec wire
+  (3 to 4), in both directions, and with how `wait` relates to ADR-11's completion event. The text said an old
+  controller with a new app and the reverse fail with an actionable error, without checking each wire. The script wire
+  tells the user to relaunch. The exec wire tells the driver's author to update, and a v4 app now reads another
+  protocol's hello whatever its `schema` shape, since protocol 3's whole-number schema had been refused as a malformed
+  line. A v4 driver against a v3 app gets the v3 app's malformed-line error, which cannot change. ADR-11's "a completion
+  event names the handle" and UTERM-004's "remote callers receive no events" are reconciled: `wait` stands in for the
+  event. This is the decision's existing marker, extended here.
 
 ## References
 

@@ -171,8 +171,20 @@ public enum ExecWire {
 
     switch type {
     case "hello":
+      let protocolVersion = try integer(fields["protocol"], "protocol")
+
+      // A driver of another protocol may write its schema in another shape. Protocol 3 wrote one
+      // whole number. The hello then still decodes, so the refusal names the protocol versions
+      // and says to update, instead of calling the line malformed.
+      guard protocolVersion == ExecProtocol.version else {
+        return .hello(
+          protocolVersion: protocolVersion,
+          appletType: (try? name(fields["applet"], "applet")) ?? "",
+          schemaVersion: (try? schemaVersion(fields["schema"])) ?? AppletSchemaVersion(0, 0))
+      }
+
       return .hello(
-        protocolVersion: try integer(fields["protocol"], "protocol"),
+        protocolVersion: protocolVersion,
         appletType: try name(fields["applet"], "applet"),
         schemaVersion: try schemaVersion(fields["schema"]))
 
