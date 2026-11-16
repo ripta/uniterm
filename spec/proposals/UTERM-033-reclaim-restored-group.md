@@ -12,9 +12,8 @@
 ## Impacts
 
 - UTERM-004 — "Saved layouts": adds a second way to make the explicit grant it requires. A controller run asks to adopt
-  a restored group, and the user approves. The badge's Give Group stays. If the saved group comes to record which
-  controller made it, that supersedes in part the rule that a grant binds current identities, not historical file
-  claims.
+  a restored group, and the user approves. The badge's Give Group stays. The saved group gains the identity of the
+  controller that made it, as a hint that grants nothing, so the layout envelope's version goes up.
 - UTERM-025 — "Slides only, beside the terminal": a presenter run after a relaunch reuses its restored slide pane instead
   of opening a second one.
 
@@ -56,17 +55,27 @@ Decision: only a run from the restored group's source pane may ask to adopt it.
 Rationale: the source pane is where the earlier run started, and UTERM-004 keeps groups anchored to it. A run elsewhere
 in the window has no tie to the group.
 
+### The group records its controller
+
+Decision: a saved group records the identity of the controller that made it. A run is offered the group only when its
+verified identity matches. The record is a hint. It grants nothing, and the user still approves every adoption.
+
+- The record changes the layout envelope, so its version goes up under ADR-06. An older build keeps a newer file aside.
+- The record is display and matching data only. Authority comes from the run's fresh verified binding and the user's
+  approval, per ADR-09.
+
+Rationale: without a record, any run from the source pane could be offered any restored group. UTERM-004 records no
+reason for leaving the identity out. Its rules are that a restored layout grants no authority and that a grant binds a
+current verified identity. A hint that grants nothing keeps both. ADR-09 says a saved name is no proof of identity,
+which is why the hint only narrows the offer, and never stands in for verification. The user chose to track the group.
+
 ## Design Decisions (Open)
 
-### How a run matches a group
+### What the record holds
 
-UTERM-004 saves no record of who made a group. Options:
-
-- **No identity match.** Any run from the source pane may ask, and the sheet shows what the group holds. Simplest, and
-  needs no saved data.
-- **Save the controller's identity as a hint.** The saved group records the declared file's ID or the package's
-  identity. Only a matching run is offered the group. The hint grants nothing, and the user still approves. This changes
-  the layout envelope under ADR-06, and supersedes in part UTERM-004's rule on historical claims.
+A declared file's `:id` is optional under UTERM-021. Options for a file without one: its content hash, which changes on
+every edit, or no record, so the file cannot reclaim. A package's identity is its controller ID. Also: whether a
+different version of the same controller matches.
 
 ### How the run learns of the group
 
@@ -91,8 +100,11 @@ verified.
 
 - **A different controller adopts a group meant for another** — likelihood: medium, impact: medium. Mitigation: the user
   approves every adoption, and the sheet shows what the group holds.
-- **A saved identity hint is a layout schema change** — likelihood: medium, impact: medium, if chosen. Mitigation: follow
-  ADR-06's versioning, and treat the hint as display data that grants nothing.
+- **The identity record is a layout schema change** — likelihood: high, impact: medium. Mitigation: follow ADR-06's
+  versioning, and treat the record as display data that grants nothing.
+- **A forged record steers the offer** — likelihood: low, impact: low. A program that edits the layout file can make a
+  group match another controller. Accepted: the record grants nothing, the run must still verify, and the user
+  approves.
 
 ## Milestones
 
@@ -104,11 +116,16 @@ verified.
   request places the restored panes with no new pane
 - A denied request leaves the group ownerless, and the run's layout opens new panes as today
 - A run from another pane is never offered the group
+- A run whose verified identity does not match the group's record is never offered it
+- An older build keeps a layout file with the record aside, unchanged
 
 ## Decision Log
 
 - 2026-11-16: Filed as a nice-to-have. The user chose it after asking whether a restored presenter duplicates panes. It
   does today: a new run opens a second group beside the restored one.
+- 2026-11-16: The saved group records the controller that made it, as a hint that grants nothing. The user said the
+  group needs tracking. The previous text claimed UTERM-004 saves no such record by design. UTERM-004 records no reason
+  for that, and nothing in it or ADR-09 forbids a record that grants nothing.
 
 ## References
 
