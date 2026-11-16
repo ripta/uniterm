@@ -1,8 +1,8 @@
 # UTERM-021: Declared Permissions for Script Files
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-13
-**Updated:** 2026-11-14
+**Updated:** 2026-11-15
 
 ## Dependencies
 
