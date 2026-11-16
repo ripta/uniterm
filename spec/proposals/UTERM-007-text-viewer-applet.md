@@ -1,6 +1,6 @@
 # UTERM-007: Text Viewer Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-10-31
 **Updated:** 2026-11-15
 
