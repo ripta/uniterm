@@ -7,11 +7,13 @@
 ## Dependencies
 
 - UTERM-025, for the presentation controller this extends
+- UTERM-003, for `uniterm/send`
+- UTERM-007, for the text viewer's PDF view
+- UTERM-006 or UTERM-019, depending on which deck sources are chosen
 
 ## Impacts
 
-- UTERM-006 — "M4: Control": an image-folder deck needs the image viewer's `show` and stepping commands.
-- UTERM-019 — "Page events": an HTML deck needs browser automation.
+None.
 
 ## Summary
 
@@ -31,20 +33,29 @@ None yet.
 
 ### Deck sources
 
-- **PDF**: one page per slide, notes from a sidecar file. Works with the text viewer's page scroll today.
-- **An image folder**: waits on UTERM-006 M4.
-- **HTML**: waits on UTERM-019.
+- **PDF.** The only way in today is `uniterm/send`, capped at 1 MiB, and exported decks with images often pass that. The
+  viewer shows a PDF as one continuous column, so scrolling to a page can show its neighbors, depending on the pane's
+  shape. A PDF deck needs a show-by-path route, such as UTERM-030's or UTERM-015's, and a single-page view.
+- **An image folder.** A controller can send one image per step today through `uniterm/send`, within 1 MiB each.
+  UTERM-006 M4 adds show-by-path and stepping, which is the better route.
+- **HTML.** Stepping an HTML deck needs page JavaScript or trusted input from UTERM-019, not only its page events.
 
-Which ones to build, and the notes source for each.
+Which ones to build, and where each gets notes once UTERM-026 adds them.
 
 ### Go to Slide
 
-Whether the presenter offers it, and how the user names the slide: a number typed in the palette, or a list of slide
-titles.
+Registry commands take no arguments today. Options for naming the slide:
+
+- **A number typed in the palette**, which needs a new palette contract for an argument.
+- **A form**, through UTERM-022's Questions applet.
+- **A list of slide titles as commands**, which needs UTERM-024's runtime declaration.
 
 ## Risks
 
-None identified: each item extends the presenter without changing UTERM-025's deck format or commands.
+- **Each new deck source is a format contract** — likelihood: medium, impact: medium. A PDF with sidecar notes is a new
+  deck format. Mitigation: version it with UTERM-025's deck format.
+- **An HTML deck is untrusted active content** — likelihood: medium, impact: medium. Mitigation: it runs in a controller
+  tab under UTERM-019's rules.
 
 ## Milestones
 
@@ -52,8 +63,8 @@ None identified: each item extends the presenter without changing UTERM-025's de
 
 **Status:** NOT STARTED
 
-- Each deck source chosen under "Deck sources" shows and steps like a Markdown deck
-- Go to Slide, if chosen, shows the named slide and its notes
+- Each deck source settled under "Deck sources" shows and steps like a Markdown deck
+- Go to Slide shows the named slide
 
 ## Decision Log
 

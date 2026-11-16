@@ -8,16 +8,15 @@
 
 - UTERM-002, for the command registry, the palette, and the one dispatch point that keys, menus, and the palette share
 - UTERM-003, for the `uniterm` Janet module, ScriptWire, and its scope note that defers script-registered commands
-- UTERM-004, for controller runs, groups and their owners, revocation, and the permission kinds
+- UTERM-004, for controller runs, groups and their owners, the disconnected mode, revocation, and the permission kinds
 - UTERM-013, for command owners, reserved keys, and the order in which a key finds its command
 - UTERM-021, for the `declare-permissions` spelling a new permission kind must define
 
 ## Impacts
 
-- UTERM-025 — the whole proposal: this is the presentation controller's required prerequisite. Its Next Slide and
-  Previous Slide are commands declared here.
-- UTERM-027 — "Chord shortcuts": plain keys for controllers build on the key ownership settled here.
-- UTERM-028 — "Who may declare commands": exec drivers gain the same commands and events.
+- UTERM-025 — the whole proposal: this is a required prerequisite of the presentation controller. Its Next Slide and
+  Previous Slide are commands declared here, bound to navigation keys.
+- UTERM-028 — "Navigation keys" and "When commands are live": exec drivers gain the same commands and events.
 - UTERM-003 — "Scope": its out-of-scope line "Invoking or registering UTERM-002 registry commands from scripts" is the
   registering half of what this proposal builds. Invoking registry commands from scripts stays out of scope.
 - UTERM-013 — "What one shortcut declaration is" and "Which keys uniterm reserves": a controller joins uniterm and
@@ -31,12 +30,12 @@
 
 ## Summary
 
-A Janet controller declares commands. They appear in the command palette, and may carry chord shortcuts, while one of
-the controller's panes has focus. When the user invokes one, uniterm records an event. The controller reads its events
-and acts on them.
+A Janet controller declares commands. They appear in the command palette while one of the controller's panes has
+focus. A command may be bound to a navigation key, such as an arrow key, or to a chord. When the user invokes one,
+uniterm records an event. The controller reads its events and acts on them.
 
-This is the required prerequisite for the presentation controller, UTERM-025. Plain keys, exec drivers, and screen
-control are not required, and live in UTERM-027, UTERM-028, and UTERM-026.
+This is a required prerequisite of the presentation controller, UTERM-025. Exec drivers and screen control are not
+required, and live in UTERM-028 and UTERM-026.
 
 ## Motivation
 
@@ -44,8 +43,8 @@ A program can already drive applets. A Janet script can lay out panes and send c
 script can do is hear the user. A script gets no events at all, and the built-in applets emit no input events.
 
 A presentation controller shows each slide with `show-markdown`. Today it has no way to learn that the user wants the
-next slide. The only workaround is reading lines from the script's own terminal. That needs Enter, and works only while
-that terminal has focus.
+next slide while the slide pane has focus. The script can read only its own terminal. That works only while the
+terminal has focus, and a presenter steps from the slide, usually with the arrow keys.
 
 The same gap blocks other controllers: a build dashboard with Rerun, a review tool with Approve and Next File, a
 debugger with Step. Each is a small set of named actions that the user triggers and the program handles.
@@ -55,35 +54,60 @@ debugger with Step. Each is a small set of named actions that the user triggers 
 ### Scope: what the presenter requires
 
 Decision: this proposal holds only what UTERM-025 cannot work without. That is Janet controller commands, their palette
-entries, chord shortcuts, and the events their invocations produce.
+entries, navigation keys and chords, and the events their invocations produce.
 
-- Plain keys with no modifier, for clickers, are UTERM-027.
 - Commands declared by exec drivers are UTERM-028.
 - Pane zoom, full screen, and presenter windows are UTERM-026.
 
-Chord shortcuts are in scope because stepping through a talk from the palette alone is not usable.
+Rationale: people step through slides with the arrow keys and Page Up and Page Down, and clickers send the same keys.
+Stepping from the palette alone is not usable for a talk.
+
+### Where a controller lives
+
+Decision: a Janet controller runs in the process the user started in a terminal pane, its source. It commands the panes
+in the groups it owns, which are the panes its layout requests opened. It does not live in those panes.
+
+- The controller's keys are live only in its own groups' panes. It never hears keys in any other pane.
+- Group membership is by stable node ID, per ADR-02.
 
 ### When commands are live
 
-Decision: a controller's commands are live only while the focused pane belongs to a group the controller owns.
+Decision: a controller's commands are live only while the focused pane belongs to a group the controller owns, and
+that pane is not disconnected.
 
-- "Live" covers the palette, the menu, and shortcuts together. A command that is not live is not listed in the palette.
+- "Live" covers the palette, the menu, and keys together. A command that is not live is not listed in the palette.
   Its keys reach the pane as if it did not exist.
-- Group membership is by stable node ID, per ADR-02.
-- A controller's commands never act in panes it does not own, so it cannot take keys from the user's other panes.
+- A pane the user disconnects through its chrome keeps all its keys, per ADR-09's rule that remembered permission does
+  not override a disconnected pane.
 
 Whether the group's source pane counts is an open question. See "The source pane".
 
-### Chord shortcuts
+### Navigation keys
 
-Decision: a controller may bind chords, keys with Command, Control, or Option.
+Decision: a controller may bind plain keys, with no modifier, only from a fixed list of navigation keys: the four
+arrows, Page Up, Page Down, Home, End, Space, Return, and Escape.
 
-- uniterm's reserved keys win over the controller, per UTERM-013. A user's remap wins over every default. A controller
-  key that loses is dropped, and the user is told, as UTERM-013 does for an applet key.
-- A controller chord that the focused pane's applet also binds goes to the controller, while that pane is the
-  controller's.
+- Letters, digits, and punctuation are never bindable as plain keys. A controller that owns a terminal therefore never
+  learns what the user types in it.
+- A pane taking text input keeps every key. That covers a text field with focus, such as the text viewer's find field
+  or the browser's address bar, an input method composing text, and a terminal pane. The controller's navigation keys
+  are not live there.
+- A navigation key goes live only on the next focus change into the pane, never while the user is already typing in
+  it, per ADR-12.
+- uniterm's reserved keys and the user's remaps win over a controller's key, as for applet keys under UTERM-013.
+  Plain keys do not pass through the menu's key route today, so this proposal adds the check where they arrive.
+- Each pane where a controller's navigation keys are live shows that the controller is taking keys. The badge names
+  the controller and lists its keys. The user can revoke the controller from there.
 
-### Powers, lifecycle, and the ADRs
+Rationale: the list holds the keys people move with, and nothing anyone types text with. The text-input carve-out keeps
+find fields and terminals working inside a controller's panes.
+
+### Chords
+
+Decision: a controller may also bind chords, keys with Command or Control. uniterm's reserved keys and the user's remaps
+win over them. A controller key that loses is dropped, and the user is told, as UTERM-013 does for an applet key.
+
+### Powers and lifecycle
 
 Decision: these follow from accepted ADRs.
 
@@ -96,15 +120,13 @@ Decision: these follow from accepted ADRs.
 - A controller that stalls or crashes ends only itself. The palette and the keys never wait on it, per ADR-07.
 - No command, key, or event is saved with a layout. A restored group has no commands until a live controller declares
   them, per ADR-03.
-- Invoking a command is the user's choice. A change the controller makes in response may move focus within ADR-12's
-  rules for chosen changes. A shortcut pressed before such a change never counts as the choice that arms input after it.
 
 ### Version skew
 
 Decision: ScriptWire refuses an unknown version at the hello, as it does today.
 
 - A new helper with an old app, or an old helper with a new app: the run fails at the hello before any effect, with
-  the message to relaunch uniterm.
+  the message to relaunch uniterm. The helper is the bundle's own, so a relaunch heals it.
 - A declared file that names the new permission kind is refused whole by an older build, which does not know the kind.
   A policy file holding an approval of the new kind makes an older build treat the whole file as newer, so every
   remembered approval goes inert. That fails closed, as UTERM-022 found for `ask-user`.
@@ -122,9 +144,9 @@ Decision: ScriptWire refuses an unknown version at the hello, as it does today.
 ### The event model
 
 - **A per-run cursor buffer, like UTERM-019.** Bounded by count. It drops the oldest events and reports how many were
-  dropped. Several readers can each keep a cursor.
-- **A single-reader queue.** Each event is delivered once. Simpler, but a helper that reads from two places loses
-  events.
+  dropped. Several readers can each keep a cursor. A read only looks, so a failed or lost reply loses nothing.
+- **A single-reader queue.** Each event is delivered once. Removing an event is an effect, so under ADR-11 a read that
+  fails or loses its reply loses the event. This option must say how it avoids that.
 
 Either way: the bound, whether a drop raises an error in Janet by default as UTERM-019's helpers do, and whether an
 event carries the pane that had focus and the input that triggered it, such as palette, menu, or key.
@@ -142,16 +164,25 @@ event carries the pane that had focus and the input that triggered it, such as p
   is built once. Controller commands need adding and removing at runtime, without disturbing uniterm's and the
   applets' commands.
 - Availability is keyed by applet type today. Controller commands need it keyed by group membership.
-- Where they appear in the menu bar: a per-controller menu, a Controller menu, or palette only.
-- How the palette labels them, so a controller titled "Close Window" cannot pass for uniterm's command. UTERM-022's
-  requester chrome is a precedent.
+- Where they appear in the menu bar: a per-controller menu or a Controller menu. Chords and user remaps reach a command
+  only through a menu item today, so a palette-only option needs a new key route.
+- How the palette and the menu label them, so a controller titled "Close Window" cannot pass for uniterm's command. A
+  user's App Shortcuts remap matches menu items by title, so a controller item must not inherit a remap meant for
+  another item. UTERM-022's requester chrome is a precedent for the label.
+
+### A chord against the focused applet's key
+
+Whether a controller chord wins over the focused applet's own binding of the same chord in the controller's pane, or
+loses to it. Winning keeps the controller's keys predictable. Losing keeps every applet command reachable.
 
 ### The source pane
 
 The terminal that started a script is the group's source. It is not a member. Options:
 
-- **It counts.** The presenter can step slides from the terminal. Its chords then take keys the shell would get.
 - **It does not count.** Clicking into the terminal turns the commands off. The terminal keeps every key.
+- **It counts for chords only.** The presenter can step from the terminal with a chord. Navigation keys stay with the
+  shell, since a terminal is a text-input pane under "Navigation keys".
+- **It counts.** Same as chords only, since navigation keys are never live in a terminal.
 
 ### Nested groups
 
@@ -165,7 +196,8 @@ data shape" and UTERM-003's verb-noun naming.
 
 ### How ADR-04 changes
 
-ADR-04 says an applet binds keys only for its own actions. A controller is a third key owner. Options:
+ADR-04 says an applet binds keys only for its own actions. A controller is a third key owner, and its navigation keys
+pre-empt a pane's ordinary handling of those keys, not only its bindings. Options:
 
 - A new ADR that supersedes ADR-04, restating its rules with three owners.
 - A narrower ADR that adds controller keys and leaves ADR-04's text in force for the other two.
@@ -175,8 +207,14 @@ ADR-04 says an applet binds keys only for its own actions. A controller is a thi
 - **A new ScriptWire version and permission kind are published contracts** — likelihood: high, impact: medium.
   Mitigation: ScriptWire refuses an unknown version at the hello, and an unknown permission kind fails closed. See
   "Version skew".
+- **Navigation-key capture confuses the user** — likelihood: medium, impact: medium. A viewer stops scrolling on the
+  arrow keys, and the user does not know why. Mitigation: the indicator on each affected pane, the scope to the
+  controller's own panes, and revoking from the badge.
+- **A key list that grows leaks typed text** — likelihood: low, impact: high. A later change adding letters to the list
+  would let a controller read what the user types. Mitigation: the list is settled here, and widening it is a decision
+  for a later proposal.
 - **A controller's palette entry passes for uniterm's** — likelihood: medium, impact: medium. Mitigation: attribution
-  in the palette. See "Registry mechanism".
+  in the palette and the menu. See "Registry mechanism".
 - **Changing the registry at runtime destabilizes the menu** — likelihood: medium, impact: medium. The menu and key
   resolution assume a fixed set today. Mitigation: M1 tests adding and removing controller commands while uniterm's
   and the applets' commands keep their keys and menu places.
@@ -199,22 +237,30 @@ ADR-04 says an applet binds keys only for its own actions. A controller is a thi
 - Adding and removing controller commands leaves uniterm's and the applets' commands with the same keys and menu places
 - A restored layout has no controller commands
 
-### M2: Chord shortcuts
+### M2: Keys
 
 **Status:** NOT STARTED
 
-- A controller's chord invokes its command while a pane the controller owns has focus
-- In panes it does not own, the same chord reaches the pane as before
-- A reserved uniterm key and a user's remap win over a controller chord. The dropped key is reported to the user
+- A controller's arrow key and its chord each invoke its command while a viewer pane it owns has focus
+- In panes it does not own, in a disconnected pane, and in a text field or terminal it owns, the same keys reach the
+  pane as before
+- A letter, digit, or punctuation key without a modifier is refused when declared
+- A key never goes live in a pane while the user is typing in it
+- A reserved uniterm key and a user's remap win over a controller key. The dropped key is reported to the user
+- Each pane where controller keys are live shows the controller and its keys
 - The ADR for the third key owner is accepted
 
 ## Decision Log
 
 - 2026-11-15: Screen control moved to its own proposal, UTERM-026. The presenter moved to UTERM-025.
 - 2026-11-15: Controller commands are live only while a pane the controller owns has focus.
-- 2026-11-15: Narrowed to what UTERM-025 requires. Plain keys moved to UTERM-027, keeping the user's choice that a
-  controller may bind them in its own panes. Exec driver commands moved to UTERM-028. The previous text settled both
-  here, with milestones M2 and M3 for them.
+- 2026-11-15: Plain keys came back from UTERM-027 as required, limited to a fixed navigation-key list. People step
+  slides with the arrow keys, so a presenter without them fails its job. The list, the text-input carve-out, and the
+  disconnected-pane rule answer the design critic's finding that any plain key would let a controller read typed text.
+  Exec driver commands stay in UTERM-028.
+- 2026-11-15 (addition): lifts the registering half of UTERM-003's out-of-scope line on registry commands.
+- 2026-11-15: Removed the claim that a response to a command may move focus "within ADR-12's rules for chosen changes".
+  ADR-12 has no rules for chosen changes, and the presenter moves no focus. UTERM-026 owns the question.
 - 2026-11-15: ADR candidate (cuts across the system): a program that is neither uniterm nor an applet may own keys,
   only in panes it controls, and only after uniterm's keys and the user's remaps. Pending: its form is the open
   question "How ADR-04 changes".

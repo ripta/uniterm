@@ -1,6 +1,6 @@
 # UTERM-027: Plain Keys for Controllers
 
-**Status:** draft
+**Status:** retracted
 **Created:** 2026-11-15
 **Updated:** 2026-11-15
 
@@ -69,6 +69,8 @@ Which plain keys UTERM-025 binds once this lands.
 
 ## Decision Log
 
+- 2026-11-15: Retracted. Plain keys are required by the presentation controller, since people step slides with
+  the arrow keys. They moved back into UTERM-024 as a fixed navigation-key list.
 - 2026-11-15: Controllers may bind plain keys in their own panes, winning over the pane's own handling. The user chose
   this during UTERM-024's drafting. It moved here when UTERM-024 narrowed to what the presenter requires.
 
