@@ -11,7 +11,7 @@
 ## Impacts
 
 - UTERM-004 — "Same window only": a presenter view needs a controller's panes in two windows.
-- UTERM-025 — "Presenter view": this proposal is what makes it possible.
+- UTERM-025 — the whole proposal: a presenter view, with only the slide on the audience's display. Not required by it.
 
 ## Summary
 

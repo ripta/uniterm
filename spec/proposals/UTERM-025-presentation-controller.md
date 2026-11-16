@@ -6,34 +6,34 @@
 
 ## Dependencies
 
-- UTERM-024, for the commands, shortcuts, and events that let the user step through a deck
+- UTERM-024, the required prerequisite: the commands and chord shortcuts that step through a deck
 - UTERM-004, for controller runs, layout requests, groups, and remote control of the panes it opens
-- UTERM-007, for the text viewer's `show-markdown` and `scroll` commands that show slides and notes
-- UTERM-021, for the `declare-permissions` form the controller's script file carries
+- UTERM-007, for the text viewer's `show-markdown` command that shows slides and notes
+- UTERM-021, for the `declare-permissions` form, including the `:fs-read` capability that reads the deck
 
 ## Impacts
 
-- UTERM-026 — "Summary": screen control is what turns this controller's window into a full presenter view, with only
-  the slide on the audience's display.
-- UTERM-006 — "M4: Control": an image-folder deck needs the image viewer's `show` and stepping commands.
-- UTERM-019 — "Page events": an HTML deck needs browser automation.
+- UTERM-026 — screen control turns this controller's window into a presenter view. Not required.
+- UTERM-027 — plain keys let a clicker step the deck. Not required.
+- UTERM-029 — more deck sources and Go to Slide. Not required.
 
 ## Summary
 
-A presentation controller shows a deck of slides with speaker notes, using uniterm's existing applets. It lays out a
-slide pane and a notes pane, shows one slide at a time, and steps forward and back on the user's command, from the
-palette, a shortcut, or a clicker. It is a controller, not an applet. It drives the text viewer, and later the image
-viewer and the browser, through their command schemas.
+A presentation controller shows a Markdown deck with speaker notes, using the text viewer. It lays out a slide pane and
+a notes pane, shows one slide at a time, and steps forward and back on the user's command from the palette or a chord
+shortcut. It is a controller, not an applet.
+
+Everything here is on the hot path. What is nice to have lives in UTERM-026, UTERM-027, and UTERM-029.
 
 ## Motivation
 
 Presenting from a terminal app is a real workflow: a talk about a tool, with the tool live in the next pane. Today that
 means a separate presentation app and switching windows mid-talk.
 
-uniterm already has the pieces to show content. The text viewer renders Markdown and pages through PDFs. A controller
-can lay out panes and command them. A presenter built from those pieces needs no new applet. It also proves the
-controller model on something people use, rather than on test fixtures. And it gives anyone writing a controller a
-working starting point. The repo has no sample controller today, and no `.janet` file outside the test fixtures.
+uniterm already has the pieces to show content. The text viewer renders Markdown, and a controller can lay out panes
+and command them. A presenter built from those pieces needs no new applet. It also proves the controller model on
+something people use, rather than on test fixtures. And it gives anyone writing a controller a working starting point.
+The repo has no sample controller today, and no `.janet` file outside the test fixtures.
 
 `spec/ideas.md` "Sample presentation controller" records the starting survey.
 
@@ -44,18 +44,25 @@ working starting point. The repo has no sample controller today, and no `.janet`
 Decision: the presenter is a controller that drives existing applets. It adds no applet type.
 
 Rationale: the applets already show the content. What a presenter adds is sequence and input, which is controller work.
-Building it as a controller keeps it replaceable, and any gap it finds belongs to the controller model, where every
-other controller gains from the fix.
+Any gap it finds belongs to the controller model, where every other controller gains from the fix.
+
+### A Markdown deck
+
+Decision: the deck is one Markdown file. Slides are split on `---`. Each slide's notes sit in a marked block inside it.
+The exact notes syntax is open. See "Notes syntax".
+
+Rationale: Markdown is the one deck source that works with today's text viewer and carries its notes in the same file.
+PDF, image, and HTML decks are UTERM-029.
 
 ### The deck stays in the user's files
 
-Decision: the deck is a file or folder the user names when starting the presenter. The presenter reads it, and keeps no
-copy beyond its run. Restoring a layout that held a presentation restores the panes inert, per ADR-03 and UTERM-004.
+Decision: the user names the deck when starting the presenter. The presenter reads it with `:fs-read`, and keeps no copy
+beyond its run. Restoring a layout that held a presentation restores the panes inert, per ADR-03 and UTERM-004.
 
 ### Stepping
 
-Decision: Next Slide and Previous Slide are the presenter's commands, declared through UTERM-024. Each one updates the
-slide pane and the notes pane together. Stepping past either end does nothing.
+Decision: Next Slide and Previous Slide are the presenter's commands, declared through UTERM-024 with chord shortcuts.
+Each one updates the slide pane and the notes pane together. Stepping past either end does nothing.
 
 ## Design Decisions (Open)
 
@@ -66,74 +73,51 @@ slide pane and the notes pane together. Stepping past either end does nothing.
 - **An example script in the repo.** A declared Janet file. Less to build, but it reaches only users with a checkout.
 - **A separate repository.** Its own releases and signing. Keeps uniterm free of a built-in presenter.
 
-### Deck sources
+### Notes syntax
 
-- **Markdown**: one file, slides split on `---`, notes in a marked block. Works with `show-markdown` today.
-- **PDF**: one page per slide, notes from a sidecar file. Works with the text viewer's page scroll today.
-- **An image folder**: waits on UTERM-006 M4.
-- **HTML**: waits on UTERM-019.
-
-Which ones the first version supports, and the notes syntax for each.
+How a slide marks its notes: an HTML comment, a fenced block with a `notes` tag, or a heading such as `Notes:`.
 
 ### Layout
 
-How the slide and notes panes sit beside the terminal that started the presenter, their weights, and whether a third
-pane shows the next slide or a timer.
+How the slide and notes panes sit beside the terminal that started the presenter, and their weights.
 
-### Clicker keys
+### Default shortcuts
 
-Which plain keys the presenter binds by default: Page Down and Page Up, the arrow keys, and Space are common clicker
-outputs. UTERM-024 settles that a controller may bind plain keys in its own panes. This proposal picks the set.
+Which chords step the deck, checked against uniterm's reserved keys.
 
-### Going to a chosen slide
+### Slide size
 
-Whether the presenter offers Go to Slide, and how the user names the slide: a number typed in the palette, or a list of
-slide titles.
-
-### Deck size
-
-Inline Markdown has a size cap, and no remote command opens a file by path. Options: send each slide as its own inline
-Markdown, which keeps every send small, or wait for a show-by-path command under UTERM-015's path-reading power. A PDF
-deck needs the file in the viewer, which today means `send`.
-
-### Presenter view
-
-Slides on one display and notes on another needs UTERM-026. Whether the first version waits for it, or ships the
-single-window layout first.
+Inline Markdown has a size cap. Each slide is sent alone, so a slide must fit under it. What the presenter does with a
+slide that does not: refuse to start, or show an error slide in its place.
 
 ## Risks
 
 - **UTERM-024's design changes what the presenter can do** — likelihood: medium, impact: medium. Mitigation: this
   proposal stays a draft until UTERM-024 is accepted, and its milestones follow UTERM-024's.
-- **A deck file is untrusted input** — likelihood: medium, impact: medium. A deck from someone else could hold content
-  that misleads in the notes or slides. Mitigation: the text viewer already renders untrusted Markdown and PDF. The
-  presenter passes content through and adds no rendering of its own.
-- **A large deck exceeds what one send carries** — likelihood: medium, impact: low. Mitigation: settle "Deck size"
-  before M1, and test a deck at the cap.
+- **A deck file is untrusted input** — likelihood: medium, impact: medium. Mitigation: the text viewer already renders
+  untrusted Markdown. The presenter passes content through and adds no rendering of its own.
 - **Shipping a controller in the bundle is a new contract** — likelihood: medium, impact: medium. Users would depend on
   its deck format. Mitigation: settle "How it ships" before acceptance, and version the deck format if it is bundled.
 
 ## Milestones
 
-### M1: Markdown deck in one window
+### M1: Present a Markdown deck
 
 **Status:** NOT STARTED
 
 - Starting the presenter on a Markdown deck lays out a slide pane and a notes pane beside the starting terminal
-- Next Slide and Previous Slide from the palette update both panes
-- A clicker's keys step the deck while a presenter pane has focus
+- Next Slide and Previous Slide, from the palette and from their chords, update both panes
+- Stepping past either end does nothing
 - Ending the presenter removes its commands and keys, and leaves the panes showing the last slide
+- A slide over the size cap is handled as "Slide size" settles
 - A UI test runs a synthetic deck in the real app and captures each step on screen
-
-### M2: More deck sources
-
-**Status:** NOT STARTED
-
-- Each deck source chosen under "Deck sources" beyond Markdown shows and steps like M1
 
 ## Decision Log
 
 - 2026-11-15: The presenter is a controller over existing applets, not an applet.
+- 2026-11-15: Narrowed to the hot path. Markdown is the one deck source, since it works today and carries its notes.
+  PDF, image, and HTML decks and Go to Slide moved to UTERM-029. Clicker keys moved to UTERM-027. The presenter view
+  stays in UTERM-026. The previous text had a second milestone for more deck sources.
 
 ## References
 

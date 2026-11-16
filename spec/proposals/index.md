@@ -25,9 +25,12 @@
 | [UTERM-021](UTERM-021-declared-script-permissions.md) | Script files declare their powers, with strict mode by default and a lint | implemented |
 | [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | accepted |
 | [UTERM-023](UTERM-023-controller-runs-with-sip-off.md) | What uniterm does for controller runs on a Mac with SIP off | draft |
-| [UTERM-024](UTERM-024-controller-input-channel.md) | Controllers declare palette commands and shortcuts, and read the user's invocations as events | draft |
-| [UTERM-025](UTERM-025-presentation-controller.md) | Present slide decks with notes by driving existing applets, stepped from the palette or a clicker | draft |
+| [UTERM-024](UTERM-024-controller-input-channel.md) | Janet controllers declare palette commands and chord shortcuts, and read the user's invocations as events | draft |
+| [UTERM-025](UTERM-025-presentation-controller.md) | Present a Markdown deck with notes by driving the text viewer, stepped from the palette or a chord | draft |
 | [UTERM-026](UTERM-026-screen-control.md) | Pane zoom, full screen, and presenter windows across displays | draft |
+| [UTERM-027](UTERM-027-controller-plain-keys.md) | Controllers bind plain keys in their own panes, so a clicker works | draft |
+| [UTERM-028](UTERM-028-exec-driver-commands.md) | Exec drivers declare commands and receive their invocations | draft |
+| [UTERM-029](UTERM-029-presentation-extras.md) | PDF, image, and HTML decks, and Go to Slide, for the presenter | draft |
 
 ## Dependency Graph
 
@@ -58,6 +61,9 @@ UTERM-023 ← UTERM-003, UTERM-004
 UTERM-024 ← UTERM-002, UTERM-003, UTERM-004, UTERM-013, UTERM-021
 UTERM-025 ← UTERM-004, UTERM-007, UTERM-021, UTERM-024
 UTERM-026 ← UTERM-004
+UTERM-027 ← UTERM-024
+UTERM-028 ← UTERM-004, UTERM-024
+UTERM-029 ← UTERM-025
 ```
 
 ## Not Yet Filed
