@@ -327,9 +327,10 @@ None.
 
 - **Strict mode by default refuses every existing plain script** — likelihood: high, impact: medium.
   Mitigation: the refusal says uniterm is in strict mode, names the form to add, and names the Settings row. The
-  repo's own fixtures and examples gain declarations in the same milestone. Unsafe mode runs an undeclared file after
-  one review per run. A declaration plus Trust This Version removes the review until the file changes. No setting
-  restores today's run with no review at all, which is the point of the change.
+  scripts that the UI tests run through the bundled command carry declarations or run in unsafe mode. The package
+  tests' script fixtures stay undeclared. Unsafe mode runs an undeclared file after one review per run. A declaration
+  plus Trust This Version removes the review until the file changes. No setting restores today's run with no
+  review at all, which is the point of the change.
 - **A parser differential lets the review show something other than what runs** — likelihood: low, impact: high.
   Mitigation: the declaration is read with Janet's own parser from the snapshot's bytes. Enforcement uses the approved
   scopes whatever the review showed, so a differential cannot grant an unapproved power.
@@ -556,15 +557,16 @@ adds the undeclared begin and its admitted answer. Refusals and the review notic
 command opens a session for an undeclared file with the undeclared begin and runs none of its code until the app
 admits it. It no longer sends the plain begin.
 
-The app tells the bundled command from any other program with the cheap check it already runs on the main actor, and
-the full check follows off the main actor. A plain begin from the command is refused and its connection closed. An
-undeclared begin from the command claims its place in the one-session table, then takes one of two paths. Strict
-mode refuses it with a message that names the mode, the form to add, ffi and modules, and the Settings row. Unsafe mode
-puts a review in the Pending Requests panel once the full check passes, and the mode is read again when the check
-finishes. A call from the connection before the answer is refused, as for a controller. Every refusal of a begin marks the
-connection refused as it is sent, so a request already on the wire is dropped without waiting for the close. An undeclared begin from a
-program that is not the command gets the admission a plain begin gets, with an admitted answer at once and no review,
-so the SwiftPM test helper and any other program that speaks the wire are unchanged in strict mode.
+The app tells the bundled command from any other program with the cheap check it already runs on the main actor, and the
+full check follows off the main actor. A plain begin from the command is refused and its connection closed. An
+undeclared begin from the command claims its place in the one-session table, then takes one of two paths. Strict mode
+refuses it with a message that names the mode, the form to add, ffi and modules, and the Settings row. Unsafe mode puts
+a review in the Pending Requests panel once the full check passes, and the mode is read again when the check finishes. A
+call from the connection before the answer is refused, as for a controller. Every refusal of a begin marks the
+connection refused as it is sent, so a request already on the wire is dropped without waiting for the close. An
+undeclared begin from a program that is not the command gets the admission a plain begin gets, with an admitted answer
+at once and no review, so the SwiftPM test helper and any other program that speaks the wire are unchanged in strict
+mode.
 
 The review offers Reject, Allow and Ask Each Use, and Allow Everything. It lists the run's `--allow` capabilities and
 says a declaration makes the script trustable. No choice is remembered, and none is a trust choice. Ask Each Use leaves
@@ -574,8 +576,8 @@ still asks. The Pending Requests panel lists every live undeclared run, not only
 a row does what Revoke does for a controller run or a declared file run: it ends the run's authority, so its next call
 is refused, and it does not close the connection or stop the process. Switching to strict refuses each waiting review at
 once. An answer that arrives after the switch reads the mode again and refuses the run, and an admission in flight is
-refused when its full check finishes. A live run is left alone. A file with a later `(declare-permissions ...)` form is refused by the
-command before it connects, as the M2 reader reports it, so the app never sees that begin.
+refused when its full check finishes. A live run is left alone. A file with a later `(declare-permissions ...)` form is
+refused by the command before it connects, as the M2 reader reports it, so the app never sees that begin.
 
 A peer that the cheap check does not take for the command gets the full check, off the main actor, before it is
 admitted as a generic one. A command replaced on disk under a running app fails the cheap check, and would otherwise
@@ -749,6 +751,12 @@ a socket that belongs to another user never reached the app, so it keeps 69.
   call, and named no exit status. A file that could make any call may use any declared power, so an unused report
   would be a claim the lint cannot back. Amended text: "The lint" now says both. If the lint should still list the
   declared powers it saw no literal use of, only the one suppression changes.
+- 2026-11-15: Correction of fact to the Risks section's first bullet. It said "The repo's own fixtures and examples gain
+  declarations in the same milestone. Unsafe mode runs an undeclared file after one review per run. A declaration plus
+  Trust This Version removes the review until the file changes. No setting restores today's run with no review at all,
+  which is the point of the change." The package tests' script fixtures stay undeclared, and the scripts the UI tests
+  run through the bundled command carry declarations or run in unsafe mode, as the fixtures entry above records. The
+  bullet now says that, and its other sentences are unchanged.
 
 ## References
 

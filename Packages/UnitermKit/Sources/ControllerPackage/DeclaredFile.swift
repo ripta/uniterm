@@ -316,9 +316,13 @@ public struct DeclaredFileSnapshot: Sendable {
     ControllerSnapshot.remove(directory: directory)
   }
 
-  /// Reads the `.sig` beside `source`, opened as the file was: no link followed, a regular file, and
-  /// the signature's own size cap. A signature that is there and does not read or verify over
-  /// `bytes` throws a file-signature error whatever the reason, so a bad signature never leaves a file to run as an unsigned one.
+  /// Reads the `.sig` beside `source` and verifies it over `bytes`.
+  ///
+  /// The file is opened as the script was: no link followed, a regular file, and the signature's own
+  /// size cap.
+  ///
+  /// A signature that is there and does not read or verify throws a file-signature error, whatever
+  /// the reason. A bad signature never leaves a file to run as an unsigned one.
   private static func readSignature(
     besides source: String, verifying bytes: Data
   ) throws -> ControllerSignature? {
