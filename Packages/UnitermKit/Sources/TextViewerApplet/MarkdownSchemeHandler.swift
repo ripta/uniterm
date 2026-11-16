@@ -47,6 +47,10 @@ enum MarkdownScheme {
 struct MarkdownDocument: Sendable {
   let text: Data
   let folder: ConfinedFile.Folder?
+
+  /// True for Markdown a program sent. It has no folder, so the page shows an image's alt text
+  /// where a file's page would ask for the image.
+  var isInline = false
 }
 
 /// Serves the Markdown page, its stylesheet, the document's text, and the images the document

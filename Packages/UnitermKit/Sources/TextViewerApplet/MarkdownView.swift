@@ -366,11 +366,43 @@ final class MarkdownView: NSView, WKNavigationDelegate, WKUIDelegate {
     _ = await run("return window.umViewer.clearFind()")
   }
 
-  /// Scrolls to the heading at `index` in `headings`.
-  func scrollToHeading(_ index: Int) async {
-    guard isRendered else { return }
+  /// Scrolls to the heading at `index` in `headings`. Returns false when the page has no such
+  /// heading.
+  @discardableResult
+  func scrollToHeading(_ index: Int) async -> Bool {
+    guard isRendered else { return false }
 
-    _ = await run("return window.umViewer.scrollToHeading(index)", ["index": index])
+    let found = await run("return window.umViewer.scrollToHeading(index)", ["index": index])
+
+    return (found as? NSNumber)?.boolValue ?? false
+  }
+
+  /// Scrolls so the block that starts at `target.line` sits at the top, and returns where the page
+  /// landed. Returns nil when a newer document replaced this one first.
+  func scroll(to target: MarkdownAnchor) async -> MarkdownAnchor? {
+    let shown = generation
+
+    guard isRendered else { return nil }
+
+    _ = await run(
+      "return window.umViewer.scrollToAnchor(target)",
+      ["target": ["line": target.line, "fraction": target.fraction]])
+
+    guard shown == generation else { return nil }
+
+    return await landedAnchor()
+  }
+
+  /// Where the page is scrolled now, read from the page and not from its last scroll report.
+  func landedAnchor() async -> MarkdownAnchor? {
+    let shown = generation
+
+    guard isRendered,
+      let fields = await run("return window.umViewer.currentAnchor()") as? [String: Any],
+      shown == generation
+    else { return nil }
+
+    return MarkdownMessage.anchor(from: fields)
   }
 
   /// The first match that lies inside the selection last read, or nil when none does.
@@ -400,6 +432,8 @@ final class MarkdownView: NSView, WKNavigationDelegate, WKUIDelegate {
     if let restoreAnchor {
       options["anchor"] = ["line": restoreAnchor.line, "fraction": restoreAnchor.fraction]
     }
+
+    if scheme.document?.isInline == true { options["inline"] = true }
 
     Task { [weak self] in
       _ = await self?.run("return await window.umViewer.start(options)", ["options": options])

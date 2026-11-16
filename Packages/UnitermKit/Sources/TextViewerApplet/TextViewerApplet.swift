@@ -21,6 +21,11 @@ import UniformTypeIdentifiers
 /// The description holds the file's path, bookmark, and view anchor, never the file's contents.
 /// `describe()` reads memory only.
 ///
+/// A controller can also show Markdown text in the pane. That inline content is the pane's second
+/// source. The layout file records only that inline content was showing. The text rides in the
+/// description's undo-only part, so a reopen within the launch brings it back and a relaunch says
+/// it was not restored.
+///
 /// The pane watches the file it shows and reloads when it changes. A reload runs the same load as
 /// an open and swaps in only when that load succeeds, so a file that fails to parse leaves the
 /// last good render on screen. A file caught half written can still parse, and the next write
@@ -41,11 +46,25 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   let content: TextViewerView
   let finder: FindCoordinator
 
+  /// The remote commands' results, and the waits on them.
+  let remote = TextViewerRemote()
+
+  /// Remote callers receive no events, so the viewer emits none. The outlet exists for the command
+  /// hook, and closes with the pane.
+  public let events = AppletEventOutlet()
+
   /// The contents the shown document carries. The sidebar lists it.
   private(set) var contents = Contents.empty
-  private var record: TextViewerDescription
+  private(set) var record: TextViewerDescription
   private var opening: Task<Void, Never>?
   private var openGeneration = 0
+
+  /// The Markdown a program sent, while it shows.
+  private var inline: InlineContent?
+
+  /// The notes a restore found in the undo-only part. They show when the pane starts, and until
+  /// then a description of the pane still holds them.
+  private var restoredInline: InlineContent?
   private var job: DocumentHelperJob?
   private var resolvedNotice: String?
   private var posted = AppletNotices()
@@ -89,7 +108,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   /// there on its own. Which scroll position it picks depends on whether the view already had a size
   /// when the document arrived, so a restore and a fresh open could differ.
   private var scrollsToTop = false
-  private var closed = false
+  private(set) var closed = false
   private var palette = ThemePalette.latte
   private var pageObserver: (any NSObjectProtocol)?
   private let links: LinkHandler
@@ -106,7 +125,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   var activeHelperProcessID: pid_t? { job?.processID }
 
   /// How many characters the shown RTF or Word document holds.
-  private var textLength: Int?
+  private(set) var textLength: Int?
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
@@ -144,7 +163,10 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     opener: any URLOpening
   ) throws {
     record = try TextViewerDescription.decode(description)
-    restoreWaitsForStart = record.path != nil
+
+    restoredInline =
+      record.path == nil && record.inlineContent ? Self.keptInline(in: description) : nil
+    restoreWaitsForStart = record.path != nil || restoredInline != nil
     describesFromRecord = true
     self.settings = settings
     self.opener = opener
@@ -155,8 +177,16 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
     wire()
-    showMessage(
-      record.path == nil ? Self.emptyText : "Opening\u{2026}", offersOpen: record.path == nil)
+
+    if record.path == nil, record.inlineContent, restoredInline == nil {
+      showMessage(Self.inlineNotRestoredText, offersOpen: true)
+      messageText = Self.inlineNotRestoredText
+    } else {
+      let waits = record.path != nil || restoredInline != nil
+
+      showMessage(waits ? "Opening\u{2026}" : Self.emptyText, offersOpen: !waits)
+    }
+
     refresh()
   }
 
@@ -244,6 +274,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
       startDirectory: startDirectory, path: file.path, sidebarShown: record.sidebarShown)
     describesFromRecord = false
     restoreWaitsForStart = false
+    restoredInline = nil
 
     open(path: file.path, bookmark: nil, anchor: nil, origin: .user)
   }
@@ -254,14 +285,8 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     path: String, bookmark: Data?, anchor: TextViewerAnchor?, origin: LoadOrigin,
     reloading: Bool = false
   ) {
-    cancelLoad()
-    openGeneration += 1
-    loadOrigin = origin
-    resolvedNotice = nil
-    reloadNotice = nil
-    reloadQueued = false
-    posted.reset()
-    alerts.replaceLoad()
+    startLoad(origin: origin)
+    record.inlineContent = false
 
     if !reloading {
       unwatch()
@@ -302,9 +327,137 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
       case .failure(let error):
         self.describesFromRecord = false
-        self.fail(error.errorDescription ?? "The file could not be opened.")
+        self.fail(error.errorDescription ?? "The file could not be opened.", .unreadable)
       }
     }
+  }
+
+  /// Ends whatever load runs and starts the bookkeeping for the next one. A command that started
+  /// the load before is superseded, so a wait on it ends at once.
+  private func startLoad(origin: LoadOrigin) {
+    cancelLoad()
+    openGeneration += 1
+    loadOrigin = origin
+    resolvedNotice = nil
+    reloadNotice = nil
+    reloadQueued = false
+    posted.reset()
+    alerts.replaceLoad()
+    remote.supersedeLoad()
+    inline = nil
+  }
+
+  // MARK: Inline content
+
+  /// Shows Markdown text in place of what the pane shows. The path goes, the watch stops, and a
+  /// load still running is superseded, so a late file load or reload never replaces the text.
+  func showInline(_ text: String, anchor: TextViewerAnchor?) {
+    startLoad(origin: .user)
+    unwatch()
+    fileGone = false
+    keepsRender = false
+    restoreWaitsForStart = false
+    restoredInline = nil
+    describesFromRecord = anchor != nil
+    record.path = nil
+    record.bookmark = nil
+    record.anchor = nil
+    record.inlineContent = true
+    inline = InlineContent(text: text)
+
+    let document = MarkdownDocument(text: Data(text.utf8), folder: nil, isInline: true)
+    let generation = openGeneration
+
+    if let view = content.markdownView {
+      show(markdown: view, document: document, anchor: anchor)
+      return
+    }
+
+    showMessage("Opening\u{2026}", offersOpen: false)
+    refresh()
+
+    opening = Task { [weak self] in
+      guard let self else { return }
+
+      let view = await markdownView(limits: settings.limits)
+
+      guard generation == openGeneration, !closed else {
+        if let view, content.markdownView !== view { view.close() }
+        return
+      }
+
+      guard let view else {
+        fail(
+          "The Markdown viewer could not start, so the content was not shown.", .viewerUnavailable)
+        return
+      }
+
+      show(markdown: view, document: document, anchor: anchor)
+    }
+  }
+
+  /// Markdown a program sent, with the undo-only part that carries it. The part is encoded once,
+  /// when the content arrives, so a description of the pane only reads it.
+  private struct InlineContent {
+    let text: String
+    let undo: JSONValue?
+
+    init(text: String) {
+      self.text = text
+      undo = try? JSONValue(encoding: InlineUndo(text: text))
+    }
+
+    init(restoring undo: JSONValue, text: String) {
+      self.text = text
+      self.undo = undo
+    }
+  }
+
+  /// What the undo-only part holds for inline content: the text, and nothing else.
+  private struct InlineUndo: Codable {
+    var text: String
+  }
+
+  static let inlineNotRestoredText =
+    "This pane showed content that a program sent. uniterm does not save that content, so it was not restored."
+
+  private static func keptInline(in description: AppletDescription) -> InlineContent? {
+    guard let state = description.undoState,
+      let kept = try? state.decoded(as: InlineUndo.self),
+      kept.text.utf8.count <= TextViewerLimits.maxInlineMarkdownBytes
+    else { return nil }
+
+    return InlineContent(restoring: state, text: kept.text)
+  }
+
+  /// A remote scroll to a PDF page or an RTF character. It goes through the pane's anchor path,
+  /// which waits for a first layout when the pane has none yet. Returns where the view landed, or
+  /// the requested place when the pane has not laid out.
+  func place(_ target: TextViewerAnchor) -> TextViewerAnchor {
+    pendingAnchor = target
+    anchorApplied = false
+    applyPendingAnchor()
+
+    return pendingAnchor == nil ? (currentAnchor() ?? target) : target
+  }
+
+  /// A remote scroll to a contents entry that is not in the Markdown page. Returns where it landed.
+  func scroll(toEntry entry: ContentsEntry) -> TextViewerAnchor? {
+    go(to: entry)
+
+    return currentAnchor()
+  }
+
+  /// True while a load that has not shown its document runs: a file read or decode, or a Markdown
+  /// page still rendering. A scroll or find then has nothing settled to act on.
+  var loadInFlight: Bool {
+    if opening != nil { return true }
+
+    if case .markdown = content.body, let view = content.markdownView, !view.isRendered {
+      return true
+    }
+
+    return false
   }
 
   // MARK: Watching
@@ -400,16 +553,18 @@ public final class TextViewerApplet: Applet, SourceReplacing {
         show(pdf: loaded.document, anchor: anchor)
 
       case .failure(.read(.access(let error))):
-        fail(error.errorDescription ?? "The file could not be opened.")
+        fail(error.errorDescription ?? "The file could not be opened.", .unreadable)
 
       case .failure(.read(.tooLarge(_, let bytes, _))):
-        fail(limits.tooLargeMessage(fileName: name, bytes: bytes, format: format))
+        fail(limits.tooLargeMessage(fileName: name, bytes: bytes, format: format), .tooLarge)
 
       case .failure(.notAPDF):
-        fail("\u{201C}\(name)\u{201D} is not a PDF that macOS can open.")
+        fail("\u{201C}\(name)\u{201D} is not a PDF that macOS can open.", .unsupported)
 
       case .failure(.locked):
-        fail("\u{201C}\(name)\u{201D} is password-protected, which the text viewer does not open.")
+        fail(
+          "\u{201C}\(name)\u{201D} is password-protected, which the text viewer does not open.",
+          .unsupported)
       }
 
     case .rtf, .word97, .wordXML:
@@ -422,7 +577,8 @@ public final class TextViewerApplet: Applet, SourceReplacing {
       await loadMarkdown(file: file, anchor: anchor, generation: generation)
 
     case .unsupported(let description):
-      fail(TextFormatRule.unsupportedMessage(fileName: name, description: description))
+      fail(
+        TextFormatRule.unsupportedMessage(fileName: name, description: description), .unsupported)
     }
   }
 
@@ -441,7 +597,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
     switch opened {
     case .failure(let error):
-      fail(error.errorDescription ?? "The file could not be opened.")
+      fail(error.errorDescription ?? "The file could not be opened.", .unreadable)
       return
 
     case .success(let file):
@@ -449,7 +605,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     }
 
     guard source.size <= limits.fileLimit(for: format) else {
-      fail(limits.tooLargeMessage(fileName: name, bytes: source.size, format: format))
+      fail(limits.tooLargeMessage(fileName: name, bytes: source.size, format: format), .tooLarge)
       return
     }
 
@@ -465,7 +621,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
     switch outcome {
     case .failure(let end):
-      fail(Self.message(for: end, fileName: name, limits: limits))
+      fail(Self.message(for: end, fileName: name, limits: limits), .renderFailed)
 
     case .success(let reply):
       let decoded = await DocumentReplyDecoder.decode(reply, limits: limits)
@@ -477,12 +633,12 @@ public final class TextViewerApplet: Applet, SourceReplacing {
         show(text: document.text, contents: document.contents, anchor: anchor)
 
       case .failure(.overCap(let violation)):
-        fail(violation.message(fileName: name))
+        fail(violation.message(fileName: name), .tooLarge)
 
       case .failure(.misbehaved):
         fail(
-          "The document reader sent something uniterm could not trust, so \u{201C}\(name)\u{201D} was not opened."
-        )
+          "The document reader sent something uniterm could not trust, so \u{201C}\(name)\u{201D} was not opened.",
+          .renderFailed)
       }
     }
   }
@@ -496,15 +652,17 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
     switch result {
     case .failure(.access(let error)):
-      fail(error.errorDescription ?? "The file could not be opened.")
+      fail(error.errorDescription ?? "The file could not be opened.", .unreadable)
 
     case .failure(.tooLarge(_, let bytes, _)):
-      fail(limits.tooLargeMessage(fileName: name, bytes: bytes, format: .markdown))
+      fail(limits.tooLargeMessage(fileName: name, bytes: bytes, format: .markdown), .tooLarge)
 
     case .success(let document):
       guard let view = await markdownView(limits: limits) else {
         if generation == openGeneration, !closed {
-          fail("The Markdown viewer could not start, so \u{201C}\(name)\u{201D} was not opened.")
+          fail(
+            "The Markdown viewer could not start, so \u{201C}\(name)\u{201D} was not opened.",
+            .viewerUnavailable)
         }
 
         return
@@ -627,13 +785,16 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     content.sidebar.isReady = true
     finder.documentReady()
     refresh()
+
+    // The handle ends last, so a command sent on seeing `loaded` finds the contents in place.
+    remote.settleLoad(.loaded)
   }
 
   private func markdownFailed(_ reason: String) {
-    let name = record.path.map { ($0 as NSString).lastPathComponent } ?? Self.untitled
+    let subject = record.path.map { "\u{201C}\(($0 as NSString).lastPathComponent)\u{201D}" }
     let detail = reason.isEmpty ? "" : " \(reason)"
 
-    fail("\u{201C}\(name)\u{201D} could not be shown.\(detail)")
+    fail("\(subject ?? "The content") could not be shown.\(detail)", .renderFailed)
   }
 
   /// WebKit's content process ended. The pane keeps the last position in its description, says
@@ -648,6 +809,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
     let text = "The page for this document stopped. Reload to show it again."
 
+    remote.settleLoad(.failed(.processEnded))
     finder.documentChanged()
     setContents(.empty)
 
@@ -676,6 +838,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     refresh()
     applyPendingAnchor()
     finder.documentReady()
+    remote.settleLoad(.loaded)
     settleLoad()
   }
 
@@ -700,6 +863,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     refresh()
     applyPendingAnchor()
     finder.documentReady()
+    remote.settleLoad(.loaded)
     settleLoad()
   }
 
@@ -748,8 +912,10 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     refresh()
   }
 
-  private func fail(_ text: String) {
+  private func fail(_ text: String, _ code: RemoteFailure = .renderFailed) {
     defer { settleLoad() }
+
+    remote.settleLoad(.failed(code))
 
     if keepsRender {
       keepsRender = false
@@ -966,10 +1132,14 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   // MARK: Applet
 
   public func start(origin: StartOrigin) {
-    guard restoreWaitsForStart, let path = record.path else { return }
+    guard restoreWaitsForStart else { return }
 
-    restoreWaitsForStart = false
-    open(path: path, bookmark: record.bookmark, anchor: record.anchor, origin: origin.loadOrigin)
+    if let path = record.path {
+      restoreWaitsForStart = false
+      open(path: path, bookmark: record.bookmark, anchor: record.anchor, origin: origin.loadOrigin)
+    } else if let restored = restoredInline {
+      showInline(restored.text, anchor: record.anchor)
+    }
   }
 
   /// Reads the file again and shows it at the position the pane holds. A pane whose web content
@@ -987,11 +1157,19 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   /// True when the pane has a file to read again.
   var canReload: Bool { !closed && record.path != nil }
 
+  /// Reads the file again. Inline content has no file, so it shows its text again. That is how the
+  /// pane's Reload button recovers a page whose process ended.
   private func reload(origin: LoadOrigin) {
-    guard let path = record.path else { return }
-
     let anchor = content.markdownView?.anchor.map {
       TextViewerAnchor.markdown(line: $0.line, fraction: $0.fraction)
+    }
+
+    guard let path = record.path else {
+      if let text = inline?.text {
+        showInline(text, anchor: anchor ?? currentAnchor() ?? record.anchor)
+      }
+
+      return
     }
 
     open(
@@ -1001,6 +1179,8 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    remote.close()
+    events.close()
     unwatch()
     alerts.discard()
     cancelLoad()
@@ -1012,6 +1192,10 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     pageObserver = nil
     content.pdfView.document = nil
     content.textView.textStorage?.setAttributedString(NSAttributedString())
+  }
+
+  public func hostBadgeReachDidChange(_ width: CGFloat) {
+    content.findBar.trailingReserve = width
   }
 
   public func detach() {
@@ -1044,9 +1228,9 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     }
 
     // The payload always encodes. The fields are plain values, so a failure is a programming error.
-    return (try? description.appletDescription())
+    return (try? description.appletDescription(undoState: (inline ?? restoredInline)?.undo))
       ?? AppletDescription(
-        type: TextViewerDescription.typeID, version: TextViewerDescription.currentVersion,
+        type: TextViewerDescription.typeID, version: TextViewerDescription.baseVersion,
         payload: .object([:]))
   }
 

@@ -32,6 +32,25 @@ enum FindReveal {
   /// Moves to the first match inside the selection the query came from, or the first match when
   /// none lies inside it.
   case near(SelectionAnchor)
+
+  /// Moves to the last match, as a backward remote find does.
+  case last
+}
+
+/// Where a search ended up. The numbers and the anchor describe the document, never its text.
+struct FindLanding: Equatable {
+  var count: Int
+  var capped: Bool
+  var current: Int?
+  var anchor: TextViewerAnchor?
+}
+
+/// How a search that reports its end finished.
+enum FindEnd: Equatable {
+  case finished(FindLanding)
+
+  /// A newer search, a new document, or the bar closing took the search's place.
+  case superseded
 }
 
 @MainActor
@@ -52,6 +71,12 @@ final class FindCoordinator {
   private var pdfMatches: [PDFSelection] = []
   private var shownPDFMatch: Int?
   private var shownTextMatch: Int?
+
+  /// Told once how the running search ended. Only a remote find sets it.
+  private var completion: (@MainActor (FindEnd) -> Void)?
+
+  /// The page's latest match selection, so the landed anchor is read after it.
+  private var selectTask: Task<Void, Never>?
 
   static let matchColor = NSColor.systemYellow.withAlphaComponent(0.55)
   static let currentColor = NSColor.systemOrange
@@ -93,6 +118,19 @@ final class FindCoordinator {
     guard let index = state.stepTarget(forward: forward) else { return }
 
     select(index)
+  }
+
+  /// Searches for `query` as a remote find does. The query becomes the pane's own, shown in the bar,
+  /// cut to the cap. `completion` hears once how the search ended.
+  func search(
+    query: String, backward: Bool, completion: @escaping @MainActor (FindEnd) -> Void
+  ) {
+    let prepared = FindMatching.prepared(query) ?? ""
+
+    content.findBar.query = prepared
+    content.findBar.reveal()
+    state.query = prepared
+    run(reveal: backward ? .last : .first, completion: completion)
   }
 
   /// Closes the bar and drops the query and every highlight.
@@ -186,6 +224,12 @@ final class FindCoordinator {
 
   private func invalidate() {
     generation += 1
+
+    if let ending = completion {
+      completion = nil
+      ending(.superseded)
+    }
+
     task?.cancel()
     task = nil
     pdfSearch?.cancel()
@@ -194,7 +238,7 @@ final class FindCoordinator {
 
   // MARK: Searching
 
-  private func run(reveal: FindReveal) {
+  private func run(reveal: FindReveal, completion: (@MainActor (FindEnd) -> Void)? = nil) {
     invalidate()
     clearHighlights()
 
@@ -202,9 +246,11 @@ final class FindCoordinator {
     state.current = nil
     state.capped = false
     state.isSearching = false
+    self.completion = completion
 
     guard canFind, let query = FindMatching.prepared(state.query) else {
       publish()
+      finish()
       return
     }
 
@@ -223,6 +269,69 @@ final class FindCoordinator {
 
   private func publish() {
     content.findBar.update(state)
+  }
+
+  /// Tells the remote find how the search ended. A Markdown page reports the anchor it landed on
+  /// after its own scroll, so that one waits for the page.
+  private func finish() {
+    guard let ending = completion else { return }
+
+    completion = nil
+
+    var landing = FindLanding(
+      count: state.matchCount, capped: state.capped, current: state.current, anchor: nil)
+
+    guard let current = state.current else {
+      ending(.finished(landing))
+      return
+    }
+
+    switch content.body {
+    case .text:
+      if textMatches.indices.contains(current) {
+        landing.anchor = .text(characterIndex: textMatches[current].location)
+      }
+
+      ending(.finished(landing))
+
+    case .pdf:
+      if pdfMatches.indices.contains(current), let page = pdfMatches[current].pages.first,
+        let document = page.document
+      {
+        let bounds = pdfMatches[current].bounds(for: page)
+
+        landing.anchor = .pdf(
+          page: document.index(for: page), x: Double(bounds.minX), y: Double(bounds.maxY))
+      }
+
+      ending(.finished(landing))
+
+    case .markdown:
+      guard let view = content.markdownView else {
+        ending(.finished(landing))
+        return
+      }
+
+      let token = generation
+      let selecting = selectTask
+
+      Task { @MainActor [weak self] in
+        await selecting?.value
+
+        let landed = await view.landedAnchor()
+
+        guard let self, token == generation else {
+          ending(.superseded)
+          return
+        }
+
+        landing.anchor = landed.map { .markdown(line: $0.line, fraction: $0.fraction) }
+        ending(.finished(landing))
+      }
+
+    case .message:
+      ending(.finished(landing))
+    }
   }
 
   private func clearHighlights() {
@@ -253,7 +362,7 @@ final class FindCoordinator {
     case .text: showText(index)
     case .pdf: showPDF(index)
     case .markdown:
-      if let view = content.markdownView { Task { await view.selectMatch(index) } }
+      if let view = content.markdownView { selectTask = Task { await view.selectMatch(index) } }
     case .message: break
     }
   }
@@ -290,11 +399,16 @@ final class FindCoordinator {
       case .near(let anchor):
         guard !outcome.ranges.isEmpty else {
           publish()
-          return
+          break
         }
 
         select(index(in: outcome.ranges, near: anchor))
+
+      case .last:
+        outcome.ranges.isEmpty ? publish() : select(outcome.ranges.count - 1)
       }
+
+      finish()
     }
   }
 
@@ -337,6 +451,7 @@ final class FindCoordinator {
     guard let document = content.pdfView.document else {
       state.isSearching = false
       publish()
+      finish()
       return
     }
 
@@ -358,9 +473,13 @@ final class FindCoordinator {
 
       if case .near = reveal, state.current == nil, !pdfMatches.isEmpty {
         select(0)
+      } else if case .last = reveal, !pdfMatches.isEmpty {
+        select(pdfMatches.count - 1)
       } else {
         publish()
       }
+
+      finish()
     }
 
     search.start(query)
@@ -376,7 +495,14 @@ final class FindCoordinator {
       state.isSearching = false
       search.cancel()
       content.pdfView.highlightedSelections = pdfMatches
-      publish()
+
+      if case .last = reveal {
+        select(pdfMatches.count - 1)
+      } else {
+        publish()
+      }
+
+      finish()
       return
     }
 
@@ -443,6 +569,7 @@ final class FindCoordinator {
     guard let view = content.markdownView else {
       state.isSearching = false
       publish()
+      finish()
       return
     }
 
@@ -455,6 +582,7 @@ final class FindCoordinator {
 
       guard let outcome else {
         publish()
+        finish()
         return
       }
 
@@ -463,6 +591,7 @@ final class FindCoordinator {
 
       guard outcome.count > 0 else {
         publish()
+        finish()
         return
       }
 
@@ -479,7 +608,12 @@ final class FindCoordinator {
         guard token == generation else { return }
 
         select(inside ?? 0)
+
+      case .last:
+        select(outcome.count - 1)
       }
+
+      finish()
     }
   }
 }

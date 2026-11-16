@@ -8,6 +8,7 @@ import PaneModel
 import Preferences
 import ScriptHost
 import ScriptWire
+import TextViewerApplet
 import XCTest
 
 @testable import WindowKit
@@ -39,7 +40,8 @@ final class ExecPaneFixture {
     AppletFixtures.declarations + [
       AppletTypeDeclaration(
         typeID: "fake", displayName: "Fake", symbolName: "questionmark", opens: [],
-        controlSupport: [.remoteControlled])
+        controlSupport: [.remoteControlled]),
+      TextViewerApplet.typeDeclaration,
     ]
 
   init() throws {
@@ -75,10 +77,12 @@ final class ExecPaneFixture {
     scripting = WindowScripting(windows: windows)
 
     // A hosted choice, as a layout makes, gets its own fixture. Any other gets a slides fixture.
-    factory = { [unowned self] choice, _ in
+    factory = { [unowned self] choice, directory in
       if case .hosted(let typeID) = choice, let applet = AppletFixtures.make(typeID: typeID) {
         return applet
       }
+
+      if case .textViewer = choice { return TextViewerApplet(startDirectory: directory) }
 
       if nextIsNotes { return NotesFixture() }
 

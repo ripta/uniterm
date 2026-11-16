@@ -109,6 +109,9 @@ final class PaneFrameView: NSView {
 
   private var palette: ThemePalette = .latte
 
+  /// The width last told to the applet, so it hears only changes.
+  private var reportedBadgeReach: CGFloat = 0
+
   /// The host's own badge, above the applet's view. It opens the pane's control actions with the
   /// mouse, so they stay reachable when the applet takes every key.
   let controlBadge = NSButton()
@@ -218,6 +221,8 @@ final class PaneFrameView: NSView {
     replacement.view.frame = innerFrame
     addSubview(replacement.view, positioned: .below, relativeTo: controlBadge)
     replacement.apply(palette)
+    reportedBadgeReach = 0
+    reportBadgeReach()
   }
 
   private var innerFrame: NSRect {
@@ -244,6 +249,24 @@ final class PaneFrameView: NSView {
     applet.view.frame = innerFrame
     controlBadge.frame = Self.badgeFrame(in: bounds)
     layoutExecStrip()
+    reportBadgeReach()
+  }
+
+  /// How far the shown badge reaches in from the applet's trailing edge, with a gap. The applet
+  /// keeps its top bar's trailing controls clear of it.
+  static func badgeReach(badge: NSRect, appletFrame: NSRect) -> CGFloat {
+    max(0, appletFrame.maxX - badge.minX) + 4
+  }
+
+  private func reportBadgeReach() {
+    let reach =
+      controlBadge.isHidden
+      ? 0 : Self.badgeReach(badge: controlBadge.frame, appletFrame: applet.view.frame)
+
+    guard reach != reportedBadgeReach else { return }
+
+    reportedBadgeReach = reach
+    applet.hostBadgeReachDidChange(reach)
   }
 
   private func layoutExecStrip() {
@@ -292,6 +315,7 @@ final class PaneFrameView: NSView {
   private func refreshBadge() {
     guard let mark = controlMark, mark.isShown else {
       controlBadge.isHidden = true
+      reportBadgeReach()
       return
     }
 
@@ -303,6 +327,7 @@ final class PaneFrameView: NSView {
     controlBadge.setAccessibilityValue(mark.accessibilityValue)
     controlBadge.contentTintColor = active ? palette[.peach].nsColor : palette[.overlay1].nsColor
     controlBadge.layer?.backgroundColor = palette[.surface0].cgColor
+    reportBadgeReach()
   }
 
   /// The menu names the mode, the owner, and the driver, then offers the actions that apply.

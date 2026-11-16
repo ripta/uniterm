@@ -17,7 +17,7 @@ final class BuiltInAppletsTests: XCTestCase {
   /// Catches a declaration that changes without a deliberate edit here. The terminal opens folders
   /// as the owner, the data viewer opens CSV, JSON, and `.xlsx` as the owner, the map viewer
   /// opens GeoJSON as the owner, the text viewer opens PDF, RTF, and Word as the owner, and the
-  /// REPL opens nothing. Only the terminal and the REPL declare remote control.
+  /// REPL opens nothing. The terminal, the REPL, and the text viewer declare remote control.
   func testTheCatalogIsTheTerminalOpeningFoldersAndTheDataViewerOpeningTables() {
     XCTAssertEqual(
       BuiltInApplets.declarations,
@@ -52,7 +52,8 @@ final class BuiltInAppletsTests: XCTestCase {
             OpenedType("com.microsoft.word.doc", rank: .owner),
             OpenedType("org.openxmlformats.wordprocessingml.document", rank: .owner),
             OpenedType("net.daringfireball.markdown", rank: .owner),
-          ]),
+          ],
+          controlSupport: [.disconnected, .remoteControlled]),
         AppletTypeDeclaration(
           typeID: "repl", displayName: "REPL", symbolName: "curlybraces", opens: [],
           controlSupport: [.disconnected, .remoteControlled]),
@@ -68,7 +69,7 @@ final class BuiltInAppletsTests: XCTestCase {
     let expected: [String: Set<ControlCombination>] = [
       "terminal": remote, "repl": remote, "data-viewer": [.disconnected],
       "map-viewer": [.disconnected], "browser": [.disconnected],
-      "image-viewer": [.disconnected], "text-viewer": [.disconnected],
+      "image-viewer": [.disconnected], "text-viewer": remote,
     ]
 
     XCTAssertEqual(Set(BuiltInApplets.declarations.map(\.typeID)), Set(expected.keys))
@@ -86,20 +87,32 @@ final class BuiltInAppletsTests: XCTestCase {
       [.disconnected])
   }
 
-  /// Catches a shipped applet that takes applet commands before its own proposal designs them. The
-  /// terminal and the REPL may be remote-controlled, and still refuse every command, since only an
-  /// applet that adopts the command hook can take one.
-  func testNoShippedAppletAdoptsTheCommandHook() {
-    let types: [(String, any Applet.Type)] = [
-      ("terminal", TerminalApplet.self), ("repl", ReplApplet.self),
-      ("data-viewer", DataViewerApplet.self), ("map-viewer", MapViewerApplet.self),
-      ("browser", BrowserApplet.self), ("image-viewer", ImageViewerApplet.self),
-      ("text-viewer", TextViewerApplet.self),
+  /// Catches an applet that takes applet commands before its own proposal designs them. Only the
+  /// text viewer adopts the command hook. The terminal and the REPL may be remote-controlled, and
+  /// still refuse every command, since only an applet that adopts the hook can take one.
+  func testOnlyTheTextViewerAdoptsTheCommandHook() {
+    let types: [(String, any Applet.Type, Bool)] = [
+      ("terminal", TerminalApplet.self, false), ("repl", ReplApplet.self, false),
+      ("data-viewer", DataViewerApplet.self, false), ("map-viewer", MapViewerApplet.self, false),
+      ("browser", BrowserApplet.self, false), ("image-viewer", ImageViewerApplet.self, false),
+      ("text-viewer", TextViewerApplet.self, true),
     ]
 
-    for (name, type) in types {
-      XCTAssertFalse(type is any AppletCommandHandling.Type, name)
+    for (name, type, adopts) in types {
+      XCTAssertEqual(type is any AppletCommandHandling.Type, adopts, name)
     }
+  }
+
+  /// Catches a viewer declaration that lets an exec driver start. The viewer takes remote
+  /// commands and never owns a child process, so every exec combination is refused from the
+  /// declaration alone, before anything launches.
+  func testTheTextViewerRefusesEveryExecCombinationBeforeLaunch() {
+    let supported = AppletTypeDeclaration.supportedControl(
+      forType: "text-viewer", in: BuiltInApplets.declarations)
+
+    XCTAssertTrue(supported.contains(.remoteControlled))
+    XCTAssertFalse(supported.contains(.disconnectedExec))
+    XCTAssertFalse(supported.contains(.remoteControlledExec))
   }
 
   /// Catches an image that routes anywhere but the image viewer, and a folder that stops routing to

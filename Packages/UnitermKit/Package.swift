@@ -397,7 +397,7 @@ let package = Package(
         "WindowKit", "Theme", "Preferences", "StatusKit", "AppletKit", "PaneModel", "LayoutKit",
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
         "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
-        "ControllerTrust", "TestProcessGuard",
+        "ControllerTrust", "TestProcessGuard", "TextViewerApplet",
       ]),
   ],
   swiftLanguageModes: [.v6],

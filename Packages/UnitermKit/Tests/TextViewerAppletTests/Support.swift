@@ -87,6 +87,19 @@ enum Harness {
     return applet
   }
 
+  /// Rebuilds a pane from the description another pane described, undo-only part included.
+  static func restoredDescription(
+    _ description: AppletDescription, settings: DocumentHelperSettings = settings(),
+    opener: RecordingOpener = RecordingOpener(), watching: WatchPolicy = silentWatch
+  ) throws -> TextViewerApplet {
+    let applet = try TextViewerApplet(
+      restoring: description, settings: settings, opener: opener)
+
+    applet.watchPolicy = watching
+
+    return applet
+  }
+
   /// Polls until `condition` holds or `seconds` pass. The helper is a real process, so a wait for
   /// its reply polls, since nothing else says when another process has answered.
   static func eventually(seconds: Double = 20, _ condition: @MainActor () -> Bool) async -> Bool {

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-08
+**Updated:** 2026-11-15
 
 ## Dependencies
 
@@ -15,6 +15,8 @@
   viewer declares
 - UTERM-004 M2 and M3: M5's remote commands need remote-controlled panes and the applet command hook
 - UTERM-003 M2: M5's send-document check uses its send function
+- ADR-11: a command with an effect replies at once, and only a command with no effect may hold a pending reply. M5
+  builds the pending reply and the handle pattern for the viewer
 
 ## Impacts
 
@@ -22,7 +24,10 @@
   answer to the restore rule UTERM-009 deferred for pipe input
 - UTERM-006 — "RTF and Word use the system readers": both proposals run decoders uniterm does not own in sandboxed
   helpers of the same design
-- UTERM-003 — "Control levels": "send a document or data to an applet" lands on the viewer's inline content command
+- UTERM-003 — "Control levels": the file-based "send a document or data to an applet" starts to work once the viewer
+  declares remote control. It does not use the viewer's inline command
+- UTERM-019 — "Commands that wait": the pending reply that proposal specifies for the applet contract exists after M5,
+  built for the viewer's wait command. UTERM-019 M2 reuses it
 
 ## Summary
 
@@ -146,8 +151,9 @@ Decision: the text viewer needs no change to the applet contract or the factory.
 bookmark fallback, a start directory, and the view state, and never any of the file's contents. This follows UTERM-009's
 applet contract decision.
 
-- The payload holds the file's absolute path, a macOS bookmark of the file, the view state, and whether the contents
-  sidebar is shown. It has its own version, per ADR-06.
+- The payload holds the file's absolute path, a macOS bookmark of the file, the view state, whether the contents
+  sidebar is shown, and whether inline content was showing. It has its own version, per ADR-06. The inline flag is a
+  version 2 field, and a description that sets it is written as version 2. Amended 2026-11-15; see Decision Log.
 - View state is a source anchor that survives reflow: for PDF, a page index and a point on the page; for RTF and Word,
   the character index at the top of the view; for Markdown, the source line of the top block, which the parser's token
   map gives, plus a fraction within that block.
@@ -249,11 +255,13 @@ RTF and Word documents whose reader sets no heading level get no contents.
 Original question: which UTERM-004 levels the viewer supports. The presentation example would send speaker notes here.
 
 Decision: the viewer supports remote-controlled and disconnected access, both without an exec driver. Exec combinations
-are refused before anything starts.
+are refused before anything starts. Amended 2026-11-15; see Decision Log.
 
 - Remote commands: scroll to an anchor (a page, a heading, or a source line), find text, reload, and show Markdown text
-  sent inline. Each reply comes once the command's effect is done, so the reply to show or reload reports whether the
-  content loaded. Per UTERM-004, remote callers receive no applet events, and the viewer emits none.
+  sent inline. Each of these has an effect, so each replies at once with a handle, per ADR-11. A separate wait command
+  has no effect. It replies at once when the handle has ended, and otherwise holds a pending reply until the handle ends
+  or its timeout passes. The wait reports whether the content loaded, the match count of a find, and where a scroll or
+  a find landed. Per UTERM-004, remote callers receive no applet events, and the viewer emits none.
 - There is no remote command to open a file path. A controller would otherwise make uniterm read any file uniterm can
   read, under uniterm's privacy grants, and learn from the reply whether a protected path exists. Neither caller needs
   it: notes arrive inline, and UTERM-003's send function sends content. UTERM-015 defines a scoped path-reading power
@@ -266,17 +274,22 @@ are refused before anything starts.
   minor. A change in what a command means, or a removed command, bumps the major. The viewer accepts any version with
   its current major and a minor up to its own. Anything else is refused before any effect, so an old controller with a
   new app and a new controller with an old app both fail with an actionable error. The units on each side are external
-  controllers and the app; UTERM-003's helper ships inside the app.
+  controllers and the app; UTERM-003's helper ships inside the app. The rule holds across every wire that carries a
+  version: the script wire is at version 12, the exec wire is at version 4, a Janet call names `[major minor]` or a
+  bare whole number that means minor 0, and the dispatcher applies the rule once for every applet.
 - Inline Markdown is the viewer's second source, beside a file. It renders like a file, with no relative resources:
   its relative images show their alt text. Showing it clears the stored path and stops the watch, and the pane reports
   its start directory as `currentDirectory`. It is never saved in the layout file. The payload records only that inline
   content was showing. Reopen within the launch brings the text back from the description's in-memory undo state. A
   relaunched pane says the content came from a program and was not restored.
-- UTERM-003's "send a document or data to an applet" host function reaches the viewer through these same commands.
+- UTERM-003's "send a document or data to an applet" host function stays file-based. It writes a private file and calls
+  the viewer's source-replacing hook, as it does for every viewer. It reaches the viewer once the viewer declares
+  remote control, and it does not go through these commands.
 
-Rationale: the presentation program drives the slide, notes, and chart panes it owns through remote control, and
-UTERM-003's send-data function goes through the same command validation. Inline notes let both work without writing
-temporary files that a description would then point at. An exec driver has no caller here. It would make the pane own
+Rationale: the presentation program drives the slide, notes, and chart panes it owns through remote control. Inline
+notes let it work without writing temporary files that a description would then point at. A command with an effect
+replies at once, so a caller never reads an error as "nothing happened" for a load that began, and the result waits
+under a handle, per ADR-11. An exec driver has no caller here. It would make the pane own
 a child process, contradicting the applet contract's rule that the viewer never counts as running something.
 Deferring, as UTERM-009 deferred pipe input, was weighed. UTERM-009 deferred because UTERM-003 and UTERM-004 had not
 settled, and both are now accepted, so its reason no longer holds. This departs from UTERM-009's deferral on purpose.
@@ -648,17 +661,21 @@ None.
 
 ### M5: Remote control
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The viewer declares remote-controlled and disconnected access without an exec driver, and an exec combination is
   refused before launch
-- Scroll to anchor, find, reload, and show inline Markdown work through UTERM-004's remote host call, and the reply to
-  show or reload reports whether the content loaded. The viewer emits no events. No remote command opens a file path
+- Scroll to anchor, find, reload, and show inline Markdown work through UTERM-004's remote host call. Each replies at
+  once with a handle, and a wait command on the handle reports whether the content loaded, the find's match count, and
+  where a scroll or find landed. The viewer emits no events. No remote command opens a file path. Amended 2026-11-15;
+  see Decision Log.
 - A controller written for schema 1.0 keeps working against a viewer on 1.1. A command naming another major, or a minor
   newer than the viewer's, is refused before any effect
 - Scroll or find sent before a load finishes waits for the load or returns a structured error
 - Replies carry no document text and no path the user opened
-- Inline content that is not Markdown, or larger than one frame, returns a structured error
+- Inline text larger than the viewer's cap returns a bad-argument error and changes nothing. A send-command whose JSON
+  arguments pass the script helper's limit gets the helper's structured bad-argument error. Text that is not UTF-8 is
+  refused by the script helper
 - While inline content shows, `currentDirectory` is the start directory
 - Reopen within the launch brings back inline notes from the description's undo-only part, and an unchanged pane
   still describes itself the same way twice without re-encoding them on the main thread
@@ -667,8 +684,82 @@ None.
 - Inline content loads no relative resources
 - After relaunch, a pane that showed inline content shows a not-restored message, and an older build keeps its
   description
-- UTERM-003's send-document function shows content in the viewer
+- UTERM-003's file-based send function shows a file's content in the viewer
 - A pane opened by a controller creates its own non-persistent web data store, like any other pane
+
+**As built:**
+
+- The commit before this one built the shared contract: the major and minor schema version, the pending reply, and the
+  `mayWait` marker on a schema entry. This milestone is its first adopter outside the fixtures. The viewer's schema
+  is `text-viewer` at 1.0, and it emits no events. Its event outlet closes with the pane.
+- Five commands. `show-markdown`, `reload`, `scroll`, and `find` change the pane and reply at once with `{handle}`.
+  `wait` takes a handle and an optional `timeout-ms`, and carries `mayWait`. See Decision Log.
+- A wait answers `{state}`. The states are `loaded` for a load that showed its document, `done` for a finished scroll or
+  find, `failed` with a fixed `code`, `superseded` for a handle a newer command or load replaced, and `pending` when
+  the wait ran out of time. A find adds `count`, `capped`, `current`, and the current match's `anchor`, and a scroll
+  adds the anchor it landed on. A handle the table never held or already dropped is `not-found`. A reply carries only
+  these. A test scans every reply for the document text, a heading, the query, the file's name, and its folder.
+- A load handle ends at every place a load ends: a PDF or text show, the Markdown page's render report, the page
+  failing or its process ending, every load failure, and a newer load. The Markdown page reports its render by message
+  after the pane has already cleared its load, so the pane's own "a load is running" test also asks whether the page
+  has rendered. Scroll and find use that test. While it holds they answer `busy` and name the load's handle when a
+  command started the load. They make no handle.
+- The handle table holds 32 results. A full table drops the oldest finished one, and a handle still running is never
+  dropped. A command refuses with `busy` before it starts when every slot is running. Closing the pane fails every
+  wait and frees every handle.
+- Waits are timed by a scheduler the pane takes, so no test sleeps for a timeout. The cap is 30 seconds, and the default
+  is 10. A wait with no time answers `pending` at once.
+- Inline Markdown clears the stored path and bookmark, stops the watch, ends any running load, and bumps the pane's
+  load generation, so a late file load or watcher reload finds a newer generation and does nothing. The page gets an
+  `inline` option, so an image's `src` is dropped and the alt text shows. The scheme handler already answered 404 for
+  an image when the document has no folder.
+- The cap is 12 KiB. The script helper writes a command's arguments as JSON and refuses more than 32 KiB. A quote,
+  backslash, or line break costs two bytes there, and another control character costs six. A test runs a real script
+  that sends 12 KiB of quotes and backslashes, which the helper accepts, and 12 KiB of control characters, which it
+  refuses with a structured `:bad-argument`.
+- Scroll anchors are `page` with an optional point, `heading` as an index into the contents list, `line` with a
+  fraction, and `character`. A kind that does not fit the shown document is `bad-argument`, and nothing changes. PDF
+  and RTF or Word scrolls go through the pane's own pending-anchor path, which waits for a first layout. A Markdown
+  scroll asks the page where it landed, and a replaced page leaves the handle `superseded`.
+- Find drives the pane's own coordinator and puts the query in the pane's find bar. The coordinator now reports how a
+  search ended, once, from every engine. PDFKit's own end callback never fires when the search is cancelled at the
+  10,000 match cap or when there is no document, so the coordinator reports from those paths itself. A test with a
+  PDF past the cap failed without it, by timing out. The Markdown match is selected by a task, and the landed anchor
+  is read after that task ends. A newer search, a new document, or the bar closing reports `superseded`.
+- The layout file holds a payload flag and no text. The text is the description's undo-only part, encoded once when the
+  inline content arrives and kept with it, so a description only reads it. A pane restored from an undo description
+  keeps the part it was given, so it describes the notes before it starts too. A reopen within the launch brings the
+  notes back. A relaunched pane has no undo part, and shows a message that a program sent the
+  content and that it was not restored. See Decision Log for the payload version.
+- Reload on the process-ended message re-shows the inline text. The remote `reload` command is still refused for a pane
+  with no file.
+- The viewer's declaration adds remote control. A test through the catalog and one through a window show that every
+  exec combination is refused before a driver launches.
+- A window test reaches a real viewer through the script call path. It shows 1.0 working, and 1.1 and 2.0 refused with
+  the pane unchanged. Another sends a file through UTERM-003's send function and sees it render. A third opens two
+  viewers from a controller and shows each has its own non-persistent web data store.
+- The script helper's `request-layout` oversize error is now a `:bad-argument` struct, like its other failures and
+  send-command's. It was a plain string. A fixture assertion failed before the one-word change.
+- There is no way to send content that is not Markdown. The command takes text, and the page parses all text as
+  Markdown. That case of the old check cannot arise.
+- No remote command moves keyboard focus. A package test keeps a probe view as the first responder through a show,
+  a scroll, and a find in Markdown, text, and a PDF, and the UI test checks that the terminal keeps the keyboard.
+- The host's control badge covered the find bar's Done button in a controlled pane, which a remote find shows first.
+  The pane host now tells its applet how far the badge reaches in from the trailing edge, through a new applet hook
+  that defaults to nothing, and the find bar keeps its trailing controls clear of that width. Without a badge the bar
+  sits where it did. A package test lays out a controlled pane and checks that Done misses the badge's frame.
+- The UI test's first real runs failed at its heading scroll with `bad-argument: the contents list has no such entry`.
+  The cause was the test's own script. It wrote the notes' line breaks as literal line breaks inside a quoted Janet
+  string, and Janet's reader drops those, so the whole note reached the viewer as one heading line. The viewer, the
+  script wire and the command arguments were not at fault, and a string argument arrives as written. The script now
+  writes the breaks as `\n` escapes, a package test runs the same script through a real helper, and another compares the
+  two scripts line by line so they cannot drift. The error now says how many entries the list has, and the script
+  prints its replies to stderr.
+- A real defect turned up on the way. The load handle ended at the start of the page's render report, before the pane
+  installed the contents list, and a wait's reply is handed over inside that settle. The handle now ends last, after
+  the contents, the sidebar, and the find state are in place, for Markdown, PDF, and RTF and Word alike. Two package
+  tests read the contents list at the moment the wait's reply is handed over, for Markdown and for text. Both failed
+  before the change. A heading past the end of a list that has arrived is still a bad argument.
 
 ## Decision Log
 
@@ -891,6 +982,74 @@ None.
   that the import alone was meant to make Markdown route. A Finder open of a `.md` file opened no pane, since Launch
   Services prefers another app's `com.unknown.md`. The router now falls back to the extension's types. See UTERM-015
   "How a file type maps to an applet".
+- 2026-11-15: Amended "Control levels" and M5, in one marker on the decision and one on the M5 check. The text said each
+  reply comes once the command's effect is done, so the reply to show or reload reports whether the content loaded.
+  ADR-11 forbids that for a command with an effect, since a late failure would say nothing ran after the effect
+  happened. Every command with an effect now replies at once with a handle, and a separate `wait` command with no
+  effect pends until the handle ends and reports the outcome. This builds the pending reply that UTERM-019 "Commands
+  that wait" specifies. Chosen by the user. (addition: a pending reply and handles in the applet contract)
+- 2026-11-15: Amended "Control levels". The text said the schema version is a major and a minor and a controller names
+  it, without saying how it crosses each wire. One rule now holds everywhere: the same major and any minor up to the
+  applet's own. The script wire is at version 12 and the exec wire at version 4, a Janet call names `[major minor]` or
+  a bare whole number for minor 0, and the dispatcher applies the rule once for every applet. Chosen by the user.
+  (addition: the version rule across the script and exec wires, and the dispatcher)
+- 2026-11-15: Amended "Control levels", M5, and Impacts. The text said UTERM-003's send reaches the viewer through the
+  viewer's commands, and M5's check said the send-document function shows content in the viewer. Send stays file-based
+  as built. It writes a private file and calls the viewer's source-replacing hook, and it works once the viewer
+  declares remote control. The inline command serves controllers, not send. Chosen by the user.
+- 2026-11-15: Amended "The applet contract" (the payload bullet). The text listed the path, bookmark, view state, and
+  sidebar flag. The payload now also records that inline content was showing, a field of version 2. ADR-06 bumps the
+  version for a field an older reader would drop, and the milestone's check says an older build keeps its description.
+  The 2026-11-08 entry that kept the payload at version 1 rested on no build outside the branch having read version 1.
+  M1 to M4 have since landed on the main line, so that premise no longer holds for this field. A description is
+  written as version 2 only when it sets the flag, and every other description stays at version 1, which every build
+  reads, so a rollback loses nothing. The anchor fields of that earlier entry stay at version 1. (work-queue best
+  guess)
+- 2026-11-15: Replies are `{handle}` for a command with an effect. A wait answers `loaded` for a load, `done` for a
+  scroll or find, and `failed`, `superseded`, or `pending`. The success word for a scroll or find is `done` and not
+  `loaded`, since nothing was loaded. A failed handle carries one of six fixed codes: `unreadable`, `too-large`,
+  `unsupported`, `render-failed`, `viewer-unavailable`, and `process-ended`. No code, count, or state ever holds text of
+  the document, a path, or the query. (work-queue best guess)
+- 2026-11-15: Scroll or find while a load runs answers `busy` with nothing changed, naming the load's handle when a
+  command started it, in place of queueing. M5's check allows either. Queueing would hold a find on the main actor's
+  queue with no handle to report on, and a caller can wait on the load's handle first. (work-queue best guess)
+- 2026-11-15: A wait takes `timeout-ms` from 0 to 30,000 and defaults to 10,000. A wait that runs out of time answers
+  `pending` and is not an error, as UTERM-019's next-events does. A larger value is a bad argument and not a silent cut,
+  so a caller learns the cap. (work-queue best guess)
+- 2026-11-15: The pane keeps 32 results, and a full table drops the oldest finished one. A handle that was dropped is
+  `not-found`, the same as one never made. A pane with 32 running handles refuses a new command with `busy`, which
+  cannot happen in practice because at most one load, one find, and a few scrolls run at once. (work-queue best guess)
+- 2026-11-15: The inline cap is 12 KiB, a schema value published in 1.0. The script helper refuses more than 32 KiB of
+  JSON arguments. A quote, backslash, or line break costs two bytes, and another control character costs six. 12 KiB
+  doubles to 24 KiB with room for the wrapper. A larger cap would let ordinary text with many quotes overflow the
+  helper. A smaller one that survives six-byte escapes would be about 5 KiB, too small for speaker notes. Text made
+  mostly of other control characters can still overflow, and the helper then answers with a structured error. Raising
+  the cap later is a minor bump. This also amends M5's check "Inline content that is not Markdown, or larger than one
+  frame, returns a structured error". The second half became the cap and the helper's structured error. The first
+  half cannot arise: the command takes text, and the page parses all text as Markdown, so no text is "not Markdown".
+  Text that is not UTF-8 is refused by the script helper, since a string in the viewer's command is always valid
+  UTF-8. (work-queue best guess)
+- 2026-11-15: A scroll anchor is an object with a `kind`: `page` with optional `x` and `y`, `heading` as an index into
+  the contents list, `line` with an optional `fraction`, or `character`. A heading is named by position so no heading
+  text crosses the wire. A scroll that names a kind the shown document cannot use, or a position past its end, is a
+  bad argument. A find with a backward flag selects the last match after the search, since the first match is the
+  start of a fresh search. The query is cut at 500 characters as the bar cuts it, and an empty query is a bad argument.
+  (work-queue best guess)
+- 2026-11-15: Reload on the page-process-ended message re-shows inline text, and Cmd-R stays off for a pane with no file.
+  The message offers Reload for an inline pane too, and a button that did nothing would strand the pane. The remote
+  `reload` command is refused for a pane with no file, as M5's text says. (work-queue best guess)
+- 2026-11-15: A relaunched pane that showed inline content keeps its version 2 flag and shows the not-restored message,
+  so a second relaunch says the same. Clearing the flag after one message would make the pane an ordinary empty one,
+  but would also hide that content was once there. (work-queue best guess)
+- 2026-11-15: The window-level and UI tests use the real viewer in `ExecPaneFixture`, whose factory gives a viewer for
+  the text viewer choice. The package has no other window fixture that builds a real viewer. (work-queue best guess)
+- 2026-11-15: ADR candidate (cuts across the system): what a remote reply from a content-bearing applet may disclose. A
+  controller with pane control can call find with chosen queries and read counts and anchors, which derive from
+  document content, though no reply carries text. Undecided. Found in UTERM-007 M5.
+- 2026-11-15: ADR candidate (hard to reverse): command schemas accept the same major and any minor up to the applet's
+  own. Controllers in other processes, scripts in users' files, and exec drivers depend on it across ScriptWire,
+  the exec wire, and the dispatcher. Changing the rule later would break controllers written against it. Undecided.
+  Found in UTERM-007 M5.
 
 ## References
 

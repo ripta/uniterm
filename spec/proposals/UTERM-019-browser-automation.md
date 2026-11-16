@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-11
-**Updated:** 2026-11-11
+**Updated:** 2026-11-15
 
 ## Dependencies
 
@@ -266,11 +266,13 @@ the review.
 
 Decision: next-events is the only command that waits, through a deferred reply in the applet contract. Every command
 whose WebKit call finishes later returns a handle at once, and its result is read under that handle. (autonomous)
-Amended 2026-11-11; see Decision Log.
+Amended 2026-11-15; see Decision Log.
 
-- The applet contract gains a pending reply that the applet completes later. Only next-events uses it in this
-  proposal. Before a pending reply completes, the dispatcher checks the caller's authority again. Revocation, run end,
-  and pane close fail it. The dispatcher caps pending replies per window.
+- The applet contract has a pending reply that the applet completes later. UTERM-007 M5 built it for the text viewer's
+  wait command, and this proposal's M2 reuses it for next-events. A schema entry marks a command that may wait with
+  `mayWait`, and dispatch fails a pending reply from any other command. Before a pending reply completes, the
+  dispatcher checks the caller's authority again. Revocation, a control change on the pane, run end, and pane close
+  fail it. The dispatcher caps pending replies at 64 per window.
 - Run-script replies at once with a handle. The result goes into a slot for that handle, outside the event buffer, so
   no burst of events can push it out. A script finished event naming the handle enters the buffer. A read-result
   command returns the value or the page's error, in chunks per "Large results". Each tab caps its outstanding runs.
@@ -1009,6 +1011,13 @@ Starts after UTERM-005 M8.
   rules in "Permission descriptor format". M1's format checks moved to M6.
 - 2026-11-11: Correction: "Result encoding" said the exec protocol stays at version 2. It is at version 3 today, and
   the change does not move it.
+- 2026-11-15: Amended "Commands that wait". The text said the applet contract gains a pending reply, and that only
+  next-events uses it in this proposal. UTERM-007 M5 built the pending reply for the text viewer's wait command, as
+  ADR-11 requires. It carries a `mayWait` marker on a schema entry, which dispatch enforces, a second authority check
+  before the reply goes out, failure on any control change of the pane as well as on revocation, run end, and close,
+  and a cap of 64 pending replies for each window. M2 reuses it and adds its own marked command. (work-queue best
+  guess)
+
 ## References
 
 - Findings note: `spec/reports/20261111-wkwebview-automation-vs-cdp.md`

@@ -649,4 +649,119 @@ final class TextViewerUITests: UnitermUITestCase {
     XCTAssertFalse(off.isEnabled, "no outline and no sidebar, so Show Contents is off")
     app.typeKey(.escape, modifierFlags: [])
   }
+
+  // MARK: Remote control
+
+  /// Catches a viewer a script cannot drive in the real app. A script, started by the bundled
+  /// command from the terminal, opens a text viewer beside the terminal, shows inline Markdown
+  /// notes, waits for the page, scrolls to a heading, and finds text. Each wait reports the
+  /// outcome of its handle. The pane shows the notes as rendered Markdown, with no file behind
+  /// them.
+  func testAScriptShowsNotesInATextViewerThenScrollsAndFinds() throws {
+    let command = try bundledCommand()
+
+    try write("PROMPT='%% '\nRPROMPT=''\n", to: scratch + "-shell/.zshrc")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    let terminal = waitForTerminal(in: app)
+    enableRemoteControl(pane: 1, in: app)
+
+    let script = scratch + "-notes.janet"
+    let shell = scratch + "-notes.sh"
+    let errors = scratch + "-notes.err"
+    let status = scratch + "-notes.status"
+
+    try write(
+      """
+      (declare-permissions {:name "Synthetic Notes"}
+        {:kind :pane-control :version 1})
+
+      (import uniterm)
+
+      (def me (get (uniterm/list-windows) 0))
+      (def layout
+        (uniterm/request-layout
+          {:window (me :window) :pane (me :pane)}
+          {:split :row
+           :children [{:pane (me :pane)}
+                      {:open :text-viewer :control :remote-controlled :weight 2}]}))
+
+      (def [_ viewer] (layout :panes))
+
+      (defn send [name arguments]
+        (def [ok result] (protect (uniterm/send-command viewer :text-viewer [1 0] name arguments)))
+
+        (unless ok
+          (error (if (struct? result)
+                   (string name " failed: " (get result :kind) ": " (get result :message))
+                   (string name " failed: " result))))
+
+        result)
+
+      (defn wait-for [handle]
+        (send :wait {:handle (handle :handle) :timeout-ms 20000}))
+
+      (def notes
+        (string/join
+          (map |(string "## Section " $ "\\n\\nThe body of section " $ " names the deadline.\\n")
+               (range 40))
+          "\\n"))
+
+      (def loaded (wait-for (send :show-markdown {:text notes})))
+      (eprint "loaded: " (string/format "%q" loaded))
+      (def found (wait-for (send :find {:query "deadline"})))
+      (eprint "found: " (string/format "%q" found))
+      (def scrolled (wait-for (send :scroll {:anchor {:kind "heading" :heading 20}})))
+
+      (print (loaded :state) " " (scrolled :state) " " (found :state) " " (found :count))
+      """, to: script)
+
+    try write(
+      """
+      attempts=0
+      while [ $attempts -lt 100 ]; do
+        "\(command)" run --socket "\(testSocket)" "\(script)" > "\(status).out" 2> "\(errors)"
+        code=$?
+        [ $code -ne 69 ] && break
+        attempts=$((attempts + 1))
+        sleep 0.1
+      done
+      printf '\\033[H\\033[2J\\033[3J'
+      echo "exit=$code" > "\(status)"
+      """, to: shell)
+
+    defer {
+      for path in [script, shell, errors, status, status + ".out"] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+
+    runInTerminal(shell, in: app)
+    answerFirstReview(in: app, pressing: "pending-requests-allow-session")
+
+    let result = try XCTUnwrap(waitForFile(status), "the shell never finished the script")
+    let errorText = (try? String(contentsOfFile: errors, encoding: .utf8)) ?? ""
+
+    XCTAssertEqual(result, "exit=0\n", errorText)
+
+    let output = try String(contentsOfFile: status + ".out", encoding: .utf8)
+
+    XCTAssertEqual(output, "loaded done done 40\n")
+
+    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(
+      window.descendants(matching: .any)["text-viewer-markdown"].waitForExistence(timeout: 20),
+      "the notes did not render as Markdown")
+    let markdown = window.descendants(matching: .any)["text-viewer-markdown"].firstMatch
+
+    let focused = NSPredicate(format: "hasKeyboardFocus == true")
+
+    XCTAssertFalse(
+      focused.evaluate(with: markdown), "the script's find moved the keyboard into the page")
+    XCTAssertTrue(
+      focused.evaluate(with: terminal), "the keyboard did not stay in the terminal")
+    attachScreenshot("text viewer, notes sent by a script", of: window, in: app)
+  }
 }

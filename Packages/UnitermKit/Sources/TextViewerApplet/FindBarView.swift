@@ -13,6 +13,17 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
   private let previousButton = NSButton()
   private let nextButton = NSButton()
   private let closeButton = NSButton(title: "Done", target: nil, action: nil)
+  private let row = NSStackView()
+
+  /// How far the bar's trailing controls stay in from its right edge, beyond the usual margin. The
+  /// pane sets it while the host's badge covers the corner.
+  var trailingReserve: CGFloat = 0 {
+    didSet {
+      row.edgeInsets.right = Self.margin + trailingReserve
+    }
+  }
+
+  private static let margin: CGFloat = 10
 
   /// The query changed, whether by typing or by the pane setting it.
   var onQuery: ((String) -> Void)?
@@ -53,10 +64,13 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
     closeButton.action = #selector(closePressed)
     closeButton.setAccessibilityIdentifier("text-viewer-find-close")
 
-    let row = NSStackView(views: [field, countLabel, previousButton, nextButton, closeButton])
+    for view in [field, countLabel, previousButton, nextButton, closeButton] {
+      row.addArrangedSubview(view)
+    }
+
     row.orientation = .horizontal
     row.spacing = 8
-    row.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+    row.edgeInsets = NSEdgeInsets(top: 6, left: Self.margin, bottom: 6, right: Self.margin)
     row.translatesAutoresizingMaskIntoConstraints = false
 
     addSubview(row)
