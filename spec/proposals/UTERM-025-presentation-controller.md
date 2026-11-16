@@ -20,6 +20,7 @@
 - UTERM-026 — "Speaker notes" and "A second window": the presenter view and its notes build on this controller's deck
   format and commands.
 - UTERM-029 — "Deck sources": other deck sources extend this controller's stepping.
+- UTERM-033 — "Summary": after a relaunch, running the presenter again reuses the restored slide pane. Not required.
 
 ## Summary
 
@@ -131,6 +132,8 @@ refuse to start, or show an error slide in its place.
   approvals. Mitigation: it is already queued. Whether to depend on those checks alone is open for the user.
 - **Stepping needs focus in the slide pane** — likelihood: medium, impact: low. During a live demo the user clicks back
   into the slide pane to step. Accepted: keys that work from the terminal are UTERM-031.
+- **Running the presenter after a relaunch leaves a second slide pane** — likelihood: high, impact: low. The restored
+  group has no owner, and the new run opens its own. Accepted: the user closes the stale pane. UTERM-033 adds reclaiming.
 - **A deck file is untrusted input** — likelihood: medium, impact: medium. Mitigation: the text viewer already renders
   untrusted Markdown. The presenter passes content through and adds no rendering of its own.
 - **Users copy the example's deck format** — likelihood: medium, impact: low. A later bundled presenter would need to
