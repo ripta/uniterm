@@ -446,6 +446,8 @@ trust in every script run by a shared interpreter. Amended 2026-11-02; replaces 
 
 ### Permission scopes and approval flow
 
+Superseded in part by UTERM-032; see Decision Log.
+
 Original question: integrate startup declarations and remembered approvals with clipboard attribution, host-launch
 scopes, control enablement, REPL capabilities, revocation, and inert restore without repeated modal interruptions.
 
@@ -1607,6 +1609,11 @@ None.
   reviews wait apart from the panel's rows, so that needed one reservation across both. The panel's row bound is also
   64. That option would then refuse ordinary questions as denials built up. If the user wants a bound back, it would be
   that busy refusal, not dropping the oldest.
+
+- 2026-11-16: Superseded in part by UTERM-032. A remembered approval may hold the folder of a run's input file,
+  after the sheet showed it, so arguments are no longer always outside a remembered scope. Allow once keeps that folder
+  standing for the run beside Janet capabilities. A startup denial of a run with an input folder covers that folder
+  only, and a covering approval admits such a run before the denial check.
 
 ## References
 

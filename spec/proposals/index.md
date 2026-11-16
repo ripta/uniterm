@@ -33,7 +33,7 @@
 | [UTERM-029](UTERM-029-presentation-extras.md) | PDF, image, and HTML decks, and Go to Slide, for the presenter | draft |
 | [UTERM-030](UTERM-030-text-viewer-slides.md) | A slide style and deck images for the text viewer | draft |
 | [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | draft |
-| [UTERM-032](UTERM-032-run-time-input-file.md) | A script takes its input file as an argument, and its folder is granted for slide images | draft |
+| [UTERM-032](UTERM-032-run-time-input-file.md) | A script takes its input file as an argument, and its folder is granted for slide images | accepted |
 | [UTERM-033](UTERM-033-reclaim-restored-group.md) | A controller that runs again after a relaunch adopts its restored group, with the user's approval | accepted |
 
 ## Dependency Graph

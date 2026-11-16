@@ -123,6 +123,10 @@ user can switch a pane's style.
 - Remote, root-relative, and data-URI images stay refused
 - Builds on UTERM-032 M1's grant
 - After the grant ends, a slide that renders again reads no image and shows alt text
+- The image walk is confined to the granted folder, not only to its volume, and a protected location inside the grant,
+  such as `~/Documents` under a granted `~`, serves no image unless the grant names it
+- The base folder is compared with the grant without touching the filesystem, as APFS compares names, and a base
+  folder that does not exist inside the grant is refused the same way as one outside it
 
 ## Decision Log
 

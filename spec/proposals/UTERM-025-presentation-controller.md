@@ -128,8 +128,8 @@ refuse to start, or show an error slide in its place.
 - **The prerequisites' designs change what the presenter can do** — likelihood: medium, impact: medium. Mitigation:
   this proposal stays a draft until UTERM-024, UTERM-030, and UTERM-032 are accepted.
 - **UTERM-015 M4 is unbuilt and large** — likelihood: high, impact: medium. Slide images wait on it. Its gate,
-  UTERM-004 M6, is done. UTERM-032 uses only some of M4: the confined open, the protected-location list, and stored
-  approvals. Mitigation: it is already queued. Whether to depend on those checks alone is open for the user.
+  UTERM-004 M6, is done. UTERM-032 uses only some of M4: the confined open and the protected-location list. It keeps
+  its remembered folders in a store of its own. Mitigation: it is already queued. Whether to depend on those checks alone is open for the user.
 - **Stepping needs focus in the slide pane** — likelihood: medium, impact: low. During a live demo the user clicks back
   into the slide pane to step. Accepted: keys that work from the terminal are UTERM-031.
 - **Running the presenter after a relaunch leaves a second slide pane** — likelihood: high, impact: low. The restored
