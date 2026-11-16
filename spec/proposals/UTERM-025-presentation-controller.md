@@ -95,10 +95,10 @@ The user chose this. Bundling it, with signing, updates, discovery, and a versio
 ### Stepping
 
 Decision: Next Slide and Previous Slide are the presenter's commands, declared through UTERM-024. Right Arrow, Down
-Arrow, and Page Down step forward. Left Arrow, Up Arrow, and Page Up step back. Each command is also in the palette.
+Arrow, Page Down, and Space step forward. Left Arrow, Up Arrow, and Page Up step back. Each command is also in the palette.
 Stepping past either end leaves the slide in place and posts a status message.
 
-Rationale: these are the keys people step slides with, and the keys clickers send. A press past the end is a common
+Rationale: these are the keys people step slides with, as in Keynote and PowerPoint, and the keys clickers send. A press past the end is a common
 slip mid-talk, so the slide stays up rather than blanking.
 
 ## Design Decisions (Open)
@@ -127,7 +127,8 @@ refuse to start, or show an error slide in its place.
 - **The prerequisites' designs change what the presenter can do** — likelihood: medium, impact: medium. Mitigation:
   this proposal stays a draft until UTERM-024, UTERM-030, and UTERM-032 are accepted.
 - **UTERM-015 M4 is unbuilt and large** — likelihood: high, impact: medium. Slide images wait on it. Its gate,
-  UTERM-004 M6, is done. Mitigation: it is already queued. The presenter's milestone follows it.
+  UTERM-004 M6, is done. UTERM-032 uses only some of M4: the confined open, the protected-location list, and stored
+  approvals. Mitigation: it is already queued. Whether to depend on those checks alone is open for the user.
 - **Stepping needs focus in the slide pane** — likelihood: medium, impact: low. During a live demo the user clicks back
   into the slide pane to step. Accepted: keys that work from the terminal are UTERM-031.
 - **A deck file is untrusted input** — likelihood: medium, impact: medium. Mitigation: the text viewer already renders
@@ -142,13 +143,14 @@ refuse to start, or show an error slide in its place.
 **Status:** NOT STARTED
 
 - Starting the presenter on a Markdown deck opens a slide pane beside the starting terminal, in the slide style
-- The arrow keys, Page Up and Page Down, and the palette step the deck while the slide pane has focus
+- The arrow keys, Page Up and Page Down, Space, and the palette step the deck while the slide pane has focus
 - A slide's images load from the deck's folder
 - Stepping past either end leaves the slide in place and posts a status message
 - Ending the presenter removes its commands and keys, and leaves the pane showing the last slide. A re-render after
   that shows its images as alt text
 - A slide over the size cap is handled as "Slide size" settles
-- A UI test runs a synthetic deck in the real app and captures each step on screen
+- A UI test runs the shipped example file on a synthetic deck in the real app and captures each step on screen
+- `uniterm lint` passes on the example file
 
 ## Decision Log
 
@@ -158,11 +160,13 @@ refuse to start, or show an error slide in its place.
   one window shows the audience every pane.
 - 2026-11-15: Readable projected text and slide images are required. The user chose both, and they became UTERM-030.
 - 2026-11-15: Stepping uses the arrow keys and Page Up and Page Down. The user noted that people step slides with plain
-  arrow keys. Space was dropped from the keys, since it types text.
+  arrow keys.
 - 2026-11-15: The deck's folder is granted at run time, and the deck arrives on stdin. The user chose this, and it
   became UTERM-032.
 - 2026-11-15: A slide pane beside the terminal is enough for the hot path. The user chose this. Pane zoom stays in
   UTERM-026.
+- 2026-11-16: Space steps forward. The user chose it. The earlier reason for dropping it, that Space types text, does
+  not hold in the slide pane under UTERM-024's opt-in rule.
 - 2026-11-16: The deck is an argument, not stdin. The user corrected it. The presenter ships as an example script in
   the repo. The user chose this.
 

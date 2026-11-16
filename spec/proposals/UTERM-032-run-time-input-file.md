@@ -15,10 +15,13 @@
 
 - UTERM-030 — "Slide images": slide images load from the folder this proposal grants.
 - UTERM-025 — "How it starts": the presenter takes its deck as an argument, under this proposal.
-- UTERM-021 — "Authority comes from the read, not the run": supersedes it in part. The folder a run may read comes from
-  the run's argument, not from the file alone. The rest of the declaration stays fixed in the file. UTERM-021 is
-  implemented, so it gains a "Superseded in part by UTERM-032" marker when this proposal is accepted.
-- UTERM-004 — M6's approval panel: it gains a line naming the input file's folder, even under remembered trust.
+- UTERM-004 — "Permission scopes and approval flow": supersedes in part its rule that approvals hold typed authority
+  ceilings, not exact launch inputs, and that arguments are never part of a remembered scope. A remembered folder for
+  slide images comes from a run's argument. UTERM-004 is implemented, so it gains a "Superseded in part by UTERM-032"
+  marker when this proposal is accepted.
+- UTERM-004 — M6's approval panel: it gains a line naming the input file's folder when no remembered approval covers
+  the folder.
+- UTERM-021 — "The declaration's data shape": a declared file gains a field naming its input argument.
 - UTERM-015 — "How the path-reading power is granted": adds a folder that comes from a run's argument, beside a scope
   written in a controller's file.
 
@@ -97,10 +100,38 @@ up.
 
 ## Design Decisions (Open)
 
+### Which argument is the input file
+
+A position, the last argument, or a named flag such as `--deck`. A position breaks when a script later adds an option
+before it. Also: what happens when the argument is missing. The choice is a published contract under UTERM-021, which
+refuses unknown fields.
+
 ### How the text reaches the script
 
-- The command opens the file onto the script's stdin before the script runs. Janet reads stdin with no capability.
-- A host call returns the input file's text.
+- **The command opens the file onto the script's stdin** before the script runs. The read happens in the invoker's own
+  process, with the invoker's own access, so it borrows nothing from uniterm. Janet reads stdin with no capability.
+- **A host call returns the input file's text.** The app reads a path a program chose, with uniterm's macOS privacy
+  grants. Combined with a remembered approval, a later run by any program could read a file under the folder without a
+  sheet. UTERM-015 gives program-chosen command-line paths no remembered approval for this reason. If chosen, the read
+  must come after approval, follow UTERM-015 M4's open rules, and count as a path read in the sheet and the risks.
+
+Either way, a missing file, a non-regular file, a FIFO, or a `/dev/fd` path is refused before anything blocks, and
+before any sheet names it.
+
+### How the script names the base folder
+
+The script cannot reliably name the canonical folder UTERM-030 checks. A relative argument has no folder part, and
+`os/realpath` needs `:fs-read`. Options:
+
+- **The host fills in the base folder** from the run's grant, and the script passes nothing or a path relative to it.
+- **A host call returns the canonical input path.**
+
+### The stored approval
+
+A remembered folder needs its own stored record kind, apart from UTERM-015's path-reading power, since UTERM-015
+refused one stored type with two meanings. Also its coverage rule, with UTERM-015's protected-location subtraction, so a
+remembered `~` does not cover a deck under `~/Documents`.
+
 
 ### Names
 
@@ -112,6 +143,11 @@ The declaration field's spelling under UTERM-021, and the sheet's wording.
   it is declared and shown. Mitigation: version the declaration under UTERM-021, and show the folder in the sheet.
 - **A user names a deck in too broad a folder, such as `~`** — likelihood: medium, impact: medium. Mitigation: the sheet
   shows the folder, UTERM-015's protected-location rule still applies, and the grant covers slide images only.
+- **A program-started run reuses a remembered folder** — likelihood: medium, impact: high. Any process can run
+  `uniterm run` with a path under a remembered folder. Mitigation: settle "How the text reaches the script" so the read
+  borrows nothing, and the grant covers slide images only.
+- **The stored approval changes shape** — likelihood: high, impact: medium. Remembered scopes start holding a value from
+  a run's argument. Mitigation: a record kind of its own, versioned with the policy file. See "The stored approval".
 - **Downgrading leaves every remembered approval inert** — likelihood: low, impact: medium. Accepted: it fails closed,
   and the approvals come back on the new build.
 
@@ -123,10 +159,12 @@ The declaration field's spelling under UTERM-021, and the sheet's wording.
 
 - A script that declares an input file gets the named file's text and no file access of its own
 - The approval sheet names the file's folder, and the run starts only after approval
-- The viewer loads a slide image inside the folder, and refuses one outside it with UTERM-015's single error
+- A missing, non-regular, FIFO, or `/dev/fd` input is refused before anything blocks
 - A remembered approval covers a later run on the same folder, and a different folder asks again
+- A remembered `~` does not cover a deck under `~/Documents`
+- The grant ends with the run, whatever the approval lifetime, and covers the deck's own canonical folder
 - No path read other than slide images succeeds under the grant
-- When the grant ends, no further image is read
+- UTERM-030 M2 builds on this milestone and owns the image checks
 
 ## Decision Log
 

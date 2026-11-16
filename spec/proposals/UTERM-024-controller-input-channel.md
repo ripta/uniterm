@@ -18,7 +18,8 @@
   Previous Slide are commands declared here, bound to the arrow keys and Page Up and Page Down.
 - UTERM-028 — "Any key" and "When commands are live": exec drivers gain the same commands and events.
 - UTERM-031 — "Which panes take a controller's keys": keys in panes that do not opt in, such as the source terminal.
-- UTERM-029 — "When commands are declared": Go to Slide needs runtime declaration, which this proposal leaves out.
+- UTERM-029 — "Scope: what the presenter requires": Go to Slide needs runtime declaration, which this proposal leaves
+  out.
 - UTERM-003 — "Scope": supersedes in part its out-of-scope line "Invoking or registering UTERM-002 registry commands
   from scripts". Registering becomes in scope. Invoking stays out. UTERM-003 is implemented, so its text stays, and it
   gains a "Superseded in part by UTERM-024" marker when this proposal is accepted.
@@ -26,7 +27,8 @@
   model. A controller joins uniterm and applet types as a third key owner, after uniterm's keys and the user's remaps.
 - UTERM-004 — "Exec wire format": an invocation is a host event, not an applet event, so "remote callers receive no
   applet events" stands and nothing there is superseded. ScriptWire's version goes up.
-- UTERM-007 — "Control levels": the text viewer opts in to controller keys, per "Which panes take a controller's keys".
+- UTERM-030 — "The Markdown page opts in": the text viewer's Markdown body opts in to controller keys, per "Which panes
+  take a controller's keys".
 - UTERM-019 — "Page events": the event read here takes the same cursor, timeout, and dropped-count shape, if Open
   question "The event model" settles that way.
 - UTERM-022 — "Where the form calls live": a host-side waiting call is the precedent this proposal weighs in Open
@@ -85,20 +87,21 @@ enforces for commands, and settles nested groups with no extra rule.
 
 ### Which panes take a controller's keys
 
-Decision: a controller's keys reach it only in applet types that opt in, and only while the pane's content has keyboard
-focus.
+Decision: a controller's keys reach it only in a pane body that opts in, and only while that body has keyboard focus.
 
-- An applet type opts in when its content never takes typed text. The text
-  viewer's rendered page opts in. The terminal, the REPL, and the browser do not, since each takes typed text the host
-  cannot always see.
+- The unit is the kind of body a pane shows, not the applet type. One applet can show several kinds. The text viewer
+  shows Markdown, PDF, and plain or rich text, and a PDF can hold form fields the user types into.
+- A body kind opts in when it never takes typed text. The opt-in is a decision in that applet's own proposal. The text
+  viewer's Markdown body opts in under UTERM-030. Its PDF and text bodies do not. The terminal, the REPL, and the browser
+  do not, since each takes typed text the host cannot always see.
 - Keyboard focus must be in the content itself. A find field, a sheet, or the command palette has focus elsewhere, so
   it keeps its keys.
 - A pane the user disconnects through its chrome keeps all its keys, per ADR-09's rule that remembered permission does
   not override a disconnected pane.
 
 Rationale: uniterm cannot tell in general when a pane is taking text input. A browser cannot see focus inside a web
-page without page script. Opting in pane types that are known safe means a controller never takes keys from a pane type
-nobody vetted. Because a key reaches a controller only where nothing is typed, any key may be bound without the
+page without page script. Opting in body kinds that are known safe means a controller never takes keys from a body nobody
+vetted. Because a key reaches a controller only where nothing is typed, any key may be bound without the
 controller learning typed text.
 
 ### Any key
@@ -106,7 +109,8 @@ controller learning typed text.
 Decision: a controller may bind any key, with or without modifiers. Each controller binds the keys its job needs, such
 as UTERM-025's arrows and Page Up and Page Down.
 
-- uniterm's reserved keys and the user's remaps win over a controller's key, as for applet keys under UTERM-013. The
+- uniterm's reserved keys and the user's remaps win over a controller's key, as for applet keys under UTERM-013. Where a
+  controller's key falls against the focused applet's own keys is open. See "Against the applet's own keys". The
   menu's key route lives in the window's key-equivalent handling. Whether plain arrows reach it is unverified, so the
   check runs where the controller's keys arrive, and M2 proves a remap onto a plain arrow still wins. A key that loses
   is dropped, and the user is told.
@@ -192,6 +196,21 @@ event carries the pane that had focus and the input that triggered it, palette o
 - Availability is keyed by applet type today. Controller commands need it keyed by group membership.
 - How the controller's name looks in a palette row, and how a search matches it.
 
+### Against the applet's own keys
+
+The text viewer binds Cmd-F, Cmd-G, Cmd-Shift-G, Cmd-E, and Cmd-R. A controller can bind the same key. Options:
+
+- **The applet's key wins.** The controller's key is dropped in that pane, and the user is told, as for a reserved key.
+- **The controller's key wins.** The user loses that applet command in the controller's panes.
+
+Either way the order joins the ADR in "How ADR-04 changes": uniterm, the user's remaps, then the controller and the
+applet in the chosen order, then the view.
+
+### Packages
+
+Whether a controller package's `controller.json` can declare commands. The presenter ships as a declared file, so the
+hot path needs only the declared-file spelling.
+
 ### How keys reach the controller
 
 Plain keys arrive through each view's `keyDown`, and keys with modifiers may arrive as key equivalents first. Options:
@@ -228,9 +247,13 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
 - **Navigation-key capture confuses the user** — likelihood: medium, impact: medium. A viewer stops scrolling on the
   arrow keys, and the user does not know why. Mitigation: the key indicator, the scope to the controller's own members,
   and revoking from the pane.
-- **An applet opts in that takes typed text** — likelihood: low, impact: high. Any key may be bound, so a controller
-  would read what the user types there. Mitigation: opting in a type is a decision in that type's proposal, and M2
-  checks that the terminal, the REPL, and the browser never deliver a key to a controller.
+- **A body opts in that takes typed text** — likelihood: low, impact: high. Any key may be bound, so a controller would
+  read what the user types there. This includes a later change that lets the Markdown sanitizer pass an element that
+  takes text. Mitigation: the opt-in is per body kind, decided in that applet's proposal. M2 checks that the terminal,
+  the REPL, the browser, and the viewer's PDF and text bodies never deliver a key, and a test fails if the sanitizer
+  ever allows an element or attribute that takes text.
+- **A controller key and an applet key mask each other** — likelihood: medium, impact: low. One of them goes dead in the
+  controller's panes. Mitigation: settle "Against the applet's own keys", and tell the user about the loser.
 - **A controller's palette entry passes for uniterm's** — likelihood: medium, impact: medium. Mitigation: attribution
   in the palette. See "Registry mechanism".
 - **Changing the registry at runtime destabilizes the menu and keys** — likelihood: medium, impact: medium.
@@ -254,6 +277,7 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
 - A stalled controller never delays the palette, and its read times out
 - Adding and removing controller commands leaves uniterm's and the applets' commands with the same keys and menu places
 - A restored layout has no controller commands
+- The approval panel lists each declared command and its key
 
 ### M2: Keys
 
@@ -263,7 +287,11 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
 - The same keys reach the pane as before in a pane that is not a member, including one split off inside the group's
   area and the source terminal
 - The same keys reach the pane as before in a disconnected member, a terminal, REPL, or browser member, a find field,
-  and the command palette
+  the contents sidebar, and the command palette
+- A text viewer member showing a PDF or a text file delivers no key to the controller
+- A test fails if the Markdown sanitizer allows an element or attribute that takes text
+- A remap that appears after declaration drops the controller's key, and the user is told then
+- Key repeat follows ADR-12's rule on repeated input
 - A letter key bound by a controller never reaches it from a terminal, REPL, or browser member, or a find field
 - A command never goes live while keyboard focus is already in the pane
 - A reserved uniterm key and a user's remap win over a controller key, including a remap onto a plain arrow. The
@@ -285,19 +313,22 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
   modifiers are back, and UTERM-031 narrows to panes that do not opt in.
 - 2026-11-15: Navigation keys reach a controller only in applet types that opt in, while their content has keyboard
   focus. The user chose this over a per-applet text-input hook and a plain focus check.
+- 2026-11-15: commands are declared in the controller's file only. The user confirmed it on 2026-11-16. Runtime declaration serves only UTERM-029's
+  Go to Slide. The source pane is never live, since it is not a member and chords left. Nested groups need no rule,
+  since liveness is by membership.
+- 2026-11-15: ADR candidate (cuts across the system): a program that is neither uniterm nor an applet may own keys,
+  only in panes it controls, and only after uniterm's keys and the user's remaps. Pending: its form is the open
+  question "How ADR-04 changes".
 - 2026-11-16: Any key may be bound, with or without modifiers. The user corrected an agent trim that had limited
   UTERM-024 to the presenter's six keys. The input channel stays general, and UTERM-025 binds only what it needs. The
   opt-in rule keeps typed text from a controller. Keys with modifiers come back too, since the Ctrl-C finding was about
   terminals, which never opt in.
-- 2026-11-15: commands are declared in the controller's file only. The user confirmed it on 2026-11-16. Runtime declaration serves only UTERM-029's
-  Go to Slide. The source pane is never live, since it is not a member and chords left. Nested groups need no rule,
-  since liveness is by membership.
 - 2026-11-16: Controller commands appear in the palette only, with no menu item. The user chose this, after the design
   critic flagged that the agent had settled it without asking. Left undone: menu discoverability, and remapping a
   controller command by its menu title.
-- 2026-11-15: ADR candidate (cuts across the system): a program that is neither uniterm nor an applet may own keys,
-  only in panes it controls, and only after uniterm's keys and the user's remaps. Pending: its form is the open
-  question "How ADR-04 changes".
+- 2026-11-16 (agent): the opt-in unit is the kind of body, not the applet type. The design critic found that the
+  text viewer's PDF body can hold form fields, so an applet-wide opt-in would let a controller read what is typed into
+  them. This narrows the user's choice that the text viewer's page opts in to its Markdown body.
 
 ## References
 

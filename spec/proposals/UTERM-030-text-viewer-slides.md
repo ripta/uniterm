@@ -45,10 +45,21 @@ Rationale: the presenter passes content through and adds no rendering of its own
 the presenter's job, under UTERM-025's "Deck format rules". Other controllers that show Markdown gain the same
 features.
 
+### The Markdown page opts in
+
+Decision: the text viewer's Markdown body opts in to controller keys, under UTERM-024 "Which panes take a controller's
+keys". Its PDF and text bodies do not.
+
+Rationale: the Markdown page takes no typed text. Its sanitizer allows no `input`, `textarea`, `select`, or
+`contenteditable`, and the page runs no script. A PDF can hold form fields, and the find bar and contents sidebar take
+their own keys, so none of those opt in.
+
 ### A slide style, not a zoom
 
 Decision: the viewer gains a named slide style that a controller sets on its pane. The style sizes type to the pane and
-drops the column cap. There is no arbitrary zoom or scale factor. The style is not saved with the layout.
+drops the column cap. There is no arbitrary zoom or scale factor. The viewer does not save the style with the layout.
+Restoring a presentation is the controller's job: a restored pane is inert, and a presenter that runs again sets the
+style again.
 
 Rationale: a slide needs type laid out for a slide, sized from the pane, with headings and lists in proportion. A zoom
 factor scales the document style, so it keeps the column and leaves the controller guessing a number for each display.
@@ -98,6 +109,7 @@ user can switch a pane's style.
 
 **Status:** NOT STARTED
 
+- The Markdown body delivers controller keys, and the PDF and text bodies do not
 - A controller sets the slide style on a viewer pane, and a heading and a bullet list fill a projector-sized pane
 - A user-opened document keeps the document style
 
@@ -109,6 +121,7 @@ user can switch a pane's style.
 - A base folder outside the granted folder is refused before anything is read
 - An image reached by `..` or an absolute symlink outside the granted folder shows alt text, the same as a missing image
 - Remote, root-relative, and data-URI images stay refused
+- Builds on UTERM-032 M1's grant
 - After the grant ends, a slide that renders again reads no image and shows alt text
 
 ## Decision Log
@@ -118,8 +131,10 @@ user can switch a pane's style.
 - 2026-11-15: A named slide style, with no arbitrary zoom. The user chose it.
 - 2026-11-15: Slide images load from a base folder inside the folder granted at run time. The user chose this. The
   option where the viewer opens the deck file by path was dropped, since it would put deck splitting in the viewer.
-- 2026-11-16 (agent): the slide style does not survive a restore. Inline content never survives a relaunch, so a
-  stored style would change the viewer's payload under ADR-06 for no case the presenter has.
+- 2026-11-16: the viewer does not save the slide style. The user's reason: the controller is in charge, so restoring
+  is the controller's job. A restored pane is inert, and the controller sets the style again when it runs.
+- 2026-11-16 (agent): the Markdown body opts in to controller keys, and the PDF and text bodies do not. UTERM-024 puts
+  the opt-in in each applet's proposal.
 
 ## References
 
