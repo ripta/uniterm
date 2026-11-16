@@ -641,6 +641,48 @@ final class LauncherTests: XCTestCase {
     }
   }
 
+  /// Catches a list scroller that pulls the rows in from the filter box's right edge. A legacy
+  /// scroller takes its width from the list, so the title, the subtitle, and the filter box must
+  /// give up the same width while it shows. They take it back when it hides.
+  ///
+  /// The short pane overflows the list, so its scroller shows. The same launcher then grows to fit
+  /// the list, so its scroller hides. Overlay scrollers take no width at either size.
+  func testAListScrollerKeepsTheLauncherPartsOnOneRightEdge() throws {
+    for (name, style) in [("legacy", NSScroller.Style.legacy), ("overlay", .overlay)] {
+      let (view, window) = bareLauncher()
+      defer { window.close() }
+
+      let scroll = try XCTUnwrap(descendants(of: view).compactMap { $0 as? NSScrollView }.first)
+      scroll.scrollerStyle = style
+      view.choose(.program)
+
+      for (size, overflows) in [
+        (NSSize(width: 200, height: 100), true), (NSSize(width: 400, height: 700), false),
+      ] {
+        lay(out: view, in: window, at: size)
+
+        let takesWidth = style == .legacy && overflows
+        let gutter = scroll.bounds.width - scroll.contentView.frame.width
+        XCTAssertEqual(
+          gutter > 0, takesWidth, "\(name) at \(size): the scroller's width is \(gutter)")
+
+        func right(_ part: NSView) -> CGFloat {
+          view.convert(part.alignmentRect(forFrame: part.bounds), from: part).maxX
+        }
+
+        let edge = right(try XCTUnwrap(view.rows.first))
+        for (part, partView) in [
+          ("title", view.titleLabel), ("subtitle", view.subtitleLabel),
+          ("filter box", view.filterBox), ("command box", view.commandBox),
+        ] where !partView.isHiddenOrHasHiddenAncestor {
+          XCTAssertEqual(
+            right(partView), edge, accuracy: 0.5,
+            "\(name) at \(size): the \(part) ends off the first row's edge")
+        }
+      }
+    }
+  }
+
   /// Catches a short pane that clips the filter box, squashes the legend, or hides the header
   /// when there is room for it. Only the pane's size decides what shows. With room for the whole
   /// unfiltered list, the header sits above the filter box. Shorter, the header gives way and the

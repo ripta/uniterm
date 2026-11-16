@@ -191,9 +191,19 @@ private final class LauncherListDocument: NSView {
 ///
 /// A shown scroller makes the list narrower and so taller, which keeps it shown. The second pass
 /// therefore settles.
+///
+/// The parts above the list give up the scroller's width along with it, so every part keeps one
+/// right edge. `onGutterChange` hands them the new width before the second solve.
 @MainActor
 private final class LauncherListScroll: NSScrollView {
+  var onGutterChange: ((CGFloat) -> Void)?
+
   private var clipWidthChanged = false
+
+  /// The width a legacy scroller takes from the list. An overlay scroller takes none.
+  var gutter: CGFloat {
+    max(0, bounds.width - contentView.frame.width)
+  }
 
   override func tile() {
     let width = contentView.frame.width
@@ -209,6 +219,7 @@ private final class LauncherListScroll: NSScrollView {
 
     if clipWidthChanged {
       clipWidthChanged = false
+      onGutterChange?(gutter)
       superview?.needsLayout = true
     }
   }
@@ -418,8 +429,21 @@ final class LauncherView: NSView, NSTextFieldDelegate {
     let card = NSStackView(views: [header, filterBox, listScroll])
     card.orientation = .vertical
     card.alignment = .leading
-    pinWidths(of: card.arrangedSubviews, to: card)
+    pinWidths(of: [listScroll], to: card)
     card.spacing = Self.cardSpacing
+
+    // The rows end where the list's clip view ends, which a legacy scroller pulls in. The parts
+    // above the list end there too.
+    let aboveList = [header, filterBox].map {
+      $0.widthAnchor.constraint(equalTo: card.widthAnchor)
+    }
+
+    NSLayoutConstraint.activate(aboveList)
+
+    listScroll.onGutterChange = { gutter in
+      for width in aboveList { width.constant = -gutter }
+    }
+
     card.translatesAutoresizingMaskIntoConstraints = false
 
     stage.translatesAutoresizingMaskIntoConstraints = false

@@ -1,7 +1,8 @@
 # The launcher's rows end short of the filter box while a legacy scroller shows
 
-**Status:** open
-**Estimate:** small; one design decision
+**Status:** fixed 2026-11-15
+**Estimate:** small; one design decision, settled as the inset
+**Fixed:** 2026-11-15
 
 ## Observed
 
@@ -38,3 +39,21 @@ This needs a design call. The candidates:
 - Keep the list's scroller as an overlay whatever the system setting, so every part keeps one right edge. That
   overrides the user's "Show scroll bars: Always" choice for this one list.
 - Inset the parts outside the list by the scroller's width while it shows, so every edge moves together.
+
+## Fix note
+
+Triage on 2026-11-15 reproduced the bug. At 200 by 100 with a legacy scroller, the rows and the command box ended at
+x = 167 and the filter box at x = 184.
+
+The user chose the inset. The other two options each gave something up. Accepting the gap broke the shared-edge
+contract. Forcing an overlay scroller overrode the user's "Show scroll bars: Always" setting.
+
+- The header and the filter box now give up the scroller's width while it shows, and take it back when it hides. Every
+  part of the launcher ends on one right edge with either scroller style.
+- The list's scroll view reports its scroller's width when tiling changes its clip view. It already asks for a second
+  layout pass then, so the new width lands in that pass.
+- `testAListScrollerKeepsTheLauncherPartsOnOneRightEdge` runs one launcher with each scroller style. It lays the
+  launcher out short, so the list overflows, then tall, so it fits. It failed before the fix: the filter box ended
+  17 points past the first row.
+- Files: `Packages/UnitermKit/Sources/WindowKit/LauncherView.swift` and
+  `Packages/UnitermKit/Tests/WindowKitTests/LauncherTests.swift`.
