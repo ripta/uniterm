@@ -15,10 +15,31 @@ public struct ControllerSignature: Equatable, Sendable {
   /// The signature format this version reads and writes.
   public static let format = 1
 
+  /// The sidecar signature of a script file is named after the file.
+  public static let fileSuffix = ".sig"
+
   public static let maxBytes = 4 * 1024
 
-  /// What is signed comes first, so a signature made for another purpose never verifies here.
-  static let domain = Data("uniterm controller descriptor 1\n".utf8)
+  /// What a signature covers. The subject's domain line is signed ahead of the bytes, so a
+  /// signature made for one subject never verifies for another, whatever the bytes are.
+  public enum Subject: Sendable {
+    case descriptor
+    case scriptFile
+
+    func error(_ text: String) -> ControllerPackageError {
+      switch self {
+      case .descriptor: return .signature(text)
+      case .scriptFile: return .fileSignature(text)
+      }
+    }
+
+    var domain: Data {
+      switch self {
+      case .descriptor: return Data("uniterm controller descriptor 1\n".utf8)
+      case .scriptFile: return Data("uniterm script file 1\n".utf8)
+      }
+    }
+  }
 
   /// The signer's raw 32-byte Ed25519 public key.
   public let publicKey: Data
@@ -91,18 +112,31 @@ public struct ControllerSignature: Equatable, Sendable {
   /// Throws unless the signature verifies over `descriptor`, the exact bytes of the descriptor
   /// file.
   public func verify(descriptor: Data) throws {
+    try verify(descriptor, as: .descriptor)
+  }
+
+  /// Throws unless the signature verifies over `bytes` as `subject`.
+  public func verify(_ bytes: Data, as subject: Subject) throws {
     let key: Curve25519.Signing.PublicKey
 
     do {
       key = try Curve25519.Signing.PublicKey(rawRepresentation: publicKey)
     } catch {
-      throw ControllerPackageError.signature("the public key is not an Ed25519 key")
+      throw subject.error("the public key is not an Ed25519 key")
     }
 
-    guard key.isValidSignature(signature, for: Self.domain + descriptor) else {
-      throw ControllerPackageError.signature(
-        "the signature does not match controller.json, so the package was changed after it was "
-          + "signed, or signed with another key")
+    guard key.isValidSignature(signature, for: subject.domain + bytes) else {
+      switch subject {
+      case .descriptor:
+        throw ControllerPackageError.signature(
+          "the signature does not match controller.json, so the package was changed after it was "
+            + "signed, or signed with another key")
+
+      case .scriptFile:
+        throw ControllerPackageError.fileSignature(
+          "the signature does not match the file, so the file was changed after it was signed, "
+            + "or signed with another key")
+      }
     }
   }
 
@@ -110,8 +144,15 @@ public struct ControllerSignature: Equatable, Sendable {
   public static func sign(descriptor: Data, with key: any ControllerSigningKey) throws
     -> ControllerSignature
   {
+    try sign(descriptor, as: .descriptor, with: key)
+  }
+
+  /// Signs the exact bytes of `bytes` as `subject`.
+  public static func sign(_ bytes: Data, as subject: Subject, with key: any ControllerSigningKey)
+    throws -> ControllerSignature
+  {
     ControllerSignature(
-      publicKey: key.publicKey, signature: try key.signature(for: domain + descriptor))
+      publicKey: key.publicKey, signature: try key.signature(for: subject.domain + bytes))
   }
 
   /// Base64 that decodes and encodes back to the same text, so one signature has one spelling.

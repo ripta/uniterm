@@ -22,7 +22,7 @@
 | [UTERM-018](UTERM-018-open-in-nearest-capable-pane.md) | Every open walks to the nearest pane that can handle it | accepted |
 | [UTERM-019](UTERM-019-browser-automation.md) | Controller scripts run JavaScript, follow page events, and send input in their own browser tabs | accepted |
 | [UTERM-020](UTERM-020-inspector-bridge.md) | Console, network, interception, and debugging for controller tabs through a hidden Web Inspector | accepted |
-| [UTERM-021](UTERM-021-declared-script-permissions.md) | Script files declare their powers, with strict mode by default and a lint | accepted |
+| [UTERM-021](UTERM-021-declared-script-permissions.md) | Script files declare their powers, with strict mode by default and a lint | implemented |
 | [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | accepted |
 | [UTERM-023](UTERM-023-controller-runs-with-sip-off.md) | What uniterm does for controller runs on a Mac with SIP off | draft |
 

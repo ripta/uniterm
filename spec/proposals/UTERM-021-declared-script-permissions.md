@@ -1,8 +1,8 @@
 # UTERM-021: Declared Permissions for Script Files
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-13
-**Updated:** 2026-11-14
+**Updated:** 2026-11-15
 
 ## Dependencies
 
@@ -19,6 +19,9 @@
 - UTERM-003 — "Where scripts run": the app reads and snapshots a declared script file before the command runs it. The
   command runs the snapshot, not the bytes it read itself. An undeclared file is not snapshotted, and its run waits
   for the app's answer. `uniterm run` no longer sends the plain begin.
+- UTERM-003 — the command's public exit statuses (64, 66, 69, 70): a refusal from the app, such as strict mode, a
+  rejected review, or a denial, exits 77. 69 stays for no uniterm reachable, so a caller that retries on 69 does not
+  retry a refusal. See Decision Log.
 
 ## Summary
 
@@ -63,7 +66,8 @@ Decision: a file declares its powers with `(declare-permissions ...)`, its first
   unquote refuses the file.
 - The permissions use `controller.json`'s (kind, version) vocabulary and its rules. An unknown kind or version
   refuses the file, and so does one kind listed twice. A scoped kind, such as a capability or a host launch, is
-  listed once for each scope.
+  listed once for each scope: a capability by its name, and a host launch by its executable alone. Amended
+  2026-11-15; see Decision Log.
 - An optional leading struct carries `:id` and `:name`. The ID follows `controller.json`'s ID rules. It is required
   when the file is signed. An unsigned file without a name is shown by its file name.
 - uniterm binds `declare-permissions` before the file loads, so a misspelled form fails as an unbound symbol. At run
@@ -101,6 +105,8 @@ Decision: a file is signed by a detached `file.janet.sig` beside it. The signatu
 Ed25519 signature over a fixed domain line and the file's exact bytes. A signed file's leading struct must carry an
 `:id`.
 
+- The domain line is `uniterm script file 1`, where a package descriptor's is `uniterm controller descriptor 1`, so a
+  signature for one never verifies the other. Amended 2026-11-15; see Decision Log.
 - A signature that does not verify refuses the file. It never falls back to an unsigned version.
 - Identity trust pins the public key plus the ID, as it does for a controller.
 
@@ -162,7 +168,9 @@ Rationale: a plain script's connection is its run. Three names for one lifetime 
 Decision: uniterm ships a lint that scans a file's literal `uniterm/` calls and compares them with its declaration.
 It reports calls that need an undeclared power, and declared powers the file never uses. It is best effort and
 grants nothing. A dynamic call, such as one built with `symbol` or run through `eval`, makes it report that the file
-could make any call. "The lint's name" says how it is invoked.
+could make any call, and then it reports no declared power as unused. "The lint's name" says how it is invoked. Its
+exit status is 0 when clean, 1 with findings, 65 when the file or its declaration does not read, and 66 when the file
+cannot be opened. Amended 2026-11-15; see Decision Log.
 
 Rationale: enforcement makes a missed call safe. It is refused at run time. A lint moves that error to before the run.
 
@@ -279,7 +287,8 @@ reads as strict.
 
 - Switching to strict refuses every waiting undeclared-file review, with a message naming strict mode. An admission or
   an answer that finishes after the switch is refused too.
-- A live undeclared run keeps running after a switch to strict. The user ends it with Revoke.
+- A live undeclared run keeps running after a switch to strict. The user ends its authority with Revoke, as for a
+  controller run. Its next call is refused, and the process is not stopped. Amended 2026-11-15; see Decision Log.
 - Switching to unsafe affects runs that start afterward.
 - Strict mode's refusal names the Settings row.
 
@@ -318,9 +327,10 @@ None.
 
 - **Strict mode by default refuses every existing plain script** — likelihood: high, impact: medium.
   Mitigation: the refusal says uniterm is in strict mode, names the form to add, and names the Settings row. The
-  repo's own fixtures and examples gain declarations in the same milestone. Unsafe mode runs an undeclared file after
-  one review per run. A declaration plus Trust This Version removes the review until the file changes. No setting
-  restores today's run with no review at all, which is the point of the change.
+  scripts that the UI tests run through the bundled command carry declarations or run in unsafe mode. The package
+  tests' script fixtures stay undeclared. Unsafe mode runs an undeclared file after one review per run. A declaration
+  plus Trust This Version removes the review until the file changes. No setting restores today's run with no
+  review at all, which is the point of the change.
 - **A parser differential lets the review show something other than what runs** — likelihood: low, impact: high.
   Mitigation: the declaration is read with Janet's own parser from the snapshot's bytes. Enforcement uses the approved
   scopes whatever the review showed, so a differential cannot grant an unapproved power.
@@ -349,7 +359,7 @@ None.
 
 ### M1: Run wording
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The startup review, controller questions, and plain-script questions all name their per-run choice "Allow for This
   Run"
@@ -357,9 +367,22 @@ None.
 - A UI test screenshot of the review and of a question row shows the new name
 - A REPL pane's questions and a generic peer's still say "Allow for This Connection"
 
+**As built:**
+
+The app now records what each connection is: a controller run, the bundled command running a plain script, a generic
+peer, or a REPL pane. A plain begin is told from a generic peer on the main actor by comparing the running code's
+dynamic signing information with the command's file, which is validated once off the main actor and kept. A native
+controller's process skips the check. A missing controller setting leaves a plain begin a generic peer. The question
+row reads the kind to pick between "Allow for This Run" and "Allow for This Connection". The controller approval line
+now reads "Allowed for this run".
+
+The strict and unsafe modes milestone later changed the check that tells the command from a generic peer. A peer the
+cached comparison does not take for the command now gets the full check before it is admitted as a generic one. See its
+As built.
+
 ### M2: Declared files
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A file with a valid declaration shows a review listing its powers before any of its code runs
 - A second declaration, a declaration after another form, a non-literal value, an unknown kind or version, and a
@@ -394,9 +417,74 @@ None.
   `policy.aside-*.json` and `policy.json.tmp-*`, so neither store prunes or sweeps the other's
 - Every connection a native entry opens after `uniterm controller run` execs it is still admitted
 
+**As built:**
+
+A script file with a valid first-form declaration now runs end to end. The command parses the file's first form
+with Janet's own parser, in a VM of its own that evaluates nothing, and sends a file begin that names the resolved
+path. The app authenticates the command, and only then opens the path without following a link. It requires a regular
+file within a size cap, copies it into the run's private folder while hashing it, checks the copy, and makes it
+read-only. It answers with the copy's path and the file's SHA-256. The command reads the copy once, checks the hash
+before it parses, reads the declaration from those bytes, and reports it as JSON in the permission structure
+`controller.json` uses. The app reads that JSON again with the strict reader that packages use, looks up trust by the
+version, and admits the run or queues the review. Only then does the command run the bytes it hashed, with a module
+loader that finds nothing but the bundled `uniterm` module. `declare-permissions` is bound as a macro that expands to
+nil in every run, so a misspelled form fails as an unbound symbol.
+
+The size cap is a packaged file's, 32 MiB. The declaration message is capped at 32 KiB of JSON. ScriptWire is at
+version 10, which adds the file begin, the file-admitted answer, and the declaration message. The final admission
+reuses the controller admitted answer.
+
+The check for what Janet's parser would merge or drop reads the parser's state before each `}`. It ends a token still
+open with a space first, so the state shows every value. It mirrors three parser-private flag bits of the pinned Janet
+release, and the duplicate-key and nil tests fail if an upgrade moves them. It applies only to the first form, and
+only when that form is the declaration, so a plain script's own structs are never refused. A later declaration is a
+parenthesized form whose head is the symbol `declare-permissions`, found at any depth outside a quote or a quasiquote.
+A bracketed list that starts with the name, quoted data, and a docstring are data, so an undeclared script may mention
+the name. The reader stops walking forms past 512 levels of nesting. A file that does not parse reads as undeclared,
+and the run reports the parse error.
+
+A struct with no `:kind` that holds a key within two edits of `kind`, of three letters or more, is marked in the JSON
+by the command's reader. That reader alone judges what looks misspelled. The Swift reader only words the message from
+the mark.
+
+The shared permission reader moved out of the descriptor reader into its own type. A file declaration and a
+descriptor read the same list through it, and only the wording of the native-code refusal differs.
+
+An undeclared file still sent the plain begin at this milestone. The strict and unsafe modes milestone later replaced
+that with the undeclared begin. See its As built.
+
+File approvals live in their own `files.json`, beside `policy.json`, with their own lock, `files.aside-N.json` copies,
+`files.json.tmp-*` sweep, and 256-record limit. Both selectors exist now: the file version, which names only the
+SHA-256, and the file identity, which names an ID and a key fingerprint. Nothing creates an identity approval yet,
+since an unsigned file has no key. A policy file of one kind that holds a selector of the other is unreadable, so
+neither store can be read as the other. An unsigned file with no declared name is titled by its file name in the
+review, cleaned as a descriptor name is, and a file name that cannot pass that is shown as "script file". The window
+lists an unsigned file's approval as "script file" too.
+
+The app keeps one table of command processes, keyed by process ID, start time, and process ID version. A plain begin
+from the bundled command, a controller begin, a file begin, and a REPL attach with a token the app issued each claim an
+entry first, and a second claim is refused. A bad token gets the attach's own refusal and costs the process nothing. A
+controller or file begin claims only when the cheap check on the main actor says the peer is the bundled command, and
+before the admission starts. A second begin from the command is therefore refused while the first still authenticates,
+and a program that is not the command takes no place, so it cannot fill the table. The strict and unsafe modes
+milestone later changed two of these rules. The app now refuses a plain begin from the bundled command instead of
+claiming an entry for it, and a begin the cached check did not take for the command claims its entry when the full
+check passes. See its As built. The table outlives the connection.
+At 1024 entries it drops those whose process has exited, and past that it refuses a new begin. A generic peer's plain
+begins are not counted, and a native entry's connections are generic peers, so every connection one opens after the
+exec is still adopted.
+
+The app refuses any path under `/dev`. The command resolves a path and the app opens it, so `/dev/fd/N` would name the
+app's own descriptor and copy whatever file the app holds open. A file name that is too long for a review title keeps
+its start and its extension, with an ellipsis between, so the cut shows. A name that cannot pass the descriptor name
+rules is shown as "script file".
+
+`uniterm run` on a pipe fails in the command's own read, as it did before, so the app's refusal of a pipe, a device,
+and an oversize file is proved against raw peers and the snapshot itself.
+
 ### M3: Signed files
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - `uniterm controller sign` signs a file and writes `file.janet.sig`
 - A signed file offers Trust This Identity, and a new version under a trusted identity that asks for nothing new runs
@@ -407,9 +495,36 @@ None.
   file
 - A valid `.sig` beside an undeclared file grants no identity
 
+**As built:**
+
+`uniterm controller sign --key NAME file.janet` signs a script file. The path is a package when it is a
+folder and a file otherwise. The command resolves the file's path, because the app reads the `.sig` beside the
+resolved path. It refuses a file whose first form is not a declaration, a declaration that fails to read, and a
+declaration with no `:id`. It writes `file.janet.sig` atomically in `controller.sig`'s format and prints the ID,
+the version, the key's fingerprint, and the path it wrote.
+
+The signature type now takes a subject. A descriptor's domain line is still `uniterm controller descriptor 1`,
+and a script file's is `uniterm script file 1`. Verifying and signing take the subject, and the descriptor forms
+call them with the descriptor subject. A file signature that fails raises its own error case, so the message
+names the file's `.sig` and not `controller.sig`.
+
+The app reads the `.sig` while it snapshots the file. It looks beside the resolved path, refuses a link, a pipe,
+and a device, and caps the signature at 4 KiB. It verifies over the bytes it read back from the copy, which are
+the bytes it hashed. A `.sig` that is there and does not read or verify refuses the file and removes the copy.
+The snapshot carries the verified signature. The file's identity takes the signature's key fingerprint. A signed
+file whose header names no `:id` is refused after the command reports the declaration, with a message that asks
+for one. Nothing on the plain path reads a `.sig`, so a valid or broken signature beside an undeclared file
+changes nothing about its run.
+
+Trust This Identity was already offered for any review whose identity carries a fingerprint, so a signed file now
+gets it. It writes a file identity approval of the ID and the key. A later version under that approval that asks
+for no new power runs without a review. One that asks for more gets a review that lists what is new. A package
+identity approval with the same ID and key does not cover the file, and the review's help text says "file ID" for a
+file.
+
 ### M4: Strict and unsafe modes
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The setting defaults to strict
 - In strict mode, a file without a declaration is refused with a message naming strict mode and the form
@@ -426,13 +541,64 @@ None.
 - Revoking an Allow Everything grant refuses the run's next call
 - Switching to strict refuses every waiting undeclared-file review with a message naming strict mode
 - An admission in flight, or a review answer, that finishes after a switch to strict is refused
-- A live undeclared run keeps running after a switch to strict, and Revoke ends it
+- A live undeclared run keeps running after a switch to strict, and Revoke ends its authority, so its next call is
+  refused
 - A missing or unknown stored mode reads as strict
-- The repo's script fixtures and examples carry declarations, and the package and UI test suites pass in strict mode
+- The scripts that the UI tests run through the bundled command carry declarations, or run in unsafe mode when the test
+  is about an undeclared file, and the package and UI test suites pass in strict mode. The package tests' script
+  fixtures stay undeclared, since the SwiftPM test helper that runs them is a generic peer, and a declared file needs
+  the bundled command. Amended 2026-11-15 in two bullets; see Decision Log.
+
+**As built:**
+
+The Settings page has a "Script files" row with Strict and Unsafe, and a missing or unknown stored value reads as
+strict. The host reads the store each time it needs the mode, and watches the key. ScriptWire is at version 11, which
+adds the undeclared begin and its admitted answer. Refusals and the review notice reuse the controller answers. The
+command opens a session for an undeclared file with the undeclared begin and runs none of its code until the app
+admits it. It no longer sends the plain begin.
+
+The app tells the bundled command from any other program with the cheap check it already runs on the main actor, and the
+full check follows off the main actor. A plain begin from the command is refused and its connection closed. An
+undeclared begin from the command claims its place in the one-session table, then takes one of two paths. Strict mode
+refuses it with a message that names the mode, the form to add, ffi and modules, and the Settings row. Unsafe mode puts
+a review in the Pending Requests panel once the full check passes, and the mode is read again when the check finishes. A
+call from the connection before the answer is refused, as for a controller. Every refusal of a begin marks the
+connection refused as it is sent, so a request already on the wire is dropped without waiting for the close. An
+undeclared begin from a program that is not the command gets the admission a plain begin gets, with an admitted answer
+at once and no review, so the SwiftPM test helper and any other program that speaks the wire are unchanged in strict
+mode.
+
+The review offers Reject, Allow and Ask Each Use, and Allow Everything. It lists the run's `--allow` capabilities and
+says a declaration makes the script trustable. No choice is remembered, and none is a trust choice. Ask Each Use leaves
+the connection as a plain script's is, with clipboard questions and the pane rules. Allow Everything puts the clipboard
+read and write in the connection's standing clipboard grants, which the call boundary already checks, so a host launch
+still asks. The Pending Requests panel lists every live undeclared run, not only those with Allow Everything. Revoke on
+a row does what Revoke does for a controller run or a declared file run: it ends the run's authority, so its next call
+is refused, and it does not close the connection or stop the process. Switching to strict refuses each waiting review at
+once. An answer that arrives after the switch reads the mode again and refuses the run, and an admission in flight is
+refused when its full check finishes. A live run is left alone. A file with a later `(declare-permissions ...)` form is
+refused by the command before it connects, as the M2 reader reports it, so the app never sees that begin.
+
+A peer that the cheap check does not take for the command gets the full check, off the main actor, before it is
+admitted as a generic one. A command replaced on disk under a running app fails the cheap check, and would otherwise
+have been admitted with no review. The connection's calls wait for the decision. The check refreshes the cached copy of
+the command's signature when it passes. A file or controller begin that the cheap check did not take for the command
+claims its place in the one-session table when its full check passes. The window's pending slot counts an undeclared
+review as it counts any other row.
+
+An app refusal of a run, whether strict mode, Reject, a switch to strict, a denial, or an undeclared power at
+admission, makes the command exit with status 77. Status 69 stays for no reachable uniterm, so a caller that retries on
+69 does not retry a refusal. A socket that belongs to another user is a failure to reach uniterm, not an answer from
+it, so that failure keeps 69. Only a refusal that came from the app exits 77.
+
+The package tests' script fixtures stay undeclared, and the tests that exercise a plain script through the real signed
+command set unsafe mode and answer the review. The UI tests that drive the real app declare their scripts, answer the
+review in the panel, and seed unsafe mode for the plain-script question and the unsafe review. The decision for the
+fixtures is in the Decision Log.
 
 ### M5: The lint
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The lint reports a literal call whose power the file does not declare
 - The lint reports a declared power the file never uses
@@ -442,6 +608,47 @@ None.
   each resolved or reported as able to make any call
 - A declared capability is never reported as unused, since its uses are Janet's own functions
 - The lint maps calls to powers with the same table the app uses at the call boundary
+
+**As built:**
+
+`uniterm lint file.janet` is a command beside `repl` and `controller`. It takes one file, and `-h` or `--help` shows
+its usage. It refuses a folder, a second file, and any other flag with status 64. It reads the file, parses it, and
+prints one finding per line as `file:line:column: text`. It opens no socket and reads no address, so it never contacts
+the app. It runs none of the file's code.
+
+The shim parses the file with Janet's parser in a VM of its own and copies the forms into plain arrays. The walker is
+Swift. A tuple's position is the parser's own source map, so a reference is reported at the form that holds it. Exit
+status is 0 when clean, 1 with findings, 65 when the file does not parse, nests past 512 levels, or has a declaration
+that fails to read, and 66 when the file cannot be opened. A parse error names its line and column.
+
+The call-to-power table moved into ScriptWire. `ScriptCallKind` lists each wire call with its Janet name and its power,
+and `ScriptCall.kind` is an exhaustive switch over the wire calls. The app's `ScriptHost.power(for:)` reads the table,
+and so does the lint. A test lists every Janet function the module offers and checks it against the table, so
+`api-version` is the only function without a row. No call maps to a host launch in the table. A layout carries its
+launch, so the lint treats a literal `request-layout` call as needing host-launch when a struct inside it has `exec` as
+a key, spelled as a keyword or a string. It treats a declared host-launch as used by any `request-layout` call.
+
+A reference to a module function counts as a use of its power, whether it is called, aliased, or passed. The lint
+resolves `(import uniterm)`, `:as`, `:prefix`, and `(use uniterm)`, from imports found anywhere before the walk. It
+tracks local bindings from `def`, `var`, `defn`, `fn`, `let`, `each`, `for`, `loop`, `with`, and `try`, so a local
+named like a module function is not a call. A macro defined in the file is walked with its templates, so a template
+that names a module function counts, and one that builds a name is a dynamic call. A name that starts with an imported
+prefix and is not a module function is reported as one uniterm does not offer.
+
+These reach a call without its name and are reported as able to make any call: `eval`, `eval-string`, `compile`,
+`run-context`, `dofile`, `load-image`, `unmarshal`, `require`, `import*` or `use` with a computed path, `parse`,
+`parse-all`, the `parser/` functions, `symbol`, `keyword`, `curenv`, `make-env`, `env-lookup`, `root-env`, `resolve`,
+`fiber/getenv`, `fiber/setenv`, the `module/` tables, and `dyn` with a computed key or the environment. `apply` is not
+on the list. A function reaches `apply` only through a literal reference, which is counted where it appears, or through
+one of these. Once a file has a dynamic call, the lint reports no declared power as unused. A declared capability is
+never reported unused.
+
+An undeclared file lints too. Each call reports its power as undeclared, and a last line suggests the declaration to
+add. A `comment` form is data unless the file binds its own `comment`. Limits: `match` and `case` patterns are not seen
+as bindings, a file the script imports is not scanned, quoted code outside a macro is data, and a launch hidden behind
+an alias of `request-layout` is not seen.
+
+The lint walker is in the declaration fuzzer's run: the fuzzer lints mutated files twice and compares the results.
 
 ## Decision Log
 
@@ -512,6 +719,44 @@ None.
 - 2026-11-14: Scheduled as M1-M5 in queue.md.
 - 2026-11-14: ADR candidate (cuts across the system): one session per command process, for files, packages, and REPL
   helpers. Declined: ADR-09's authenticated binding to the actual run already covers it.
+- 2026-11-15 (run best guess): A host launch is listed once for each executable alone, as `controller.json` lists
+  it, so two host launches of one executable in different directories are a repeated kind. The decision said "once for
+  each scope" and did not say what a host launch's scope is. Amended text: "A scoped kind, such as a capability or a
+  host launch, is listed once for each scope." It now says a capability is listed by its name and a host launch by its
+  executable alone. A declaration that wants two directories for one executable lists the broader directory.
+- 2026-11-15 (run best guess): A script file's signature domain line is `uniterm script file 1\n`. The decision said
+  "a fixed domain line" and did not name it, and the line has to differ from the descriptor's so neither kind of
+  signature verifies the other. Amended text: the Signing decision now names both lines. If a different line is
+  wanted, only the one constant and the signatures made so far change.
+- 2026-11-15 (run best guess): The package tests' script fixtures stay undeclared. The SwiftPM test helper that runs
+  them is not the bundled command, so the app takes it for a generic peer, which UTERM-004 admits in strict mode, and a
+  declared file from it is refused because only the bundled command may begin one. Declaring them would have moved
+  every one of those tests onto the signed copy of the command, with a review answered in each. The M4 check said "the
+  repo's script fixtures and examples carry declarations". Amended text: it now names the scripts the UI tests run
+  through the bundled command, and says the package fixtures stay undeclared and why. The repo has no other script
+  examples. If declared fixtures are wanted anyway, those tests move to the signed command and answer a review each.
+- 2026-11-15 (run best guess): An app refusal of a run makes the command exit 77 (EX_NOPERM), where it exited 69. The
+  proposal names no exit status. The change came from review: scripts that loop while the exit is 69, meaning no app
+  is up yet, would retry a strict-mode refusal for the whole retry window. 69 stays for no reachable uniterm. UTERM-003
+  names the sysexits statuses as public contract, so its list is stale by this one. Only an answer from the app counts:
+a socket that belongs to another user never reached the app, so it keeps 69.
+- 2026-11-15 (run best guess): Revoke on an undeclared run ends its authority and does not stop the process. The
+  Where-the-mode-setting-lives decision and the M4 check said a live run "keeps running" and that Revoke "ends it". A
+  controller run's Revoke and a declared file run's Revoke refuse the run's later calls and leave the process and its
+  connection alone, so the undeclared run does the same. Amended text: the decision now says the user ends the run's
+  authority, as for a controller run, and the check says its next call is refused. If a stopped process is wanted,
+  Revoke would close the connection for all three kinds of run, which is a separate decision.
+- 2026-11-15 (run best guess): The lint reports no declared power as unused once it finds a dynamic call, and its
+  exit status is 0, 1, 65, or 66. The decision said a dynamic call makes the lint report that the file could make any
+  call, and named no exit status. A file that could make any call may use any declared power, so an unused report
+  would be a claim the lint cannot back. Amended text: "The lint" now says both. If the lint should still list the
+  declared powers it saw no literal use of, only the one suppression changes.
+- 2026-11-15: Correction of fact to the Risks section's first bullet. It said "The repo's own fixtures and examples gain
+  declarations in the same milestone. Unsafe mode runs an undeclared file after one review per run. A declaration plus
+  Trust This Version removes the review until the file changes. No setting restores today's run with no review at all,
+  which is the point of the change." The package tests' script fixtures stay undeclared, and the scripts the UI tests
+  run through the bundled command carry declarations or run in unsafe mode, as the fixtures entry above records. The
+  bullet now says that, and its other sentences are unchanged.
 
 ## References
 

@@ -265,8 +265,12 @@ final class ScriptHelperIntegrationTests: XCTestCase {
     let measured = MeasureBox()
     let finished = await listener.drive(timeout: .seconds(60)) { event in
       switch event {
-      case .begun(_, _):
+      case .undeclaredBegun(let connection, _):
         measured.startup = clock.now - launch
+        connection.send(.undeclaredAdmitted)
+
+      case .begun:
+        XCTFail("the helper began with the plain begin")
 
       case .request(let connection, let id, _):
         measured.footprint = ScriptFixtures.footprint(of: connection.peer.pid)
@@ -281,6 +285,9 @@ final class ScriptHelperIntegrationTests: XCTestCase {
 
       case .controllerBegun:
         XCTFail("a script helper asked for a controller run")
+
+      case .fileBegun, .fileDeclared:
+        XCTFail("an undeclared script helper asked for a declared file run")
 
       case .pong:
         break

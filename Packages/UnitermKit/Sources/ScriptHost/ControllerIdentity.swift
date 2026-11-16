@@ -15,14 +15,26 @@ public struct ControllerSettings: Sendable {
   public let helper: any ControllerHelperIdentity
 
   /// The remembered approvals. Without it, nothing is remembered and only Allow once and Allow
-  /// for this session are offered.
+  /// for this run are offered.
   let trust: ControllerTrustStore?
 
-  /// `trustDirectory` is the folder of the private policy file, or nil to remember nothing.
+  /// The remembered approvals of declared script files, in a policy file of their own.
+  let fileTrust: ControllerTrustStore?
+
+  /// `trustDirectory` is the folder of the private policy files, or nil to remember nothing.
   public init(runsRoot: URL, helper: any ControllerHelperIdentity, trustDirectory: URL? = nil) {
     self.runsRoot = runsRoot
     self.helper = helper
-    trust = trustDirectory.map(ControllerTrustStore.init(directory:))
+    trust = trustDirectory.map { ControllerTrustStore(directory: $0, artifact: .package) }
+    fileTrust = trustDirectory.map { ControllerTrustStore(directory: $0, artifact: .file) }
+  }
+
+  /// The store that holds the approvals of `artifact`.
+  func trust(for artifact: ControllerArtifact) -> ControllerTrustStore? {
+    switch artifact {
+    case .package: return trust
+    case .file: return fileTrust
+    }
   }
 
   /// The policy folder under the user's Application Support, which layout files never share.
@@ -76,6 +88,22 @@ public struct ControllerSettings: Sendable {
 public protocol ControllerHelperIdentity: Sendable {
   /// Nil when the process that holds `token` runs the bundle's command. Otherwise why it does not.
   func refusal(forPeer token: AuditToken) -> String?
+
+  /// Whether the process that holds `token` runs the bundle's command, answered cheaply enough for
+  /// the main actor. It is for wording and routing, never for admitting a controller.
+  func isRunningCommand(_ token: AuditToken) -> Bool
+
+  /// Reads whatever the cheap check keeps, so the first connection does not pay for it. The host
+  /// calls it off the main actor.
+  func prepare()
+}
+
+extension ControllerHelperIdentity {
+  public func isRunningCommand(_ token: AuditToken) -> Bool {
+    refusal(forPeer: token) == nil
+  }
+
+  public func prepare() {}
 }
 
 /// The bundle's command, matched by its code directory hash.
@@ -88,8 +116,31 @@ public protocol ControllerHelperIdentity: Sendable {
 public struct BundleHelperIdentity: ControllerHelperIdentity {
   public let helperURL: URL
 
+  /// What the command's file said when it was last read. A failed read is not kept, so the next
+  /// call reads again.
+  private let reference = CommandReference()
+
   public init(helperURL: URL) {
     self.helperURL = helperURL
+  }
+
+  /// Compares the running code's dynamic signing information with the command's file, which is
+  /// validated once and kept. Nothing here reads the whole file again, so the main actor can ask
+  /// on every connection. A command replaced on disk after the first read mismatches, and its
+  /// peers are then taken for generic ones. The running code must carry the hardened runtime too.
+  public func isRunningCommand(_ token: AuditToken) -> Bool {
+    guard let expected = reference.identity(of: helperURL),
+      expected.hasHardenedRuntime, !expected.allowsLoaderVariables,
+      let running = CodeIdentity.ofProcess(token: token, dynamicOnly: true)
+    else { return false }
+
+    return running.hasHardenedRuntime
+      && running.codeDirectoryHash == expected.codeDirectoryHash
+  }
+
+  /// Reads the command's signature ahead of the first connection, off the main actor.
+  public func prepare() {
+    _ = reference.identity(of: helperURL)
   }
 
   /// The command inside the running app's bundle.
@@ -120,7 +171,35 @@ public struct BundleHelperIdentity: ControllerHelperIdentity {
         + "with that command."
     }
 
+    // The file was just read and the peer matches it, so a command replaced on disk since the
+    // cheap check's copy was kept is the command now. Later checks are cheap again.
+    reference.replace(with: expected)
+
     return nil
+  }
+}
+
+/// The command's validated identity, read once and shared by every copy of the identity value.
+private final class CommandReference: @unchecked Sendable {
+  private let lock = NSLock()
+  private var kept: CodeIdentity?
+
+  func replace(with identity: CodeIdentity) {
+    lock.lock()
+    defer { lock.unlock() }
+
+    kept = identity
+  }
+
+  func identity(of url: URL) -> CodeIdentity? {
+    lock.lock()
+    defer { lock.unlock() }
+
+    if let kept { return kept }
+
+    kept = CodeIdentity.ofFile(at: url)
+
+    return kept
   }
 }
 
@@ -249,9 +328,9 @@ public enum ControllerApproval: Sendable, Equatable {
     switch self {
     case .nothingRequested: return "No powers requested"
     case .once: return "Allowed once"
-    case .session: return "Allowed for this session"
-    case .remembered(.version): return "Trusted version"
-    case .remembered(.identity): return "Trusted identity"
+    case .session: return "Allowed for this run"
+    case .remembered(.version), .remembered(.fileVersion): return "Trusted version"
+    case .remembered(.identity), .remembered(.fileIdentity): return "Trusted identity"
     }
   }
 }

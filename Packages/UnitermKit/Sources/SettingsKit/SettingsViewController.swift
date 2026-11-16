@@ -9,6 +9,7 @@ final class SettingsViewController: NSViewController {
   private let paletteMode: ChoiceSettingRow<PaletteMode>
   private let paletteDockEdge: ChoiceSettingRow<PaletteDockEdge>
   private let searchEngine: ChoiceSettingRow<SearchEngine>
+  private let scriptFiles: ChoiceSettingRow<ScriptFileMode>
   private let websiteData: ActionSettingRow
 
   init(store: SettingsStore, clearWebsiteData: @escaping @MainActor () async throws -> Void) {
@@ -56,6 +57,16 @@ final class SettingsViewController: NSViewController {
       store: store, key: .searchEngine, caption: "Browser search:",
       identifier: "search-engine-control", title: \.displayName)
 
+    scriptFiles = ChoiceSettingRow(
+      store: store, key: .scriptFileMode, caption: "Script files:",
+      identifier: "script-file-mode-control"
+    ) { mode in
+      switch mode {
+      case .strict: return "Strict"
+      case .unsafe: return "Unsafe"
+      }
+    }
+
     websiteData = ActionSettingRow(
       caption: "Browser data:", buttonTitle: "Clear Website Data",
       note: "Removes cookies, logins, and site data from every browser pane. Open tabs keep "
@@ -79,6 +90,7 @@ final class SettingsViewController: NSViewController {
       [paletteMode.label, paletteMode.cell],
       [paletteDockEdge.label, paletteDockEdge.cell],
       [searchEngine.label, searchEngine.cell],
+      [scriptFiles.label, scriptFiles.cell],
       [websiteData.label, websiteData.cell],
     ])
     grid.translatesAutoresizingMaskIntoConstraints = false

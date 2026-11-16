@@ -112,13 +112,20 @@ extension ScriptHost {
   nonisolated static func requested(
     _ descriptor: ControllerDescriptor, capabilities: [String]
   ) -> Set<ControllerPermission> {
-    // A capability is requested at the version the descriptor declares it.
+    requested(descriptor.permissions, capabilities: capabilities)
+  }
+
+  /// The powers a run asks for out of the permissions its artifact declares.
+  nonisolated static func requested(
+    _ permissions: Set<ControllerPermission>, capabilities: [String]
+  ) -> Set<ControllerPermission> {
+    // A capability is requested at the version the artifact declares it.
     var scopes = Set(
       capabilities.compactMap { name in
-        descriptor.permissions.first { $0.capabilityName == name }
+        permissions.first { $0.capabilityName == name }
       })
 
-    for permission in descriptor.permissions where permission.capabilityName == nil {
+    for permission in permissions where permission.capabilityName == nil {
       scopes.insert(permission)
     }
 
@@ -135,9 +142,7 @@ extension ScriptHost {
     let state = store.read()
     let matching = state.policies.filter { $0.selector.matches(identity) }
     let covering = matching.filter { $0.uncovered(requested).isEmpty }.min { first, _ in
-      if case .version = first.selector { return true }
-
-      return false
+      first.selector.kindName == "version"
     }
     let nearest = matching.min { $0.uncovered(requested).count < $1.uncovered(requested).count }
 
@@ -206,37 +211,49 @@ extension ScriptHost {
   ) {
     controllerAdmissions.remove(connection.id)
 
-    let waiting: WaitingAdmission
-    var trust: TrustLookup
-
     switch outcome {
     case .refused(let text):
       return refuseController(connection, text)
 
     case .admitted(let made, let hash, let path, let lookup):
-      waiting = WaitingAdmission(
-        connection: connection, request: request, snapshot: made, entryHash: hash,
-        entryPath: path,
-        requested: Self.requested(made.controller.descriptor, capabilities: request.capabilities))
-      trust = lookup
+      guard claimAfterFullCheck(connection) else {
+        made.remove()
+        onRefusal(.secondSession)
+
+        return refuseController(connection, Self.secondSessionText)
+      }
+
+      proceed(
+        WaitingAdmission(
+          connection: connection, artifact: .package(made), entryHash: hash, entryPath: path,
+          requested: Self.requested(
+            made.controller.descriptor, capabilities: request.capabilities)),
+        trust: lookup, trustRevision: trustRevision)
     }
+  }
+
+  /// Admits a verified run, refuses it, or puts it before the user. A package and a declared file
+  /// reach this point alike, with their powers read and their remembered trust looked up.
+  func proceed(_ waiting: WaitingAdmission, trust: TrustLookup, trustRevision: UInt64) {
+    var trust = trust
+    let connection = waiting.connection
 
     // The command may have exited, started another executable, or been revoked while the package
     // was read. Its run then never starts.
     guard admissionStillWanted(connection) else {
-      waiting.snapshot.remove()
+      waiting.artifact.remove()
 
       return refuseController(connection, "The program that asked for the run is gone.")
     }
 
-    let identity = waiting.snapshot.controller.identity
+    let identity = waiting.artifact.identity
 
     if waiting.requested.isEmpty {
       return admitRun(waiting, approval: .nothingRequested, standing: [])
     }
 
     if permissionRequests.isDenied(Self.startupKey(identity)) {
-      waiting.snapshot.remove()
+      waiting.artifact.remove()
 
       return refuseController(
         connection,
@@ -277,45 +294,68 @@ extension ScriptHost {
     standing: Set<ControllerPermission>
   ) {
     let connection = waiting.connection
-    let snapshot = waiting.snapshot
+    let artifact = waiting.artifact
 
     guard admissionStillWanted(connection), let token = connection.peer.token else {
-      snapshot.remove()
+      artifact.remove()
 
       return refuseController(connection, "The program that asked for the run is gone.")
     }
 
-    let descriptor = snapshot.controller.descriptor
     let caller = caller(for: connection)
 
-    if let hash = waiting.entryHash, let path = waiting.entryPath {
-      startNativeLaunch(
-        NativeLaunch(
-          snapshot: snapshot, scopes: waiting.requested, approval: approval, standing: standing,
-          started: connection.peerStartTime, launcherGeneration: token.pidVersion,
-          entryHash: hash, entryPath: path, sourceRoot: connection.binding?.root,
-          window: caller?.window, pane: caller?.pane, generation: nil,
-          watch: watchNative(connection.peer.pid)),
-        pid: connection.peer.pid)
-    } else {
+    switch artifact {
+    case .package(let snapshot):
+      let descriptor = snapshot.controller.descriptor
+
+      if let hash = waiting.entryHash, let path = waiting.entryPath {
+        startNativeLaunch(
+          NativeLaunch(
+            snapshot: snapshot, scopes: waiting.requested, approval: approval, standing: standing,
+            started: connection.peerStartTime, launcherGeneration: token.pidVersion,
+            entryHash: hash, entryPath: path, sourceRoot: connection.binding?.root,
+            window: caller?.window, pane: caller?.pane, generation: nil,
+            watch: watchNative(connection.peer.pid)),
+          pid: connection.peer.pid)
+      } else {
+        controllerRuns[connection.id] = ControllerRun(
+          identity: snapshot.controller.identity, name: descriptor.name,
+          entryKind: descriptor.entryKind, entryPath: descriptor.entryPath,
+          scopes: waiting.requested, approval: approval, standing: standing,
+          pid: connection.peer.pid, generation: token.pidVersion, connection: connection.id,
+          sourceRoot: connection.binding?.root, window: caller?.window, pane: caller?.pane,
+          snapshot: snapshot.directory)
+        controllerSnapshots[connection.id] = snapshot.directory
+        sessions[connection.id, default: Session()].name = Self.label(for: descriptor.name)
+      }
+
+      connection.send(
+        .controllerAdmitted(
+          snapshot: snapshot.directory.path, version: descriptor.versionDigest))
+
+    case .file(let file):
       controllerRuns[connection.id] = ControllerRun(
-        identity: snapshot.controller.identity, name: descriptor.name,
-        entryKind: descriptor.entryKind, entryPath: descriptor.entryPath,
-        scopes: waiting.requested, approval: approval, standing: standing,
-        pid: connection.peer.pid, generation: token.pidVersion, connection: connection.id,
-        sourceRoot: connection.binding?.root, window: caller?.window, pane: caller?.pane,
-        snapshot: snapshot.directory)
-      controllerSnapshots[connection.id] = snapshot.directory
-      sessions[connection.id, default: Session()].name = Self.label(for: descriptor.name)
+        identity: file.identity, name: file.name, entryKind: .janet,
+        entryPath: file.snapshot.sourceName, scopes: waiting.requested, approval: approval,
+        standing: standing, pid: connection.peer.pid, generation: token.pidVersion,
+        connection: connection.id, sourceRoot: connection.binding?.root, window: caller?.window,
+        pane: caller?.pane, snapshot: file.snapshot.directory)
+      controllerSnapshots[connection.id] = file.snapshot.directory
+      sessions[connection.id, default: Session()].name = Self.label(for: file.name)
+
+      connection.send(
+        .controllerAdmitted(snapshot: file.snapshot.file.path, version: file.snapshot.version))
     }
 
-    connection.send(
-      .controllerAdmitted(
-        snapshot: snapshot.directory.path, version: descriptor.versionDigest))
     controllersChanged()
   }
 
+  /// Sends the refusal and closes the connection after it. The close is queued behind the refusal,
+  /// so the connection is marked refused here. A request that is already on the wire is dropped
+  /// until the close lands.
   func refuseController(_ connection: ScriptConnection, _ text: String) {
+    if !connection.isClosed { sessions[connection.id, default: Session()].refused = true }
+
     connection.send(.controllerRefused(text))
     connection.closeAfterSending()
   }
@@ -371,6 +411,22 @@ extension ScriptHost {
     launch.snapshot.remove()
   }
 
+  /// Tells the bundled command running a plain script from any other program that begins a
+  /// session.
+  ///
+  /// It runs on the main actor, before the connection's first call, so that call's question is
+  /// already worded for the right kind. The command's file was validated once, and only the
+  /// running code's dynamic signing information is read here. A native controller's process is
+  /// never the command, so it skips the check. A missing setting or token leaves a generic peer.
+  func plainPeerKind(of connection: ScriptConnection) -> SessionKind {
+    guard let settings = controllerSettings, let token = connection.peer.token,
+      nativeLaunches[connection.peer.pid] == nil,
+      settings.helper.isRunningCommand(token)
+    else { return .genericPeer }
+
+    return .bundledRun
+  }
+
   /// Binds a new connection to the native launch it comes from, when it does. A connection from
   /// the command itself, from another process at a reused ID, or from code that is not the
   /// snapshot's entry gets no run.
@@ -403,6 +459,7 @@ extension ScriptHost {
       generation: token.pidVersion, connection: connection.id, sourceRoot: launch.sourceRoot,
       window: launch.window, pane: launch.pane, snapshot: launch.snapshot.directory)
     sessions[connection.id, default: Session()].name = Self.label(for: descriptor.name)
+    sessions[connection.id, default: Session()].kind = .controllerRun
     controllersChanged()
   }
 
@@ -412,6 +469,7 @@ extension ScriptHost {
     controllerAdmissions.remove(id)
     controllerRuns[id] = nil
     dropWaitingAdmission(id)
+    dropPendingDeclaration(id)
 
     if let snapshot = controllerSnapshots.removeValue(forKey: id) {
       ControllerSnapshot.remove(directory: snapshot)
@@ -424,7 +482,9 @@ extension ScriptHost {
   func controllerRunsRevoked(_ ids: Set<UInt64>) {
     for id in ids {
       controllerRuns[id] = nil
-      dropWaitingAdmission(id, refusal: "You revoked this controller before it started.")
+      dropWaitingAdmission(id, refusal: "You revoked this run before it started.")
+      dropPendingDeclaration(id, refusal: "You revoked this program before it started.")
+      dropUndeclared(id, refusal: "You revoked this run before it started.")
     }
   }
 
@@ -440,9 +500,16 @@ extension ScriptHost {
     controllerRuns = [:]
     controllerAdmissions = []
 
-    for waiting in waitingAdmissions.values { waiting.snapshot.remove() }
+    for waiting in waitingAdmissions.values { waiting.artifact.remove() }
 
     waitingAdmissions = [:]
+
+    for pending in pendingDeclarations.values {
+      pending.deadline.cancel()
+      pending.snapshot.remove()
+    }
+
+    pendingDeclarations = [:]
     controllerReviews = []
   }
 }

@@ -81,7 +81,7 @@ final class ControllersWindowTests: XCTestCase {
     XCTAssertTrue(unsigned.contains("Trust This Version"), unsigned)
     XCTAssertFalse(unsigned.contains("Trust This Identity"), unsigned)
     XCTAssertFalse(unwritable.contains("Trust This"), unwritable)
-    XCTAssertTrue(unwritable.contains("Allow for This Session"), unwritable)
+    XCTAssertTrue(unwritable.contains("Allow for This Run"), unwritable)
   }
 
   /// Catches a review that hides what is new, leaves out a power, or lets a name reorder the text
@@ -93,7 +93,7 @@ final class ControllersWindowTests: XCTestCase {
     XCTAssertTrue(text.contains("Control panes it may address"), text)
     XCTAssertTrue(text.contains("Start /usr/bin/true as a driver, with any arguments"), text)
     XCTAssertTrue(
-      text.contains("2 runs wait. Allow Once and Allow for This Session start the oldest alone."),
+      text.contains("2 runs wait. Allow Once and Allow for This Run start the oldest alone."),
       text)
     XCTAssertTrue(text.contains("Synthetic\\u{202E}Name"), text)
     XCTAssertFalse(text.contains("\u{202E}"), text)
@@ -166,6 +166,110 @@ final class ControllersWindowTests: XCTestCase {
     XCTAssertTrue(host.isRevoked(9))
     XCTAssertEqual(window.rows, [.policy(policy)])
     XCTAssertEqual(store.read().policies, [policy])
+  }
+
+  /// Catches a script file's approval that is missing from the window, listed as a controller's, or
+  /// left in its file by Revoke. Revoke also ends the live run that approval admitted, and leaves
+  /// the controller approvals as they were.
+  func testTheWindowListsFileApprovalsAsTheirOwnRowsAndRevokeRemovesThem() async throws {
+    let trust = folder.appendingPathComponent("trust")
+    let packages = ControllerTrustStore(directory: trust)
+    let files = ControllerTrustStore(directory: trust, artifact: .file)
+    let packagePolicy = ControllerPolicy(
+      selector: .version(
+        controllerID: Self.identity.controllerID, version: Self.identity.version),
+      name: "Package", scopes: [.paneControl], approved: "2026-11-11T10:00:00Z")
+    let selector = ControllerSelector.fileVersion(version: String(repeating: "7", count: 64))
+    let filePolicy = ControllerPolicy(
+      selector: selector, name: "Tidy", scopes: [.paneControl, .clipboardRead],
+      approved: "2026-11-11T10:00:00Z")
+
+    try packages.update { _ in [packagePolicy] }
+    try files.update { _ in [filePolicy] }
+
+    host.controllerRuns[9] = ControllerRun(
+      identity: ControllerIdentity(
+        controllerID: "tidy.janet", version: String(repeating: "7", count: 64),
+        keyFingerprint: nil, artifact: .file),
+      name: "Tidy", entryKind: .janet, entryPath: "tidy.janet",
+      scopes: [.paneControl, .clipboardRead], approval: .remembered(selector),
+      standing: [.paneControl, .clipboardRead], pid: 4242, generation: 1, connection: 9,
+      sourceRoot: nil, window: nil, pane: nil, snapshot: folder.appendingPathComponent("snap"))
+
+    let window = ControllersWindowController(scriptHost: host)
+
+    try await bounded("the window reads the policies") { await window.settle() }
+
+    XCTAssertEqual(window.rows.count, 3)
+    XCTAssertTrue(window.rows.contains(.policy(packagePolicy)))
+    XCTAssertTrue(window.rows.contains(.policy(filePolicy)))
+
+    let detail = ControllersWindowController.describe(.policy(filePolicy))
+
+    XCTAssertTrue(detail.contains("Trusted version of a script file"), detail)
+    XCTAssertTrue(detail.contains("Version: \(String(repeating: "7", count: 64))"), detail)
+    XCTAssertEqual(ControllersWindowController.subjectText(filePolicy), "Tidy (script file)")
+    XCTAssertEqual(
+      ControllersWindowController.selectorText(selector), "File version 7777777777777777\u{2026}")
+
+    try await bounded("the revoke is done") { await window.revoke(.policy(filePolicy)) }
+
+    XCTAssertEqual(files.read().policies, [])
+    XCTAssertEqual(packages.read().policies, [packagePolicy])
+    XCTAssertTrue(host.isRevoked(9), "Revoke left the run the approval admitted")
+    XCTAssertEqual(window.rows.filter { if case .policy = $0 { true } else { false } }.count, 1)
+  }
+
+  /// Catches a file's review that is titled as a controller's.
+  func testAFilesReviewIsTitledAsAScriptFile() {
+    let review = ControllerReview(
+      id: 2, name: "Tidy",
+      identity: ControllerIdentity(
+        controllerID: "tidy.janet", version: String(repeating: "1", count: 64), keyFingerprint: nil,
+        artifact: .file),
+      requested: [.paneControl], added: [.paneControl], revises: nil, canRemember: true,
+      notice: nil, waiting: [(1, 100)])
+    let text = ControllerReviewText.summary(review)
+
+    XCTAssertTrue(text.hasPrefix("Script file: Tidy (tidy.janet)"), text)
+    XCTAssertTrue(text.contains("Unsigned: only this exact version can be trusted."), text)
+    XCTAssertEqual(
+      ControllerReviewText.offered(for: review),
+      [.allowOnce, .allowForSession, .trustVersion, .deny])
+  }
+
+  /// Catches an undeclared file's review that leaves out an `--allow` capability or the way to make
+  /// the script trustable, lets a name reorder the text the user reads, or describes a run as
+  /// broader than its choice.
+  func testTheUndeclaredReviewListsTheAllowedCapabilitiesAndTheWayToTrust() {
+    let review = UndeclaredReview(
+      id: 1, name: "tidy\u{202E}.janet", capabilities: ["fs-read", "net-connect"], connection: 4,
+      pid: 100)
+    let text = ControllerReviewText.summary(review)
+
+    XCTAssertTrue(text.hasPrefix("Undeclared script file: tidy\\u{202E}.janet"), text)
+    XCTAssertFalse(text.contains("\u{202E}"), text)
+    XCTAssertTrue(text.contains("--allow fs-read\n  --allow net-connect"), text)
+    XCTAssertTrue(text.contains("(declare-permissions ...)"), text)
+    XCTAssertTrue(text.contains("this run only"), text)
+
+    let bare = ControllerReviewText.summary(
+      UndeclaredReview(id: 2, name: "a.janet", capabilities: [], connection: 5, pid: 101))
+
+    XCTAssertTrue(bare.contains("no --allow capabilities"), bare)
+    XCTAssertFalse(ControllerReviewText.undeclaredChoices.contains("Trust"))
+
+    let everything = ControllerReviewText.summary(
+      UndeclaredRun(
+        connection: 4, name: "tidy.janet", pid: 100, capabilities: [], choice: .allowEverything))
+    let asking = ControllerReviewText.summary(
+      UndeclaredRun(
+        connection: 4, name: "tidy.janet", pid: 100, capabilities: [], choice: .askEachUse))
+
+    XCTAssertTrue(everything.contains("without asking"), everything)
+    XCTAssertTrue(everything.contains("host launch"), everything)
+    XCTAssertTrue(asking.contains("clipboard calls ask"), asking)
+    XCTAssertFalse(asking.contains("without asking"), asking)
   }
 
   /// Catches a window that keeps its selection by index when the chosen row goes. The next row

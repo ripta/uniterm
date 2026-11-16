@@ -117,6 +117,23 @@ final class ScriptCommandTests: XCTestCase {
       ScriptHelperMain.Exit.ok)
   }
 
+  /// Catches a failure to reach the app exiting like a refusal by the app. A caller that retries on
+  /// 69 must see the foreign socket as unreachable, and only an answer from the app as 77.
+  func testOnlyAnAnswerFromTheAppExitsAsARefusal() {
+    let address = ScriptHelperMain.Address(path: "/tmp/ut.sock", isWellKnown: false)
+
+    func status(_ error: any Error) -> Int32 {
+      ScriptHelperMain.connectionFailure(error, address: address)
+    }
+
+    XCTAssertEqual(
+      status(ScriptSessionError.failed(.refused, "strict mode")), ScriptHelperMain.Exit.refused)
+    XCTAssertEqual(
+      status(ScriptSessionError.foreignSocket(path: "/tmp/ut.sock")),
+      ScriptHelperMain.Exit.unavailable)
+    XCTAssertEqual(status(WireError.closed), ScriptHelperMain.Exit.unavailable)
+  }
+
   func testTheCommandLineParsesFlagsInAnyOrderAndLeavesTheScriptsArgumentsAlone() {
     typealias Invocation = ScriptHelperMain.Invocation
 

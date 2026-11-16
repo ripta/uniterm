@@ -153,4 +153,105 @@ final class ControllerSignerTests: XCTestCase {
         identity: .unchecked, environment: ["DYLD_LIBRARY_PATH": "/tmp"]),
       ScriptHelperMain.Exit.usage)
   }
+
+  private func scriptFile(_ text: String, named name: String = "tidy.janet") throws -> URL {
+    let file = root.appendingPathComponent(name)
+
+    try Data(text.utf8).write(to: file)
+
+    return file
+  }
+
+  /// Catches a file signer that signs other bytes than the file's, with another key, under a
+  /// package's domain, or beside the wrong name. The `.sig` it writes must verify as a file
+  /// signature over the exact bytes, carry the fixture key's fingerprint, and verify as nothing
+  /// else.
+  func testTheSignerSignsAFileBesideItAsAFileSignature() throws {
+    let text = "(declare-permissions {:id \"dev.example.tidy\"} {:kind :pane-control :version 1})\n"
+    let file = try scriptFile(text)
+
+    XCTAssertEqual(keyCommand("sign", "--key", "fixture", file.path), 0)
+
+    let sidecar = root.appendingPathComponent("tidy.janet.sig")
+    let signature = try ControllerSignature.parse(try Data(contentsOf: sidecar))
+
+    XCTAssertNoThrow(try signature.verify(Data(text.utf8), as: .scriptFile))
+    XCTAssertThrowsError(try signature.verify(descriptor: Data(text.utf8)))
+    XCTAssertEqual(signature.keyFingerprint, ControllerFixtures.Hello.keyFingerprint)
+    XCTAssertEqual(
+      try FileManager.default.contentsOfDirectory(atPath: root.path).sorted(),
+      ["tidy.janet", "tidy.janet.sig"], "a temporary file was left behind")
+
+    let snapshot = try DeclaredFileSnapshot.create(
+      from: file.path, in: root.appendingPathComponent("runs"))
+
+    defer { snapshot.remove() }
+
+    XCTAssertEqual(snapshot.signature, signature)
+  }
+
+  /// Catches a signer that signs a file the app would refuse, which would leave a signature that
+  /// matches nothing. A file with no declaration, one without an `:id`, a bad declaration, and a
+  /// missing file or key each write nothing and say why.
+  func testTheSignerRefusesAFileThatCouldNotBeTrustedByIdentity() throws {
+    let cases: [(String, String)] = [
+      ("(print :hi)\n", "first form is not (declare-permissions"),
+      ("(declare-permissions {:kind :pane-control :version 1})\n", "names no :id"),
+      ("(declare-permissions {:name \"Tidy\"})\n", "names no :id"),
+      ("(declare-permissions {:id \"Bad ID\"})\n", "id"),
+    ]
+
+    for (index, (text, _)) in cases.enumerated() {
+      let file = try scriptFile(text, named: "case\(index).janet")
+
+      XCTAssertNotEqual(keyCommand("sign", "--key", "fixture", file.path), 0, text)
+      XCTAssertFalse(
+        FileManager.default.fileExists(atPath: file.path + ".sig"), "signed: \(text)")
+    }
+
+    let missing = root.appendingPathComponent("missing.janet").path
+
+    XCTAssertNotEqual(keyCommand("sign", "--key", "fixture", missing), 0)
+
+    let file = try scriptFile("(declare-permissions {:id \"dev.example.tidy\"})\n")
+
+    XCTAssertNotEqual(keyCommand("sign", "--key", "lost", file.path), 0)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: file.path + ".sig"))
+  }
+
+  /// Catches a signer that writes beside the link and not the file. The app reads the `.sig` beside
+  /// the resolved path, so a signature beside the link would never be found.
+  func testTheSignerWritesBesideTheResolvedFile() throws {
+    let file = try scriptFile("(declare-permissions {:id \"dev.example.tidy\"})\n")
+    let link = root.appendingPathComponent("link.janet")
+
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+
+    XCTAssertEqual(keyCommand("sign", "--key", "fixture", link.path), 0)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: file.path + ".sig"))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: link.path + ".sig"))
+  }
+
+  /// Catches a re-sign that leaves the old signature in place when the file changed. After the
+  /// second sign, the `.sig` verifies the edited bytes and the first one no longer does.
+  func testSigningAgainReplacesTheSignature() throws {
+    let one = "(declare-permissions {:id \"dev.example.tidy\"})\n(print :one)\n"
+    let two = "(declare-permissions {:id \"dev.example.tidy\"})\n(print :two)\n"
+    let file = try scriptFile(one)
+    let sidecar = URL(fileURLWithPath: file.path + ".sig")
+
+    XCTAssertEqual(keyCommand("sign", "--key", "fixture", file.path), 0)
+
+    let old = try ControllerSignature.parse(try Data(contentsOf: sidecar))
+
+    try Data(two.utf8).write(to: file)
+    XCTAssertEqual(keyCommand("sign", "--key", "fixture", file.path), 0)
+
+    let current = try ControllerSignature.parse(try Data(contentsOf: sidecar))
+
+    XCTAssertNoThrow(try current.verify(Data(two.utf8), as: .scriptFile))
+    XCTAssertThrowsError(try current.verify(Data(one.utf8), as: .scriptFile))
+    XCTAssertThrowsError(try old.verify(Data(two.utf8), as: .scriptFile))
+    XCTAssertNoThrow(try old.verify(Data(one.utf8), as: .scriptFile))
+  }
 }

@@ -7,7 +7,7 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 9
+  public static let version: UInt16 = 11
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -26,6 +26,10 @@ public enum ScriptProtocol {
 
   /// The longest script name a peer may announce, in UTF-8 bytes.
   public static let maxNameBytes = 128
+
+  /// The most bytes of JSON one file declaration may hold. It leaves room in the control frame for
+  /// the message's own header.
+  public static let maxDeclarationBytes = 32 * 1024
 
   /// The longest status text a script may post, in UTF-8 bytes. It matches the host function's own
   /// check in the Janet shim.
@@ -168,6 +172,15 @@ extension ByteWriter {
     }
   }
 
+  /// The `--allow` names of a begin, at most `ControllerBegin.maxCapabilities` of them.
+  mutating func put(capabilities: [String]) {
+    put(UInt8(min(capabilities.count, ControllerBegin.maxCapabilities)))
+
+    for name in capabilities.prefix(ControllerBegin.maxCapabilities) {
+      put(string: name, limit: ControllerBegin.maxCapabilityBytes)
+    }
+  }
+
   /// A string that may be absent. A flag says which.
   mutating func put(optional text: String?, limit: Int) {
     guard let text else {
@@ -232,6 +245,23 @@ extension ByteReader {
     }
 
     return text
+  }
+
+  /// The `--allow` names of a begin: a count, then each name.
+  mutating func capabilities() throws -> [String] {
+    let count = Int(try u8())
+
+    guard count <= ControllerBegin.maxCapabilities else {
+      throw WireError.tooLong(declared: count, limit: ControllerBegin.maxCapabilities)
+    }
+
+    var names: [String] = []
+
+    for _ in 0..<count {
+      names.append(try string(limit: ControllerBegin.maxCapabilityBytes))
+    }
+
+    return names
   }
 
   mutating func optionalString(limit: Int) throws -> String? {
@@ -510,6 +540,41 @@ public struct ControllerBegin: Equatable, Sendable {
   }
 }
 
+/// A run of a declared script file, which the bundle's own command asks the app to admit. It names
+/// the file by its resolved path and nothing else. The app reads and copies the file itself, so a
+/// digest or a name the peer could claim never reaches it. What the file declares comes later, in
+/// a declaration the command reads from the app's copy.
+public struct FileBegin: Equatable, Sendable {
+  /// The file's absolute path, with every link resolved by the command.
+  public let path: String
+
+  /// The Janet capabilities the user granted the run with `--allow`. Each must be one the
+  /// declaration lists.
+  public let capabilities: [String]
+
+  public init(path: String, capabilities: [String] = []) {
+    self.path = path
+    self.capabilities = capabilities
+  }
+}
+
+/// A run of a script file that declares nothing, which the bundle's own command asks the app to
+/// admit. The command runs the file itself, so only a name and the `--allow` capabilities go to
+/// the app. Nothing runs until the app answers.
+public struct UndeclaredBegin: Equatable, Sendable {
+  /// The script's file name, which labels its messages and its review.
+  public let name: String
+
+  /// The Janet capabilities the user granted the run with `--allow`. Nothing declares them, so the
+  /// review only lists them.
+  public let capabilities: [String]
+
+  public init(name: String, capabilities: [String] = []) {
+    self.name = name
+    self.capabilities = capabilities
+  }
+}
+
 /// A message from a script helper. The app validates each one and trusts none of them.
 public enum ScriptHelperMessage: Equatable, Sendable {
   case hello(version: UInt16)
@@ -544,6 +609,20 @@ public enum ScriptHelperMessage: Equatable, Sendable {
   /// `controllerAdmitted` or `controllerRefused`, and no call is answered before that.
   case controllerBegin(ControllerBegin)
 
+  /// Declares the connection a run of a declared script file, in place of `begin`. The app answers
+  /// with `fileAdmitted` or `controllerRefused`, and no call is answered before the run is
+  /// admitted.
+  case fileBegin(FileBegin)
+
+  /// What the file's first form declares, read by the command from the app's copy and converted to
+  /// the descriptor's permission structure as JSON text. It follows `fileAdmitted`, and only once.
+  case fileDeclaration(String)
+
+  /// Declares the connection a run of a script file that declares nothing, in place of `begin`.
+  /// The app answers with `undeclaredAdmitted` or `controllerRefused`, and may first say the run
+  /// waits for review. No call is answered before the run is admitted.
+  case undeclaredBegin(UndeclaredBegin)
+
   /// The frame type of the one call that carries content.
   static let sendType: UInt8 = 4
 
@@ -561,6 +640,9 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .pong: return 8
     case .memoryLimit: return 9
     case .controllerBegin: return 10
+    case .fileBegin: return 11
+    case .fileDeclaration: return 12
+    case .undeclaredBegin: return 13
     }
   }
 
@@ -579,11 +661,21 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .controllerBegin(let begin):
       body.put(begin.entry.rawValue)
       body.put(string: begin.package, limit: ScriptProtocol.maxDirectoryBytes)
-      body.put(UInt8(min(begin.capabilities.count, ControllerBegin.maxCapabilities)))
+      body.put(capabilities: begin.capabilities)
 
-      for name in begin.capabilities.prefix(ControllerBegin.maxCapabilities) {
-        body.put(string: name, limit: ControllerBegin.maxCapabilityBytes)
-      }
+    case .fileBegin(let begin):
+      body.put(string: begin.path, limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(capabilities: begin.capabilities)
+
+    case .fileDeclaration(let json):
+      let bytes = Data(json.utf8.prefix(ScriptProtocol.maxDeclarationBytes))
+
+      body.put(UInt32(bytes.count))
+      body.put(raw: bytes)
+
+    case .undeclaredBegin(let begin):
+      body.put(string: begin.name, limit: ScriptProtocol.maxNameBytes)
+      body.put(capabilities: begin.capabilities)
 
     case .attach(let token): body.put(raw: token)
 
@@ -656,20 +748,26 @@ public enum ScriptHelperMessage: Equatable, Sendable {
       }
 
       let package = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
-      let count = Int(try reader.u8())
-
-      guard count <= ControllerBegin.maxCapabilities else {
-        throw WireError.tooLong(declared: count, limit: ControllerBegin.maxCapabilities)
-      }
-
-      var capabilities: [String] = []
-
-      for _ in 0..<count {
-        capabilities.append(try reader.string(limit: ControllerBegin.maxCapabilityBytes))
-      }
+      let capabilities = try reader.capabilities()
 
       message = .controllerBegin(
         ControllerBegin(entry: entry, package: package, capabilities: capabilities))
+
+    case 11:
+      let path = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
+      let capabilities = try reader.capabilities()
+
+      message = .fileBegin(FileBegin(path: path, capabilities: capabilities))
+
+    case 12:
+      message = .fileDeclaration(
+        try reader.json(limit: ScriptProtocol.maxDeclarationBytes, what: "the declaration is"))
+
+    case 13:
+      let name = try reader.string(limit: ScriptProtocol.maxNameBytes)
+      let capabilities = try reader.capabilities()
+
+      message = .undeclaredBegin(UndeclaredBegin(name: name, capabilities: capabilities))
 
     default: throw WireError.unknownType(type)
     }
@@ -726,6 +824,14 @@ public enum ScriptAppMessage: Equatable, Sendable {
   /// keeps waiting for the admission or the refusal. It may come once, before either.
   case controllerReviewing(String)
 
+  /// The app read the file, made its private copy, and waits for the declaration. `snapshot` is the
+  /// copy's path, and `version` the SHA-256 of the whole file. The command reads the copy once,
+  /// checks its hash against `version`, and only then parses it.
+  case fileAdmitted(snapshot: String, version: Data)
+
+  /// The app admitted a script file that declares nothing. The command runs it now.
+  case undeclaredAdmitted
+
   var wireType: UInt8 {
     switch self {
     case .hello: return 1
@@ -737,6 +843,8 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .controllerAdmitted: return 7
     case .controllerRefused: return 8
     case .controllerReviewing: return 9
+    case .fileAdmitted: return 10
+    case .undeclaredAdmitted: return 11
     }
   }
 
@@ -764,9 +872,9 @@ public enum ScriptAppMessage: Equatable, Sendable {
 
     case .ping(let nonce): body.put(nonce)
 
-    case .stop: break
+    case .stop, .undeclaredAdmitted: break
 
-    case .controllerAdmitted(let snapshot, let version):
+    case .controllerAdmitted(let snapshot, let version), .fileAdmitted(let snapshot, let version):
       body.put(string: snapshot, limit: ScriptProtocol.maxDirectoryBytes)
       body.put(raw: version.prefix(ScriptProtocol.versionDigestBytes))
 
@@ -880,6 +988,22 @@ public enum ScriptAppMessage: Equatable, Sendable {
       try reader.finished()
 
       return .controllerReviewing(text)
+
+    case 10:
+      let snapshot = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
+      let version = reader.rest()
+
+      guard version.count == ScriptProtocol.versionDigestBytes else {
+        throw WireError.badValue(
+          "a file version is not \(ScriptProtocol.versionDigestBytes) bytes")
+      }
+
+      return .fileAdmitted(snapshot: snapshot, version: version)
+
+    case 11:
+      try reader.finished()
+
+      return .undeclaredAdmitted
 
     default:
       throw WireError.unknownType(type)

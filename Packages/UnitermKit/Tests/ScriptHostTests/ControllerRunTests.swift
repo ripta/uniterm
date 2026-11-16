@@ -36,7 +36,13 @@ final class ControllerRunTests: XCTestCase {
   private var seenReviews: [ControllerReview] = []
   private var reviewWatch: ChangeObservers.Token?
 
+  /// The plain scripts here run in unsafe mode, and each undeclared review is answered to ask on
+  /// each use.
+  private var settings: TestScriptSettings!
+  private var undeclaredWatch: ChangeObservers.Token?
+
   override func setUp() async throws {
+    settings = TestScriptSettings(mode: .unsafe)
     directory = try ScriptFixtures.makeSocketDirectory()
     work = try ControllerFixtures.temporaryFolder()
     runs = work.appendingPathComponent("runs")
@@ -49,8 +55,10 @@ final class ControllerRunTests: XCTestCase {
       issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: windows,
       controllers: ControllerSettings(
         runsRoot: runs, helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()),
-        trustDirectory: work.appendingPathComponent("trust")))
+        trustDirectory: work.appendingPathComponent("trust")),
+      settings: settings.store)
     host.start()
+    undeclaredWatch = host.answerUndeclaredReviews(with: .askEachUse)
     reviewWatch = host.changes.add { [weak self] in
       guard let self else { return }
 
@@ -75,6 +83,7 @@ final class ControllerRunTests: XCTestCase {
 
   override func tearDown() async throws {
     host.stop()
+    settings.remove()
     try? FileManager.default.removeItem(at: directory)
     ControllerSnapshot.removeStale(in: runs)
     try? FileManager.default.removeItem(at: work)
@@ -533,6 +542,22 @@ final class ControllerRunTests: XCTestCase {
     expect(await waitUntil { self.runFolders.isEmpty }, "the snapshot outlived its process")
   }
 
+  /// Catches the one-session rule turning away a native entry's later connections. Once the command
+  /// execs the entry, the whole process is the controller, so every connection it opens is its own
+  /// and is adopted, where a command process would be held to one.
+  func testEveryConnectionANativeEntryOpensAfterTheExecIsAdopted() async throws {
+    let package = try nativePackage(try Data(contentsOf: nativeFixture))
+    let result = try await run(
+      try HardenedHelper.url(),
+      ["controller", "run", "--socket", host.instanceAddress, package.path, "second"], in: work)
+
+    XCTAssertEqual(result.status, 0, result.standardError)
+    XCTAssertTrue(result.standardOutput.contains("call: ok\n"), result.standardOutput)
+    XCTAssertTrue(result.standardOutput.contains("second: ok\n"), result.standardOutput)
+    XCTAssertEqual(seenRuns.filter { $0.entryKind == .native }.count, 2)
+    expect(await waitUntil { self.runFolders.isEmpty }, "the snapshot outlived its process")
+  }
+
   /// Catches a command that stays between the terminal and the native entry. A signal sent to the
   /// command's process reaches the entry, because the entry is that process.
   func testASignalToTheCommandsProcessReachesTheNativeEntry() async throws {
@@ -751,9 +776,24 @@ final class ControllerRunTests: XCTestCase {
       result.standardOutput.contains("did not declare pane-control"), result.standardOutput)
     XCTAssertFalse(windows.calls.contains(.listWindows))
   }
+
+  /// Catches a collector that keeps its handler once the pipe ends. A handler left on an ended pipe
+  /// is called again and again for as long as the test process lives, and each one holds a core.
+  func testALineCollectorLetsGoOfItsPipeAtTheEnd() async throws {
+    let pipe = Pipe()
+    let collector = LineCollector(pipe.fileHandleForReading)
+
+    pipe.fileHandleForWriting.write(Data("one\n".utf8))
+    try pipe.fileHandleForWriting.close()
+
+    expect(
+      await waitUntil(timeout: .seconds(5)) { pipe.fileHandleForReading.readabilityHandler == nil },
+      "the collector kept reading an ended pipe")
+    XCTAssertEqual(collector.text, "one\n")
+  }
 }
 
-/// Collects a pipe's text as it arrives.
+/// Collects a pipe's text as it arrives, and lets go of the pipe at its end.
 final class LineCollector: @unchecked Sendable {
   private let lock = NSLock()
   private var collected = ""
@@ -762,7 +802,13 @@ final class LineCollector: @unchecked Sendable {
     handle.readabilityHandler = { [weak self] handle in
       let data = handle.availableData
 
-      guard let self, !data.isEmpty else { return }
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+
+        return
+      }
+
+      guard let self else { return }
 
       self.lock.lock()
       self.collected += String(decoding: data, as: UTF8.self)

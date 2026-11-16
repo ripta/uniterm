@@ -56,6 +56,32 @@ final class ControllerFormatFuzzTests: XCTestCase {
     }
   }
 
+  /// Catches a mutated file declaration that traps the reader, or one whose second reading differs
+  /// from its first.
+  func testMutatedFileDeclarationsReadWithoutTrapping() throws {
+    var random = SplitMix64(seed: seed &+ 2)
+    let inputs = [
+      #"{"header":{"id":"dev.example.tidy","name":"Tidy"},"permissions":[]}"#,
+      #"{"permissions":[{"kind":"pane-control","version":1},{"kind":"clipboard-read","version":1}]}"#,
+      #"{"permissions":[{"kind":"capability","version":1,"name":"fs-read"}]}"#,
+      #"{"permissions":[{"kind":"host-launch","version":1,"executable":"/usr/bin/git","directory":"/a","environment":["HOME"]}]}"#,
+      #"{"header":{"kynd":"x"},"permissions":[{"kidn":"y"}]}"#,
+    ].map { [UInt8]($0.utf8) }
+
+    for iteration in 0..<iterations {
+      var bytes = inputs[Int(random.next() % UInt64(inputs.count))]
+
+      for _ in 0..<Int(random.next() % 4) { mutate(&bytes, using: &random) }
+
+      guard let text = String(validating: bytes, as: UTF8.self) else { continue }
+
+      if let declaration = try? FileDeclaration.parse(text) {
+        XCTAssertEqual(
+          try FileDeclaration.parse(text), declaration, "seed \(seed), iteration \(iteration)")
+      }
+    }
+  }
+
   /// Catches a mutated Mach-O image that traps the load check or reads past its end.
   func testMutatedImagesCheckWithoutTrapping() throws {
     var random = SplitMix64(seed: seed &+ 1)

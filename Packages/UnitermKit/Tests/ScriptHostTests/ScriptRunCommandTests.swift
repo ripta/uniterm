@@ -88,6 +88,31 @@ final class ScriptRunCommandTests: XCTestCase {
     XCTAssertEqual(flagLoses.status, 69, "the variable won over the flag")
   }
 
+  /// Catches a script that arrives through a pipe being refused. Process substitution such as
+  /// `uniterm run <(echo ...)` names a pipe, and a whole-file read of one fails with a permission
+  /// error. The script must run, and a regular file must keep working.
+  func testAScriptReadFromAPipeRuns() async throws {
+    let fifo = directory.appendingPathComponent("script.fifo")
+
+    XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+
+    let writer = Thread {
+      let descriptor = open(fifo.path, O_WRONLY)
+      let text = Array("(print \"from a pipe\")\n".utf8)
+
+      _ = text.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+
+      Darwin.close(descriptor)
+    }
+
+    writer.start()
+
+    let run = try await ScriptFixtures.run(socket: host.instanceAddress, script: fifo)
+
+    XCTAssertEqual(run.status, 0, run.standardError)
+    XCTAssertEqual(run.standardOutput, "from a pipe\n")
+  }
+
   /// Catches arguments that never reach the script, or that arrive without the script's own path
   /// first. The convention is Janet's: `(dyn :args)` starts with the script.
   func testScriptArgumentsReachTheScriptAfterItsOwnPath() async throws {
@@ -240,6 +265,12 @@ final class ScriptRunAppQuitTests: XCTestCase {
     defer { if process.isRunning { process.terminate() } }
 
     let asked = await listener.drive { event in
+      if case .undeclaredBegun(let connection, _) = event {
+        connection.send(.undeclaredAdmitted)
+
+        return false
+      }
+
       guard case .request = event else { return false }
 
       listener.stop()
@@ -274,6 +305,10 @@ final class ScriptRunAppQuitTests: XCTestCase {
 
     Task {
       _ = await listener.drive { event in
+        if case .undeclaredBegun(let connection, _) = event {
+          connection.send(.undeclaredAdmitted)
+        }
+
         if case .request(let connection, let id, _) = event {
           connection.reply(id: id, result: .ok(Data()))
         }

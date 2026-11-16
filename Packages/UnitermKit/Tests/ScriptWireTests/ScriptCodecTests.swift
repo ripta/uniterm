@@ -82,6 +82,14 @@ final class ScriptCodecTests: XCTestCase {
       .controllerBegin(
         ControllerBegin(
           entry: .native, package: "/tmp/caf\u{00E9}", capabilities: ["fs-read", "net-connect"])),
+      .fileBegin(FileBegin(path: "/Users/synthetic/tidy.janet")),
+      .fileBegin(
+        FileBegin(path: "/tmp/caf\u{00E9}.janet", capabilities: ["fs-read", "net-connect"])),
+      .fileDeclaration(#"{"permissions":[{"kind":"pane-control","version":1}]}"#),
+      .fileDeclaration(""),
+      .undeclaredBegin(UndeclaredBegin(name: "tidy.janet")),
+      .undeclaredBegin(
+        UndeclaredBegin(name: "caf\u{00E9}.janet", capabilities: ["fs-read", "net-connect"])),
     ]
 
     for level in ScriptStatusLevel.allCases {
@@ -115,6 +123,9 @@ final class ScriptCodecTests: XCTestCase {
         snapshot: "/tmp/run.synthetic", version: Data(repeating: 0xA5, count: 32)),
       .controllerRefused("synthetic refusal"),
       .controllerReviewing("synthetic review notice"),
+      .fileAdmitted(
+        snapshot: "/tmp/run.synthetic/script.janet", version: Data(repeating: 0x5A, count: 32)),
+      .undeclaredAdmitted,
     ]
 
     for message in messages {
@@ -122,13 +133,16 @@ final class ScriptCodecTests: XCTestCase {
     }
   }
 
-  /// Catches an old command or an old app that the version 9 side accepts. Version 8 knows neither
-  /// the typed clipboard calls nor the review notice, so each side refuses the other at the hello,
-  /// before any call or admission.
-  func testTheClipboardAndReviewVersionRefusesTheVersionBeforeIt() {
-    XCTAssertEqual(ScriptProtocol.version, 9)
-    XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: 8)))
-    XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: 8)))
+  /// Catches an old command or an old app that the version 11 side accepts. Version 10 knows no
+  /// undeclared begin, so an older command would run a file with no answer from the app. Each
+  /// side refuses the other at the hello, before any call or admission.
+  func testTheUndeclaredBeginVersionRefusesTheVersionBeforeIt() {
+    XCTAssertEqual(ScriptProtocol.version, 11)
+
+    for older: UInt16 in [9, 10] {
+      XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: older)))
+      XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: older)))
+    }
   }
 
   /// Catches a hello that accepts another version, in either direction. The refusal names both
@@ -564,5 +578,110 @@ extension ScriptCodecTests {
   func testTheKillMarginIsAQuarterOfTheCap() {
     XCTAssertEqual(ScriptProtocol.helperMemoryCap, 1 << 30)
     XCTAssertEqual(ScriptProtocol.helperMemoryCap + ScriptProtocol.footprintKillMargin, 5 << 28)
+  }
+}
+
+extension ScriptCodecTests {
+  /// Catches a declaration past its bound, or one whose length runs past the body, being read. A
+  /// declaration exactly at the bound is read, and one that is not UTF-8 is refused.
+  func testDeclarationBoundsAreRefusedWhenDecoded() throws {
+    func body(declared: Int, actual: Int, byte: UInt8 = 0x20) -> Data {
+      var body = ByteWriter()
+
+      body.put(UInt32(declared))
+      body.put(raw: Data(repeating: byte, count: actual))
+
+      return body.bytes
+    }
+
+    let limit = ScriptProtocol.maxDeclarationBytes
+
+    XCTAssertThrowsError(
+      try ScriptHelperMessage.decode(type: 12, body: body(declared: limit + 1, actual: limit + 1)))
+    XCTAssertThrowsError(
+      try ScriptHelperMessage.decode(type: 12, body: body(declared: 10, actual: 9)))
+    XCTAssertThrowsError(
+      try ScriptHelperMessage.decode(type: 12, body: body(declared: 2, actual: 2, byte: 0xFF)))
+    XCTAssertThrowsError(
+      try ScriptHelperMessage.decode(type: 12, body: body(declared: 2, actual: 3)))
+
+    guard
+      case .fileDeclaration(let text) = try ScriptHelperMessage.decode(
+        type: 12, body: body(declared: limit, actual: limit))
+    else { return XCTFail("a declaration at the bound was not read") }
+
+    XCTAssertEqual(text.utf8.count, limit)
+  }
+
+  /// Catches a file begin whose capability count passes the bound, whose path passes the path
+  /// limit, or that carries trailing bytes, being read.
+  func testFileBeginBoundsAreRefusedWhenDecoded() {
+    var many = ByteWriter()
+
+    many.put(string: "/tmp/a.janet", limit: ScriptProtocol.maxDirectoryBytes)
+    many.put(UInt8(ControllerBegin.maxCapabilities + 1))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 11, body: many.bytes))
+
+    var long = ByteWriter()
+
+    long.put(UInt16(ScriptProtocol.maxDirectoryBytes + 1))
+    long.put(raw: Data(repeating: 0x61, count: ScriptProtocol.maxDirectoryBytes + 1))
+    long.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 11, body: long.bytes))
+
+    var trailing = ByteWriter()
+
+    trailing.put(string: "/tmp/a.janet", limit: ScriptProtocol.maxDirectoryBytes)
+    trailing.put(UInt8(0))
+    trailing.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 11, body: trailing.bytes))
+  }
+
+  /// Catches an undeclared begin whose name or capabilities pass their bounds, or that carries
+  /// trailing bytes, being read.
+  func testUndeclaredBeginBoundsAreRefusedWhenDecoded() {
+    var many = ByteWriter()
+
+    many.put(string: "a.janet", limit: ScriptProtocol.maxNameBytes)
+    many.put(UInt8(ControllerBegin.maxCapabilities + 1))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 13, body: many.bytes))
+
+    var long = ByteWriter()
+
+    long.put(UInt16(ScriptProtocol.maxNameBytes + 1))
+    long.put(raw: Data(repeating: 0x61, count: ScriptProtocol.maxNameBytes + 1))
+    long.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 13, body: long.bytes))
+
+    var trailing = ByteWriter()
+
+    trailing.put(string: "a.janet", limit: ScriptProtocol.maxNameBytes)
+    trailing.put(UInt8(0))
+    trailing.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 13, body: trailing.bytes))
+
+    var admitted = ByteWriter()
+
+    admitted.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptAppMessage.decode(type: 11, body: admitted.bytes))
+  }
+
+  /// Catches a file's version that is not a SHA-256 being read as an admission.
+  func testAFileAdmissionRefusesAVersionOfTheWrongSize() {
+    for size in [0, 31, 33] {
+      var body = ByteWriter()
+
+      body.put(string: "/tmp/run/script.janet", limit: ScriptProtocol.maxDirectoryBytes)
+      body.put(raw: Data(repeating: 1, count: size))
+
+      XCTAssertThrowsError(try ScriptAppMessage.decode(type: 10, body: body.bytes), "\(size)")
+    }
   }
 }

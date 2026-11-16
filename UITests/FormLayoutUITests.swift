@@ -24,8 +24,15 @@ final class FormLayoutUITests: UnitermUITestCase {
 
     let appearance = settings.radioGroups["appearance-control"]
     let statusBar = settings.radioGroups["status-bar-position-control"]
+    let scriptFiles = settings.radioGroups["script-file-mode-control"]
     XCTAssertTrue(appearance.waitForExistence(timeout: 5))
     XCTAssertTrue(statusBar.exists)
+    XCTAssertTrue(scriptFiles.exists, "Settings has no Script files row")
+    XCTAssertTrue(scriptFiles.radioButtons["Strict"].exists)
+    XCTAssertTrue(scriptFiles.radioButtons["Unsafe"].exists)
+    XCTAssertEqual(
+      scriptFiles.radioButtons["Strict"].value as? Int, 1, "Script files does not default to strict"
+    )
 
     for (name, button) in [("light", "Light"), ("dark", "Dark")] {
       appearance.radioButtons[button].click()
@@ -33,10 +40,13 @@ final class FormLayoutUITests: UnitermUITestCase {
 
       let appearanceLabel = settings.staticTexts["Appearance:"]
       let statusLabel = settings.staticTexts["Status bar:"]
+      let scriptFilesLabel = settings.staticTexts["Script files:"]
       XCTAssertEqual(appearance.frame.minX, statusBar.frame.minX, accuracy: 1, name)
+      XCTAssertEqual(appearance.frame.minX, scriptFiles.frame.minX, accuracy: 1, name)
       XCTAssertEqual(appearanceLabel.frame.maxX, statusLabel.frame.maxX, accuracy: 4, name)
+      XCTAssertEqual(appearanceLabel.frame.maxX, scriptFilesLabel.frame.maxX, accuracy: 4, name)
 
-      for control in [appearance, statusBar] {
+      for control in [appearance, statusBar, scriptFiles] {
         XCTAssertGreaterThanOrEqual(
           control.frame.minX, settings.frame.minX + 16, "\(name): too close to the leading edge")
         XCTAssertLessThanOrEqual(

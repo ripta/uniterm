@@ -1,4 +1,5 @@
 import CJanet
+import ControllerPackage
 import Darwin
 import Foundation
 import ScriptWire
@@ -17,8 +18,13 @@ public enum ScriptHelperMain {
     public static let ok: Int32 = 0
     public static let scriptFailed: Int32 = 1
     public static let usage: Int32 = 64
+    public static let dataError: Int32 = 65
     public static let noInput: Int32 = 66
     public static let unavailable: Int32 = 69
+
+    /// The app was reached and refused the run: strict mode, a rejected review, a denial, or a
+    /// power the file did not declare. A caller that retries on `unavailable` must not retry this.
+    public static let refused: Int32 = 77
     public static let protocolMismatch: Int32 = 70
     public static let connectionLost: Int32 = 74
     public static let notBundleCommand: Int32 = 78
@@ -55,11 +61,19 @@ public enum ScriptHelperMain {
     return """
       usage: uniterm run [--allow CAPABILITY]... [--socket PATH] file.janet [argument...]
              uniterm run [--allow CAPABILITY]... [--socket PATH] package [argument...]
+             uniterm lint file.janet
              uniterm controller --help
 
       Runs a Janet script against the running uniterm. Given a controller package's folder, it
       runs the package's Janet entry from uniterm's verified copy of the package, and each
       --allow must name a capability the package's controller.json declares.
+
+      A file whose first form is (declare-permissions ...) declares the powers it needs. uniterm
+      shows them for review, then runs its own copy of the file with no import of any other file.
+      Each --allow must name a capability the declaration lists.
+
+      A file that declares nothing is refused while uniterm's Script files setting is Strict, which
+      is the default. In Unsafe mode, uniterm asks you about it each time before it runs.
 
         --allow CAPABILITY  let the script use a capability. Repeat it to allow more. The
                             names are Janet's own, and each is denied by default.
@@ -89,6 +103,10 @@ public enum ScriptHelperMain {
 
     if arguments.dropFirst().first == "repl" {
       return ScriptReplMain.run(arguments: Array(arguments.dropFirst(2)))
+    }
+
+    if arguments.dropFirst().first == "lint" {
+      return ScriptLintCommand.run(arguments: Array(arguments.dropFirst(2)))
     }
 
     if arguments.dropFirst().first == "controller" {
@@ -144,17 +162,31 @@ public enum ScriptHelperMain {
     let source: Data
 
     do {
-      source = try Data(contentsOf: URL(fileURLWithPath: invocation.script))
+      source = try readScript(at: invocation.script)
     } catch {
       return fail(
         "cannot read \(invocation.script): \(error.localizedDescription)", status: Exit.noInput)
+    }
+
+    switch DeclaredScript.read(source) {
+    case .declared:
+      return DeclaredFileCommands.run(
+        script: invocation.script, allowed: invocation.allowed, denied: denied,
+        arguments: invocation.arguments, address: address)
+
+    case .invalid(let text):
+      return fail("\(invocation.script): \(text)", status: Exit.dataError)
+
+    case .undeclared:
+      break
     }
 
     let name = URL(fileURLWithPath: invocation.script).lastPathComponent
     let session: ScriptSession
 
     do {
-      session = try ScriptSession.open(path: address.path, name: name)
+      session = try ScriptSession.openUndeclared(
+        path: address.path, begin: UndeclaredBegin(name: name, capabilities: invocation.allowed))
     } catch {
       return connectionFailure(error, address: address)
     }
@@ -182,6 +214,27 @@ public enum ScriptHelperMain {
     return fail(
       failure.description,
       status: failure.kind == .interrupted ? Exit.interrupted : Exit.scriptFailed)
+  }
+
+  /// Reads an undeclared script until end of file. A pipe, such as process substitution names, has
+  /// no size to ask for up front, so the read cannot be one whole-file call. It stops past the
+  /// same cap a declared file has.
+  static func readScript(at path: String) throws -> Data {
+    let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: path))
+
+    defer { try? handle.close() }
+
+    var data = Data()
+
+    while let chunk = try handle.read(upToCount: 1 << 16), !chunk.isEmpty {
+      data.append(chunk)
+
+      if data.count > DeclaredFileSnapshot.maxBytes {
+        throw ScriptReadError.tooLarge(DeclaredFileSnapshot.maxBytes)
+      }
+    }
+
+    return data
   }
 
   #if DEBUG
@@ -223,7 +276,10 @@ public enum ScriptHelperMain {
         status: Exit.unavailable)
 
     case ScriptSessionError.failed(_, let text):
-      return fail(text, status: Exit.unavailable)
+      return fail(text, status: Exit.refused)
+
+    case ScriptSessionError.foreignSocket(let path):
+      return fail("the socket at \(path) belongs to another user", status: Exit.unavailable)
 
     default:
       return fail("cannot talk to uniterm at \(address.path): \(error)", status: Exit.unavailable)
@@ -343,6 +399,17 @@ public enum ScriptHelperMain {
       }
 
       return .usage("a script file is needed")
+    }
+  }
+}
+
+/// Why an undeclared script could not be read.
+enum ScriptReadError: LocalizedError {
+  case tooLarge(Int)
+
+  var errorDescription: String? {
+    switch self {
+    case .tooLarge(let limit): return "the script is larger than \(limit) bytes"
     }
   }
 }

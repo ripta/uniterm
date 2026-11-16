@@ -56,6 +56,38 @@ final class ControllerPolicyFuzzTests: XCTestCase {
     }
   }
 
+  /// Catches a mutated file policy file that traps the reader, or one whose rewrite reads
+  /// differently.
+  func testMutatedFilePolicyFilesReadWithoutTrapping() throws {
+    var random = SplitMix64(seed: seed &+ 1)
+    let seedFile = ControllerPolicyFile.encode([
+      ControllerPolicy(
+        selector: .fileVersion(version: String(repeating: "0f", count: 32)), name: "Fuzz",
+        scopes: [.paneControl, .clipboardRead, .capability("fs-read")],
+        approved: "2026-11-11T10:00:00Z"),
+      ControllerPolicy(
+        selector: .fileIdentity(
+          fileID: "dev.uniterm.fixture.fuzz", keyFingerprint: String(repeating: "e", count: 64)),
+        name: "Fuzz", scopes: [.paneControl], approved: "2026-11-11T10:00:00Z"),
+    ])
+
+    for iteration in 0..<iterations {
+      var bytes = [UInt8](seedFile)
+
+      for _ in 0..<Int(random.next() % 4) { mutate(&bytes, using: &random) }
+
+      guard let policies = try? ControllerPolicyFile.decode(Data(bytes), artifact: .file) else {
+        continue
+      }
+
+      XCTAssertEqual(
+        Set(
+          try ControllerPolicyFile.decode(
+            ControllerPolicyFile.encode(policies), artifact: .file)), Set(policies),
+        "seed \(seed), iteration \(iteration)")
+    }
+  }
+
   private func mutate(_ bytes: inout [UInt8], using random: inout SplitMix64) {
     guard !bytes.isEmpty else { return }
 

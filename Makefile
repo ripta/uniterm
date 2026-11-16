@@ -101,12 +101,13 @@ test-helper-sandbox: build ## Run each helper's sandbox probe and samples, and t
 		swift test --scratch-path ../../$(SWIFTPM_SCRATCH) --filter HelperSandboxTests
 
 .PHONY: fuzz
-fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, and PDF readers under ASan. Slow, so make ci skips it
+fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, declaration, and PDF readers under ASan. Slow, so make ci skips it
 	cd $(PACKAGE_DIR) && UNITERM_FUZZ_ITERATIONS=$(FUZZ_ITERATIONS) \
 		swift test --sanitize=address --scratch-path ../../$(FUZZ_SCRATCH) \
 		--filter TableFuzzTests --filter GeoJSONFuzzTests --filter ImageWireFuzzTests \
 		--filter DocumentWireFuzzTests --filter PDFFuzzTests --filter ScriptWireFuzzTests \
-		--filter ExecFrameFuzzTests --filter ControllerFormatFuzzTests --filter ControllerPolicyFuzzTests
+		--filter ExecFrameFuzzTests --filter ControllerFormatFuzzTests --filter ControllerPolicyFuzzTests \
+		--filter DeclaredScriptFuzzTests
 
 # A failing UI test would otherwise attach a recording of the whole screen, with whatever else is
 # on it. The tests keep screenshots of uniterm's own elements instead. The scheme also keeps no

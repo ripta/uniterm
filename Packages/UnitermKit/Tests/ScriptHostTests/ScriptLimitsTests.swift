@@ -164,6 +164,9 @@ final class ScriptLimitsTests: XCTestCase {
 
     let answered = await listener.drive(timeout: .seconds(30)) { event in
       switch event {
+      case .undeclaredBegun(let connection, _):
+        connection.send(.undeclaredAdmitted)
+
       case .request(let connection, let id, _):
         connection.reply(id: id, result: .ok(Data()))
         connection.send(.ping(41))

@@ -5,7 +5,8 @@ import ScriptWire
 // A native controller for the tests. It reports what it was started with, connects to the app at
 // UNITERM_SOCKET, makes one call, reports the answer, and exits with the status its last argument
 // names, or 0. With "wait" among its arguments, it waits for a signal instead of exiting. With
-// "exec", it keeps its connection open and execs /bin/sleep, which holds the socket on.
+// "exec", it keeps its connection open and execs /bin/sleep, which holds the socket on. With
+// "second", it opens a second connection after the first and reports that answer too.
 //
 // Every line goes to stdout, so a test reads what the process itself saw.
 
@@ -19,13 +20,13 @@ print("directory: \(FileManager.default.currentDirectoryPath)")
 /// The connection, kept open for "exec" mode.
 nonisolated(unsafe) var kept: FramedSocket?
 
-func answer() -> String {
+func answer(keeping: Bool = true) -> String {
   guard let path = environment["UNITERM_SOCKET"], !path.isEmpty else { return "no socket" }
 
   do {
     let socket = try UnixSocket.connect(path: path)
 
-    kept = socket
+    if keeping { kept = socket }
 
     try socket.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
 
@@ -49,6 +50,10 @@ func answer() -> String {
 }
 
 print("call: \(answer())")
+
+if CommandLine.arguments.contains("second") {
+  print("second: \(answer(keeping: false))")
+}
 
 if CommandLine.arguments.contains("exec"), let socket = kept {
   _ = fcntl(socket.rawDescriptor, F_SETFD, 0)

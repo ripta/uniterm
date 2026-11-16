@@ -6,6 +6,10 @@ import ScriptWire
 enum ScriptSessionError: Error, Equatable {
   /// The app answered the call with a failure.
   case failed(ScriptFailureKind, String)
+
+  /// The socket belongs to another user, so the helper did not talk to it. This is a reachability
+  /// failure. The app never answered.
+  case foreignSocket(path: String)
 }
 
 /// The helper's end of one connection to the app.
@@ -70,14 +74,43 @@ final class ScriptSession: @unchecked Sendable {
   /// What a REPL's helper says when the app's end of the connection closes.
   static let replQuitText = "uniterm quit, or closed this REPL's connection"
 
-  /// Connects, exchanges the protocol version, and names the script. Throws
-  /// `WireError.versionMismatch` when the app is another version.
-  static func open(path: String, name: String) throws -> ScriptSession {
+  /// Connects and asks the app to admit a script file that declares nothing. The command has read
+  /// the file and runs it itself, so nothing of it is sent but its name and the capabilities
+  /// granted. Nothing runs until the app admits it. A refusal throws
+  /// `ScriptSessionError.failed`, and a run that waits for the user's review is told so once.
+  static func openUndeclared(
+    path: String, begin: UndeclaredBegin,
+    onReview: (String) -> Void = { FileHandle.standardError.write(Data("uniterm: \($0)\n".utf8)) }
+  ) throws -> ScriptSession {
     let session = try connect(path: path)
 
-    try session.socket.send(ScriptHelperMessage.begin(name: name).frame())
+    do {
+      try session.socket.send(ScriptHelperMessage.undeclaredBegin(begin).frame())
 
-    return session
+      var told = false
+
+      while true {
+        switch try session.readMessage() {
+        case .undeclaredAdmitted:
+          return session
+
+        case .controllerRefused(let text):
+          throw ScriptSessionError.failed(.refused, text)
+
+        // The user may take as long as they like, so the wait has no timeout.
+        case .controllerReviewing(let text) where !told:
+          told = true
+          onReview(text)
+
+        default:
+          throw WireError.badValue("the app answered an undeclared script with something else")
+        }
+      }
+    } catch {
+      session.close()
+
+      throw error
+    }
   }
 
   /// Connects and asks the app to admit a controller run. The app authenticates this process,
@@ -121,6 +154,65 @@ final class ScriptSession: @unchecked Sendable {
       session.close()
 
       throw error
+    }
+  }
+
+  /// Connects and asks the app to admit a declared script file. The app authenticates this process,
+  /// reads and copies the file itself, and answers with the copy's path and the SHA-256 of the whole
+  /// file, or with a refusal, which throws `ScriptSessionError.failed`. The run is not admitted
+  /// yet. The caller reads the copy, then reports what it declares with `declare`.
+  static func openFile(path: String, begin: FileBegin) throws -> (
+    session: ScriptSession, snapshot: String, version: Data
+  ) {
+    let session = try connect(path: path)
+
+    do {
+      try session.socket.send(ScriptHelperMessage.fileBegin(begin).frame())
+
+      switch try session.readMessage() {
+      case .fileAdmitted(let snapshot, let version):
+        return (session, snapshot, version)
+
+      case .controllerRefused(let text):
+        throw ScriptSessionError.failed(.refused, text)
+
+      default:
+        throw WireError.badValue("the app answered a file run with something else")
+      }
+    } catch {
+      session.close()
+
+      throw error
+    }
+  }
+
+  /// Reports what the file declares, and waits for the app's decision. A run whose powers wait for
+  /// the user's review is told so once, and `onReview` shows it. The app admits the run or refuses
+  /// it, and a refusal throws `ScriptSessionError.failed`.
+  func declare(
+    _ json: String,
+    onReview: (String) -> Void = { FileHandle.standardError.write(Data("uniterm: \($0)\n".utf8)) }
+  ) throws {
+    try socket.send(ScriptHelperMessage.fileDeclaration(json).frame())
+
+    var told = false
+
+    while true {
+      switch try readMessage() {
+      case .controllerAdmitted:
+        return
+
+      case .controllerRefused(let text):
+        throw ScriptSessionError.failed(.refused, text)
+
+      // The user may take as long as they like, so the wait has no timeout.
+      case .controllerReviewing(let text) where !told:
+        told = true
+        onReview(text)
+
+      default:
+        throw WireError.badValue("the app answered a declaration with something else")
+      }
     }
   }
 
@@ -171,7 +263,7 @@ final class ScriptSession: @unchecked Sendable {
     guard try UnixSocket.peerUserID(of: socket.rawDescriptor) == geteuid() else {
       socket.shutdownAndClose()
 
-      throw ScriptSessionError.failed(.refused, "the socket at \(path) belongs to another user")
+      throw ScriptSessionError.foreignSocket(path: path)
     }
 
     let session = ScriptSession(socket: socket)

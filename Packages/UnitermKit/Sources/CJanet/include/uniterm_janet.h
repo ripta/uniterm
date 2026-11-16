@@ -182,6 +182,135 @@ uniterm_script_status uniterm_janet_run_package(const uniterm_host *host, const 
                                                 uniterm_script_failure *failure);
 
 /*
+ * Runs a declared script file as uniterm_janet_run runs a script, with a fixed module loader that
+ * resolves only the bundled uniterm module. No import finds a file, relative or absolute, and
+ * native modules and images have no loader at all. `name` is the file's name in errors.
+ */
+uniterm_script_status uniterm_janet_run_declared(const uniterm_host *host, const char *name,
+                                                 const uint8_t *source, size_t length,
+                                                 uint32_t sandbox_flags,
+                                                 const char *const *arguments,
+                                                 size_t argument_count,
+                                                 uniterm_script_failure *failure);
+
+/* The most bytes of JSON a declaration may convert to. ScriptProtocol holds the same number. */
+#define UNITERM_JANET_MAX_DECLARATION_BYTES (32 * 1024)
+
+/* The most bytes of a declaration refusal, with its terminator. */
+#define UNITERM_JANET_DECLARATION_MESSAGE_CAPACITY 512
+
+typedef enum uniterm_declaration_status {
+    /* The file's first form is not a declaration. The file is not declared. */
+    UNITERM_DECLARATION_NONE = 0,
+
+    /* The first form is a valid declaration, converted to JSON in `json`. */
+    UNITERM_DECLARATION_FOUND = 1,
+
+    /* The file has a declaration problem. `message` says which. */
+    UNITERM_DECLARATION_INVALID = 2
+} uniterm_declaration_status;
+
+typedef struct uniterm_declaration {
+    /* From malloc, owned by the caller, and only for FOUND. Release it with the function below. */
+    char *json;
+    size_t json_length;
+    char message[UNITERM_JANET_DECLARATION_MESSAGE_CAPACITY];
+} uniterm_declaration;
+
+/*
+ * Reads a script file's first form with Janet's own parser, in a VM of its own, and evaluates
+ * nothing. When the form is `(declare-permissions ...)`, it checks that nothing else in the file
+ * declares, converts the declaration to JSON, and returns FOUND. The JSON is
+ * {"header": {...}, "permissions": [{...}, ...]}, with the header absent when the file names none.
+ * A keyword and a string both become a JSON string, after the declaration's field types are
+ * checked. Only literal data is accepted: keywords, strings, whole numbers, bracketed lists, and
+ * structs.
+ *
+ * The reader refuses what Janet's parser would merge or drop, which no later step could see: a
+ * struct that repeats a key, and a nil key or value. It can only refuse. A file that does not
+ * parse reads as NONE, since the run reports the parse error. The call starts and ends a VM on the
+ * calling thread, so no other VM may be running there.
+ */
+uniterm_declaration_status uniterm_janet_read_declaration(const uint8_t *source, size_t length,
+                                                          uniterm_declaration *declaration);
+
+void uniterm_janet_free_declaration(uniterm_declaration *declaration);
+
+/*
+ * The names of the functions the `uniterm` module offers, without a prefix, one for each index from
+ * zero. Returns NULL past the last. The script lint reads them to tell a function uniterm offers
+ * from a name that only looks like one.
+ */
+const char *uniterm_janet_module_function(size_t index);
+
+typedef enum uniterm_form_kind {
+    UNITERM_FORM_SYMBOL = 0,
+    UNITERM_FORM_KEYWORD = 1,
+    UNITERM_FORM_STRING = 2,
+    /* A number, nil, a boolean, or a buffer. `text` is empty. */
+    UNITERM_FORM_ATOM = 3,
+    /* `(...)`. The children are the elements. */
+    UNITERM_FORM_PAREN = 4,
+    /* `[...]`, which reads as a bracketed tuple. */
+    UNITERM_FORM_BRACKET = 5,
+    /* `@[...]`. */
+    UNITERM_FORM_ARRAY = 6,
+    /* `{...}` or `@{...}`. The children alternate key and value. */
+    UNITERM_FORM_STRUCT = 7,
+    UNITERM_FORM_TABLE = 8
+} uniterm_form_kind;
+
+/* One form of a parsed file. The nodes of a file are in pre-order, each followed by its subtree. */
+typedef struct uniterm_form_node {
+    int32_t kind;
+
+    /* The number of direct children, which a struct or table counts as keys plus values. */
+    int32_t children;
+
+    /* Where the form starts, 1-based. A form with no recorded start gets where its parent starts. */
+    int32_t line;
+    int32_t column;
+
+    /* The symbol, keyword, or string bytes, as an offset and length into the file's text. */
+    size_t text_offset;
+    size_t text_length;
+} uniterm_form_node;
+
+typedef struct uniterm_forms {
+    /* Both from malloc, owned by the caller, and released with the function below. */
+    uniterm_form_node *nodes;
+    size_t node_count;
+    char *text;
+    size_t text_length;
+
+    /* Nonempty when the file does not parse. `error_line` and `error_column` are 1-based. */
+    char message[UNITERM_JANET_DECLARATION_MESSAGE_CAPACITY];
+    int32_t error_line;
+    int32_t error_column;
+
+    /* The number of top-level forms, which are the first nodes of the list's roots. */
+    size_t root_count;
+} uniterm_forms;
+
+typedef enum uniterm_forms_status {
+    UNITERM_FORMS_OK = 0,
+    /* The file did not parse, or is nested too deeply. `message` says which. */
+    UNITERM_FORMS_ERROR = 1
+} uniterm_forms_status;
+
+/*
+ * Parses a script file with Janet's own parser, in a VM of its own, and evaluates nothing. It
+ * returns the file's top-level forms as data. A struct's entries come in the parser's order, with
+ * duplicate keys merged and nil entries dropped as the run would see them. Nesting past 512 levels
+ * is an error. The call starts and ends a VM on the calling thread, so no other VM may be running
+ * there.
+ */
+uniterm_forms_status uniterm_janet_parse_forms(const uint8_t *source, size_t length,
+                                               uniterm_forms *forms);
+
+void uniterm_janet_free_forms(uniterm_forms *forms);
+
+/*
  * What the REPL reports to its host. Both callbacks run on the thread that runs the REPL, and must
  * not unwind or trap. `line` gets each non-blank line the user enters, without its newline, before
  * the line is evaluated. `running` gets 1 when a form starts to evaluate and 0 when it ends.
