@@ -59,6 +59,10 @@ fixed ones.
 - Seen: 2026-11-14, once, in CI's package job, in the same run as the entry above.
 - Evidence: `FindTests.swift:172` counted 3 main-actor turns during the search, where it expects more than 100. The
   test took 6.6 s there and about 1.2 s locally, where it passed 10 of 10 alone.
+- Seen again: 2026-11-15, once, in a local full `make test-package` run during a work-queue run that touches no
+  text-viewer code. It counted 35 turns. It passed alone and in the next full run.
+- Seen again: 2026-11-15, once, in a local full `make test-package` run after a launcher layout fix that touches no
+  text-viewer code. It counted 54 turns, the only failure of 2606 tests. It passed alone right after, in 1.3 s.
 - Suspected cause: the main actor was busy for seconds at a time, likely laying out the four-million-character text,
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.
@@ -107,6 +111,38 @@ fixed ones.
 - Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list". The rerun passed.
 - Suspected cause: the test checks `isHittable` right after the scroll, with no wait for the list to settle. Not
   confirmed.
+- Status: unresolved.
+
+### `TerminalSessionIntegrationTests.testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose`
+
+- Seen: 2026-11-15, once, in a local `make test-package` run during a work-queue run that touches no terminal code.
+- Evidence: the test asserted that the system pasteboard held `SECRET-STALE`. It held text another session had just
+  written to it. The test passed alone, and the next full run passed.
+- Suspected cause: the test reads the real, shared system pasteboard. Any other program that writes it mid-run
+  changes what the test sees. Not confirmed.
+- Status: unresolved.
+
+### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
+
+- Seen: 2026-11-15, in four local runs during the work-queue run that added strict and unsafe script modes. Each run
+  failed a different test, and every test passed in at least one other run of the same code:
+  - `testAPlainScriptsQuestionNamesItsRun`, `testControllersAndPermissionsShowsAndRevokesTheApproval`, and
+    `testThePanelAllowsOnceAndDeniesAReview` failed in one five-class run. All three passed together when run alone.
+  - `testThePanelTrustsAVersionThatThenRunsWithoutAsking` failed with "the window never showed the review. The shell
+    wrote none. Standard output: none Standard error: none". The typed shell line never ran.
+  - `testADeclaredFilesReviewAndApprovalReachThePanelAndTheWindow` exceeded its 1-minute allowance as the first test of
+    a class-only run.
+- Evidence: the class passed 7 of 7, four times, before the change. The change made each test's run wait for a review,
+  and added two tests. The failure messages now report what the shell and the command wrote.
+- Suspected cause: lost keystrokes or focus races between app instances, or a system prompt holding the first test.
+  Not confirmed, and not reproduced on the commit before the change.
+- Status: unresolved.
+
+### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
+
+- Seen: 2026-11-15, once, in a five-class local run. It passed in the run before.
+- Evidence: "Unable to find hit point for ScrollView, {{20.0, 749.0}, {739.0, 180.0}}".
+- Suspected cause: the scroll view was covered or still moving when the test clicked it. Not confirmed.
 - Status: unresolved.
 
 ## Fixed

@@ -1,6 +1,7 @@
 # The second-Ctrl-C test sometimes sees the first Ctrl-C end the script
 
 **Status:** open
+**Triaged:** 2026-11-15 (not reproducible; see investigation notes)
 **Validation:** not confirmed. Seen once in a full package run. It passed alone and in another full run.
 
 ## Observed
@@ -27,3 +28,20 @@ Not traced. A product race, where the interrupt hook reaches the read after all,
 
 Read `waitUntilBlocked` and what it samples. Then run the full package suite several times and see whether the failure
 recurs, and in which order.
+
+## Investigation notes
+
+Triage run on 2026-11-15.
+
+- No separate regression test exists. The failing test is the only one that covers this path.
+- The test passes alone on the current build: 1 test, 0 failures, 1.07 s.
+- A full-suite repeat was not run, so the failure did not recur.
+- `waitUntilBlocked` polls `mainThreadIsWaiting` every 10 ms. That reads the oldest thread's run state and returns true
+  for `TH_STATE_WAITING`. It does not say what the thread waits on.
+- The fixture writes the marker with `spit` and then reads stdin. `spit` is local to the helper, not an app call. So
+  the helper has no app reply to wait on between the two steps.
+- A short kernel wait after the write, such as closing the file or a page fault under load, would still read as
+  waiting. The first SIGINT could then land before the read begins. That matches both symptoms in the report.
+- This is a hypothesis about test synchronization. A product race is not ruled out.
+- Next step: run the full package suite several times in the original order and note whether the failure recurs.
+  If it does, make the test wait for the read itself, for example by having the fixture signal after the read begins.
