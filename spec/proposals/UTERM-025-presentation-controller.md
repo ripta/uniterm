@@ -8,9 +8,12 @@
 
 - UTERM-024, a required prerequisite: Next Slide and Previous Slide, bound to the arrow keys and Page Up and Page Down
 - UTERM-030, a required prerequisite: slide text that fills the pane, and slide images
+- UTERM-032, a required prerequisite: the deck's folder, granted when the presenter starts
+- UTERM-015 M4, a required prerequisite through UTERM-030 and UTERM-032: the path-reading power
+- UTERM-003, for `uniterm run` and the Janet module
 - UTERM-004, for controller runs, layout requests, groups, and remote control of the pane it opens
 - UTERM-007, for the text viewer that shows the slides
-- UTERM-021, for the `declare-permissions` form, including the `:fs-read` capability that reads the deck
+- UTERM-021, for the `declare-permissions` form
 
 ## Impacts
 
@@ -20,11 +23,12 @@
 
 ## Summary
 
-A presentation controller shows a Markdown deck, one slide at a time, in a text viewer pane. The user steps forward and
-back with the arrow keys, Page Up and Page Down, a clicker, or the palette. It is a controller, not an applet.
+A presentation controller shows a Markdown deck, one slide at a time, in a text viewer pane beside the terminal that
+started it. The user steps forward and back with the arrow keys, Page Up and Page Down, a clicker, or the palette. It is
+a controller, not an applet.
 
-Everything here is on the hot path. Speaker notes and the presenter view are UTERM-026. Other deck sources and Go to
-Slide are UTERM-029.
+Everything here is on the hot path. Speaker notes, pane zoom, and the presenter view are UTERM-026. Other deck sources
+and Go to Slide are UTERM-029.
 
 ## Motivation
 
@@ -45,7 +49,8 @@ The repo has no sample controller today, and no `.janet` file outside the test f
 Decision: the presenter is a controller that drives existing applets. It adds no applet type.
 
 Rationale: the applets already show the content. What a presenter adds is sequence and input, which is controller work.
-Any gap it finds belongs to the controller model, where every other controller gains from the fix.
+Any gap it finds belongs to the controller model, where every other controller gains from the fix. A slide mode built
+into the viewer would need fewer prerequisites, but would prove nothing about controllers.
 
 ### A Markdown deck
 
@@ -53,17 +58,25 @@ Decision: the deck is one Markdown file. Slides may hold headings, lists, code, 
 
 Rationale: Markdown is the one deck source the text viewer shows today. PDF, image, and HTML decks are UTERM-029.
 
-### Slides only
+### Slides only, beside the terminal
 
-Decision: the presenter shows slides, in one pane. Speaker notes are UTERM-026.
+Decision: the presenter shows slides in one pane, beside the terminal that started it, in a normal window. Speaker notes
+and a slide that fills the screen are UTERM-026.
 
-Rationale: in one window the audience sees every pane, so a notes pane would show them the notes. Private notes need a
-second window, which UTERM-026 settles.
+Rationale: in one window the audience sees every pane, so a notes pane would show them the notes. A slide beside the
+terminal suits a live demo, and the user chose it as enough for the hot path.
+
+### How it starts
+
+Decision: the user starts the presenter on a deck. The deck's folder is granted for that run under UTERM-032, and the
+deck's text arrives on stdin. The presenter holds no file access of its own.
+
+Rationale: the user chose the least access that works. Images load from the granted folder through UTERM-030.
 
 ### The deck stays in the user's files
 
-Decision: the user names the deck when starting the presenter. The presenter reads it, and keeps no copy beyond its run.
-Restoring a layout that held a presentation restores the pane inert, per ADR-03 and UTERM-004.
+Decision: the presenter keeps no copy of the deck beyond its run. Restoring a layout that held a presentation restores
+the pane inert, per ADR-03 and UTERM-004.
 
 Rationale: the deck is the user's document. A copy would go stale when the user edits it, and would hold content the
 user did not choose to store. `show-markdown` carries each slide without writing it to disk, unlike `uniterm/send`.
@@ -71,8 +84,8 @@ user did not choose to store. `show-markdown` carries each slide without writing
 ### Stepping
 
 Decision: Next Slide and Previous Slide are the presenter's commands, declared through UTERM-024. Right Arrow, Down
-Arrow, Page Down, and Space step forward. Left Arrow, Up Arrow, and Page Up step back. Each command is also in the
-palette. Stepping past either end leaves the slide in place and posts a status message.
+Arrow, and Page Down step forward. Left Arrow, Up Arrow, and Page Up step back. Each command is also in the palette.
+Stepping past either end leaves the slide in place and posts a status message.
 
 Rationale: these are the keys people step slides with, and the keys clickers send. A press past the end is a common
 slip mid-talk, so the slide stays up rather than blanking.
@@ -86,29 +99,20 @@ slip mid-talk, so the slide stays up rather than blanking.
 - **An example script in the repo.** A declared Janet file. Less to build, but it reaches only users with a checkout.
 - **A separate repository.** Its own releases and signing. Keeps uniterm free of a built-in presenter.
 
-### How it starts and ends
+### How it ends
 
-A declared `:fs-read` is granted only when the run also passes `--allow fs-read`, so a script presenter starts as
-`uniterm run --allow fs-read presenter.janet deck.md`. That capability reads any file the user can. Options:
-
-- **`:fs-read`**, as above.
-- **The deck on stdin**, which needs no capability.
-- **UTERM-030's path-reading power**, if it settles that the viewer opens the deck by path. The presenter then reads
-  nothing itself.
-
-Also: whether Ctrl-C in the source terminal is the only way to end it, or a Stop command joins Next and Previous.
+Whether Ctrl-C in the source terminal is the only way to end it, or a Stop command joins Next and Previous.
 
 ### Deck format rules
 
 - How slides split. A `---` line collides with a setext heading, where a line of text is followed by `---`, and with
   `---` inside a fenced code block.
-- How a slide references images, which UTERM-030 resolves.
+- How a slide references images, relative to the deck file.
 - Whether the format is versioned, if the presenter ships in the bundle.
 
 ### Layout
 
-Where the slide pane sits beside the starting terminal, and its weight. Whether the starting terminal is in the
-presenter's group decides whether a chord steps the deck from the terminal, per UTERM-024 "The source pane".
+Where the slide pane sits beside the starting terminal, and its weight.
 
 ### Slide size
 
@@ -117,11 +121,12 @@ refuse to start, or show an error slide in its place.
 
 ## Risks
 
-- **UTERM-024's and UTERM-030's designs change what the presenter can do** — likelihood: medium, impact: medium.
-  Mitigation: this proposal stays a draft until both are accepted, and its milestone follows theirs.
-- **The presenter depends on UTERM-024's open "The source pane" for stepping from the terminal** — likelihood: medium,
-  impact: low. During a live demo the user clicks back into the slide pane to step. Mitigation: settle "Layout" with
-  UTERM-024's answer in hand.
+- **The prerequisites' designs change what the presenter can do** — likelihood: medium, impact: medium. Mitigation:
+  this proposal stays a draft until UTERM-024, UTERM-030, and UTERM-032 are accepted.
+- **UTERM-015 M4 is unbuilt and large** — likelihood: high, impact: medium. Slide images wait on it, and it waits on
+  UTERM-004 M6. Mitigation: it is already queued. The presenter's milestone follows it.
+- **Stepping needs focus in the slide pane** — likelihood: medium, impact: low. During a live demo the user clicks back
+  into the slide pane to step. Accepted: chords from the terminal are UTERM-031.
 - **A deck file is untrusted input** — likelihood: medium, impact: medium. Mitigation: the text viewer already renders
   untrusted Markdown. The presenter passes content through and adds no rendering of its own.
 - **Shipping a controller in the bundle is a new contract** — likelihood: medium, impact: medium. Users would depend on
@@ -134,8 +139,8 @@ refuse to start, or show an error slide in its place.
 **Status:** NOT STARTED
 
 - Starting the presenter on a Markdown deck opens a slide pane beside the starting terminal, in the slide style
-- The arrow keys, Page Up and Page Down, Space, and the palette step the deck while the slide pane has focus
-- A slide's images load
+- The arrow keys, Page Up and Page Down, and the palette step the deck while the slide pane has focus
+- A slide's images load from the deck's folder
 - Stepping past either end leaves the slide in place and posts a status message
 - Ending the presenter removes its commands and keys, and leaves the pane showing the last slide
 - A slide over the size cap is handled as "Slide size" settles
@@ -148,8 +153,12 @@ refuse to start, or show an error slide in its place.
 - 2026-11-15: Speaker notes moved off the hot path to UTERM-026. The user chose this after the design critic found that
   one window shows the audience every pane.
 - 2026-11-15: Readable projected text and slide images are required. The user chose both, and they became UTERM-030.
-- 2026-11-15: Stepping uses the arrow keys and Page Up and Page Down, through UTERM-024's navigation keys. The user
-  noted that people step slides with plain arrow keys.
+- 2026-11-15: Stepping uses the arrow keys and Page Up and Page Down. The user noted that people step slides with plain
+  arrow keys. Space was dropped from the keys, since it types text.
+- 2026-11-15: The deck's folder is granted at run time, and the deck arrives on stdin. The user chose this, and it
+  became UTERM-032.
+- 2026-11-15: A slide pane beside the terminal is enough for the hot path. The user chose this. Pane zoom stays in
+  UTERM-026.
 
 ## References
 

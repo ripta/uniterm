@@ -48,7 +48,8 @@ Registry commands take no arguments today. Options for naming the slide:
 
 - **A number typed in the palette**, which needs a new palette contract for an argument.
 - **A form**, through UTERM-022's Questions applet.
-- **A list of slide titles as commands**, which needs UTERM-024's runtime declaration.
+- **A list of slide titles as commands**, which needs commands declared at runtime. UTERM-024 declares commands in
+  the controller's file only, so this adds runtime declaration.
 
 ## Risks
 
