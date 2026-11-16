@@ -1,0 +1,50 @@
+# Images in Markdown a script sends resolve anywhere on the volume
+
+**Status:** open, not reproduced, traced only
+**Estimate:** small; one design decision
+**Found:** 2026-11-15, by the design critic reviewing UTERM-030
+
+## Observed
+
+A script with pane control and no file capability can make the text viewer read and show an image it names by path.
+Nothing was run. The path below is traced through the code.
+
+`ScriptSentContent.swift:5-8` states the contract: "A script sends bytes and a name, never a path, so what a script may
+read stays under its own sandbox."
+
+The code does not keep it for Markdown images:
+
+1. `uniterm/send` writes the bytes to `~/Library/Application Support/uniterm/sent/<instance>/<uuid>/<name>`
+   (`ScriptSentContent.swift:90-100`).
+2. The viewer loads that file like a file the user opened. `MarkdownLoading.loadBlocking` sets the image folder to the
+   file's parent (`MarkdownLoading.swift:18-21`).
+3. The image walk confines a path to the folder's volume, not the folder. A `..` step passes on a device check alone
+   (`ConfinedFile.swift:94-101`). That is the documented rule for documents the user opens, per UTERM-007's 2026-11-08
+   ADR candidate.
+4. So `![](../../../../../../Documents/x.png)` in sent Markdown climbs from the sent folder to `~` and reads
+   `~/Documents/x.png`.
+
+The script never sees the bytes. The image shows on screen, and the read uses uniterm's own macOS privacy grant for
+Documents, or raises a privacy prompt under uniterm's name. UTERM-015 "The path-reading power" rules out exactly that:
+a script with no file capability must not borrow uniterm's grants. Inline Markdown from `show-markdown` is not affected.
+It has no folder, so its images show alt text (UTERM-007 "Control levels").
+
+## Repro
+
+Not yet written. A script with `{:kind :pane-control :version 1}` and no capability sends Markdown that names a test
+image above the sent folder, to a remote-controlled text viewer pane.
+
+- Expected, per `ScriptSentContent.swift:7`: the image does not load.
+- Traced: the image loads.
+
+## Fix
+
+This needs a design call. The candidates:
+
+- Give sent Markdown no image folder, as inline Markdown has. Sent documents lose relative images, which they cannot
+  have in a useful way anyway, since the sent folder holds only the one file.
+- Confine a sent document's images to its own sent folder, refusing any `..` that leaves it.
+- Refuse `..` in image paths for every document that did not come from the user.
+
+UTERM-030 "How a slide finds its images" designs scoped image loading for controllers. It should use whichever rule
+this settles.
