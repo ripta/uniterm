@@ -63,19 +63,18 @@ verified identity matches. The record is a hint. It grants nothing, and the user
 - The record changes the layout envelope, so its version goes up under ADR-06. An older build keeps a newer file aside.
 - The record is display and matching data only. Authority comes from the run's fresh verified binding and the user's
   approval, per ADR-09.
+- The record holds the verified selector the run had, the same ones remembered approvals use under UTERM-021: the
+  identity, an ID and key fingerprint, for a package or a signed file, and the version, the file's SHA-256, otherwise.
+  Matching follows the approval rules. An identity matches across versions. A version matches only the same bytes.
+- An unsigned file's `:id` is never recorded or matched. It is a claim, and ADR-09 says a claimed name proves nothing.
 
 Rationale: without a record, any run from the source pane could be offered any restored group. UTERM-004 records no
 reason for leaving the identity out. Its rules are that a restored layout grants no authority and that a grant binds a
-current verified identity. A hint that grants nothing keeps both. ADR-09 says a saved name is no proof of identity,
+current verified identity. A hint that grants nothing keeps both. Reusing the approval selectors means a group follows
+its controller exactly as remembered trust does, with no second notion of identity. ADR-09 says a saved name is no proof of identity,
 which is why the hint only narrows the offer, and never stands in for verification. The user chose to track the group.
 
 ## Design Decisions (Open)
-
-### What the record holds
-
-A declared file's `:id` is optional under UTERM-021. Options for a file without one: its content hash, which changes on
-every edit, or no record, so the file cannot reclaim. A package's identity is its controller ID. Also: whether a
-different version of the same controller matches.
 
 ### How the run learns of the group
 
@@ -126,6 +125,9 @@ verified.
 - 2026-11-16: The saved group records the controller that made it, as a hint that grants nothing. The user said the
   group needs tracking. The previous text claimed UTERM-004 saves no such record by design. UTERM-004 records no reason
   for that, and nothing in it or ADR-09 forbids a record that grants nothing.
+- 2026-11-16: The record holds the run's verified selector, identity or version, matched by the approval rules. The
+  user noted it had a correct answer. The previous text left it open, with a content hash or no record as options for
+  a file without an `:id`.
 
 ## References
 
