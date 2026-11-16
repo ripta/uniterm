@@ -576,7 +576,15 @@ final class SocketRelay: @unchecked Sendable {
     process.standardError = FileHandle.nullDevice
 
     output.fileHandleForReading.readabilityHandler = { [weak self] handle in
-      self?.take(handle.availableData)
+      let data = handle.availableData
+
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+
+        return
+      }
+
+      self?.take(data)
     }
 
     try process.run()

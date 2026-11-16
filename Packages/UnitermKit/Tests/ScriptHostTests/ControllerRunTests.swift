@@ -776,9 +776,24 @@ final class ControllerRunTests: XCTestCase {
       result.standardOutput.contains("did not declare pane-control"), result.standardOutput)
     XCTAssertFalse(windows.calls.contains(.listWindows))
   }
+
+  /// Catches a collector that keeps its handler once the pipe ends. A handler left on an ended pipe
+  /// is called again and again for as long as the test process lives, and each one holds a core.
+  func testALineCollectorLetsGoOfItsPipeAtTheEnd() async throws {
+    let pipe = Pipe()
+    let collector = LineCollector(pipe.fileHandleForReading)
+
+    pipe.fileHandleForWriting.write(Data("one\n".utf8))
+    try pipe.fileHandleForWriting.close()
+
+    expect(
+      await waitUntil(timeout: .seconds(5)) { pipe.fileHandleForReading.readabilityHandler == nil },
+      "the collector kept reading an ended pipe")
+    XCTAssertEqual(collector.text, "one\n")
+  }
 }
 
-/// Collects a pipe's text as it arrives.
+/// Collects a pipe's text as it arrives, and lets go of the pipe at its end.
 final class LineCollector: @unchecked Sendable {
   private let lock = NSLock()
   private var collected = ""
@@ -787,7 +802,13 @@ final class LineCollector: @unchecked Sendable {
     handle.readabilityHandler = { [weak self] handle in
       let data = handle.availableData
 
-      guard let self, !data.isEmpty else { return }
+      guard !data.isEmpty else {
+        handle.readabilityHandler = nil
+
+        return
+      }
+
+      guard let self else { return }
 
       self.lock.lock()
       self.collected += String(decoding: data, as: UTF8.self)
