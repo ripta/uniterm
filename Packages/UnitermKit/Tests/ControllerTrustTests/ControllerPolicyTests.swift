@@ -325,6 +325,34 @@ final class ControllerPolicyTests: XCTestCase {
 
     XCTAssertEqual(first.read().policies, [Self.policy([.paneControl])])
   }
+
+  /// Catches a write the reader would refuse as too large. The next read would move the whole file
+  /// aside, and every remembered approval would stop working. Policies under the count cap can still
+  /// pass the byte limit through host-launch environment keys, so the store refuses the write and
+  /// keeps the file it had.
+  func testAWriteOverTheByteLimitIsRefusedAndTheFileKept() throws {
+    let store = ControllerTrustStore(directory: folder)
+
+    try store.update { _ in [Self.policy([.paneControl])] }
+
+    let padding = String(repeating: "K", count: HostLaunchScope.maxKeyBytes - 3)
+    let keys = (0..<HostLaunchScope.maxEnvironmentKeys).map { padding + String(format: "%03d", $0) }
+    let large = try (0..<200).map { index in
+      ControllerPolicy(
+        selector: .version(
+          controllerID: "dev.uniterm.fixture.large\(index)", version: Self.version),
+        name: "Large", scopes: [try launch("/tmp", keys: keys)], approved: "2026-11-11T10:00:00Z")
+    }
+
+    XCTAssertGreaterThan(ControllerPolicyFile.encode(large).count, ControllerPolicyFile.maxBytes)
+    XCTAssertThrowsError(try store.update { _ in large })
+
+    let state = store.read()
+
+    XCTAssertEqual(state.policies, [Self.policy([.paneControl])])
+    XCTAssertTrue(state.writable)
+    XCTAssertEqual(store.keptAsideFiles.count, 0)
+  }
 }
 
 /// The state a read on another thread returned.

@@ -127,8 +127,18 @@ public struct ControllerTrustStore: Sendable {
               + "Revoke some in Controllers & Permissions first.")
         }
 
+        let encoded = ControllerPolicyFile.encode(policies)
+
+        // The reader refuses a larger file as broken and moves it aside, which would end every
+        // remembered approval. Policies under the count cap can still pass the limit.
+        guard encoded.count <= ControllerPolicyFile.maxBytes else {
+          throw ControllerTrustStoreError.io(
+            "uniterm's \(subject) approvals would not fit in its policy file. "
+              + "Revoke some in Controllers & Permissions first.")
+        }
+
         do {
-          try AtomicFile.write(ControllerPolicyFile.encode(policies), to: fileURL)
+          try AtomicFile.write(encoded, to: fileURL)
         } catch {
           throw ControllerTrustStoreError.io("\(error)")
         }
