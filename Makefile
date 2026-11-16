@@ -8,6 +8,10 @@ MAKEFLAGS += --warn-undefined-variables
 
 # Xcode build output, including the .app bundle.
 DERIVED_DATA ?= .build/DerivedData
+# Xcode build output for the UI tests. A test build signs the helpers with Xcode's test exceptions,
+# and a later plain build in the same folder keeps the app's copies of them. So the UI tests build
+# here, apart from the app that `make run` launches and the helper sandbox tests probe.
+TEST_DERIVED_DATA ?= .build/DerivedData-test
 # Where SwiftPM keeps checkouts for the Xcode build.
 SOURCE_PACKAGES ?= .build/SourcePackages
 # Where `swift build` and `swift test` keep the package build.
@@ -29,10 +33,12 @@ TEST_TIME_LIMIT ?= 120
 
 PACKAGE_DIR := Packages/UnitermKit
 SWIFT_DIRS := App Helpers UITests $(PACKAGE_DIR)/Sources $(PACKAGE_DIR)/Tests $(PACKAGE_DIR)/Package.swift
-XCODEBUILD := xcodebuild -project uniterm.xcodeproj -scheme uniterm \
+xcodebuild_into = xcodebuild -project uniterm.xcodeproj -scheme uniterm \
 	-configuration $(CONFIGURATION) \
-	-derivedDataPath $(DERIVED_DATA) \
+	-derivedDataPath $(1) \
 	-clonedSourcePackagesDirPath $(SOURCE_PACKAGES)
+XCODEBUILD := $(call xcodebuild_into,$(DERIVED_DATA))
+XCODEBUILD_TEST := $(call xcodebuild_into,$(TEST_DERIVED_DATA))
 
 ##@ Build
 
@@ -58,7 +64,7 @@ run: build ## Build, then run uniterm.app in the foreground
 
 .PHONY: clean
 clean: ## Remove Xcode and SwiftPM build output. Keeps the Ghostty cache
-	rm -rf .build/DerivedData .build/SourcePackages .build/swiftpm
+	rm -rf .build/DerivedData .build/DerivedData-test .build/SourcePackages .build/swiftpm
 
 # A hung package test outlives a cancelled `swift test`, and only this checkout's orphans are ended.
 .PHONY: clean-test-processes
@@ -108,7 +114,7 @@ fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, 
 # records nothing either.
 .PHONY: test-app
 test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission
-	scripts/run-ui-tests.sh $(XCODEBUILD) -test-timeouts-enabled YES \
+	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) -test-timeouts-enabled YES \
 		-default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120 \
 		-collect-test-diagnostics never test
 

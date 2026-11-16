@@ -278,6 +278,22 @@ if [[ -s "$scratch/watch-err" ]]; then
 fi
 echo "PASS: a passing run is passed through untouched"
 
+# A UI test build signs the helpers with Xcode's test exceptions, and a later plain build in the same
+# folder keeps the app's copies of them. So the UI tests must never build where the helper sandbox
+# probes and `make run` read the app.
+derived_data_paths() {
+  make -C "$root" -n "$1" | grep -o -- '-derivedDataPath [^ ]*' | sort -u
+}
+
+test_build_paths="$(derived_data_paths test-app)"
+for target in build test-helper-sandbox; do
+  if [[ -z "$test_build_paths" ]] || [[ "$(derived_data_paths "$target")" == "$test_build_paths" ]]; then
+    echo "FAIL: make test-app builds into the same folder as make $target: $test_build_paths" >&2
+    exit 1
+  fi
+done
+echo "PASS: the UI tests build apart from the app the helper sandbox probes"
+
 status=0
 run_watch 30 failing || status=$?
 expect_watch_status "a failing run passes its status through" 3 "$status"

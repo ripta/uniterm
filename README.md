@@ -40,7 +40,8 @@ Commands:
 - `make build` builds the pinned libghostty, then `uniterm.app`, into `.build/DerivedData`.
 - `make run` builds, then runs the app in the foreground, so its logs and any crash show in the terminal.
 - `make test` runs the CI gating checks, package tests, and app UI tests. UI tests need a logged-in desktop session
-  and Accessibility permission for the terminal. `make test-ci` runs just the CI gating checks, without Xcode or Zig.
+  and Accessibility permission for the terminal. The UI tests build into `.build/DerivedData-test`, so their test
+  signing never reaches the app that `make build` leaves. `make test-ci` runs just the CI gating checks, without Xcode or Zig.
 - `make fuzz` runs the table readers' fuzzer under the address sanitizer, in its own build folder. It tries
   `FUZZ_ITERATIONS` mutated inputs, 5000 by default. `make test-package` runs the same fuzzer at a small count. `make ci`
   does not run `make fuzz`.
