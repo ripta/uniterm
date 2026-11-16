@@ -1,6 +1,6 @@
 # UTERM-021 M1-M5: declared script permissions work-queue run
 
-Started 2026-11-15. This report covers a `/work-queue` run with no arguments, which means `next 1`. The run takes one
+Started and finished 2026-11-15. This report covers a `/work-queue` run with no arguments, which means `next 1`. The run takes one
 row, `UTERM-021 M1-M5`, from `spec/proposals/UTERM-021-declared-script-permissions.md`. UTERM-021 lets a single Janet
 file declare its powers in a first `(declare-permissions ...)` form. The app snapshots the file, reviews the declared
 powers, and remembers trust by version or signed identity. Strict mode refuses a file that declares nothing, and a lint
@@ -13,7 +13,7 @@ Step 0 fetched `upstream/main`. The branch already held it, so no rebase ran. Th
 both the commit "Merge pull request #55 from ripta/agent/petunia-1115/bug-filings".
 
 The row has no dependencies and no milestone carries a `Live after` line. Nothing is held, blocked, or skipped, and no
-work is stashed.
+work is stashed. The row is finished.
 
 | Milestone | Run status | Commit |
 |---|---|---|
@@ -443,3 +443,45 @@ same-user limit, so it does not pass the bar.
 - `proposals.py freeze` reports nothing.
 - The coordinator ran the full `make test-app` on the row's code before these fixes: 164 tests, 0 failures, about
   26 minutes. That includes every UI test that failed in the M4 runs. The fixes changed package code and tests only.
+
+The row then finished in "Mark UTERM-021 implemented and move its row to history". `proposals.py check` reports
+nothing.
+
+## Final review
+
+Commit: "Correct UTERM-021's fixture risk and tidy a signature doc comment".
+
+A fresh reviewer and `adr-impact` read the whole run, with the ADR review. The range adds or edits no ADR. Neither found
+a correctness or security defect, and the freeze check passes.
+
+### Findings
+
+- The Risks section still said the repo's fixtures gain declarations, which M4 changed. Fixed as a correction of
+  fact, with a Decision Log entry quoting the replaced text.
+- Two M4 As built paragraphs had unwrapped lines. Rewrapped with the words unchanged.
+- A signature doc comment packed two ideas into a 125-column line. Fixed.
+- The exit-77 Decision Log entry's last line lacks its continuation indent. Left open: the proposal is implemented,
+  and the freeze check rejects a whitespace edit inside a Decision Log entry.
+- `PendingRequestsTests.testAReviewArrivingAboveTheSelectionLeavesTheSelectionOnItsRow` polls with 50 ms sleeps.
+  Left open: the host has no change signal for its undeclared reviews, and the repo's other waits poll the same way.
+
+### ADR candidate
+
+- ADR candidate (hard to reverse): the `uniterm` command's exit status tells a caller whether to retry. "No uniterm
+  is reachable" stays apart from "uniterm answered no", and a published status never changes meaning. External
+  retry loops depend on it, and this run added 77 beside 69. Undecided. UTERM-021 was already frozen when the final
+  review found it, so it is recorded here instead of in that proposal's Decision Log.
+
+The run's other candidates were weighed and declined in the milestone sections above. Each was a mechanism that ADR-09
+already covers, or the proposal's Decision Log had already declined it.
+
+## Run summary
+
+All five milestones are DONE, and UTERM-021 is implemented. Nothing is held, blocked, or stashed.
+
+Edits the run found but did not make:
+
+- Commit "Record how auto mode learned to reject computed git staging" landed on this branch from another session
+  during the run. The run did not review or change it.
+- UTERM-003 lists the command's public exit statuses without 77. UTERM-003 is frozen, so UTERM-021's Impacts section
+  records the change.
