@@ -29,7 +29,7 @@ same gap a Janet controller has. Today a driver hears only its own pane's applet
 
 ### The same commands and limits
 
-Decision: a driver's commands follow UTERM-024's rules: the same navigation-key list, the same text-input carve-out,
+Decision: a driver's commands follow UTERM-024's rules: the same keys, the same opt-in rule for panes,
 the same key ownership, and the same cleanup when the driver ends.
 
 ## Design Decisions (Open)

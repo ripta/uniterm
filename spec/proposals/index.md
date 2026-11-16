@@ -25,15 +25,15 @@
 | [UTERM-021](UTERM-021-declared-script-permissions.md) | Script files declare their powers, with strict mode by default and a lint | implemented |
 | [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | accepted |
 | [UTERM-023](UTERM-023-controller-runs-with-sip-off.md) | What uniterm does for controller runs on a Mac with SIP off | draft |
-| [UTERM-024](UTERM-024-controller-input-channel.md) | Janet controllers declare palette commands bound to navigation keys, and read the user's invocations | draft |
+| [UTERM-024](UTERM-024-controller-input-channel.md) | Janet controllers declare palette commands bound to keys, and read the user's invocations | draft |
 | [UTERM-025](UTERM-025-presentation-controller.md) | Present a Markdown deck in a text viewer pane beside the terminal, stepped with the arrow keys or the palette | draft |
 | [UTERM-026](UTERM-026-screen-control.md) | Speaker notes in a presenter view, pane zoom, and windows across displays | draft |
 | [UTERM-027](UTERM-027-controller-plain-keys.md) | Plain keys for controllers, folded back into UTERM-024 | retracted |
 | [UTERM-028](UTERM-028-exec-driver-commands.md) | Exec drivers declare commands and receive their invocations | draft |
 | [UTERM-029](UTERM-029-presentation-extras.md) | PDF, image, and HTML decks, and Go to Slide, for the presenter | draft |
 | [UTERM-030](UTERM-030-text-viewer-slides.md) | A slide style and deck images for the text viewer | draft |
-| [UTERM-031](UTERM-031-controller-chords.md) | Controllers bind chords to their commands, never taking a terminal's typed input | draft |
-| [UTERM-032](UTERM-032-run-time-read-scope.md) | The user grants a controller one folder to read when starting it | draft |
+| [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | draft |
+| [UTERM-032](UTERM-032-run-time-input-file.md) | A script takes its input file as an argument, and its folder is granted for slide images | draft |
 
 ## Dependency Graph
 
@@ -68,7 +68,7 @@ UTERM-028 ← UTERM-004, UTERM-013, UTERM-024
 UTERM-029 ← UTERM-003, UTERM-007, UTERM-025
 UTERM-030 ← UTERM-004, UTERM-007, UTERM-015, UTERM-032
 UTERM-031 ← UTERM-013, UTERM-024
-UTERM-032 ← UTERM-004, UTERM-015, UTERM-021
+UTERM-032 ← UTERM-003, UTERM-004, UTERM-015, UTERM-021
 ```
 
 ## Not Yet Filed

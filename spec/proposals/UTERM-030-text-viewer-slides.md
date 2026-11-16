@@ -2,20 +2,20 @@
 
 **Status:** draft
 **Created:** 2026-11-15
-**Updated:** 2026-11-15
+**Updated:** 2026-11-16
 
 ## Dependencies
 
 - UTERM-007, for the text viewer, its Markdown page, and its remote schema
 - UTERM-004, for remote control of a viewer pane
 - UTERM-015, for the path-reading power and its checks, built in its M4
-- UTERM-032, for the folder the user grants the controller at run time
+- UTERM-032, for the input file's folder the user grants when starting the controller
 
 ## Impacts
 
 - UTERM-025 — the whole proposal: this is a required prerequisite of the presentation controller. Slides need text
   that fills the pane, and images.
-- UTERM-024 — "Which panes take navigation keys": the text viewer's page opts in to navigation keys. The arrow keys step
+- UTERM-024 — "Which panes take a controller's keys": the text viewer's page opts in to controller keys. The arrow keys step
   slides, so a slide's overflow rule cannot rely on scrolling by keyboard.
 - UTERM-007 — "Control levels": the viewer's remote schema gains a minor version.
 
@@ -48,23 +48,25 @@ features.
 ### A slide style, not a zoom
 
 Decision: the viewer gains a named slide style that a controller sets on its pane. The style sizes type to the pane and
-drops the column cap. There is no arbitrary zoom or scale factor.
+drops the column cap. There is no arbitrary zoom or scale factor. The style is not saved with the layout.
 
 Rationale: a slide needs type laid out for a slide, sized from the pane, with headings and lists in proportion. A zoom
 factor scales the document style, so it keeps the column and leaves the controller guessing a number for each display.
 
 ### Slide images
 
-Decision: `show-markdown` takes a base folder for a slide's relative images. The folder must lie inside the folder the
-user granted at run time, under UTERM-032. The viewer reads each image under UTERM-015 M4's checks.
+Decision: `show-markdown` takes a base folder for a slide's relative images. The folder must lie inside the input
+file's folder the user granted, under UTERM-032. The viewer reads each image under UTERM-015 M4's checks.
 
 - Each image path is confined to the granted folder. A `..` or a symlink that leaves it is refused. This is stricter
   than the volume rule for documents the user opens, per UTERM-007's 2026-11-08 ADR candidate.
 - A missing, refused, or out-of-scope image shows the same alt text, so the outcome tells the controller nothing about
   what exists.
 - Remote, root-relative, and data-URI images stay refused, as for any Markdown the viewer shows.
+- Once the grant ends, the viewer reads no further image. A slide that renders again, such as after WebKit's content
+  process restarts or an undo restores it, shows alt text.
 
-Rationale: the user chose a folder scoped at run time, with the controller holding no file access, over sending image
+Rationale: the user chose a folder granted at run time, with the controller holding no file access, over sending image
 bytes with each slide. The folder confinement follows UTERM-015's rule that a controller never borrows uniterm's macOS
 privacy grants. The bug "Images in Markdown a script sends resolve anywhere on the volume" shows what the volume rule
 allows for content a program supplied.
@@ -81,8 +83,7 @@ rule. An older controller reaching a newer viewer gets the document style and no
 
 How type sizes from the pane, such as from its height or its width, and the bounds on it. How a slide that overflows
 the pane behaves. Shrinking to fit works with the keys, since the arrow keys step slides and cannot scroll. Whether the
-user can switch a pane's style. Whether it survives a restore, which would change the viewer's stored payload under
-ADR-06.
+user can switch a pane's style.
 
 ## Risks
 
@@ -108,6 +109,7 @@ ADR-06.
 - A base folder outside the granted folder is refused before anything is read
 - An image reached by `..` or an absolute symlink outside the granted folder shows alt text, the same as a missing image
 - Remote, root-relative, and data-URI images stay refused
+- After the grant ends, a slide that renders again reads no image and shows alt text
 
 ## Decision Log
 
@@ -116,6 +118,8 @@ ADR-06.
 - 2026-11-15: A named slide style, with no arbitrary zoom. The user chose it.
 - 2026-11-15: Slide images load from a base folder inside the folder granted at run time. The user chose this. The
   option where the viewer opens the deck file by path was dropped, since it would put deck splitting in the viewer.
+- 2026-11-16 (agent): the slide style does not survive a restore. Inline content never survives a relaunch, so a
+  stored style would change the viewer's payload under ADR-06 for no case the presenter has.
 
 ## References
 

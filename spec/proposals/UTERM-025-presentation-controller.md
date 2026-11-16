@@ -2,13 +2,13 @@
 
 **Status:** draft
 **Created:** 2026-11-15
-**Updated:** 2026-11-15
+**Updated:** 2026-11-16
 
 ## Dependencies
 
 - UTERM-024, a required prerequisite: Next Slide and Previous Slide, bound to the arrow keys and Page Up and Page Down
 - UTERM-030, a required prerequisite: slide text that fills the pane, and slide images
-- UTERM-032, a required prerequisite: the deck's folder, granted when the presenter starts
+- UTERM-032, a required prerequisite: the deck as an argument, its text handed to the presenter, and its folder granted
 - UTERM-015 M4, a required prerequisite through UTERM-030 and UTERM-032: the path-reading power
 - UTERM-003, for `uniterm run` and the Janet module
 - UTERM-004, for controller runs, layout requests, groups, and remote control of the pane it opens
@@ -68,18 +68,29 @@ terminal suits a live demo, and the user chose it as enough for the hot path.
 
 ### How it starts
 
-Decision: the user starts the presenter on a deck. The deck's folder is granted for that run under UTERM-032, and the
-deck's text arrives on stdin. The presenter holds no file access of its own.
+Decision: the user starts the presenter with the deck as an argument: `uniterm run presenter.janet deck.md`. Under
+UTERM-032, uniterm hands the presenter the deck's text and, after the user approves, grants the deck's folder for slide
+images. The presenter holds no file access of its own. It starts only through `uniterm run`, not from a REPL, since a
+REPL takes no declarations.
 
-Rationale: the user chose the least access that works. Images load from the granted folder through UTERM-030.
+Rationale: a deck is a file argument, the way any command takes one. The user chose the least access that works. Images
+load from the granted folder through UTERM-030.
 
 ### The deck stays in the user's files
 
-Decision: the presenter keeps no copy of the deck beyond its run. Restoring a layout that held a presentation restores
+Decision: the presenter writes no copy of the deck to disk. The last slide's text stays in the pane's undo memory for
+the rest of the launch, as any inline content does. Restoring a layout that held a presentation restores
 the pane inert, per ADR-03 and UTERM-004.
 
 Rationale: the deck is the user's document. A copy would go stale when the user edits it, and would hold content the
 user did not choose to store. `show-markdown` carries each slide without writing it to disk, unlike `uniterm/send`.
+
+### An example script
+
+Decision: the presenter is a declared Janet file in the repo's examples. It is not bundled in the app.
+
+Rationale: it uses only the declared-file format, so it needs no package-format entries for commands or the input file.
+The user chose this. Bundling it, with signing, updates, discovery, and a versioned deck format, is a later decision.
 
 ### Stepping
 
@@ -92,13 +103,6 @@ slip mid-talk, so the slide stays up rather than blanking.
 
 ## Design Decisions (Open)
 
-### How it ships
-
-- **A bundled controller package.** Signed, inside the app bundle, run through UTERM-004's trust flow. Users get it
-  with uniterm. uniterm has never shipped a controller, so this settles signing, updates, and how users find it.
-- **An example script in the repo.** A declared Janet file. Less to build, but it reaches only users with a checkout.
-- **A separate repository.** Its own releases and signing. Keeps uniterm free of a built-in presenter.
-
 ### How it ends
 
 Whether Ctrl-C in the source terminal is the only way to end it, or a Stop command joins Next and Previous.
@@ -108,7 +112,6 @@ Whether Ctrl-C in the source terminal is the only way to end it, or a Stop comma
 - How slides split. A `---` line collides with a setext heading, where a line of text is followed by `---`, and with
   `---` inside a fenced code block.
 - How a slide references images, relative to the deck file.
-- Whether the format is versioned, if the presenter ships in the bundle.
 
 ### Layout
 
@@ -123,14 +126,14 @@ refuse to start, or show an error slide in its place.
 
 - **The prerequisites' designs change what the presenter can do** — likelihood: medium, impact: medium. Mitigation:
   this proposal stays a draft until UTERM-024, UTERM-030, and UTERM-032 are accepted.
-- **UTERM-015 M4 is unbuilt and large** — likelihood: high, impact: medium. Slide images wait on it, and it waits on
-  UTERM-004 M6. Mitigation: it is already queued. The presenter's milestone follows it.
+- **UTERM-015 M4 is unbuilt and large** — likelihood: high, impact: medium. Slide images wait on it. Its gate,
+  UTERM-004 M6, is done. Mitigation: it is already queued. The presenter's milestone follows it.
 - **Stepping needs focus in the slide pane** — likelihood: medium, impact: low. During a live demo the user clicks back
-  into the slide pane to step. Accepted: chords from the terminal are UTERM-031.
+  into the slide pane to step. Accepted: keys that work from the terminal are UTERM-031.
 - **A deck file is untrusted input** — likelihood: medium, impact: medium. Mitigation: the text viewer already renders
   untrusted Markdown. The presenter passes content through and adds no rendering of its own.
-- **Shipping a controller in the bundle is a new contract** — likelihood: medium, impact: medium. Users would depend on
-  its deck format. Mitigation: settle "How it ships" and "Deck format rules" before acceptance.
+- **Users copy the example's deck format** — likelihood: medium, impact: low. A later bundled presenter would need to
+  read decks written for the example. Mitigation: settle "Deck format rules" before acceptance.
 
 ## Milestones
 
@@ -142,7 +145,8 @@ refuse to start, or show an error slide in its place.
 - The arrow keys, Page Up and Page Down, and the palette step the deck while the slide pane has focus
 - A slide's images load from the deck's folder
 - Stepping past either end leaves the slide in place and posts a status message
-- Ending the presenter removes its commands and keys, and leaves the pane showing the last slide
+- Ending the presenter removes its commands and keys, and leaves the pane showing the last slide. A re-render after
+  that shows its images as alt text
 - A slide over the size cap is handled as "Slide size" settles
 - A UI test runs a synthetic deck in the real app and captures each step on screen
 
@@ -159,6 +163,8 @@ refuse to start, or show an error slide in its place.
   became UTERM-032.
 - 2026-11-15: A slide pane beside the terminal is enough for the hot path. The user chose this. Pane zoom stays in
   UTERM-026.
+- 2026-11-16: The deck is an argument, not stdin. The user corrected it. The presenter ships as an example script in
+  the repo. The user chose this.
 
 ## References
 

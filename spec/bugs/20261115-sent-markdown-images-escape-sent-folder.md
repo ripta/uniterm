@@ -46,5 +46,5 @@ This needs a design call. The candidates:
 - Confine a sent document's images to its own sent folder, refusing any `..` that leaves it.
 - Refuse `..` in image paths for every document that did not come from the user.
 
-UTERM-030 "How a slide finds its images" designs scoped image loading for controllers. It should use whichever rule
+UTERM-030 "Slide images" designs scoped image loading for controllers. It should use whichever rule
 this settles.
