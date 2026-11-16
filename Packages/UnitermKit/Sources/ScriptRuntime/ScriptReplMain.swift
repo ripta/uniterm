@@ -134,6 +134,8 @@ public enum ScriptReplMain {
       return fail("uniterm closed the connection before the REPL began", .unavailable)
     } catch ScriptSessionError.failed(_, let text) {
       return fail(text, .unavailable)
+    } catch ScriptSessionError.foreignSocket(let path) {
+      return fail("the socket at \(path) belongs to another user", .unavailable)
     } catch {
       return fail("cannot talk to uniterm at \(socket): \(error)", .unavailable)
     }

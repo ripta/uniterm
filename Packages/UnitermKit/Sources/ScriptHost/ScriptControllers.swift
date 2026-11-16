@@ -350,7 +350,12 @@ extension ScriptHost {
     controllersChanged()
   }
 
+  /// Sends the refusal and closes the connection after it. The close is queued behind the refusal,
+  /// so the connection is marked refused here. A request that is already on the wire is dropped
+  /// until the close lands.
   func refuseController(_ connection: ScriptConnection, _ text: String) {
+    if !connection.isClosed { sessions[connection.id, default: Session()].refused = true }
+
     connection.send(.controllerRefused(text))
     connection.closeAfterSending()
   }

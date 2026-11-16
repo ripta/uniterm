@@ -375,6 +375,10 @@ controller's process skips the check. A missing controller setting leaves a plai
 row reads the kind to pick between "Allow for This Run" and "Allow for This Connection". The controller approval line
 now reads "Allowed for this run".
 
+The strict and unsafe modes milestone later changed the check that tells the command from a generic peer. A peer the
+cached comparison does not take for the command now gets the full check before it is admitted as a generic one. See its
+As built.
+
 ### M2: Declared files
 
 **Status:** DONE
@@ -445,8 +449,8 @@ the mark.
 The shared permission reader moved out of the descriptor reader into its own type. A file declaration and a
 descriptor read the same list through it, and only the wording of the native-code refusal differs.
 
-An undeclared file still sends the plain begin, as before. The undeclared begin and strict mode belong to the later
-milestone that adds them.
+An undeclared file still sent the plain begin at this milestone. The strict and unsafe modes milestone later replaced
+that with the undeclared begin. See its As built.
 
 File approvals live in their own `files.json`, beside `policy.json`, with their own lock, `files.aside-N.json` copies,
 `files.json.tmp-*` sweep, and 256-record limit. Both selectors exist now: the file version, which names only the
@@ -461,7 +465,10 @@ from the bundled command, a controller begin, a file begin, and a REPL attach wi
 entry first, and a second claim is refused. A bad token gets the attach's own refusal and costs the process nothing. A
 controller or file begin claims only when the cheap check on the main actor says the peer is the bundled command, and
 before the admission starts. A second begin from the command is therefore refused while the first still authenticates,
-and a program that is not the command takes no place, so it cannot fill the table. The table outlives the connection.
+and a program that is not the command takes no place, so it cannot fill the table. The strict and unsafe modes
+milestone later changed two of these rules. The app now refuses a plain begin from the bundled command instead of
+claiming an entry for it, and a begin the cached check did not take for the command claims its entry when the full
+check passes. See its As built. The table outlives the connection.
 At 1024 entries it drops those whose process has exited, and past that it refuses a new begin. A generic peer's plain
 begins are not counted, and a native entry's connections are generic peers, so every connection one opens after the
 exec is still adopted.
@@ -554,7 +561,8 @@ the full check follows off the main actor. A plain begin from the command is ref
 undeclared begin from the command claims its place in the one-session table, then takes one of two paths. Strict
 mode refuses it with a message that names the mode, the form to add, ffi and modules, and the Settings row. Unsafe mode
 puts a review in the Pending Requests panel once the full check passes, and the mode is read again when the check
-finishes. A call from the connection before the answer is refused, as for a controller. An undeclared begin from a
+finishes. A call from the connection before the answer is refused, as for a controller. Every refusal of a begin marks the
+connection refused as it is sent, so a request already on the wire is dropped without waiting for the close. An undeclared begin from a
 program that is not the command gets the admission a plain begin gets, with an admitted answer at once and no review,
 so the SwiftPM test helper and any other program that speaks the wire are unchanged in strict mode.
 
@@ -578,7 +586,8 @@ review as it counts any other row.
 
 An app refusal of a run, whether strict mode, Reject, a switch to strict, a denial, or an undeclared power at
 admission, makes the command exit with status 77. Status 69 stays for no reachable uniterm, so a caller that retries on
-69 does not retry a refusal.
+69 does not retry a refusal. A socket that belongs to another user is a failure to reach uniterm, not an answer from
+it, so that failure keeps 69. Only a refusal that came from the app exits 77.
 
 The package tests' script fixtures stay undeclared, and the tests that exercise a plain script through the real signed
 command set unsafe mode and answer the review. The UI tests that drive the real app declare their scripts, answer the
@@ -727,7 +736,8 @@ The lint walker is in the declaration fuzzer's run: the fuzzer lints mutated fil
 - 2026-11-15 (run best guess): An app refusal of a run makes the command exit 77 (EX_NOPERM), where it exited 69. The
   proposal names no exit status. The change came from review: scripts that loop while the exit is 69, meaning no app
   is up yet, would retry a strict-mode refusal for the whole retry window. 69 stays for no reachable uniterm. UTERM-003
-  names the sysexits statuses as public contract, so its list is stale by this one.
+  names the sysexits statuses as public contract, so its list is stale by this one. Only an answer from the app counts:
+a socket that belongs to another user never reached the app, so it keeps 69.
 - 2026-11-15 (run best guess): Revoke on an undeclared run ends its authority and does not stop the process. The
   Where-the-mode-setting-lives decision and the M4 check said a live run "keeps running" and that Revoke "ends it". A
   controller run's Revoke and a declared file run's Revoke refuse the run's later calls and leave the process and its

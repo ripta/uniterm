@@ -278,6 +278,9 @@ public enum ScriptHelperMain {
     case ScriptSessionError.failed(_, let text):
       return fail(text, status: Exit.refused)
 
+    case ScriptSessionError.foreignSocket(let path):
+      return fail("the socket at \(path) belongs to another user", status: Exit.unavailable)
+
     default:
       return fail("cannot talk to uniterm at \(address.path): \(error)", status: Exit.unavailable)
     }

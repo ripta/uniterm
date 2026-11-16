@@ -1,8 +1,12 @@
+import ControllerPackage
 import Darwin
+import FileRouting
 import Foundation
 import Preferences
+import ProcessInspection
 import ScriptTestSupport
 import ScriptWire
+import StatusKit
 import XCTest
 
 @testable import ScriptHost
@@ -50,6 +54,16 @@ extension ScriptHost {
   }
 }
 
+/// A helper that takes every peer for the bundle's command, so a raw peer in a test can play it.
+struct AcceptingHelper: ControllerHelperIdentity {
+  func refusal(forPeer token: AuditToken) -> String? { nil }
+}
+
+/// A helper that takes no peer for the bundle's command, so a peer is a generic one.
+struct RejectingHelper: ControllerHelperIdentity {
+  func refusal(forPeer token: AuditToken) -> String? { "not the command" }
+}
+
 enum ScriptFixtures {
   /// The unsandboxed helper that SwiftPM builds beside the test bundle. `UNITERM_SCRIPT_HELPER`
   /// names another build, such as the one inside the built app.
@@ -94,6 +108,52 @@ enum ScriptFixtures {
       socklen_t(MemoryLayout<timeval>.size))
 
     return socket
+  }
+
+  /// A raw peer that has said hello to `host` and read its answer.
+  @MainActor
+  static func openPeer(host: ScriptHost) async throws -> FramedSocket {
+    let peer = try connectPeer(path: host.instanceAddress)
+
+    try peer.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
+    _ = try await readMessage(peer)
+
+    return peer
+  }
+
+  /// Reads the app's next message off the main actor, since the read blocks.
+  static func readMessage(_ peer: FramedSocket) async throws -> ScriptAppMessage {
+    try await Task.detached {
+      let frame = try peer.readFrame(limit: ScriptAppMessage.bodyLimit(type:))
+
+      return try ScriptAppMessage.decode(type: frame.type, body: frame.body)
+    }.value
+  }
+
+  /// A started host for the script file tests. The run folders and the trust store sit under
+  /// `work`. With no `helper`, the host identifies the bundled command by its hardened copy.
+  @MainActor
+  static func makeFileHost(
+    directory: URL, work: URL, helper: (any ControllerHelperIdentity)?,
+    onRefusal: @escaping @MainActor (ScriptRefusal) -> Void = { _ in },
+    clipboard: (any ScriptClipboard)? = nil, settings: SettingsStore? = nil
+  ) throws -> ScriptHost {
+    let center = StatusCenter()
+
+    let host = ScriptHost(
+      listener: try ScriptListener.start(directory: directory),
+      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: FakeWindowAPI(),
+      onRefusal: onRefusal,
+      controllers: ControllerSettings(
+        runsRoot: work.appendingPathComponent("runs"),
+        helper: try helper ?? BundleHelperIdentity(helperURL: try HardenedHelper.url()),
+        trustDirectory: work.appendingPathComponent("trust")),
+      clipboard: clipboard, settings: settings)
+
+    host.start()
+    recordTestProcessAsSessionRoot(host)
+
+    return host
   }
 
   /// Starts the helper on `script`. `socket` is the `--socket` flag, and nil leaves it out. The

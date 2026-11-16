@@ -6,6 +6,10 @@ import ScriptWire
 enum ScriptSessionError: Error, Equatable {
   /// The app answered the call with a failure.
   case failed(ScriptFailureKind, String)
+
+  /// The socket belongs to another user, so the helper did not talk to it. This is a reachability
+  /// failure. The app never answered.
+  case foreignSocket(path: String)
 }
 
 /// The helper's end of one connection to the app.
@@ -259,7 +263,7 @@ final class ScriptSession: @unchecked Sendable {
     guard try UnixSocket.peerUserID(of: socket.rawDescriptor) == geteuid() else {
       socket.shutdownAndClose()
 
-      throw ScriptSessionError.failed(.refused, "the socket at \(path) belongs to another user")
+      throw ScriptSessionError.foreignSocket(path: path)
     }
 
     let session = ScriptSession(socket: socket)

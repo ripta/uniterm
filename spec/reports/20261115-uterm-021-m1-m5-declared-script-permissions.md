@@ -411,3 +411,35 @@ function the table lacks.
 
 The package suite took 211.7 s before the review fixes and 219.1 s after. `ScriptLintTests` takes about 0.5 s and
 `ScriptLintCommandTests` about 0.7 s.
+
+## Row review
+
+Commit: "Keep foreign sockets retryable and close the refused-begin window".
+
+A fresh reviewer and `adr-impact` read the whole row. `adr-impact` found no conflicts with ADR-03, ADR-06, ADR-07,
+ADR-08, ADR-09, ADR-10, or ADR-12. It named the app's trust in the command's report of a declaration as the only
+plausible ADR in the range. The proposal settles that boundary in "Where the declaration is read", under ADR-09's
+same-user limit, so it does not pass the bar.
+
+### Findings
+
+- M2's As built said undeclared files keep the plain begin, and that a plain begin from the command claims a table
+  entry. M4 replaced both. Fixed with pointers to M4's As built, in M1 and M2.
+- Exit 77 also caught "the socket belongs to another user", a local reachability failure that exited 69 before. The
+  trace confirmed it. Fixed with a typed error case that keeps 69. The M4 As built and the exit-77 Decision Log entry
+  now say exactly which failures exit 77.
+- A request right behind a refused begin could be served before the close landed, since a refusal did not mark the
+  session refused. The trace found the window in the code. A 300-iteration loop on the unfixed code never hit it, so
+  the new test pins the fix, not the bug. Fixed in the one function every refusal goes through.
+- Three test files carried copies of the same host and peer helpers. They moved into `Support.swift`.
+- The table-full and late-claim tests were checked for overlap. Each contract has one owner, so no test was removed.
+
+### Checks
+
+- `make fmt-check`, `make lint`, and `make check` pass.
+- `caffeinate -dimsu make test-package`: 2605 tests, 9 skipped, 1 failure, 260 s wall. The failure was the
+  `FindTests` potential flake, counting 71 turns. It passed alone. That makes three local sightings in this run.
+- `make clean`, then `make test-helper-sandbox`, passes. That run builds the app.
+- `proposals.py freeze` reports nothing.
+- The coordinator ran the full `make test-app` on the row's code before these fixes: 164 tests, 0 failures, about
+  26 minutes. That includes every UI test that failed in the M4 runs. The fixes changed package code and tests only.

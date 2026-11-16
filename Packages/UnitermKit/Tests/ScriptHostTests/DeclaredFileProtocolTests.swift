@@ -12,16 +12,6 @@ import XCTest
 
 @testable import ScriptHost
 
-/// A helper that takes every peer for the bundle's command, so a raw peer in a test can play it.
-private struct AcceptingHelper: ControllerHelperIdentity {
-  func refusal(forPeer token: AuditToken) -> String? { nil }
-}
-
-/// A helper that takes no peer for the bundle's command, so a peer is a generic one.
-private struct RejectingHelper: ControllerHelperIdentity {
-  func refusal(forPeer token: AuditToken) -> String? { "not the command" }
-}
-
 /// The declared file protocol and the one-session rule, with raw peers that play the command and
 /// a fake app that plays the app.
 @MainActor
@@ -46,33 +36,17 @@ final class DeclaredFileProtocolTests: XCTestCase {
   }
 
   private func startHost(helper: any ControllerHelperIdentity) throws {
-    let center = StatusCenter()
-
-    host = ScriptHost(
-      listener: try ScriptListener.start(directory: directory),
-      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: FakeWindowAPI(),
-      onRefusal: { [weak self] in self?.refusals.append($0) },
-      controllers: ControllerSettings(
-        runsRoot: runs, helper: helper, trustDirectory: work.appendingPathComponent("trust")))
-    host.start()
-    recordTestProcessAsSessionRoot(host)
+    host = try ScriptFixtures.makeFileHost(
+      directory: directory, work: work, helper: helper,
+      onRefusal: { [weak self] in self?.refusals.append($0) })
   }
 
   private func connect() async throws -> FramedSocket {
-    let peer = try ScriptFixtures.connectPeer(path: host.instanceAddress)
-
-    try peer.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
-    _ = try await read(peer)
-
-    return peer
+    try await ScriptFixtures.openPeer(host: host)
   }
 
   private func read(_ peer: FramedSocket) async throws -> ScriptAppMessage {
-    try await Task.detached {
-      let frame = try peer.readFrame(limit: ScriptAppMessage.bodyLimit(type:))
-
-      return try ScriptAppMessage.decode(type: frame.type, body: frame.body)
-    }.value
+    try await ScriptFixtures.readMessage(peer)
   }
 
   /// True when the next read finds the connection closed.

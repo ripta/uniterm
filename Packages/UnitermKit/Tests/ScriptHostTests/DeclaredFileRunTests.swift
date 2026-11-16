@@ -55,16 +55,8 @@ final class DeclaredFileRunTests: XCTestCase {
   }
 
   private func startHost() throws {
-    let center = StatusCenter()
-
-    host = ScriptHost(
-      listener: try ScriptListener.start(directory: directory),
-      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: FakeWindowAPI(),
-      controllers: ControllerSettings(
-        runsRoot: runs, helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()),
-        trustDirectory: trust),
-      settings: settings.store)
-    host.start()
+    host = try ScriptFixtures.makeFileHost(
+      directory: directory, work: work, helper: nil, settings: settings.store)
     undeclaredWatch = host.answerUndeclaredReviews(with: .askEachUse)
     reviewWatch = host.changes.add { [weak self] in
       guard let self else { return }
@@ -84,8 +76,6 @@ final class DeclaredFileRunTests: XCTestCase {
         seenRuns.append(run)
       }
     }
-
-    recordTestProcessAsSessionRoot(host)
   }
 
   // MARK: Helpers

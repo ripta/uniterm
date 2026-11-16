@@ -13,16 +13,6 @@ import XCTest
 
 @testable import ScriptHost
 
-/// A helper that takes every peer for the bundle's command, so a raw peer in a test can play it.
-private struct AcceptingHelper: ControllerHelperIdentity {
-  func refusal(forPeer token: AuditToken) -> String? { nil }
-}
-
-/// A helper that takes no peer for the bundle's command, so a peer is a generic one.
-private struct RejectingHelper: ControllerHelperIdentity {
-  func refusal(forPeer token: AuditToken) -> String? { "not the command" }
-}
-
 /// A helper whose cheap check fails for the command, as a command replaced on disk under a running
 /// app does, while the full check passes.
 private struct StaleHelper: ControllerHelperIdentity {
@@ -79,18 +69,10 @@ final class UndeclaredFileTests: XCTestCase {
   }
 
   private func startHost(helper: any ControllerHelperIdentity) throws {
-    let center = StatusCenter()
-
-    host = ScriptHost(
-      listener: try ScriptListener.start(directory: directory),
-      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: FakeWindowAPI(),
-      onRefusal: { [weak self] in self?.refusals.append($0) },
-      controllers: ControllerSettings(
-        runsRoot: work.appendingPathComponent("runs"), helper: helper,
-        trustDirectory: work.appendingPathComponent("trust")),
-      clipboard: clipboard, settings: settings.store)
-    host.start()
-    recordTestProcessAsSessionRoot(host)
+    host = try ScriptFixtures.makeFileHost(
+      directory: directory, work: work, helper: helper,
+      onRefusal: { [weak self] in self?.refusals.append($0) }, clipboard: clipboard,
+      settings: settings.store)
   }
 
   private func startCommandHost() throws {
@@ -100,21 +82,15 @@ final class UndeclaredFileTests: XCTestCase {
   // MARK: Helpers
 
   private func connect() async throws -> FramedSocket {
-    let peer = try ScriptFixtures.connectPeer(path: host.instanceAddress)
+    let peer = try await ScriptFixtures.openPeer(host: host)
 
-    try peer.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
-    _ = try await read(peer)
     peers.append(peer)
 
     return peer
   }
 
   private func read(_ peer: FramedSocket) async throws -> ScriptAppMessage {
-    try await Task.detached {
-      let frame = try peer.readFrame(limit: ScriptAppMessage.bodyLimit(type:))
-
-      return try ScriptAppMessage.decode(type: frame.type, body: frame.body)
-    }.value
+    try await ScriptFixtures.readMessage(peer)
   }
 
   /// A raw peer that has begun an undeclared script and been told it waits for review.
@@ -223,6 +199,40 @@ final class UndeclaredFileTests: XCTestCase {
     XCTAssertEqual(run.status, 77, run.standardError)
     XCTAssertEqual(run.standardOutput, "")
     XCTAssertTrue(host.undeclaredReviews.isEmpty)
+  }
+
+  /// Pins a refused begin shutting the connection to a request that follows it at once. A clipboard
+  /// read would ask the user if it were let through. It cannot prove the window itself: the queued
+  /// close wins the race every time here, so the test passes without the refused mark too.
+  func testARequestRightBehindARefusedBeginIsNeverServed() async throws {
+    try startHost(helper: AcceptingHelper())
+
+    var asked = false
+
+    let watch = host.permissionRequests.changes.add { [host] in
+      if host?.permissionRequests.rows.isEmpty == false { asked = true }
+    }
+
+    defer { _ = watch }
+
+    let peer = try await connect()
+
+    try peer.send(ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "strict")).frame())
+    try peer.send(ScriptHelperMessage.request(id: 1, call: .readClipboard).frame())
+
+    guard case .controllerRefused = try await read(peer) else {
+      return XCTFail("the begin was not refused in strict mode")
+    }
+
+    do {
+      _ = try await read(peer)
+      XCTFail("the refused connection was answered again")
+    } catch {
+      XCTAssertEqual(error as? WireError, .closed)
+    }
+
+    XCTAssertFalse(asked, "a request behind a refused begin reached the user")
+    XCTAssertEqual(clipboard.reads, 0)
   }
 
   /// Catches strict mode reaching a program that is not the bundled command. A generic peer keeps
