@@ -1064,7 +1064,9 @@ None.
   the text viewer choice. The package has no other window fixture that builds a real viewer. (work-queue best guess)
 - 2026-11-15: ADR candidate (cuts across the system): what a remote reply from a content-bearing applet may disclose. A
   controller with pane control can call find with chosen queries and read counts and anchors, which derive from
-  document content, though no reply carries text. Undecided. Found in UTERM-007 M5.
+  document content, though no reply carries text. Declined 2026-11-15: it is an open question, not a choice, so it
+  fails the Decision test. A proposal that settles what controllers may learn from replies would raise it again.
+  Found in UTERM-007 M5.
 - 2026-11-15: ADR candidate (hard to reverse): command schemas accept the same major and any minor up to the applet's
   own. Controllers in other processes, scripts in users' files, and exec drivers depend on it across ScriptWire,
   the exec wire, and the dispatcher. Changing the rule later would break controllers written against it. Undecided.
