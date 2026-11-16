@@ -163,6 +163,16 @@ fixed ones.
   right after, on the same tree.
 - Status: the earlier fix covered the foreground read. This symptom came back once. Cause unknown.
 
+### `ExecPaneUITests.testWindowShortcutsWorkWhileTheDriverStalls`
+
+- Seen: 2026-11-15, once in a filtered run of five UI classes during the UTERM-007 M5 work-queue run, the only failure
+  of 20 tests.
+- Evidence: `ExecPaneUITests.swift:185` failed with "Cmd-D did nothing while the driver stalled". The trail showed the
+  app slow throughout: 30 clicks on Next took 13.37 s, and Cmd-D took 15.22 s. It then passed 3 of 3 alone, and its
+  class passed whole, on the same tree.
+- Status: unresolved. That run changed the exec wire's hello decoding and moved the exec protocol to 4. It also
+  revalidates pending replies when remote control turns on. Neither was ruled out by a run on the base commit.
+
 ## Fixed
 
 ### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`

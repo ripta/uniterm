@@ -278,3 +278,34 @@ Left for the user:
 - UTERM-019's minor-version policy now follows UTERM-007's rule. UTERM-019 may want its own.
 - A `.build-tests/` scratch folder of 68 KB sits at the repo root, outside git's view. The sandbox refused to delete
   files inside its `ZIPFoundation` checkout.
+
+## Checks on the final tree
+
+The commit "Record UTERM-007's contract addition and wire skew, and name the exec version in a refusal" changed the
+exec hello decoder and `enableRemoteControl` after the last UI runs, so the coordinator checked the final tree again:
+
+- `caffeinate -dimsu make ci-package` passed: fmt-check, lint, check, `test-ci`, the full package tests, and the
+  SwiftPM offline check. `make test-ci` and `make test-helper-sandbox` were in the plan and had not run until here.
+- `make test-helper-sandbox` passed, 8 of 8.
+- An ASan fuzz of `ExecFrameFuzzTests` and `ScriptWireFuzzTests` at 5,000 iterations passed.
+- The decoder change was read directly. A hello with no protocol, or a protocol that is not a whole number, still
+  fails. A hello of the current protocol with a bad `schema` stays malformed.
+- The UI classes that enable remote control or start a driver ran together: `TextViewerUITests`,
+  `PresentationUITests`, `PaneControlUITests`, `ExecPaneUITests`, and `ScriptRunUITests`. 19 of 20 passed. An earlier
+  filter in this run named a `ControllerRunUITests` class that does not exist. This run's filter names only real ones.
+- `ExecPaneUITests.testWindowShortcutsWorkWhileTheDriverStalls` failed in that run: Cmd-D did nothing while the driver
+  stalled, and the app was slow throughout. It passed 3 of 3 alone, and its class passed whole, on the same tree. It is
+  logged in `spec/flaky-tests.md` as a potential flake. This run changed the exec wire, so that log entry says the
+  change was not ruled out.
+
+ADR candidates, checked against "What Earns an ADR" in `design.md`:
+
+- The command schema rule passes all three tests and stays `Undecided`. Its invariant: a controller written for an
+  older schema of an applet keeps working against a newer applet with the same major, and every other pairing is
+  refused before any effect.
+- The candidate on what a remote reply may disclose is an open question, not a choice. It fails the Decision test. Its
+  outcome in UTERM-007's Decision Log is now `Declined`, edited in place as a frozen proposal allows.
+
+One commit body breaks the commit style: "Raise request-layout's oversize error as a :bad-argument struct" opens by
+recapping the old behavior. Rewording it means rewriting this run's commits on the checked-out branch, which the run
+does not do. It is left for the user.
