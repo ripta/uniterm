@@ -53,8 +53,8 @@ final class ExecLayoutTests: XCTestCase {
 
     return [
       layout,
-      #"{"leaf":1,"applet":"fixture-notes","schema":1,"name":"set-notes","arguments":{"text":"Hi"}}"#,
-      #"{"leaf":2,"applet":"fixture-chart","schema":1,"name":"set-series","arguments":{"values":[3,1]}}"#,
+      #"{"leaf":1,"applet":"fixture-notes","schema":[1,0],"name":"set-notes","arguments":{"text":"Hi"}}"#,
+      #"{"leaf":2,"applet":"fixture-chart","schema":[1,0],"name":"set-series","arguments":{"values":[3,1]}}"#,
     ]
   }
 
@@ -133,7 +133,7 @@ final class ExecLayoutTests: XCTestCase {
     let fixture = try makeFixture()
     let controller = try fixture.openWindow()
     let pane = controller.focusedPane
-    let clear = #"{"leaf":1,"later":true,"applet":"fixture-notes","schema":1,"name":"clear"}"#
+    let clear = #"{"leaf":1,"later":true,"applet":"fixture-notes","schema":[1,0],"name":"clear"}"#
 
     controller.enableRemoteControl(pane)
     try startDriver(fixture, controller, pane, presentation(pane) + [clear])
@@ -158,6 +158,44 @@ final class ExecLayoutTests: XCTestCase {
     await waitUntil("the driver hears its clear refused") { revocations(controller) == 1 }
 
     XCTAssertEqual(notes.text, "Hi", "a revoked driver cleared the notes")
+  }
+
+  /// Catches a driver's waiting command that never answers, or that outlives its run. The wait
+  /// stays pending while the driver's other commands run, and the user's Next sends the command
+  /// that ends it. A second wait is failed when the run ends, and the notes are told to drop it.
+  func testADriversWaitAnswersLaterAndFailsWhenItsRunEnds() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let wait =
+      #"{"leaf":1,"applet":"fixture-notes","schema":[1,0],"name":"wait-for-notes","#
+      + #""arguments":{"contains":"later"}}"#
+    let never =
+      #"{"leaf":1,"applet":"fixture-notes","schema":[1,0],"name":"wait-for-notes","#
+      + #""arguments":{"contains":"never"}}"#
+    let advance =
+      #"{"leaf":1,"later":true,"applet":"fixture-notes","schema":[1,0],"name":"set-notes","#
+      + #""arguments":{"text":"later"}}"#
+
+    let (pane, members) = try await presented(fixture, controller, later: [wait, never, advance])
+    let notes = try XCTUnwrap(controller.paneArea.applet(for: members[0]) as? NotesFixture)
+    let slides = try XCTUnwrap(fixture.slides(controller, pane))
+
+    await waitUntil("both waits are pending") { controller.dispatcher.pendingCount == 2 }
+
+    XCTAssertEqual(notes.waitingCount, 2)
+
+    slides.button.performClick(nil)
+
+    await waitUntil("the first wait is answered") { controller.dispatcher.pendingCount == 1 }
+
+    XCTAssertEqual(notes.text, "later")
+    XCTAssertEqual(notes.waitingCount, 1)
+
+    controller.execAttachments[pane]?.channel?.close()
+
+    XCTAssertEqual(controller.dispatcher.pendingCount, 0, "the ended run kept a pending reply")
+    XCTAssertEqual(notes.cancelledWaits, 1)
+    XCTAssertEqual(notes.waitingCount, 0)
   }
 
   /// Lays out the presentation from a driver, and returns the driver's pane and its two members.

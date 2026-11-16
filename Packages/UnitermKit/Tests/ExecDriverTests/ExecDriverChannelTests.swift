@@ -41,9 +41,11 @@ final class ExecDriverChannelTests: XCTestCase {
   }
 
   private func start(
-    _ mode: String, type: String = SlidesFixture.typeID, schema: Int = 1, _ rest: [String] = [],
+    _ mode: String, type: String = SlidesFixture.typeID, schema: String = "1.0",
+    _ rest: [String] = [],
     directory: String? = nil, keys: [String] = [], values: [String: String] = [:],
-    killGrace: DispatchTimeInterval = .seconds(2), host: ExecDriverChannel.HostHandler? = nil
+    killGrace: DispatchTimeInterval = .seconds(2), host: ExecDriverChannel.HostHandler? = nil,
+    hosting other: (any AppletCommandHandling)? = nil
   ) throws -> ExecDriverChannel {
     let declaration = try ExecDeclaration(
       arguments: ExecTestDriver.arguments(mode, type: type, schema: schema, rest),
@@ -53,7 +55,7 @@ final class ExecDriverChannelTests: XCTestCase {
       declaration: declaration, environment: values, home: environment.home)
 
     let channel = ExecDriverChannel(
-      launch: launch, environment: environment, applet: applet, dispatcher: dispatcher,
+      launch: launch, environment: environment, applet: other ?? applet, dispatcher: dispatcher,
       authority: { nil }, producer: center.issueProducer(kind: .applet, name: "driver"),
       killGrace: killGrace, host: host, onEnd: { [weak self] end in self?.ended.append(end) })
 
@@ -146,13 +148,15 @@ final class ExecDriverChannelTests: XCTestCase {
   /// protocol or schema version, one that refuses the app's hello, and one that sends a command
   /// before its hello. Each driver sends a set-deck that must never land.
   func testEveryHelloMismatchEndsTheChannelWithNoCommandRun() async throws {
-    let cases: [(String, Int, [String], String)] = [
-      ("hello-protocol", 1, ["1"], "exec protocol 1"),
-      ("hello-protocol", 1, ["2"], "exec protocol 2"),
-      ("hello-schema", 1, ["2"], "schema version 2"),
-      ("refuse", 1, [], "needs exec protocol 9"),
-      ("command-first", 1, [], "before its hello"),
-      ("script", 1, [], "written for a fixture-chart"),
+    let cases: [(String, String, [String], String)] = [
+      ("hello-protocol", "1.0", ["1"], "exec protocol 1"),
+      ("hello-protocol", "1.0", ["2"], "exec protocol 2"),
+      ("hello-protocol", "1.0", ["3"], "exec protocol 3"),
+      ("hello-schema", "1.0", ["2.0"], "schema version 2.0"),
+      ("hello-schema", "1.0", ["1.1"], "schema version 1.1"),
+      ("refuse", "1.0", [], "needs exec protocol 9"),
+      ("command-first", "1.0", [], "before its hello"),
+      ("script", "1.0", [], "written for a fixture-chart"),
     ]
 
     for (mode, schema, rest, needle) in cases {
@@ -170,6 +174,37 @@ final class ExecDriverChannelTests: XCTestCase {
         ended.first?.description.contains(needle) == true, "\(mode): \(ended)")
       XCTAssertEqual(center.display?.message.level, .warning, mode)
     }
+  }
+
+  /// Catches a pending reply that blocks the replies behind it, or one matched to the wrong
+  /// request. The driver sends a wait, a command that answers at once, and the command that ends
+  /// the wait. The replies must arrive as 2, 1, 3, each under its own ID.
+  func testAPendingReplyArrivesOutOfOrderUnderItsOwnID() async throws {
+    let notes = NotesFixture()
+
+    _ = try start("pending-order", type: NotesFixture.typeID, hosting: notes)
+
+    await waitUntil("the driver reports the order") {
+      historyTexts.contains("reply order: 2 1 3")
+    }
+
+    XCTAssertEqual(notes.text, "go")
+  }
+
+  /// Catches an app that takes a driver written for a later minor, or refuses one written for an
+  /// earlier minor. The pane takes version 1 with a minor up to 2, so a driver at 1.1 connects.
+  func testADriverWrittenForAnEarlierMinorConnects() async throws {
+    let notes = NotesFixture()
+
+    notes.schemaVersion = AppletSchemaVersion(1, 2)
+
+    let channel = try start(
+      "script", type: NotesFixture.typeID, schema: "1.1",
+      [command("set-notes", #"{"text":"minor"}"#)], hosting: notes)
+
+    await waitUntil("the notes change") { notes.text == "minor" }
+
+    XCTAssertEqual(channel.phase, .connected)
   }
 
   /// Catches a malformed line, a partial line at the end, or a line past the frame bound that

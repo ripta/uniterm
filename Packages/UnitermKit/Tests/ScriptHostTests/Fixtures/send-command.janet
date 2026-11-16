@@ -12,6 +12,8 @@
 
 (uniterm/send-command {:nearest :fixture-slides} :fixture-slides 1 "status")
 (uniterm/send-command pane :fixture-slides 1 :status @{})
+(uniterm/send-command pane :fixture-slides [1 0] :status)
+(uniterm/send-command pane :fixture-slides @[1 0] :status)
 
 # Every refusal from the app is a struct that names its kind, and the script goes on.
 (defn fails-with [kind f]
@@ -23,6 +25,7 @@
 
 (fails-with :unsupported (fn [] (uniterm/send-command pane :fixture-chart 1 :status)))
 (fails-with :unsupported (fn [] (uniterm/send-command pane :fixture-slides 2 :status)))
+(fails-with :unsupported (fn [] (uniterm/send-command pane :fixture-slides [1 1] :status)))
 (fails-with :refused (fn [] (uniterm/send-command pane :fixture-slides 1 :explode)))
 (fails-with :reply-lost (fn [] (uniterm/send-command pane :fixture-slides 1 :huge-reply)))
 (fails-with :not-found (fn [] (uniterm/send-command {:window 7 :pane 404} :fixture-slides 1 :status)))

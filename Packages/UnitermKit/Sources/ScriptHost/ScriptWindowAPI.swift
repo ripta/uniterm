@@ -111,7 +111,8 @@ public protocol ScriptWindowAPI: AnyObject {
   /// `stillAllowed` runs again as it is delivered, so a grant that ends meanwhile leaves no effect.
   /// An error leaves the applet unchanged.
   func sendCommand(
-    to target: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
+    command: String,
     arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue
 

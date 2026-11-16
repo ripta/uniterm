@@ -29,6 +29,7 @@ final class ExecPaneFixture {
 
   /// The kind of applet the next pane gets.
   var nextIsFake = false
+  var nextIsNotes = false
 
   /// What the values sheet answers, and the keys it was asked for.
   var values: [String: String]? = [:]
@@ -79,6 +80,8 @@ final class ExecPaneFixture {
         return applet
       }
 
+      if nextIsNotes { return NotesFixture() }
+
       return nextIsFake ? FakeApplet() as any Applet : SlidesFixture()
     }
   }
@@ -125,7 +128,8 @@ final class ExecPaneFixture {
 
   func command(
     _ controller: MainWindowController, _ pane: NodeID, _ name: String, _ arguments: String = "{}",
-    type: String = SlidesFixture.typeID, version: UInt32 = 1,
+    type: String = SlidesFixture.typeID,
+    version: ScriptSchemaVersion = ScriptSchemaVersion(major: 1),
     stillAllowed: @escaping @MainActor () throws -> Void = {}
   ) async throws -> ScriptValue {
     try await scripting.sendCommand(
@@ -300,12 +304,22 @@ final class ExecPaneTests: XCTestCase {
     XCTAssertEqual(reply, .record(["index": .integer(2), "title": .string("C")]))
 
     for (type, version, name, arguments, kind) in [
-      (ChartFixture.typeID, UInt32(1), "status", "{}", ScriptFailureKind.unsupported),
-      (SlidesFixture.typeID, 2, "status", "{}", .unsupported),
-      (SlidesFixture.typeID, 1, "run", "{}", .badArgument),
-      (SlidesFixture.typeID, 1, "show-slide", #"{"index":"1"}"#, .badArgument),
-      (SlidesFixture.typeID, 1, "show-slide", "[1]", .badArgument),
-      (SlidesFixture.typeID, 1, "show-slide", "not json", .badArgument),
+      (
+        ChartFixture.typeID, ScriptSchemaVersion(major: 1), "status", "{}",
+        ScriptFailureKind.unsupported
+      ),
+      (SlidesFixture.typeID, ScriptSchemaVersion(major: 2), "status", "{}", .unsupported),
+      (SlidesFixture.typeID, ScriptSchemaVersion(major: 1, minor: 1), "status", "{}", .unsupported),
+      (SlidesFixture.typeID, ScriptSchemaVersion(major: 1), "run", "{}", .badArgument),
+      (
+        SlidesFixture.typeID, ScriptSchemaVersion(major: 1), "show-slide", #"{"index":"1"}"#,
+        .badArgument
+      ),
+      (SlidesFixture.typeID, ScriptSchemaVersion(major: 1), "show-slide", "[1]", .badArgument),
+      (
+        SlidesFixture.typeID, ScriptSchemaVersion(major: 1), "show-slide", "not json",
+        .badArgument
+      ),
     ] {
       do {
         _ = try await fixture.command(
@@ -532,6 +546,217 @@ final class ExecPaneTests: XCTestCase {
     await waitUntil("the child is gone") { kill(pid, 0) != 0 }
   }
 
+  // MARK: Pending replies
+
+  /// A remote-controlled notes pane beside the first one, and the notes fixture in it.
+  private func notesPane(
+    _ fixture: ExecPaneFixture, _ controller: MainWindowController
+  ) -> (pane: NodeID, notes: NotesFixture) {
+    fixture.nextIsNotes = true
+    controller.openPane(.terminalShell, axis: .row)
+    fixture.nextIsNotes = false
+
+    let pane = controller.focusedPane
+
+    controller.enableRemoteControl(pane)
+
+    return (pane, controller.paneArea.applet(for: pane) as! NotesFixture)
+  }
+
+  private func startWait(
+    _ fixture: ExecPaneFixture, _ controller: MainWindowController, _ pane: NodeID,
+    stillAllowed: @escaping @MainActor () throws -> Void = {}
+  ) -> Task<ScriptValue, Error> {
+    Task { @MainActor in
+      try await fixture.command(
+        controller, pane, "wait-for-notes", #"{"contains":"go"}"#, type: NotesFixture.typeID,
+        stillAllowed: stillAllowed)
+    }
+  }
+
+  /// What a script call settled with, or nil when it had not settled within 3 seconds. A nil has
+  /// already failed the test, so a regression fails in seconds and never hangs.
+  private func settled(
+    _ what: String, file: StaticString = #filePath, line: UInt = #line,
+    _ task: Task<ScriptValue, Error>
+  ) async -> Result<ScriptValue, Error>? {
+    let box = SettledBox()
+
+    Task { @MainActor in box.result = await task.result }
+
+    await waitUntil("\(what) settles", timeout: 3, file: file, line: line) { box.result != nil }
+
+    return box.result
+  }
+
+  private func settled(
+    _ what: String, file: StaticString = #filePath, line: UInt = #line,
+    _ call: @escaping @MainActor () async throws -> ScriptValue
+  ) async -> Result<ScriptValue, Error>? {
+    await settled(what, file: file, line: line, Task { @MainActor in try await call() })
+  }
+
+  /// Catches a waiting command that holds the main thread or the queue, or whose answer never
+  /// reaches the script. The script's wait stays pending while another command runs, then the
+  /// answer arrives.
+  func testAScriptCommandCanWaitWhileOthersRun() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let (pane, notes) = notesPane(fixture, controller)
+    let waiting = startWait(fixture, controller, pane)
+
+    await waitUntil("the wait is pending") { controller.dispatcher.pendingCount == 1 }
+
+    let other = await settled("an unrelated command") {
+      try await fixture.command(
+        controller, pane, "set-notes", #"{"text":"almost"}"#, type: NotesFixture.typeID)
+    }
+
+    XCTAssertEqual(try other?.get(), .record(["length": .integer(6)]))
+    XCTAssertEqual(controller.dispatcher.pendingCount, 1)
+
+    let ending = await settled("the ending command") {
+      try await fixture.command(
+        controller, pane, "set-notes", #"{"text":"go"}"#, type: NotesFixture.typeID)
+    }
+
+    XCTAssertNotNil(ending)
+
+    let answer = await settled("the wait", waiting)
+
+    XCTAssertEqual(try answer?.get(), .record(["length": .integer(2)]))
+    XCTAssertEqual(controller.dispatcher.pendingCount, 0)
+    XCTAssertEqual(notes.waitingCount, 0)
+  }
+
+  /// Catches a waiting script that outlives what authorized it. A disconnect, the end of the
+  /// script's connection, a revoked grant, and the pane's close each fail the wait at once. The
+  /// applet is told to drop it, and nothing ran.
+  func testEachWayAScriptLosesAuthorityFailsItsWaitAtOnce() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+
+    func failure(of task: Task<ScriptValue, Error>) async -> ScriptCallError? {
+      guard case .failure(let error)? = await settled("the wait", task) else { return nil }
+
+      return error as? ScriptCallError
+    }
+
+    var (pane, notes) = notesPane(fixture, controller)
+    var waiting = startWait(fixture, controller, pane)
+
+    await waitUntil("the first wait is pending") { controller.dispatcher.pendingCount == 1 }
+    controller.disconnect(pane)
+
+    let disconnected = await failure(of: waiting)
+
+    XCTAssertEqual(disconnected?.kind, .refused)
+    XCTAssertEqual(controller.dispatcher.pendingCount, 0)
+    XCTAssertEqual(notes.cancelledWaits, 1)
+    XCTAssertEqual(notes.waitingCount, 0)
+
+    controller.enableRemoteControl(pane)
+
+    let ended = Flag(true)
+
+    waiting = startWait(fixture, controller, pane) {
+      guard ended.on else { throw ScriptCallError.refused("the script ended") }
+    }
+
+    await waitUntil("the second wait is pending") { controller.dispatcher.pendingCount == 1 }
+    ended.on = false
+    controller.controllerEnded(1)
+
+    let finished = await failure(of: waiting)
+
+    XCTAssertEqual(finished?.text, "the script ended")
+    XCTAssertEqual(controller.dispatcher.pendingCount, 0)
+    XCTAssertEqual(notes.cancelledWaits, 2)
+
+    waiting = startWait(fixture, controller, pane)
+
+    await waitUntil("the third wait is pending") { controller.dispatcher.pendingCount == 1 }
+    controller.closePane(pane, appletEnded: false)
+
+    let closed = await failure(of: waiting)
+
+    XCTAssertEqual(closed?.kind, .notFound)
+    XCTAssertEqual(controller.dispatcher.pendingCount, 0)
+    XCTAssertEqual(notes.cancelledWaits, 3)
+
+    (pane, notes) = notesPane(fixture, controller)
+    waiting = startWait(fixture, controller, pane)
+
+    await waitUntil("the fourth wait is pending") { controller.dispatcher.pendingCount == 1 }
+    controller.window?.close()
+
+    let windowClosed = await failure(of: waiting)
+
+    XCTAssertEqual(windowClosed?.kind, .notFound)
+    XCTAssertEqual(controller.dispatcher.pendingCount, 0)
+  }
+
+  /// Catches a control change that leaves a script's wait pending. Starting a driver on the pane
+  /// issues a new control generation, so the script's grant over the pane is stale. The wait
+  /// fails at once, with the applet told to drop it, and does not hold its slot until the applet
+  /// settles it.
+  func testStartingADriverFailsAScriptsWaitOnThePane() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let (pane, notes) = notesPane(fixture, controller)
+    let waiting = startWait(fixture, controller, pane)
+
+    await waitUntil("the wait is pending") { controller.dispatcher.pendingCount == 1 }
+
+    try controller.declareExecDriver(fixture.declaration("silent"), for: pane)
+    controller.runExecDriver(pane)
+    fixture.windows.launchAuthority.decide(
+      try XCTUnwrap(fixture.windows.launchAuthority.requests.first?.id), .allowOnce)
+
+    await waitUntil("the wait fails", timeout: 3) { controller.dispatcher.pendingCount == 0 }
+
+    guard controller.dispatcher.pendingCount == 0 else {
+      return XCTFail("a wait survived a driver starting on its pane")
+    }
+
+    XCTAssertEqual(notes.cancelledWaits, 1)
+
+    guard case .failure(let error)? = await settled("the wait", waiting) else {
+      return XCTFail("a wait survived a driver starting on its pane")
+    }
+
+    XCTAssertEqual((error as? ScriptCallError)?.kind, .refused)
+  }
+
+  /// Catches a pending reply that reaches a script whose grant ended while the applet held it. The
+  /// grant ends with no revalidation, and the applet then completes the wait. The second check
+  /// refuses it, so the script sees the revocation and not the answer.
+  func testACompletedWaitChecksTheScriptsGrantAgain() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let (pane, _) = notesPane(fixture, controller)
+    let allowed = Flag(true)
+    let waiting = startWait(fixture, controller, pane) {
+      guard allowed.on else { throw ScriptCallError.refused("revoked") }
+    }
+
+    await waitUntil("the wait is pending") { controller.dispatcher.pendingCount == 1 }
+    allowed.on = false
+
+    let ending = await settled("the ending command") {
+      try await fixture.command(
+        controller, pane, "set-notes", #"{"text":"go"}"#, type: NotesFixture.typeID)
+    }
+
+    XCTAssertNotNil(ending)
+
+    guard case .failure(let error)? = await settled("the wait", waiting) else {
+      return XCTFail("a wait answered a script whose grant had ended")
+    }
+
+    XCTAssertEqual((error as? ScriptCallError)?.text, "revoked")
+  }
+
   /// Catches a command that ran but whose reply a script cannot hold, reported as an ordinary
   /// failure. The script must learn that the command took effect.
   func testAReplyAScriptCannotHoldSaysTheCommandRan() {
@@ -621,6 +846,11 @@ final class ExecPaneTests: XCTestCase {
 
     await waitUntil("the main thread takes another turn", timeout: 2) { turned.on }
   }
+}
+
+@MainActor
+private final class SettledBox {
+  var result: Result<ScriptValue, Error>?
 }
 
 @MainActor

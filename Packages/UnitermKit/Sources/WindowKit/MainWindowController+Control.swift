@@ -99,7 +99,7 @@ extension MainWindowController {
 
     let control = paneControls.set(.disconnected, for: pane)
 
-    paneArea.applet(for: pane)?.controlDidChange(control)
+    pushControl(control, to: pane)
     refreshControlMarks()
     onLayoutChange?()
   }
@@ -152,11 +152,16 @@ extension MainWindowController {
         target: ExecLaunchAuthority.Target(window: scriptWindowID, pane: pane))
     }
 
+    dispatcher.revalidatePending()
     refreshControlMarks()
   }
 
+  /// Hands the pane's applet its new control. Every change of an existing pane's control issues a
+  /// new generation, so this is also where waiting replies are checked again. A path that changes
+  /// control cannot forget to.
   func pushControl(_ control: PaneControl, to pane: NodeID) {
     paneArea.applet(for: pane)?.controlDidChange(control)
+    dispatcher.revalidatePending()
   }
 
   func runControlAction(_ action: PaneControlAction, on pane: NodeID) {

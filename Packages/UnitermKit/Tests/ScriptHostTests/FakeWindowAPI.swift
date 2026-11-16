@@ -201,11 +201,12 @@ final class FakeWindowAPI: ScriptWindowAPI {
     return .null
   }
 
-  /// Stands in for shared dispatch. A chart type or schema version 2 is unsupported, and the
-  /// command `explode` is refused. Anything else echoes what arrived, with a negative and a
+  /// Stands in for shared dispatch. A chart type or any schema version but 1.0 is unsupported, and
+  /// the command `explode` is refused. Anything else echoes what arrived, with a negative and a
   /// fractional number so the reply proves both reach the script.
   func sendCommand(
-    to target: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
+    command: String,
     arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
     calls.append(
@@ -220,8 +221,8 @@ final class FakeWindowAPI: ScriptWindowAPI {
       throw ScriptCallError.unsupported("the pane runs a fixture-slides applet, not \(appletType)")
     }
 
-    guard schemaVersion == 1 else {
-      throw ScriptCallError.unsupported("the applet takes command schema version 1")
+    guard schemaVersion.major == 1, schemaVersion.minor == 0 else {
+      throw ScriptCallError.unsupported("the applet takes command schema version 1.0")
     }
 
     guard command != "explode" else { throw ScriptCallError.refused("the applet refused") }

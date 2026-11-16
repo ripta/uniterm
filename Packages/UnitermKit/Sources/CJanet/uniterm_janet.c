@@ -725,6 +725,15 @@ static const char *failure_kind_name(int32_t status) {
     }
 }
 
+/* Raises a struct of :kind and :message, which a script can tell apart without reading words. */
+static void panic_failure(const char *kind, const char *text) {
+    JanetKV *record = janet_struct_begin(2);
+
+    janet_struct_put(record, janet_ckeywordv("kind"), janet_ckeywordv(kind));
+    janet_struct_put(record, janet_ckeywordv("message"), janet_cstringv(text));
+    janet_panicv(janet_wrap_struct(janet_struct_end(record)));
+}
+
 /*
  * Runs one call through the host and turns its reply into a Janet value. A failure raises the
  * app's text. With `structured`, it raises a struct of :kind and :message instead, so a script
@@ -753,14 +762,7 @@ static Janet invoke_reply(JanetBuffer *request, int structured, int raw) {
 
         const char *text = error[0] != '\0' ? error : "the host refused the call";
 
-        if (structured) {
-            JanetKV *record = janet_struct_begin(2);
-
-            janet_struct_put(record, janet_ckeywordv("kind"),
-                             janet_ckeywordv(failure_kind_name(status)));
-            janet_struct_put(record, janet_ckeywordv("message"), janet_cstringv(text));
-            janet_panicv(janet_wrap_struct(janet_struct_end(record)));
-        }
+        if (structured) panic_failure(failure_kind_name(status), text);
 
         janet_panicf("%s", text);
     }
@@ -936,6 +938,9 @@ static Janet cfun_send(int32_t argc, Janet *argv) {
 typedef struct json_context {
     const char *what;
     int32_t limit;
+
+    /* Raises a too-large error as a struct of :kind and :message, as the call's own failures are. */
+    int structured;
 } json_context;
 
 static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length,
@@ -964,6 +969,14 @@ static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length,
 }
 
 static void json_too_large(const json_context *context) {
+    if (context->structured) {
+        char message[128];
+
+        snprintf(message, sizeof(message), "%s would be more than %d bytes as JSON", context->what,
+                 context->limit);
+        panic_failure("bad-argument", message);
+    }
+
     janet_panicf("%s would be more than %d bytes as JSON", context->what, context->limit);
 }
 
@@ -1100,6 +1113,48 @@ static JanetBuffer *json_object(Janet value, const json_context *context) {
     return json;
 }
 
+/* One part of a schema version: a whole number from 0 to the wire's largest. */
+static uint32_t schema_part(Janet value, const char *what) {
+    if (!janet_checktype(value, JANET_NUMBER)) {
+        janet_panicf("the schema version %s must be a number", what);
+    }
+
+    double part = janet_unwrap_number(value);
+
+    if (!isfinite(part) || part != floor(part) || part < 0 || part > MAX_SCHEMA_VERSION) {
+        janet_panicf("the schema version %s must be a whole number that is not negative", what);
+    }
+
+    return (uint32_t)part;
+}
+
+/*
+ * Reads a schema version: a [major minor] tuple or array, or a bare whole number n, which means
+ * [n 0]. Anything else is the script's mistake, and nothing is sent.
+ */
+static void schema_version(Janet value, uint32_t *major, uint32_t *minor) {
+    if (janet_checktypes(value, JANET_TFLAG_TUPLE | JANET_TFLAG_ARRAY)) {
+        const Janet *parts;
+        int32_t count;
+
+        if (!janet_indexed_view(value, &parts, &count) || count != 2) {
+            janet_panic("the schema version must be a [major minor] tuple");
+        }
+
+        *major = schema_part(parts[0], "major");
+        *minor = schema_part(parts[1], "minor");
+
+        return;
+    }
+
+    if (!janet_checktype(value, JANET_NUMBER)) {
+        janet_panic("the schema version must be a number or a [major minor] tuple");
+    }
+
+    *major = schema_part(value, "number");
+    *minor = 0;
+}
+
 static Janet cfun_send_command(int32_t argc, Janet *argv) {
     janet_arity(argc, 4, 5);
 
@@ -1111,14 +1166,10 @@ static Janet cfun_send_command(int32_t argc, Janet *argv) {
 
     check_text(type, "the applet type", UNITERM_JANET_MAX_KIND_BYTES, 1);
 
-    if (!janet_checktype(argv[2], JANET_NUMBER)) janet_panic("the schema version must be a number");
+    uint32_t major;
+    uint32_t minor;
 
-    double version = janet_unwrap_number(argv[2]);
-
-    if (!isfinite(version) || version != floor(version) || version < 0 ||
-        version > MAX_SCHEMA_VERSION) {
-        janet_panic("the schema version must be a whole number that is not negative");
-    }
+    schema_version(argv[2], &major, &minor);
 
     if (!janet_checktypes(argv[3], JANET_TFLAG_KEYWORD | JANET_TFLAG_STRING)) {
         janet_panic("the command must be a keyword or a string such as :show-slide");
@@ -1129,7 +1180,7 @@ static Janet cfun_send_command(int32_t argc, Janet *argv) {
     check_text(command, "the command", UNITERM_JANET_MAX_COMMAND_NAME_BYTES, 1);
 
     Janet arguments = argc > 4 ? argv[4] : janet_wrap_nil();
-    json_context context = {"the arguments", UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES};
+    json_context context = {"the arguments", UNITERM_JANET_MAX_COMMAND_ARGUMENT_BYTES, 1};
     JanetBuffer *json;
 
     if (janet_checktype(arguments, JANET_NIL)) {
@@ -1146,7 +1197,8 @@ static Janet cfun_send_command(int32_t argc, Janet *argv) {
     put_u16(request, CALL_SEND_COMMAND);
     put_target(request, argv[0]);
     put_text(request, type);
-    put_u32(request, (uint32_t)version);
+    put_u32(request, major);
+    put_u32(request, minor);
     put_text(request, command);
     put_u32(request, (uint32_t)json->count);
     janet_buffer_push_bytes(request, json->data, json->count);
@@ -1166,7 +1218,7 @@ static Janet cfun_request_layout(int32_t argc, Janet *argv) {
         janet_panic("the layout must be a struct or a table such as {:split :row :children [...]}");
     }
 
-    json_context context = {"the layout", UNITERM_JANET_MAX_LAYOUT_BYTES};
+    json_context context = {"the layout", UNITERM_JANET_MAX_LAYOUT_BYTES, 0};
     JanetBuffer *json = json_object(argv[1], &context);
     JanetBuffer *request = janet_buffer(json->count + 64);
 
@@ -1246,12 +1298,13 @@ static const JanetReg uniterm_cfuns[] = {
     {"send-command", cfun_send_command,
      "(uniterm/send-command pane applet-type schema-version command &opt arguments)\n\nSends one "
      "command to the applet of a pane the script may control, and returns the applet's reply. "
-     "The applet type and the command schema version are the ones the script was written for, "
-     "and a pane that does not support them refuses. The command is a keyword or a string, and "
-     "the arguments a struct or a table. A failure raises a struct of :kind and :message, where "
-     ":kind is :bad-argument, :refused, :not-found, :unsupported, or :failed, or :reply-lost "
-     "when the command ran and its reply could not reach the script. The pane may be "
-     "{:nearest kind}."},
+     "The applet type and the command schema version are the ones the script was written for. "
+     "The version is a [major minor] tuple, or a whole number n, which means [n 0]. The applet "
+     "takes its own major and any minor up to its own, and refuses the rest. The command is a "
+     "keyword or a string, and the arguments a struct or a table. A failure raises a struct of "
+     ":kind and :message, where :kind is :bad-argument, :refused, :not-found, :unsupported, or "
+     ":failed, or :reply-lost when the command ran and its reply could not reach the script. The "
+     "pane may be {:nearest kind}."},
     {"request-layout", cfun_request_layout,
      "(uniterm/request-layout pane layout)\n\nLays out the script's own subtree, starting from a "
      "pane the script may control, and returns {:window id :panes [...]} with one reference for "

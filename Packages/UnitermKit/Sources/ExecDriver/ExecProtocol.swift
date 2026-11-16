@@ -8,10 +8,12 @@ import Foundation
 /// schema version. No command or event flows until both sides accept the other's hello.
 ///
 /// Version 2 adds a driver's layout request and its commands to the members of a group it owns.
-/// Version 3 adds the typed clipboard read and write. Each side refuses any version but its own at
-/// the hello, so an old driver with a new app, or the reverse, runs no command.
+/// Version 3 adds the typed clipboard read and write. Version 4 writes the command schema version
+/// as `[major, minor]` in place of one whole number, and lets a reply arrive in any order, since
+/// an applet may answer a waiting command long after a later one. Each side refuses any version
+/// but its own at the hello, so an old driver with a new app, or the reverse, runs no command.
 public enum ExecProtocol {
-  public static let version = 3
+  public static let version = 4
 
   /// The most clipboard text one typed clipboard request reads or writes, in UTF-8 bytes. A larger
   /// clipboard is refused, never cut. A longer write is refused as that one call while its line
@@ -79,7 +81,7 @@ public enum ExecWireError: Error, Sendable, Equatable, CustomStringConvertible {
 
 /// A message from a driver. The app validates each one and trusts none of them.
 public enum ExecDriverMessage: Sendable, Equatable {
-  case hello(protocolVersion: Int, appletType: String, schemaVersion: Int)
+  case hello(protocolVersion: Int, appletType: String, schemaVersion: AppletSchemaVersion)
 
   /// A command for the applet. The ID is the driver's own, and the reply carries it back.
   case command(id: JSONValue, name: String, arguments: JSONValue)
@@ -87,7 +89,8 @@ public enum ExecDriverMessage: Sendable, Equatable {
   /// A command for another pane: a member of a group the driver owns. It names the applet type
   /// and schema version it was written for, as a remote command does.
   case paneCommand(
-    id: JSONValue, pane: UInt64, appletType: String, schemaVersion: Int, name: String,
+    id: JSONValue, pane: UInt64, appletType: String, schemaVersion: AppletSchemaVersion,
+    name: String,
     arguments: JSONValue)
 
   /// A layout for the driver's own subtree, anchored at its pane. The window reads the layout.
@@ -106,7 +109,7 @@ public enum ExecDriverMessage: Sendable, Equatable {
 
 /// A message to a driver.
 public enum ExecAppMessage: Sendable, Equatable {
-  case hello(protocolVersion: Int, appletType: String, schemaVersion: Int)
+  case hello(protocolVersion: Int, appletType: String, schemaVersion: AppletSchemaVersion)
   case event(name: String, data: JSONValue)
   case reply(id: JSONValue, result: JSONValue)
   case error(id: JSONValue?, code: String, message: String)
@@ -122,7 +125,8 @@ public enum ExecWire {
     case .hello(let version, let type, let schema):
       object = [
         "type": .string("hello"), "protocol": .number(Double(version)),
-        "applet": .string(type), "schema": .number(Double(schema)),
+        "applet": .string(type),
+        "schema": .array([.number(Double(schema.major)), .number(Double(schema.minor))]),
       ]
 
     case .event(let name, let data):
@@ -170,7 +174,7 @@ public enum ExecWire {
       return .hello(
         protocolVersion: try integer(fields["protocol"], "protocol"),
         appletType: try name(fields["applet"], "applet"),
-        schemaVersion: try integer(fields["schema"], "schema"))
+        schemaVersion: try schemaVersion(fields["schema"]))
 
     case "command":
       let arguments = fields["arguments"] ?? .object([:])
@@ -186,7 +190,7 @@ public enum ExecWire {
 
       return .paneCommand(
         id: id, pane: try paneID(target), appletType: try name(fields["applet"], "applet"),
-        schemaVersion: try integer(fields["schema"], "schema"), name: command,
+        schemaVersion: try schemaVersion(fields["schema"]), name: command,
         arguments: arguments)
 
     case "layout":
@@ -230,6 +234,22 @@ public enum ExecWire {
     else { throw .malformed("its \(field) is not a whole number") }
 
     return Int(number)
+  }
+
+  /// A schema version is `[major, minor]`, two whole numbers that are not negative.
+  private static func schemaVersion(_ value: JSONValue?) throws(ExecWireError)
+    -> AppletSchemaVersion
+  {
+    guard case .array(let parts)? = value, parts.count == 2 else {
+      throw .malformed("its schema is not [major, minor]")
+    }
+
+    let major = try integer(parts[0], "schema major")
+    let minor = try integer(parts[1], "schema minor")
+
+    guard major >= 0, minor >= 0 else { throw .malformed("its schema is not [major, minor]") }
+
+    return AppletSchemaVersion(major, minor)
   }
 
   private static func name(_ value: JSONValue?, _ field: String) throws(ExecWireError) -> String {

@@ -41,9 +41,15 @@ final class ExecWireTests: XCTestCase {
       #"{"type":"command","id":1.5,"name":"x"}"#, #"{"type":"command","id":1,"name":""}"#,
       #"{"type":"command","id":1,"name":"x","arguments":[1]}"#,
       #"{"type":"command","id":1,"name":"x","pane":3}"#,
-      #"{"type":"command","id":1,"name":"x","pane":0,"applet":"a","schema":1}"#,
-      #"{"type":"command","id":1,"name":"x","pane":2.5,"applet":"a","schema":1}"#,
-      #"{"type":"command","id":1,"name":"x","pane":"3","applet":"a","schema":1}"#,
+      #"{"type":"command","id":1,"name":"x","pane":0,"applet":"a","schema":[1,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":2.5,"applet":"a","schema":[1,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":"3","applet":"a","schema":[1,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":1}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1,0,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1,-1]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1.5,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":"1.0"}"#,
       #"{"type":"layout","id":1}"#, #"{"type":"layout","id":1,"layout":[1]}"#,
       #"{"type":"layout","layout":{}}"#,
       #"{"type":"clipboard-read"}"#, #"{"type":"clipboard-write","id":1}"#,
@@ -63,10 +69,12 @@ final class ExecWireTests: XCTestCase {
     XCTAssertEqual(
       try ExecWire.decode(
         Data(
-          #"{"type":"command","id":2,"name":"clear","pane":9,"applet":"fixture-notes","schema":1}"#
+          #"{"type":"command","id":2,"name":"clear","pane":9,"applet":"fixture-notes","schema":[1,0]}"#
             .utf8)),
       .paneCommand(
-        id: .number(2), pane: 9, appletType: "fixture-notes", schemaVersion: 1, name: "clear",
+        id: .number(2), pane: 9, appletType: "fixture-notes",
+        schemaVersion: AppletSchemaVersion(1, 0),
+        name: "clear",
         arguments: .object([:])))
 
     XCTAssertEqual(

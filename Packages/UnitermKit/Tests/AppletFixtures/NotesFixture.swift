@@ -8,13 +8,18 @@ import AppletKit
     public nonisolated static let typeID = "fixture-notes"
 
     public nonisolated static let schema = AppletCommandSchema(
-      appletType: typeID, version: 1,
+      appletType: typeID, version: AppletSchemaVersion(1, 0),
       commands: [
         AppletMessageSchema(
           name: "set-notes", summary: "Replaces the notes.",
           arguments: AppletObjectSchema(["text": .init(.string(maxBytes: 4096))]),
           example: .object(["text": .string("Mention the deadline.")])),
         AppletMessageSchema(name: "clear", summary: "Removes the notes."),
+        AppletMessageSchema(
+          name: "wait-for-notes",
+          summary: "Replies once the notes contain the text. It changes nothing, so it may wait.",
+          arguments: AppletObjectSchema(["contains": .init(.string(maxBytes: 4096))]),
+          example: .object(["contains": .string("deadline")]), mayWait: true),
       ],
       events: [
         AppletMessageSchema(
@@ -24,6 +29,14 @@ import AppletKit
       ])
 
     public private(set) var text = ""
+
+    /// The replies still waiting for the notes to contain their text.
+    private var waiters: [(contains: String, reply: PendingReply)] = []
+
+    /// How many waiting commands the dispatcher failed before the notes held their text.
+    public private(set) var cancelledWaits = 0
+
+    public var waitingCount: Int { waiters.count }
     private var textLabel: NSTextField!
 
     public init() {
@@ -47,10 +60,49 @@ import AppletKit
       refresh()
     }
 
-    public var commandSchema: AppletCommandSchema { Self.schema }
+    /// The version the fixture claims, so a test can stand in for a later minor of the same major.
+    public var schemaVersion = NotesFixture.schema.version
 
-    public func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError) -> JSONValue {
+    /// False stands in for an applet that forgot to mark its waiting command.
+    public var declaresWaits = true
+
+    public var commandSchema: AppletCommandSchema {
+      let commands = Self.schema.commands.map { command in
+        AppletMessageSchema(
+          name: command.name, summary: command.summary, arguments: command.arguments,
+          example: command.example, mayWait: declaresWaits && command.mayWait)
+      }
+
+      return AppletCommandSchema(
+        appletType: Self.typeID, version: schemaVersion, commands: commands,
+        events: Self.schema.events)
+    }
+
+    public func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError)
+      -> AppletCommandReply
+    {
       switch command.name {
+      case "wait-for-notes":
+        guard case .string(let wanted)? = command.arguments["contains"] else {
+          throw AppletCommandError(.badArgument, "the text to wait for is missing")
+        }
+
+        let answer: JSONValue = .object(["length": .number(Double(text.utf8.count))])
+
+        guard !text.contains(wanted) else { return .immediate(answer) }
+
+        let reply = PendingReply()
+
+        waiters.append((wanted, reply))
+        reply.onCancel = { [weak self, weak reply] in
+          guard let self, let reply else { return }
+
+          waiters.removeAll { $0.reply === reply }
+          cancelledWaits += 1
+        }
+
+        return .pending(reply)
+
       case "set-notes":
         guard case .string(let value)? = command.arguments["text"] else {
           throw AppletCommandError(.badArgument, "the text is missing")
@@ -68,7 +120,14 @@ import AppletKit
       refresh()
       events.emit("notes-shown", .object(["length": .number(Double(text.utf8.count))]))
 
-      return .object(["length": .number(Double(text.utf8.count))])
+      let answer: JSONValue = .object(["length": .number(Double(text.utf8.count))])
+      let ready = waiters.filter { text.contains($0.contains) }
+
+      waiters.removeAll { waiter in ready.contains { $0.reply === waiter.reply } }
+
+      for waiter in ready { waiter.reply.complete(answer) }
+
+      return .immediate(answer)
     }
 
     override func userPressedButton() {

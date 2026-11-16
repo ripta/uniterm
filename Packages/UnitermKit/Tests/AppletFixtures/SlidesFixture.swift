@@ -9,7 +9,7 @@ import AppletKit
     public nonisolated static let typeID = "fixture-slides"
 
     public nonisolated static let schema = AppletCommandSchema(
-      appletType: typeID, version: 1,
+      appletType: typeID, version: AppletSchemaVersion(1, 0),
       commands: [
         AppletMessageSchema(
           name: "set-deck", summary: "Replaces the deck and shows its first slide.",
@@ -71,7 +71,9 @@ import AppletKit
 
     public var commandSchema: AppletCommandSchema { Self.schema }
 
-    public func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError) -> JSONValue {
+    public func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError)
+      -> AppletCommandReply
+    {
       switch command.name {
       case "set-deck":
         guard case .array(let values)? = command.arguments["titles"] else {
@@ -83,7 +85,7 @@ import AppletKit
         refresh()
         emitShown()
 
-        return .object(["count": .number(Double(titles.count))])
+        return .immediate(.object(["count": .number(Double(titles.count))]))
 
       case "show-slide":
         let wanted = command.arguments["index"]?.integerValue ?? -1
@@ -97,10 +99,12 @@ import AppletKit
         refresh()
         emitShown()
 
-        return .object(["index": .number(Double(index)), "title": .string(titles[index])])
+        return .immediate(
+          .object(["index": .number(Double(index)), "title": .string(titles[index])]))
 
       case "status":
-        return .object(["index": .number(Double(index)), "count": .number(Double(titles.count))])
+        return .immediate(
+          .object(["index": .number(Double(index)), "count": .number(Double(titles.count))]))
 
       default:
         throw AppletCommandError(.unknownCommand, "the slides fixture has no \(command.name)")
