@@ -1,7 +1,8 @@
 # A loader variable reaches the hardened `uniterm` command on a Mac with SIP off
 
-**Status:** open
+**Status:** proposed, see [UTERM-023](../proposals/UTERM-023-controller-runs-with-sip-off.md)
 **Estimate:** small to medium; one design decision
+**Triaged:** 2026-11-15 (does not reproduce on a Mac with SIP on; design call moved to a proposal)
 
 ## Observed
 
@@ -45,3 +46,12 @@ nothing in the product. This needs a design call. The candidates:
 - Treat a Mac with SIP off as outside the threat model, and say so in UTERM-004 and ADR-10.
 - Refuse controller runs, or every run that asks for a power, while SIP is off, and tell the user why.
 - Warn on the consent sheet and in the Controllers window while SIP is off, and leave the choice to the user.
+
+## Investigation notes
+
+Triage run on 2026-11-15.
+
+- This Mac has SIP on. The two controller tests pass here. The shipped-command test skips because
+  `UNITERM_COMMAND_HELPER` is unset. So the bug cannot reproduce on this machine.
+- The CI evidence above is specific and matches the SIP mechanism. The cause is taken as understood.
+- The choice among the candidates is a design call that changes the trust contract. UTERM-023 holds it.

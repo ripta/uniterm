@@ -24,6 +24,7 @@
 | [UTERM-020](UTERM-020-inspector-bridge.md) | Console, network, interception, and debugging for controller tabs through a hidden Web Inspector | accepted |
 | [UTERM-021](UTERM-021-declared-script-permissions.md) | Script files declare their powers, with strict mode by default and a lint | accepted |
 | [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | accepted |
+| [UTERM-023](UTERM-023-controller-runs-with-sip-off.md) | What uniterm does for controller runs on a Mac with SIP off | draft |
 
 ## Dependency Graph
 
@@ -50,6 +51,7 @@ UTERM-019 ← UTERM-003, UTERM-004, UTERM-005
 UTERM-020 ← UTERM-019
 UTERM-021 ← UTERM-003, UTERM-004
 UTERM-022 ← UTERM-003, UTERM-004, UTERM-021
+UTERM-023 ← UTERM-003, UTERM-004
 ```
 
 ## Not Yet Filed

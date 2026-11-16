@@ -16,6 +16,7 @@ allow:
   - exact: [caffeinate, -dimsu, make, test-package]
   - prefix: [codesign, -d]
   - prefix: [cp]
+  - prefix: [csrutil, status]
   - prefix: [date]
   - prefix: [defaults, read]
   - prefix: [file]
