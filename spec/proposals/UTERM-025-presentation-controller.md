@@ -32,7 +32,10 @@ means a separate presentation app and switching windows mid-talk.
 
 uniterm already has the pieces to show content. The text viewer renders Markdown and pages through PDFs. A controller
 can lay out panes and command them. A presenter built from those pieces needs no new applet. It also proves the
-controller model on something people use, rather than on test fixtures.
+controller model on something people use, rather than on test fixtures. And it gives anyone writing a controller a
+working starting point. The repo has no sample controller today, and no `.janet` file outside the test fixtures.
+
+`spec/ideas.md` "Sample presentation controller" records the starting survey.
 
 ## Design Decisions (Settled)
 
@@ -82,6 +85,17 @@ pane shows the next slide or a timer.
 Which plain keys the presenter binds by default: Page Down and Page Up, the arrow keys, and Space are common clicker
 outputs. UTERM-024 settles that a controller may bind plain keys in its own panes. This proposal picks the set.
 
+### Going to a chosen slide
+
+Whether the presenter offers Go to Slide, and how the user names the slide: a number typed in the palette, or a list of
+slide titles.
+
+### Deck size
+
+Inline Markdown has a size cap, and no remote command opens a file by path. Options: send each slide as its own inline
+Markdown, which keeps every send small, or wait for a show-by-path command under UTERM-015's path-reading power. A PDF
+deck needs the file in the viewer, which today means `send`.
+
 ### Presenter view
 
 Slides on one display and notes on another needs UTERM-026. Whether the first version waits for it, or ships the
@@ -94,6 +108,8 @@ single-window layout first.
 - **A deck file is untrusted input** — likelihood: medium, impact: medium. A deck from someone else could hold content
   that misleads in the notes or slides. Mitigation: the text viewer already renders untrusted Markdown and PDF. The
   presenter passes content through and adds no rendering of its own.
+- **A large deck exceeds what one send carries** — likelihood: medium, impact: low. Mitigation: settle "Deck size"
+  before M1, and test a deck at the cap.
 - **Shipping a controller in the bundle is a new contract** — likelihood: medium, impact: medium. Users would depend on
   its deck format. Mitigation: settle "How it ships" before acceptance, and version the deck format if it is bundled.
 
