@@ -63,6 +63,9 @@ fixed ones.
   text-viewer code. It counted 35 turns. It passed alone and in the next full run.
 - Seen again: 2026-11-15, once, in a local full `make test-package` run after a launcher layout fix that touches no
   text-viewer code. It counted 54 turns, the only failure of 2606 tests. It passed alone right after, in 1.3 s.
+- Seen again: 2026-11-15, twice in about five full `make test-package` runs during the UTERM-007 M5 work-queue run,
+  with 54 and 58 turns. That run's only change near the search adds one completion call after it ends. It passed alone
+  and with its class.
 - Suspected cause: the main actor was busy for seconds at a time, likely laying out the four-million-character text,
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.
@@ -144,6 +147,21 @@ fixed ones.
 - Evidence: "Unable to find hit point for ScrollView, {{20.0, 749.0}, {739.0, 180.0}}".
 - Suspected cause: the scroll view was covered or still moving when the test clicked it. Not confirmed.
 - Status: unresolved.
+
+### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
+
+- Seen: 2026-11-15, once in a full `make test-package` run during the UTERM-007 M5 work-queue run.
+- Evidence: it timed out waiting on the channel. It passed alone and with its class, in 8.5 s, and in the next full
+  runs. It launches a real perl driver, so a loaded machine slows it.
+- Status: unresolved. Not compared on the base commit.
+
+### `WindowsUITests.testCommandWClosesOnlyTheKeyWindow`, after its fix
+
+- Seen: 2026-11-15, once in a full `make test-app` run during the UTERM-007 M5 work-queue run, the only failure of 165.
+- Evidence: `WindowsUITests.swift:120` failed: `echo "K:$((6*7)):"` produced no output in 20 s after a click on the
+  first window. That is the full-suite symptom the fix in "Fixed" below names. `WindowsUITests` passed 6 of 6 alone
+  right after, on the same tree.
+- Status: the earlier fix covered the foreground read. This symptom came back once. Cause unknown.
 
 ## Fixed
 
