@@ -18,5 +18,12 @@
 (refuses "an infinite weight" "not finite" (fn [] (uniterm/request-layout pane {:pane 1 :weight math/inf})))
 (refuses "a repeated key" "twice" (fn [] (uniterm/request-layout pane {:pane 1 "pane" 2})))
 (refuses "a deep layout" "nesting in the layout" (fn [] (uniterm/request-layout pane (deep 20))))
-(refuses "a large layout" "bytes as JSON" (fn [] (uniterm/request-layout pane {:open (string/repeat "x" 40000)})))
+
+# A too-large layout gets a structured error, as the app's own failures and send-command's do.
+(def [ok failure] (protect (uniterm/request-layout pane {:open (string/repeat "x" 40000)})))
+(assert (not ok) "a large layout was accepted")
+(assert (struct? failure) (string "the oversize error is not a struct: " failure))
+(assert (= (failure :kind) :bad-argument) (string "the oversize kind was " (failure :kind)))
+(assert (string/find "bytes as JSON" (failure :message)) (string "the oversize message was " (failure :message)))
+
 (refuses "text that is not UTF-8" "not UTF-8" (fn [] (uniterm/request-layout pane {:open "\xFF"})))

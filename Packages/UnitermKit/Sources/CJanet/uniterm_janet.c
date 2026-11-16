@@ -1218,7 +1218,7 @@ static Janet cfun_request_layout(int32_t argc, Janet *argv) {
         janet_panic("the layout must be a struct or a table such as {:split :row :children [...]}");
     }
 
-    json_context context = {"the layout", UNITERM_JANET_MAX_LAYOUT_BYTES, 0};
+    json_context context = {"the layout", UNITERM_JANET_MAX_LAYOUT_BYTES, 1};
     JanetBuffer *json = json_object(argv[1], &context);
     JanetBuffer *request = janet_buffer(json->count + 64);
 
