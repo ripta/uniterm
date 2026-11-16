@@ -14,7 +14,7 @@ skipped, and no work is stashed.
 
 | Milestone | Run status | Commits |
 |---|---|---|
-| UTERM-007 M5: Remote control | DONE | "Version applet commands by major and minor, and let reads wait"; "Raise request-layout's oversize error as a :bad-argument struct"; "Let a controller drive a text viewer pane" |
+| UTERM-007 M5: Remote control | DONE | See "Close" for every commit |
 
 ## Choices the user made in the plan
 
@@ -242,3 +242,39 @@ follow; and the pending-reply cap and revalidation policy, which is ADR-11's mec
 
 Checks after the fixes: `make fmt`, `make lint`, `make check`, `make build`, and `caffeinate -dimsu make test-package`
 passed. `proposals.py freeze` reported nothing.
+
+## Close
+
+The row is finished. "Mark UTERM-007 implemented and move its row to history" set UTERM-007 to `implemented`, updated
+the proposal index, and moved the row from `queue.md` to the end of `history.md`. `proposals.py check` then reported
+nothing.
+
+The full `make test-app` ran once, beside the row review, on the commit "Let a controller drive a text viewer pane".
+164 of 165 tests passed. `WindowsUITests.testCommandWClosesOnlyTheKeyWindow` failed at its last assertion: typed
+input reached no terminal within 20 s after a window close. `WindowsUITests` then passed 6 of 6 alone on the latest
+tree. This run's only change near window close fails pending replies, and that test holds none. The failure matches a
+symptom `spec/flaky-tests.md` records for that test, so the run counts it as unowned. "Record three test failures seen
+during the UTERM-007 M5 run" logs it with the other two unowned failures.
+
+New crash reports during the run came only from `DocumentDecoderHelper` and `ImageDecoderHelper`. Each one aborts
+inside `FaultInjection.perform`, which the helper tests trigger on purpose.
+
+Commits in the run, in order:
+
+1. "Version applet commands by major and minor, and let reads wait"
+2. "Raise request-layout's oversize error as a :bad-argument struct"
+3. "Let a controller drive a text viewer pane"
+4. "Record UTERM-007's contract addition and wire skew, and name the exec version in a refusal"
+5. "Mark UTERM-007 implemented and move its row to history"
+6. "Record three test failures seen during the UTERM-007 M5 run"
+7. This report's last amendments.
+
+Left for the user:
+
+- The badge-reach hook on `Applet` is a small contract addition, made as a best guess. The alternative was a host
+  inset of the applet's view.
+- Two `Undecided` ADR candidates in UTERM-007's Decision Log: the command schema compatibility rule, and what a
+  content-bearing applet's remote reply may disclose.
+- UTERM-019's minor-version policy now follows UTERM-007's rule. UTERM-019 may want its own.
+- A `.build-tests/` scratch folder of 68 KB sits at the repo root, outside git's view. The sandbox refused to delete
+  files inside its `ZIPFoundation` checkout.
