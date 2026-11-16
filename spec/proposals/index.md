@@ -26,6 +26,8 @@
 | [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | accepted |
 | [UTERM-023](UTERM-023-controller-runs-with-sip-off.md) | What uniterm does for controller runs on a Mac with SIP off | draft |
 | [UTERM-024](UTERM-024-controller-input-channel.md) | Controllers declare palette commands and shortcuts, and read the user's invocations as events | draft |
+| [UTERM-025](UTERM-025-presentation-controller.md) | Present slide decks with notes by driving existing applets, stepped from the palette or a clicker | draft |
+| [UTERM-026](UTERM-026-screen-control.md) | Pane zoom, full screen, and presenter windows across displays | draft |
 
 ## Dependency Graph
 
@@ -54,6 +56,8 @@ UTERM-021 ← UTERM-003, UTERM-004
 UTERM-022 ← UTERM-003, UTERM-004, UTERM-021
 UTERM-023 ← UTERM-003, UTERM-004
 UTERM-024 ← UTERM-002, UTERM-003, UTERM-004, UTERM-013, UTERM-021
+UTERM-025 ← UTERM-004, UTERM-007, UTERM-021, UTERM-024
+UTERM-026 ← UTERM-004
 ```
 
 ## Not Yet Filed

@@ -23,6 +23,8 @@
   events" stands. The exec protocol and ScriptWire versions go up.
 - UTERM-019 — "Page events": the event read here takes the same cursor, timeout, and dropped-count shape, if Open
   question "The event model" settles that way.
+- UTERM-025 — "Stepping": the presentation controller declares its commands and clicker keys through this channel.
+- UTERM-026 — "Summary": screen control is a separate proposal.
 - UTERM-022 — "Where the form calls live": a host-side waiting call is the precedent this proposal weighs in Open
   question "Where the read lives".
 
@@ -52,18 +54,8 @@ input channel serves all of them, so none needs its own applet.
 ### Scope: commands and their events, not screen control
 
 Decision: this proposal covers commands that a controller declares, their palette entries and shortcuts, and the events
-their invocations produce. Screen control is out of scope: zooming one pane to fill its window, full screen, and placing
-a second window on another display.
-
-- Screen control needs its own power under ADR-09, changes UTERM-004's "Same window only", and falls under ADR-12's
-  focus rules. Those are separate questions from input.
-- A presenter works without it. The user can make the window full screen by hand.
-- What screen control adds is showing only the slide pane to an audience, and a presenter view with notes on one
-  display and slides on another. Neither is possible today.
-
-Decision to defer: file a screen-control proposal once M4's presenter example runs. Revisit hook: M4 of this proposal.
-
-**Revisit:** when M4's presenter example passes
+their invocations produce. Screen control is UTERM-026: zooming one pane to fill its window, full screen, and placing a
+second window on another display.
 
 ### Who may declare commands
 
@@ -219,7 +211,6 @@ ADR-04 says an applet binds keys only for its own actions. A controller is a thi
 - **A waiting read blocks the Janet thread** — likelihood: high, impact: low. A controller cannot serve other work while
   it waits. Accepted: the read takes a timeout. A controller that needs both reads with short timeouts. A Janet event
   loop is out of scope.
-- **The deferred screen control is never filed** — likelihood: low, impact: low. Mitigation: the revisit hook on M4.
 
 ## Milestones
 
@@ -254,18 +245,9 @@ ADR-04 says an applet binds keys only for its own actions. A controller is a thi
 - An exec driver declares commands and receives their invocations
 - A driver that speaks an older exec protocol is refused at the hello, before any effect
 
-### M4: Presenter example
-
-**Status:** NOT STARTED
-
-- A Janet script in the real app lays out two text viewers for slides and notes, and advances and goes back from the
-  palette and from Page Down and Page Up
-- A UI test runs the example and captures it on screen
-- The screen-control proposal is filed, per "Scope: commands and their events, not screen control"
-
 ## Decision Log
 
-- 2026-11-15: Screen control moved to a follow-up proposal, filed once M4 runs.
+- 2026-11-15: Screen control moved to its own proposal, UTERM-026. The presenter moved to UTERM-025.
 - 2026-11-15: Controllers may bind plain keys in their own panes, winning over the pane's own handling.
 - 2026-11-15: Controller commands are live only while a pane the controller owns has focus.
 - 2026-11-15: ADR candidate (cuts across the system): a program that is neither uniterm nor an applet may own keys,
