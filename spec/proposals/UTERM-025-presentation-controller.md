@@ -21,9 +21,9 @@
 - UTERM-026 — "Speaker notes" and "A second window": the presenter view and its notes build on this controller's deck
   format and commands. A second layout anchored at the starting terminal is refused once the user disconnects it, per
   "How the starting terminal joins the layout".
-- UTERM-029 — "Deck sources": other deck sources extend this controller's stepping. Its risk "Each new deck source is a
-  format contract" plans to version with this deck format, which has no version. A later format opts in by a marker of
-  its own, per the risk "Users copy the example's deck format".
+- UTERM-029 — "Stepping" and "Deck format rules": PDF and image-folder inputs become slides of this controller's
+  Markdown body, and Go to Slide, First Slide, and Last Slide join its commands. A deck may name a PDF page as
+  `![](talk.pdf#page=3)`. That reference uses the standard RFC 8118 form, so it adds no deck format marker.
 - UTERM-031 — retracted. The risk "Stepping needs focus in the slide pane" is accepted on the user clicking the slide
   pane, and nothing waits on UTERM-031.
 - UTERM-033 — "Summary": after a relaunch, running the presenter again reuses the restored slide pane. Not required.

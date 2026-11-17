@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-16
+**Updated:** 2026-11-17
 
 ## Dependencies
 
@@ -14,6 +14,8 @@
 ## Impacts
 
 - UTERM-030 — "Slide images": slide images load from the folder this proposal grants.
+- UTERM-029 — "Input kinds and host functions": amends this proposal so a PDF or a folder may be the input, under
+  `input-file` version 2, with four host functions to read them. Its PDF pages count as slide images under this grant.
 - UTERM-025 — "How it starts": the presenter takes its deck as an argument, under this proposal.
 - UTERM-004 — "Permission scopes and approval flow": supersedes in part its rule that approvals hold typed authority
   ceilings, not exact launch inputs, and that arguments are never part of a remembered scope. A remembered folder for
@@ -78,8 +80,9 @@ command line names. So the run's argument is not the user's act by itself. The s
 
 ### The grant covers slide images only
 
-Decision: the folder grant lets the text viewer load a slide's images from inside the folder, under UTERM-030. It grants
-no other path read, even after other path commands land under UTERM-015 M4.
+Decision: the folder grant lets the text viewer load a slide's images from inside the folder, under UTERM-030. A PDF
+page named under UTERM-029 "PDF page references" is a slide image. It grants no other path read, even after other path
+commands land under UTERM-015 M4. Amended 2026-11-17; see Decision Log.
 
 Rationale: the presenter needs only images. A wider grant would widen silently as other applets gain path commands.
 
@@ -157,6 +160,10 @@ named binding in the uniterm module. The script's stdin stays the invoker's.
   "Version skew". The app refuses a declaration that marks an input file and arrives with no folder, and a folder that
   arrives with no mark.
 - The read runs in the command's process, so it borrows none of uniterm's macOS privacy grants.
+- Under `input-file` version 2, a PDF or a folder may be the input, per UTERM-029 "Input kinds and host functions". A
+  folder is not refused as non-regular there. The command passes a PDF's open descriptor to the app instead of reading
+  it, and lists a folder through its descriptor. The UTF-8 check and the size cap apply to text input only. Amended
+  2026-11-17; see Decision Log.
 
 Rationale: a read in the invoker's process gives the script exactly what the invoker could read. A host call would
 have the app read a path a program chose, with uniterm's grants. With a remembered folder, any program could then run
@@ -253,8 +260,9 @@ error says what to do next.
 - In a declared file that does not declare `input-file`, the error names the undeclared permission, per UTERM-021
   "Undeclared powers are refused".
 - In a package, it says a package cannot take an input file.
-- In an undeclared file or a REPL, it says only a declared file takes an input file, and names
-  `{:kind :input-file :version 1}`.
+- In an undeclared file or a REPL, it says only a declared file takes an input file, and names the `input-file`
+  version the call needs: version 1 for `input-text` and `input-folder`, version 2 for UTERM-029's functions. Amended
+  2026-11-17; see Decision Log.
 
 Rationale: no caller is served by nil. A declared run with an input file always has one, since a missing argument
 refuses the run. Every other run can never have one. A nil would make a forgotten declaration run as if the deck were
@@ -276,9 +284,12 @@ Decision: a declarable permission kind, two host functions, and a sheet line bui
 - Each permission meaning names where its kind may appear: a package, a file, or a store. One rule in the reader then
   refuses `input-file` in `controller.json`, and the folder kind in any declaration.
 - `(uniterm/input-text)` and `(uniterm/input-folder)` return the text and the folder the grant holds. No function
-  returns the file's own path, since no caller needs it. Amended 2026-11-16; see Decision Log.
-- The sheet line reads "Let the text viewer show images from /Users/me/talks/demo or a folder inside it, in panes it
-  controls". UTERM-015's line naming any protected location the folder lies in follows it.
+  returns the file's own path. Under version 2, UTERM-029 adds `input-kind`, `input-name`, `input-pages`, and
+  `input-images`. `input-name` returns the canonical base name, which a generated slide needs to name a PDF page.
+  Amended 2026-11-17; see Decision Log.
+- The sheet line reads "Let the text viewer show images and PDF pages from /Users/me/talks/demo or a folder inside it,
+  in panes it controls", for every input kind. UTERM-015's line naming any protected location the folder lies in
+  follows it. The stored folder kind keeps its version.
 
 Rationale: a permission kind keeps the declared list the whole set of powers, as the lint and UTERM-021's refusal rule
 expect. A header key would grant a folder the list never names. As written, it would also need a boolean, which the
@@ -483,6 +494,13 @@ None.
   for its new permission kind.
 - 2026-11-16: Accepted after the review gate. No ADR written. UTERM-004 and UTERM-021 carry "Superseded in part by
   UTERM-032" markers.
+- 2026-11-17: Amended by UTERM-029, which adds PDF and image-folder decks. "The grant covers slide images only" now
+  counts a PDF page as a slide image. "How the text reaches the script" admits a PDF or a folder under `input-file`
+  version 2, and its UTF-8 check and size cap apply to text only. "Calls without an input file" said the error "names
+  `{:kind :input-file :version 1}`", and now names the version the call needs. "Names" said "No function returns the
+  file's own path, since no caller needs it", and the sheet line said "Let the text viewer show images from
+  /Users/me/talks/demo or a folder inside it, in panes it controls". `input-name` now returns the base name, and the
+  sheet line names PDF pages. The stored folder kind keeps its version, so an older build still reads the store.
 
 ## References
 

@@ -30,7 +30,7 @@
 | [UTERM-026](UTERM-026-screen-control.md) | Speaker notes in a presenter view, pane zoom, windows across displays, and Pop Out Pane | accepted |
 | [UTERM-027](UTERM-027-controller-plain-keys.md) | Plain keys for controllers, folded back into UTERM-024 | retracted |
 | [UTERM-028](UTERM-028-exec-driver-commands.md) | Exec drivers declare commands and receive their invocations | accepted |
-| [UTERM-029](UTERM-029-presentation-extras.md) | PDF, image, and HTML decks, and Go to Slide, for the presenter | draft |
+| [UTERM-029](UTERM-029-presentation-extras.md) | PDF and image-folder decks, and Go to Slide, for the presenter | accepted |
 | [UTERM-030](UTERM-030-text-viewer-slides.md) | A slide style and deck images for the text viewer | accepted |
 | [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | retracted |
 | [UTERM-032](UTERM-032-run-time-input-file.md) | A script takes its input file as an argument, and its folder is granted for slide images | accepted |
@@ -66,7 +66,7 @@ UTERM-024 ← UTERM-002, UTERM-003, UTERM-004, UTERM-013, UTERM-021
 UTERM-025 ← UTERM-003, UTERM-004, UTERM-007, UTERM-015, UTERM-021, UTERM-024, UTERM-030, UTERM-032
 UTERM-026 ← UTERM-001, UTERM-002, UTERM-004, UTERM-013, UTERM-021, UTERM-024, UTERM-025, UTERM-032
 UTERM-028 ← UTERM-004, UTERM-013, UTERM-024
-UTERM-029 ← UTERM-003, UTERM-007, UTERM-025
+UTERM-029 ← UTERM-007, UTERM-024, UTERM-025, UTERM-026, UTERM-030, UTERM-032
 UTERM-030 ← UTERM-004, UTERM-007, UTERM-015, UTERM-024, UTERM-032
 UTERM-032 ← UTERM-003, UTERM-004, UTERM-015, UTERM-021
 UTERM-033 ← UTERM-004, UTERM-021

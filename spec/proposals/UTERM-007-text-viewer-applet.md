@@ -2,7 +2,7 @@
 
 **Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-15
+**Updated:** 2026-11-17
 
 ## Dependencies
 
@@ -356,6 +356,8 @@ None.
 ### M1: PDF and RTF
 
 **Status:** DONE
+
+Superseded in part by UTERM-029; see Decision Log.
 
 - A pane can run the text viewer and open a PDF
 - The viewer opens RTF and Word documents
@@ -1085,6 +1087,8 @@ None.
   line. A v4 driver against a v3 app gets the v3 app's malformed-line error, which cannot change. ADR-11's "a completion
   event names the handle" and UTERM-004's "remote callers receive no events" are reconciled: `wait` stands in for the
   event. This is the decision's existing marker, extended here.
+- 2026-11-17: Superseded in part by UTERM-029. A Markdown pane that shows a PDF page reference starts a document
+  helper for each page draw, which ends with the draw. A PDFKit PDF pane still starts none.
 
 ## References
 
