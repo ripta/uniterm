@@ -89,7 +89,7 @@ final class SenderIdentityTests: XCTestCase {
     let gone = try XCTUnwrap(AuditToken(data: token(pid: 2_000_000_000, version: 1)))
 
     XCTAssertNil(SystemSenderResolver().identity(of: gone))
-    XCTAssertEqual(OpenAuthority.decide(for: nil), .refused(sender: "an unidentified program"))
+    XCTAssertEqual(OpenAuthority.decide(for: nil), .needsApproval(sender: nil, onceOnly: true))
   }
 
   // MARK: Apple openers

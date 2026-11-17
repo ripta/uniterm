@@ -33,7 +33,7 @@ base. Whether to rebase `agent/petunia` is left to the user.
 | UTERM-015 M4: The path-reading power | DONE | "Let a controller read paths inside an approved directory scope" |
 | UTERM-015 M5: `uniterm open` | DONE | "Open files from a terminal with `uniterm open`" |
 | UTERM-015 M6: Terminal clicks | DONE | "Open the path a terminal shows on Command-click" |
-| UTERM-015 M7: Launch Services approvals | QUEUED | |
+| UTERM-015 M7: Launch Services approvals | DONE | "Ask before opening files that other apps send" |
 
 ## Local checks
 
@@ -362,6 +362,74 @@ Final-tree checks, run by the coordinator after the last code change:
 ADR candidates: "libghostty never touches a path a program chose" is covered by ADR-01 and ADR-04 together with this
 proposal's settled click rule. "A click acts only on a path the pane showed" governs the terminal applet only. Neither
 passes the cuts-across test.
+
+### UTERM-015 M7: Launch Services approvals
+
+The implementer replaced M2's refusal of other senders with a question in the pending indicator.
+`OpenAuthority.decide` returns `.userAct` or `.needsApproval(sender:onceOnly:)`. Every Apple-anchored non-opener, an
+unidentified sender, and a sender with no signing identifier are once-only. A third-party signed app can be allowed
+until it quits. That grant binds to the PID and PID version, lives in memory, and ends on exit or exec. One event is
+one question. It names the sender, lists every full path, and covers the count. An approved open takes no focus and
+raises no existing window. A busy queue, a Deny, a withdrawal, and an event with no local file each post the coalesced
+refusal message. A question waiting at cold launch lets the default window open.
+
+First-pass checks: `make fmt-check`, `make lint`, `make check`, `caffeinate -dimsu make test-package` (2825 tests, 10
+skipped, 0 failures), and `build-for-testing` passed. The freeze check showed one hunk with origin `other`, in
+UTERM-004's References, adding ADR-14. That is another session's edit, left for the user.
+
+UI tests: the coordinator ran `LaunchServicesOpenUITests` (rewritten), `PendingRequestsUITests`, `OpenPanelUITests`,
+and `ScriptOpenUITests` (`cg_run` 87X0E1, 2026-11-17 01:37). All 7 tests passed in 121 s. The runner's NSWorkspace
+open now raises a question that the test approves, and the routed pane opens with the first pane still focused. A
+second test denies and sees the message.
+
+New test classes: `LaunchOpenApprovalTests` 16 tests in 0.94 s. `LaunchOpenCoordinatorTests` is now 8 tests in 0.56 s,
+and `OpenAuthorityTests` 8 tests in 0.001 s.
+
+Implementer best guesses, in the Decision Log entry "M7 work-queue best guesses":
+
+1. Every Apple-anchored non-opener, and a sender with no signing identifier, is once-only. No helper identifier is
+   named. If wrong, an Apple-signed app the user drives is asked on every open.
+2. A session grant also ends when the sender execs.
+3. A Deny of an app lasts until the app ends. A Deny of a go-between or an unknown sender is not remembered, so one
+   denied `open -a` does not block the next.
+4. Only senders that can hold a session grant are watched, so only their questions are withdrawn on exit. A
+   go-between exits right after it sends, and withdrawing it would refuse every `open -a`.
+5. An event with no local file is refused with its own message. A mixed event asks about the files and says how many
+   items will not open.
+
+Review findings and their dispositions:
+
+- Once-only events each made a new requester, so a flood of them could fill all 64 pending rows and starve OSC 52,
+  script, and controller questions. CONFIRMED. Sent to fix with a class cap at the per-requester bound, as a best
+  guess.
+- The real watcher's claim that an already-exited sender ends at once was unmeasured. PLAUSIBLE. Sent to trace with a
+  real exited process.
+- adr-impact, under ADR-14, which another session accepted during this run and which supersedes ADR-09: "Opening a
+  window is a power of its own". The question said only "each in a new pane", though an approved open can make a
+  window. Sent to fix in the question text and the proposal.
+- A one-second sleep in the UI test guarded a check the package tests already own. Sent to fix.
+- Recorded for the user: a Deny can fold into an earlier coalesced message within 30 s. A non-Apple interpreter, such
+  as a Homebrew `python3`, can hold a session grant that covers whatever script runs in it until it exits or execs.
+
+Fix round outcome:
+
+- Once-only flood: fixed. Every `.launchEvent` now counts against one shared `maxRowsPerRequester` bound. The
+  regression test `testAFloodOfOneEventRequestersLeavesRoomForAnotherRequester` failed first three ways: 64 rows
+  instead of 16, a full queue, and a clipboard question refused as busy. Distinct live signed apps each still bound
+  alone, so many of them could still fill the rows. That is recorded as a residual.
+- ADR-14: the question now says a new window opens when a batch or a lack of room calls for one. The proposal gained a
+  bullet and a check that cite ADR-14, and a References entry. A session grant also covers such a window.
+- The UI test's sleep is gone.
+- Exited-sender watch: the trace did not confirm it. `SenderWatcherTests` spawns `/usr/bin/true`, waits for its exit,
+  and then watches. The real watcher fired in 0.08 s. No liveness check was added, and the test pins the behavior.
+
+Second-round checks: `make lint`, `make check`, `caffeinate -dimsu make test-package` (2828 tests, 10 skipped, 0
+failures), and `build-for-testing` passed. The coordinator reran `LaunchServicesOpenUITests` and
+`PendingRequestsUITests` (`cg_run` P4GEVR, 2026-11-17 01:46), and they passed. New: `SenderWatcherTests` 2 tests in
+0.19 s.
+
+ADR candidates: adr-impact named "nothing touches a path before an outside caller is approved". UTERM-015 declined it
+on 2026-11-03 as "uniterm never lends its macOS privacy grants to a program". It is not re-recorded.
 
 ## Status
 

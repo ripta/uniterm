@@ -252,17 +252,28 @@ remembered past the sender's run.
   Recent Items are not on the list, since M2 found no signed program for either to name an identifier for. Adding one
   needs its measured identifier. Amended 2026-11-03; see Decision Log.
 - Opens from those openers are the user's act, and need no grant.
-- Until UTERM-004 M6 lands, every other sender is refused, with a bounded, coalesced message naming it.
-- After M6, every other sender goes to UTERM-004's pending indicator, named from its verified signing information. The
-  user can allow once, or allow for the session. A session grant binds to the sender's audit-token PID and PID
-  version, and its label says it covers everything that app sends until it quits, as UTERM-004's OSC 52 approval says
-  for a terminal session. Nothing is remembered after the sender quits. M7 builds this.
-- A go-between, such as `/usr/bin/open` or a Launch Services helper, and a sender that cannot be identified, get Allow
-  once only. M2 checked for an attribute that names the originator, and found none. An event sent by `open -a` carries
-  `keyActualSenderAuditToken`, and it names the Launch Services UI agent, not the program that ran `open`. The
-  authority therefore reads only the sender's own audit token. Amended 2026-11-03; see Decision Log.
+- Every other sender goes to UTERM-004's pending indicator, named from its verified signing information. The user can
+  allow once, or allow for the session. A session grant binds to the sender's audit-token PID and PID version, and its
+  label says it covers everything that app sends until it quits, as UTERM-004's OSC 52 approval says for a terminal
+  session. It lives in memory only. It ends when the sender exits or starts another executable, and nothing is
+  remembered after that. A Deny of an app lasts until it ends as well. Amended 2026-11-17; see Decision Log.
+- A go-between, such as `/usr/bin/open` or a Launch Services helper, a sender that cannot be identified, and a sender
+  with no signing identifier to name get Allow once only. So does every other Apple-signed program that is not an
+  opener, since any program can drive one. M2 checked for an attribute that names the originator, and found none. An
+  event sent by `open -a` carries `keyActualSenderAuditToken`, and it names the Launch Services UI agent, not the
+  program that ran `open`. The authority therefore reads only the sender's own audit token. Amended 2026-11-17; see
+  Decision Log.
 - One event is one operation that names every file in it.
 - A prompt for an unknown sender says the sender is unknown and lists every full path.
+- Nothing about the open waits on a window. A question that still waits for the user's answer is not an open waiting
+  for layout restore, so the default window opens and the question has a window to show in. Amended 2026-11-17; see
+  Decision Log.
+- The question says that a new window may open. Opening a window is a power of its own under ADR-14, and a batch, a
+  lack of room, or no open window each call for one. The one approval covers it. Amended 2026-11-17; see Decision
+  Log.
+- A refusal never passes silently. A Deny, a sender that quit before the user answered, an event that names no local
+  file, and a pending indicator with no room each post a bounded, coalesced message that names the sender and says
+  why, and touch no path. Amended 2026-11-17; see Decision Log.
 - A program with Automation consent over Finder can make Finder the sender. The event carries no originator, so this
   cannot be closed. It is accepted under ADR-09's statement that uniterm gives no isolation from the user's own
   processes.
@@ -863,9 +874,9 @@ Amended 2026-11-17; see Decision Log.
 
 ### M7: Launch Services approvals
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-03; see Decision Log. Moved from M2.
+Amended 2026-11-17; see Decision Log. Moved from M2.
 
 - Starts after UTERM-004 M6
 - A sender other than Apple's openers goes to UTERM-004's pending indicator, named from its verified signing
@@ -875,8 +886,59 @@ Amended 2026-11-03; see Decision Log. Moved from M2.
   confirmation
 - A prompt for an unknown sender says the sender is unknown, lists every full path, and offers Allow once only
 - A go-between such as `/usr/bin/open` gets Allow once only
-- Nothing is remembered after the sender quits
-- Nothing touches a path before its open is approved, so an unapproved open never raises a macOS privacy prompt
+- Nothing is remembered after the sender quits, and a sender that quits while its question waits withdraws it
+- Nothing touches a path before its open is approved, so a pending, denied, withdrawn, or exited open never raises a
+  macOS privacy prompt
+- A Deny, a withdrawn question, and a pending indicator with no room each leave one coalesced message, and a flood of
+  once-only events leaves room for every other requester's question
+- The question says that a new window may open
+- An approved open takes no focus and raises no existing window, and a cold-launch question lets the default window
+  open
+
+**As built:**
+
+- Divergences and best guesses are in the Decision Log, 2026-11-17, M7 best guesses. The two that change a reader's
+  expectation: every Apple-signed program that is not an opener gets Allow once only, and a Deny of an app lasts until
+  that app exits.
+- The authority has a new case, `needsApproval`, in place of the refusal. It says whether the answer can cover more
+  than the one event. The coalesced message has a reason: busy, denied, withdrawn, or no local file.
+- Each event is one operation in the pending indicator under a new requester. An app that can be allowed for its run
+  asks under its PID and PID version, so its events share one row. A go-between and an unknown sender each ask under
+  their own event, so a Deny of one never blocks the next.
+- The question names the sender from its signing identifier, and the team or Apple. It lists every path with control
+  and direction characters written out, and the count. The router's own question above 10 files is skipped, through the
+  option M5 added to the route, which also turns focus off.
+- The session grant lives in the coordinator, keyed on the PID and PID version. A process watcher ends it, and the
+  watcher is injected, so tests end a sender by hand. The system's watcher reports exit and exec. An app is watched
+  from its first question until it ends. A go-between and an unknown sender are not watched.
+- No path is looked at before the answer. A test over the real coordinator, permission queue, router, and windows
+  records the router's looks. A pending, denied, withdrawn, and already exited open each leave the record empty, and an
+  allowed one records its path.
+- A question waiting at cold launch does not count toward the coordinator's pending opens. The allowed open waits for
+  restore in the coordinator's queue, as before.
+- The UI test sends an open from the test runner, answers the question in the Pending Requests panel, and shows the
+  pane open beside the first with the first still focused. A second test denies and shows the message. The runner is
+  signed ad hoc with no team and no Apple anchor, and it is not an opener, so the app asks about it. Which process the
+  event names as the sender for an NSWorkspace open from a sandboxed runner was not measured. The tests do not depend
+  on it.
+- `LaunchServicesOpenUITests`, 2 tests, is changed. Nobody has run them.
+- The same process watcher ends the grant, so a sender that execs another program loses its grant. The process ID
+  version is documented to change on exec, and the watch does not wait to find out.
+- The system's process watcher reports a process that exited before the watch began. A package test spawns
+  `/usr/bin/true`, waits for it, and then watches, so a sender that quits before its question is asked loses its
+  question.
+- Once-only events bound together under one requester bound, so a loop of them leaves room for every other requester.
+  Apps that can be allowed for their run each bound alone, so many distinct live apps can still fill the rows. Each one
+  needs its own signed process.
+- Residuals for the user. A user's Deny can be folded into an earlier coalesced message within 30 seconds, so the
+  Deny's own message may not post. A non-Apple interpreter, such as a Homebrew `python3`, can get a session grant that
+  covers whatever script runs in it. The grant is bound to its PID and version and ends on exit or exec.
+- A PID reused between the system's sender lookup and the watch's start is a residual. The window is the time between
+  two calls in the same event handler. The grant still binds to the version, so a reused PID with a new version never
+  matches.
+- No `test-cost` target exists in this repo. New and changed test classes ran in under 1 s each in the package suite:
+  `LaunchOpenApprovalTests` 16 tests in 0.94 s, `LaunchOpenCoordinatorTests` 8 in 0.56 s, `OpenAuthorityTests` 8 in
+  0.001 s, `SenderWatcherTests` 2 in 0.19 s, and `PermissionRequestsTests` 3 in 0.002 s.
 
 ### M8: Finder sender record
 
@@ -1229,6 +1291,53 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
       libghostty's own opener refuses these links.
   12. A review found a stale preview. A tab hidden while the pointer left its link showed that link again when
       selected. A hidden tab's hover is now forgotten, so the next hover sets it and a click before that is refused.
+- 2026-11-17: M7 work-queue best guesses (work-queue best guess). Amended "Opens that arrive through Launch Services"
+  and M7. The section said every other sender is refused until UTERM-004 M6 lands, then goes to the pending indicator.
+  It said a go-between and a sender that cannot be identified get Allow once only. It said nothing on what a Deny or a
+  sender that quits does, or on a cold launch with a question waiting. M7 listed no check for them.
+  1. Every Apple-anchored sender that is not an opener gets Allow once only, whatever its identifier. The text named
+     `/usr/bin/open`, a Launch Services helper, `osascript`, and `python3`. No helper identifier was measured, and a
+     list of names would be a guess about who counts as a go-between. A sender that was identified but has no signing
+     identifier is treated as unidentified, since the question cannot name it. A third-party signed app, with or
+     without a team, gets Allow once or Allow Until This App Quits. If wrong, an Apple-signed app that the user drives
+     is asked on every open.
+  2. A session grant binds to the PID and PID version, lives in memory, and ends when the sender exits or starts
+     another executable. The text said until it quits. The kernel gives a process another version when it starts
+     another executable, so the grant could not match it anyway, and the watch ends it at once. If wrong, the watch
+     listens for exit only.
+  3. A Deny of an app lasts until it ends, so a loop that opens again is refused at once with the message, and it
+     asks again after a new run. A Deny of a go-between or an unknown sender is not remembered, since no later event can
+     be tied to it. If wrong, a Deny of one `open -a` blocks every later one until Ask Again.
+  4. A sender that quits while its question waits withdraws the question, and nothing opens. Only an app that can be
+     allowed for its run is watched. A go-between exits as soon as it has sent the event, and withdrawing on that would
+     refuse every `open -a`. If wrong, a once-only sender's question is withdrawn too, and `open -a` never opens.
+  5. A refusal posts through the coalescer that M2 built, one message per 30 seconds, with a reason: no room, a
+     Deny, a sender that quit, or no local file. An event whose items are all non-file URLs is refused with the last
+     reason, so it neither asks nor opens. Mixed events ask about the file paths and say how many items will not open.
+     If wrong, the unusual events post their own messages without a bound.
+  6. A question waiting at cold launch does not count as a pending open, so the layout opens its default window. The
+     allowed open then waits for restore. The question may sit in the indicator of a window that opened for it. If
+     wrong, a cold-launch open from another program opens no window until it is answered, and cannot be answered.
+  7. An approved open anchors to the focused pane of the most recently key window, takes no focus, and raises no
+     existing window, through the option and the coordinator path M5 built. A new window holding only the routed pane
+     is ordered front without becoming key.
+  8. The question's wording is the user-facing text this milestone adds: the row names the sender as its signing
+     identifier and the team, or Apple, or no team. The session answer is titled "Allow Until This App Quits". Its
+     detail says the same, and says it covers everything that app sends. If wrong, only the text changes.
+  9. Package test classes added or changed ran in under 1 s each: `LaunchOpenApprovalTests` 16 tests in 0.94 s,
+     `LaunchOpenCoordinatorTests` 8 in 0.56 s, and `OpenAuthorityTests` 8 in 0.001 s. `LaunchServicesOpenUITests` is
+     changed and was not run.
+  10. A review found that each once-only event is its own requester, so 64 of them from an `open -a` loop filled every
+      row and refused OSC 52, scripts, and controllers as busy. Every open event's requester now counts against one
+      bound, `maxRowsPerRequester`, as one requester would. Past it the new event is busy, with the coalesced message,
+      and the waiting rows stay. The regression test failed first, with 64 rows and a busy clipboard request. If wrong,
+      a flood of events can fill the indicator.
+  11. ADR-14 says opening a window is a power of its own. An approved open can make a new window that holds only the
+      routed pane, and the question said only "each in a new pane". The question now says a new window opens when a
+      batch or a lack of room calls for one, so the one approval names it. The session grant covers it too, and its
+      text says it covers everything the app sends. If wrong, a window opens under an approval that never said so.
+  12. A review doubted that the system's watcher reports a process that already exited. A package test with a real,
+      reaped process shows it does, so no liveness check was added. The test pins the behavior.
 - 2026-11-16: ADR candidate (cuts across the system): a caller learns nothing about a user's file outside its read
   scope from any reply, event, or listing, and every applet that shows a user's file must keep it. Undecided. Found
   in M4.
@@ -1239,3 +1348,4 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
 - [ADR-06](../adr/ADR-06-layout-file-versioning-and-schema-ownership.md): each applet owns its payload
 - [ADR-09](../adr/ADR-09-control-authority-requires-authenticated-identity-and-explicit-scope.md): control authority,
   separate powers, and explicit scope
+- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): opening a window is a power of its own

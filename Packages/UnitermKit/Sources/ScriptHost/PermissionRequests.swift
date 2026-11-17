@@ -37,7 +37,9 @@ public final class ChangeObservers {
 /// requester share one row, however many arrive, so repeated requests cannot flood the user.
 /// Each row holds at most `maxPerRow` waiting operations, one requester holds at most
 /// `maxRowsPerRequester` rows, and so do all requesters that share a denial key. All requesters
-/// together hold at most `maxRows`. A request past any bound is refused as busy.
+/// that stand for one open event each hold their rows together, as one requester would, since a
+/// program that sends events cannot be told apart from the next one. All requesters together hold
+/// at most `maxRows`. A request past any bound is refused as busy, and the rows that wait stay.
 ///
 /// Allow once releases the oldest waiting operation of a row and no other, so coalescing never
 /// turns one approval into approval of several operations. The row shows that oldest operation's
@@ -68,6 +70,25 @@ public final class PermissionRequests {
 
     /// Runs of one verified controller version, for a denied startup review.
     case controllerVersion(controllerID: String, version: String)
+
+    /// An app that opens files through Launch Services, and uniterm could name and allow for its
+    /// run. Its question, its denial, and its session grant go when it exits or starts another
+    /// executable. A reused process ID carries another version, so it is another requester.
+    case launchSender(pid: Int32, pidVersion: Int32)
+
+    /// One open event whose sender no later event can be tied to: an unidentified sender, or a
+    /// go-between that can only be allowed once. It holds one question, and its denial goes as soon
+    /// as the user gives it, so a denial never outlives what it was about.
+    case launchEvent(UInt64)
+
+    /// Whether the two count against one row bound. Every open event is its own requester, so
+    /// they bound together, as one requester would. Otherwise a loop of events would fill the
+    /// rows of every other requester.
+    func sharesBound(with other: Requester) -> Bool {
+      if case .launchEvent = self, case .launchEvent = other { return true }
+
+      return self == other
+    }
   }
 
   /// One requester's question about one power. `power` names the power and anything that scopes
@@ -199,8 +220,9 @@ public final class PermissionRequests {
     // A program that opens many connections asks under each, but they share its denial key, so
     // both count against the bound.
     guard rows.count < Self.maxRows,
-      rows.count(where: { $0.key.requester == key.requester }) < Self.maxRowsPerRequester,
-      rows.count(where: { $0.denialKey.requester == denialKey.requester })
+      rows.count(where: { $0.key.requester.sharesBound(with: key.requester) })
+        < Self.maxRowsPerRequester,
+      rows.count(where: { $0.denialKey.requester.sharesBound(with: denialKey.requester) })
         < Self.maxRowsPerRequester
     else { return .busy }
 

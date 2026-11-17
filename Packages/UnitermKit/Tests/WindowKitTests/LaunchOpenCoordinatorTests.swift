@@ -12,12 +12,6 @@ private let finder = SenderIdentity(
   pid: 100, pidVersion: 1, signingIdentifier: "com.apple.finder", teamIdentifier: nil,
   isPlatformBinary: true, isAppleAnchored: true, opener: "Finder")
 
-private func stranger(_ index: Int = 0) -> SenderIdentity {
-  SenderIdentity(
-    pid: Int32(200 + index), pidVersion: 1, signingIdentifier: "com.example.launcher\(index)",
-    teamIdentifier: "TEAM", isPlatformBinary: false, isAppleAnchored: false, opener: nil)
-}
-
 /// A type system that fails the test when it is asked about a path. A refused open must not look
 /// up the type of a path, so it must not reach this.
 private final class WatchedTypes: ContentTypeSystem, @unchecked Sendable {
@@ -176,56 +170,6 @@ final class LaunchOpenCoordinatorTests: XCTestCase {
     fixture.windows.controllers.flatMap { $0.statusCenter.history.map(\.text) }
   }
 
-  // MARK: Authority
-
-  /// Catches a refused open that still looks at its paths. The sender is a stranger, so the type
-  /// system is never asked about the folder, nothing is made, and the user is told who was
-  /// refused. A looked-up path would raise privacy prompts for a program the user never approved.
-  func testARefusedOpenTouchesNothingAndNamesTheSender() async throws {
-    let fixture = try makeFixture()
-    let window = try fixture.windows.open()
-    fixture.coordinator.launchFinished()
-
-    fixture.coordinator.receive([try fixture.folder("a")], from: stranger())
-    await fixture.settle()
-
-    XCTAssertTrue(fixture.types.lookups.isEmpty)
-    XCTAssertTrue(fixture.box.entries.isEmpty)
-    XCTAssertEqual(window.paneIDs.count, 1)
-    XCTAssertTrue(messages(fixture).contains { $0.contains("com.example.launcher0") })
-  }
-
-  /// Catches an unidentified sender that gets through. A sender that exited cannot be identified.
-  func testAnUnidentifiedSenderIsRefusedBeforeAnyPathIsTouched() async throws {
-    let fixture = try makeFixture()
-    _ = try fixture.windows.open()
-    fixture.coordinator.launchFinished()
-
-    fixture.coordinator.receive([try fixture.folder("a")], from: nil)
-    await fixture.settle()
-
-    XCTAssertTrue(fixture.types.lookups.isEmpty)
-    XCTAssertTrue(fixture.box.entries.isEmpty)
-    XCTAssertTrue(messages(fixture).contains { $0.contains("unidentified") })
-  }
-
-  /// Catches a refusal that is not bounded. A loop of a thousand refusals from a thousand senders,
-  /// all inside one interval, leaves one message in the history.
-  func testALoopOfRefusedOpensPostsOneMessage() async throws {
-    let fixture = try makeFixture()
-    let window = try fixture.windows.open()
-    fixture.coordinator.launchFinished()
-
-    for index in 0..<1000 {
-      fixture.coordinator.receive([URL(fileURLWithPath: "/x")], from: stranger(index))
-    }
-
-    await fixture.settle()
-
-    XCTAssertEqual(window.statusCenter.history.count, 1)
-    XCTAssertTrue(fixture.types.lookups.isEmpty)
-  }
-
   // MARK: Placement
 
   /// Catches a Finder open that lands in a window other than the one that was key last. The first
@@ -302,16 +246,6 @@ final class LaunchOpenCoordinatorTests: XCTestCase {
     XCTAssertEqual(fixture.windows.controllers[0].paneIDs.count, 1)
     XCTAssertEqual(fixture.box.entries.count, 1, "one terminal, and no other shell")
     XCTAssertEqual(fixture.holder.fallbackWindows, 0)
-  }
-
-  /// Catches a refused cold-launch open that leaves the app with no window. A refusal is not
-  /// pending, so the layout opens its default window, and the message waits for it.
-  func testARefusedOpenBeforeRestoreIsNotPending() throws {
-    let fixture = try makeFixture()
-
-    fixture.coordinator.receive([try fixture.folder("a")], from: stranger())
-
-    XCTAssertFalse(fixture.coordinator.hasPending)
   }
 
   /// Catches a launch that ends with no window when every waiting open fails. The fallback opens
