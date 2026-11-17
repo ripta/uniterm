@@ -57,6 +57,9 @@ public final class ScriptSentContent: @unchecked Sendable {
     try ScriptSocketDirectory.prepare(directory)
   }
 
+  /// The folder this instance keeps its sent content in. Every file `write` returns is inside it.
+  public var rootPath: String { directory.path }
+
   /// A name that is one plain file name. A path, a dot file, and an empty name are the script's
   /// mistake, since the extension is the only thing in a name that means anything.
   public static func checkName(_ name: String) throws {

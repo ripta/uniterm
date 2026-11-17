@@ -55,6 +55,9 @@ public final class ScriptHost {
   private let issueProducer: ProducerIssuer
   private let windows: (any ScriptWindowAPI)?
   private let sentContent: ScriptSentContent?
+
+  /// Where the content programs sent waits, if the host holds any.
+  var sentContentRoot: String? { sentContent?.rootPath }
   let onRefusal: @MainActor (ScriptRefusal) -> Void
   var sessions: [UInt64: Session] = [:]
 
@@ -530,7 +533,9 @@ public final class ScriptHost {
 
     case .listPanes(let window):
       return answer {
-        try requireWindows().listPanes(window: window, caller: try requireCaller(connection))
+        try requireWindows().listPanes(
+          window: window, caller: try requireCaller(connection),
+          access: readAccess(for: connection.id))
       }
 
     case .openPane, .openTab, .sendCommand, .requestLayout, .readClipboard, .writeClipboard:
@@ -585,7 +590,9 @@ public final class ScriptHost {
         return Self.result(
           of: try await requireWindows().sendCommand(
             to: pane, appletType: type, schemaVersion: version, command: command,
-            arguments: arguments, caller: caller, stillAllowed: stillAllowed),
+            arguments: arguments, caller: caller,
+            access: { [weak self] in self?.readAccess(for: connection.id) ?? .none },
+            stillAllowed: stillAllowed),
           commandRan: true)
 
       case .requestLayout(let pane, let layout):

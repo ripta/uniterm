@@ -7,6 +7,14 @@ public indirect enum AppletValueSchema: Sendable, Equatable {
   /// A string of at most `maxBytes` UTF-8 bytes.
   case string(maxBytes: Int)
 
+  /// An absolute path of at most `maxBytes` UTF-8 bytes that a caller names and the host opens.
+  ///
+  /// The host opens the path inside the caller's read scope before the applet sees the command.
+  /// The applet receives the opened file or folder in `ValidatedAppletCommand.opened`, never the
+  /// path, and the argument itself reads as null. A caller with no path-reading power, or a path
+  /// outside its scope, is refused before the applet runs.
+  case path(maxBytes: Int)
+
   /// A whole number from `minimum` to `maximum`, both included.
   case integer(minimum: Int, maximum: Int)
 
@@ -179,6 +187,16 @@ extension AppletValueSchema {
           .badArgument, "\(path) must be a number from \(minimum) to \(maximum)")
       }
 
+    case (.path(let maxBytes), .string(let text)):
+      guard text.utf8.count <= maxBytes else {
+        throw AppletCommandError(
+          .badArgument, "\(path) is \(text.utf8.count) bytes, and the most is \(maxBytes)")
+      }
+
+      guard text.hasPrefix("/"), !text.utf8.contains(0) else {
+        throw AppletCommandError(.badArgument, "\(path) must be an absolute path")
+      }
+
     case (.boolean, .bool):
       return
 
@@ -209,6 +227,7 @@ extension AppletValueSchema {
   private var kindName: String {
     switch self {
     case .string: return "a string"
+    case .path: return "a path"
     case .integer: return "a whole number"
     case .number: return "a number"
     case .boolean: return "true or false"
@@ -219,7 +238,72 @@ extension AppletValueSchema {
   }
 }
 
+extension AppletValueSchema {
+  /// Every path-typed value in `value`, by the name of the argument it sits at. A value that does
+  /// not fit the schema is left to `validate`, so this lists only what fits.
+  func collectPaths(
+    in value: JSONValue, at name: String, into found: inout [(name: String, path: String)]
+  ) {
+    switch (self, value) {
+    case (.path, .string(let text)):
+      found.append((name, text))
+
+    case (.array(let element, _), .array(let values)):
+      for (index, value) in values.enumerated() {
+        element.collectPaths(in: value, at: "\(name)[\(index)]", into: &found)
+      }
+
+    case (.object(let schema), .object(let fields)):
+      schema.collectPaths(in: fields, at: name, into: &found)
+
+    default:
+      return
+    }
+  }
+
+  /// `value` with every path-typed value replaced by null. The applet never sees a raw path.
+  func strippingPaths(from value: JSONValue) -> JSONValue {
+    switch (self, value) {
+    case (.path, .string):
+      return .null
+
+    case (.array(let element, _), .array(let values)):
+      return .array(values.map { element.strippingPaths(from: $0) })
+
+    case (.object(let schema), .object(let fields)):
+      return .object(schema.strippingPaths(from: fields))
+
+    default:
+      return value
+    }
+  }
+}
+
 extension AppletObjectSchema {
+  func collectPaths(
+    in value: [String: JSONValue], at name: String,
+    into found: inout [(name: String, path: String)]
+  ) {
+    for (key, field) in fields.sorted(by: { $0.key < $1.key }) {
+      guard let fieldValue = value[key] else { continue }
+
+      field.schema.collectPaths(
+        in: fieldValue, at: name.isEmpty ? key : "\(name).\(key)", into: &found)
+    }
+  }
+
+  func strippingPaths(from value: [String: JSONValue]) -> [String: JSONValue] {
+    var result = value
+
+    for (key, field) in fields {
+      guard let fieldValue = value[key] else { continue }
+
+      result[key] = field.schema.strippingPaths(from: fieldValue)
+    }
+
+    return result
+  }
+
   /// Checks every field. A field the schema does not name, or a required one that is missing, is a
   /// bad argument.
   public func validate(_ value: [String: JSONValue], at path: String) throws(AppletCommandError) {

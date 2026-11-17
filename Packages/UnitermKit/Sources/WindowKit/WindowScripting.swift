@@ -4,6 +4,7 @@ import Foundation
 import PaneModel
 import ScriptHost
 import ScriptWire
+import SourceAccess
 import StatusKit
 
 /// The window side of the host API. It answers a script's calls about windows, panes, and tabs
@@ -72,7 +73,11 @@ public final class WindowScripting: ScriptWindowAPI {
     return .array([.record(fields)])
   }
 
-  public func listPanes(window: UInt64, caller: ScriptCaller) throws -> ScriptValue {
+  public func listPanes(
+    window: UInt64, caller: ScriptCaller, access: ReadAccess = .none
+  ) throws
+    -> ScriptValue
+  {
     guard window == caller.window, let controller = windows.controller(forScriptWindow: window)
     else { return .null }
 
@@ -83,17 +88,19 @@ public final class WindowScripting: ScriptWindowAPI {
     for pane in controller.paneIDs where isAuthorized(pane, for: caller, in: controller) {
       guard let applet = controller.paneArea.applet(for: pane) else { continue }
 
+      let shown = access.mayShow(source: (applet as? any UserFileSourcing)?.userFileSource)
+
       var fields: [String: ScriptValue] = [
         "window": .integer(window),
         "pane": .integer(pane.rawValue),
         "applet": .string(applet.typeID),
         "control": .string(controller.control(of: pane).access.rawValue),
-        "title": .string(Self.reported(applet.title)),
+        "title": .string(shown ? Self.reported(applet.title) : ""),
         "focused": .bool(pane == controller.focusedPane),
-        "tabs": .array(tabs(of: applet, pane: pane, in: controller)),
+        "tabs": .array(tabs(of: applet, pane: pane, in: controller, shown: shown)),
       ]
 
-      if let directory = applet.currentDirectory {
+      if shown, let directory = applet.currentDirectory {
         fields["directory"] = .string(Self.reported(directory))
       }
 
@@ -104,7 +111,7 @@ public final class WindowScripting: ScriptWindowAPI {
   }
 
   private func tabs(
-    of applet: any Applet, pane: NodeID, in controller: MainWindowController
+    of applet: any Applet, pane: NodeID, in controller: MainWindowController, shown: Bool
   ) -> [ScriptValue] {
     let tabs = applet.publishedTabs
 
@@ -113,7 +120,7 @@ public final class WindowScripting: ScriptWindowAPI {
         "window": .integer(controller.scriptWindowID),
         "pane": .integer(pane.rawValue),
         "tab": .integer(controller.scriptTabNumbers.number(for: tab.id)),
-        "title": .string(Self.reported(tab.title)),
+        "title": .string(shown ? Self.reported(tab.title) : ""),
         "selected": .bool(tab.id == tabs.selected),
       ])
     }
@@ -287,7 +294,9 @@ public final class WindowScripting: ScriptWindowAPI {
   public func sendCommand(
     to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
     command: String,
-    arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
+    arguments: String, caller: ScriptCaller,
+    access: @escaping @MainActor () -> ReadAccess = { .none },
+    stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
     let parsed: JSONValue
 
@@ -307,6 +316,9 @@ public final class WindowScripting: ScriptWindowAPI {
       appletType: appletType,
       schemaVersion: AppletSchemaVersion(Int(schemaVersion.major), Int(schemaVersion.minor)),
       name: command, arguments: parsed)
+
+    let paths = controller.dispatcher.pathArguments(of: submission, for: applet)
+    let opened = await Self.open(paths, in: access())
 
     let result = await withCheckedContinuation { continuation in
       controller.dispatcher.submit(
@@ -335,6 +347,7 @@ public final class WindowScripting: ScriptWindowAPI {
             return AppletCommandError(.refused, "\(error)")
           }
         },
+        reads: CommandReads(opened: opened, access: access),
         reply: { continuation.resume(returning: $0) })
     }
 
@@ -386,6 +399,26 @@ public final class WindowScripting: ScriptWindowAPI {
           .record(["window": .integer(controller.scriptWindowID), "pane": .integer($0.rawValue)])
         }),
     ])
+  }
+
+  /// Opens each path a command names, inside `scope`, off the main actor. A caller with no scope
+  /// opens nothing and touches no disk. Every path then fails the same way, whatever it names.
+  @concurrent
+  private nonisolated static func open(
+    _ paths: [(name: String, path: String)], in access: ReadAccess
+  ) async -> [String: Result<OpenedPath, ScopedOpenError>] {
+    var opened: [String: Result<OpenedPath, ScopedOpenError>] = [:]
+
+    for (name, path) in paths {
+      guard let scope = access.scope else {
+        opened[name] = .failure(access.isDeclaredButNotGranted ? .notGranted : .unavailable)
+        continue
+      }
+
+      opened[name] = ScopedOpen.open(path: path, in: scope)
+    }
+
+    return opened
   }
 
   private static func kind(of code: AppletCommandError.Code) -> ScriptFailureKind {

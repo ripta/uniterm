@@ -1096,3 +1096,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     return segments
   }
 }
+
+extension ImageViewerApplet: UserFileSourcing {
+  public var userFileSource: String? { record.path }
+}

@@ -2,6 +2,7 @@ import ControllerPackage
 import ControllerTrust
 import Foundation
 import ScriptWire
+import SourceAccess
 import StatusKit
 
 /// A controller run that the app verified and that waits for the user's review of its powers. Its
@@ -44,6 +45,11 @@ public struct ControllerReview: Identifiable, Equatable, Sendable {
 
   /// The connections waiting, oldest first, with each one's process ID.
   public internal(set) var waiting: [(connection: UInt64, pid: pid_t)]
+
+  /// The read-scope directories the request names, with their links resolved, by the directory as
+  /// written. The review fills it in off the main thread after it is queued, so the panel can name
+  /// the protected places a link leads into. It is empty until then.
+  public var resolvedReadDirectories: [String: String] = [:]
 
   public var isSigned: Bool { identity.keyFingerprint != nil }
 
@@ -130,6 +136,7 @@ extension ScriptHost {
           revises: trust.nearest?.selector,
           canRemember: trust.writable && controllerSettings?.trust != nil,
           notice: trust.notice, waiting: [peer]))
+      resolveReads(ofReview: lastReviewID, requested: requested)
     }
 
     waiting.connection.send(
@@ -137,6 +144,28 @@ extension ScriptHost {
         "\(identity.controllerID) waits for your approval. Choose Window > Pending Requests in "
           + "uniterm to review what it asks for."))
     pendingChanged()
+  }
+
+  /// Resolves the links of a review's read-scope directories off the main thread, then lets the
+  /// panel name the protected places a link leads into.
+  private func resolveReads(ofReview id: UInt64, requested: [ControllerPermission]) {
+    var directories: [String] = []
+
+    for case .pathRead(let scope) in requested.map(\.kind) { directories += scope.directories }
+
+    guard !directories.isEmpty, let scope = try? ReadScope(directories: Array(Set(directories)))
+    else { return }
+
+    Task { @MainActor [weak self] in
+      let resolved = await Task.detached { scope.resolvedDirectories() }.value
+
+      guard let self, let index = controllerReviews.firstIndex(where: { $0.id == id }) else {
+        return
+      }
+
+      controllerReviews[index].resolvedReadDirectories = resolved
+      pendingChanged()
+    }
   }
 
   /// Answers a startup review. Allow once and Allow for this run admit the oldest waiting
@@ -395,6 +424,40 @@ extension ScriptHost {
       })
 
     return PermissionContainment.uncovered([.hostLaunch(scope)], by: standing).isEmpty
+  }
+
+  /// What a connection may read and be told. A live controller run holds the directories of the
+  /// path-reading powers that stand for it. Anything else holds none, so it sees no user's file.
+  /// An Allow once answer does not stand, so a run that wants to read starts under a choice that
+  /// lasts for the run.
+  func readAccess(for id: UInt64) -> ReadAccess {
+    let sent = sentContentRoot
+
+    guard let run = liveRun(id) else { return ReadAccess(scope: nil, controllerSentRoot: sent) }
+
+    let scope = Self.readScope(of: run.standing)
+    let declared = run.scopes.contains { permission in
+      if case .pathRead = permission.kind { return true }
+
+      return false
+    }
+
+    return ReadAccess(
+      scope: scope, controllerSentRoot: sent, isDeclaredButNotGranted: scope == nil && declared)
+  }
+
+  /// The directories every path-reading power in `standing` covers together, or nil when none
+  /// stands.
+  static func readScope(of standing: Set<ControllerPermission>) -> ReadScope? {
+    let scopes = standing.compactMap { permission -> ReadScope? in
+      guard case .pathRead(let scope) = permission.kind else { return nil }
+
+      return scope
+    }
+
+    guard let first = scopes.first else { return nil }
+
+    return scopes.dropFirst().reduce(first) { $0.union($1) }
   }
 
   /// The run a connection is bound to, while its authority holds.

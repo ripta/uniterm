@@ -1,6 +1,7 @@
 import AppKit
 import AppletKit
 import PDFKit
+import SourceAccess
 import TextViewerModel
 
 /// The viewer's side of the applet command hook. Shared dispatch has already checked the
@@ -40,7 +41,17 @@ extension TextViewerApplet: AppletCommandHandling {
       try requireSettledDocument()
       try requireRoom()
 
-      return try scroll(to: anchor)
+      do {
+        return try scroll(to: anchor)
+      } catch  where error.code == .badArgument && !shows(command.access) {
+        // An anchor past the end of a file the caller may not see would tell it how long the file
+        // is. The command answers as it does for a fit, and moves nothing.
+        let handle = try begin(.scroll)
+
+        remote.settle(handle, .done(RemoteLanding()))
+
+        return .immediate(handleReply(handle))
+      }
 
     case "find":
       guard case .string(let query)? = command.arguments["query"],
@@ -65,11 +76,21 @@ extension TextViewerApplet: AppletCommandHandling {
 
       if case .number(let given)? = command.arguments["timeout-ms"] { milliseconds = Int(given) }
 
-      return try remote.wait(for: Int(number), milliseconds: milliseconds)
+      let access = command.access
+
+      return try remote.wait(
+        for: Int(number), milliseconds: milliseconds,
+        mayShow: { [weak self] in self?.shows(access) ?? false })
 
     default:
       throw AppletCommandError(.unknownCommand, "the viewer has no such command")
     }
+  }
+
+  /// True when the caller may be told about the file the pane shows. Content a controller sent
+  /// itself and the viewer's own inline text always may be.
+  private func shows(_ access: ReadAccess) -> Bool {
+    access.mayShow(source: userFileSource)
   }
 
   // MARK: Handles
@@ -248,4 +269,8 @@ extension TextViewerApplet: AppletCommandHandling {
 
     return .immediate(handleReply(handle))
   }
+}
+
+extension TextViewerApplet: UserFileSourcing {
+  public var userFileSource: String? { record.path }
 }

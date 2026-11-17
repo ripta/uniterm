@@ -1,5 +1,6 @@
 import Foundation
 import ScriptWire
+import SourceAccess
 
 /// The one reader of a permission list. A controller's `controller.json` and a script file's
 /// declaration both hold one, so a package and a file cannot disagree about which kinds, versions,
@@ -53,7 +54,7 @@ public enum ControllerPermissionReader {
     for element in try value.array("permissions") {
       let fields = try element.members(
         of: "a permission", required: format >= 2 ? ["kind", "version"] : ["kind"],
-        optional: ["name", "executable", "directory", "environment"])
+        optional: ["name", "executable", "directory", "environment", "directories"])
       let permissionKind = try fields["kind"]!.string("a permission's kind")
       let version = try fields["version"]?.integer("a permission's version") ?? 1
 
@@ -69,6 +70,10 @@ public enum ControllerPermissionReader {
       guard permissionKind == "host-launch" || launchFields.isDisjoint(with: fields.keys) else {
         throw ControllerPackageError.malformed(
           "only host-launch takes an executable, a directory, or an environment")
+      }
+
+      guard permissionKind == "path-read" || fields["directories"] == nil else {
+        throw ControllerPackageError.malformed("only path-read takes directories")
       }
 
       if permissionKind != "capability", fields["name"] != nil {
@@ -102,6 +107,21 @@ public enum ControllerPermissionReader {
             environmentKeys: try environment.array("a host launch's environment").map {
               try $0.string("an environment key")
             }))
+
+      case "path-read":
+        guard let directories = fields["directories"] else {
+          throw ControllerPackageError.malformed("path-read needs a list of directories")
+        }
+
+        do {
+          permissionValue = .pathRead(
+            try ReadScope(
+              directories: try directories.array("a read scope's directories").map {
+                try $0.string("a read scope's directory")
+              }))
+        } catch let error as ReadScopeError {
+          throw ControllerPackageError.malformed(error.description)
+        }
 
       default:
         guard allowsCapabilities else {

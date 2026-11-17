@@ -1,4 +1,5 @@
 import Foundation
+import SourceAccess
 
 /// One command as a caller sends it: the applet type and schema version it was written for, its
 /// name, and its arguments.
@@ -16,6 +17,31 @@ public struct AppletCommandSubmission: Sendable, Equatable {
     self.name = name
     self.arguments = arguments
   }
+}
+
+/// What a caller brings to a command that reads: the paths it named, already opened inside its read
+/// scope, and the access it holds now.
+///
+/// The opens happen before the command is submitted and off the main thread, since a path may sit
+/// on a slow volume. The dispatcher asks `access` again as it delivers the command, and checks every
+/// opened descriptor against it, so a grant that ended while the command waited leaves no read.
+public struct CommandReads {
+  /// The result of the scoped open for each path-typed argument, by the argument's name.
+  public let opened: [String: Result<OpenedPath, ScopedOpenError>]
+
+  /// What the caller may read and see right now.
+  public let access: @MainActor () -> ReadAccess
+
+  public init(
+    opened: [String: Result<OpenedPath, ScopedOpenError>] = [:],
+    access: @escaping @MainActor () -> ReadAccess
+  ) {
+    self.opened = opened
+    self.access = access
+  }
+
+  /// A caller with no power: it reads nothing and sees no user's file.
+  public static var none: CommandReads { CommandReads(access: { .none }) }
 }
 
 /// The shared dispatch every applet command goes through, from a remote caller or an exec driver.
@@ -47,6 +73,8 @@ public final class ControlDispatcher {
   private struct Entry {
     weak var applet: (any AppletCommandHandling)?
     let command: ValidatedAppletCommand
+    let opened: [String: Result<OpenedPath, ScopedOpenError>]
+    let access: @MainActor () -> ReadAccess
     let authority: Authority
     let reply: Reply
   }
@@ -102,11 +130,14 @@ public final class ControlDispatcher {
 
   /// Checks a command and queues it for `applet`. A command that fails a check is answered at
   /// once and never queued.
+  ///
+  /// A command that names a path needs `reads` to hold an open for each path. Without one the
+  /// command is refused, so a caller that holds no path-reading power can never make an applet read.
   public func submit(
     _ submission: AppletCommandSubmission, to applet: any Applet, authority: @escaping Authority,
-    reply: @escaping Reply
+    reads: CommandReads = .none, reply: @escaping Reply
   ) {
-    switch check(submission, for: applet, authority: authority) {
+    switch check(submission, for: applet, authority: authority, reads: reads) {
     case .failure(let error):
       reply(.failure(error))
 
@@ -119,13 +150,37 @@ public final class ControlDispatcher {
         return
       }
 
-      queue.append(Entry(applet: handler, command: command, authority: authority, reply: reply))
+      queue.append(
+        Entry(
+          applet: handler, command: command, opened: reads.opened, access: reads.access,
+          authority: authority, reply: reply))
       scheduleDrain()
     }
   }
 
+  /// The path-typed arguments a command would carry, by the argument's name, when the applet
+  /// declares the command and the arguments fit. A caller asks before it opens anything. An empty
+  /// answer means the command reads no path, or that it will fail a check before it could.
+  public func pathArguments(of submission: AppletCommandSubmission, for applet: any Applet)
+    -> [(name: String, path: String)]
+  {
+    guard let handler = applet as? any AppletCommandHandling,
+      handler.commandSchema.appletType == submission.appletType,
+      let declared = handler.commandSchema.command(named: submission.name),
+      case .object(let fields) = submission.arguments,
+      (try? declared.arguments.validate(fields, at: "")) != nil
+    else { return [] }
+
+    var found: [(name: String, path: String)] = []
+
+    declared.arguments.collectPaths(in: fields, at: "", into: &found)
+
+    return found
+  }
+
   private func check(
-    _ submission: AppletCommandSubmission, for applet: any Applet, authority: Authority
+    _ submission: AppletCommandSubmission, for applet: any Applet, authority: Authority,
+    reads: CommandReads
   ) -> Result<(any AppletCommandHandling, ValidatedAppletCommand), AppletCommandError> {
     if let refusal = authority() { return .failure(refusal) }
 
@@ -182,7 +237,29 @@ public final class ControlDispatcher {
       return .failure(error)
     }
 
-    return .success((handler, ValidatedAppletCommand(name: submission.name, arguments: fields)))
+    var paths: [(name: String, path: String)] = []
+
+    declared.arguments.collectPaths(in: fields, at: "", into: &paths)
+
+    for path in paths {
+      switch reads.opened[path.name] {
+      case nil:
+        return .failure(Self.unreadable)
+
+      case .failure(let error)?:
+        return .failure(Self.refusal(for: error))
+
+      case .success?:
+        continue
+      }
+    }
+
+    return .success(
+      (
+        handler,
+        ValidatedAppletCommand(
+          name: submission.name, arguments: declared.arguments.strippingPaths(from: fields))
+      ))
   }
 
   private func scheduleDrain() {
@@ -228,10 +305,32 @@ public final class ControlDispatcher {
       return
     }
 
+    let access = entry.access()
+    var opened: [String: OpenedPath] = [:]
+
+    for (name, result) in entry.opened {
+      switch result {
+      case .failure(let error):
+        entry.reply(.failure(Self.refusal(for: error)))
+        return
+
+      case .success(let path):
+        guard path.isWithin(access.scope) else {
+          entry.reply(.failure(Self.unreadable))
+          return
+        }
+
+        opened[name] = path
+      }
+    }
+
+    let command = ValidatedAppletCommand(
+      name: entry.command.name, arguments: entry.command.arguments, opened: opened,
+      access: access)
     let outcome: AppletCommandReply
 
     do {
-      outcome = try applet.perform(entry.command)
+      outcome = try applet.perform(command)
     } catch {
       entry.reply(.failure(error))
       return
@@ -254,6 +353,28 @@ public final class ControlDispatcher {
       }
 
       hold(reply, for: entry, applet: applet)
+    }
+  }
+
+  // MARK: Reads
+
+  /// The one answer for a path the caller may not read, whatever the reason. It never says whether
+  /// the path exists, what it is, or whether the scope held it.
+  static let unreadable = AppletCommandError(.refused, "uniterm cannot read that path for you")
+
+  private static func refusal(for error: ScopedOpenError) -> AppletCommandError {
+    switch error {
+    case .unavailable: return unreadable
+    case .missing: return AppletCommandError(.failed, "nothing is at that path")
+    case .unsupported:
+      return AppletCommandError(.failed, "that path is neither a file nor a folder")
+    case .denied: return AppletCommandError(.failed, "the system did not allow reading that path")
+    case .tooManyLinks: return AppletCommandError(.failed, "that path goes through too many links")
+    case .notGranted:
+      return AppletCommandError(
+        .refused,
+        "this run may not read paths now. It declared the power, and the user allowed the run "
+          + "once. Allow for This Run or trust it, and run it again, to let it read")
     }
   }
 

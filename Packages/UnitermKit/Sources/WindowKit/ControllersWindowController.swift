@@ -2,6 +2,7 @@ import AppKit
 import ControllerPackage
 import ControllerTrust
 import ScriptHost
+import SourceAccess
 
 /// The Controllers & Permissions window. It lists the remembered approvals, each by its version or
 /// key selector with the fingerprint and the approved scopes, and the controller runs that are
@@ -27,6 +28,11 @@ public final class ControllersWindowController: NSWindowController {
   private var reading: Task<Void, Never>?
 
   private(set) var rows: [Row] = []
+
+  /// The read-scope directories shown, with their links resolved. They are read off the main
+  /// thread when a row first shows them, and the detail follows.
+  private var resolvedReads: [String: String] = [:]
+  private var askedReads: Set<String> = []
 
   public init(scriptHost: ScriptHost) {
     self.scriptHost = scriptHost
@@ -171,6 +177,41 @@ public final class ControllersWindowController: NSWindowController {
     }
 
     updateDetail()
+    resolveReads()
+  }
+
+  /// Resolves the links of every read-scope directory a row shows that was not resolved yet. The
+  /// disk is read off the main thread, and the detail is drawn again when the answer arrives.
+  private func resolveReads() {
+    var wanted: Set<String> = []
+
+    for row in rows {
+      let permissions: Set<ControllerPermission>
+
+      switch row {
+      case .policy(let policy): permissions = policy.scopes
+      case .run(let run): permissions = run.scopes
+      }
+
+      for case .pathRead(let scope) in permissions.map(\.kind) {
+        wanted.formUnion(scope.directories)
+      }
+    }
+
+    let fresh = wanted.subtracting(askedReads)
+
+    guard !fresh.isEmpty, let scope = try? ReadScope(directories: Array(fresh)) else { return }
+
+    askedReads.formUnion(fresh)
+
+    Task { @MainActor [weak self] in
+      let resolved = await Task.detached { scope.resolvedDirectories() }.value
+
+      guard let self else { return }
+
+      resolvedReads.merge(resolved) { $1 }
+      updateDetail()
+    }
   }
 
   private enum RowIdentity: Equatable {
@@ -193,7 +234,7 @@ public final class ControllersWindowController: NSWindowController {
 
   private func updateDetail() {
     revokeButton.isEnabled = selectedRow != nil
-    detail.stringValue = selectedRow.map(Self.describe) ?? ""
+    detail.stringValue = selectedRow.map { Self.describe($0, resolved: resolvedReads) } ?? ""
   }
 
   static func selectorText(_ selector: ControllerSelector) -> String {
@@ -214,7 +255,7 @@ public final class ControllersWindowController: NSWindowController {
     return "\(LaunchApprovalText.escaped(policy.name)) (\(id))"
   }
 
-  static func describe(_ row: Row) -> String {
+  static func describe(_ row: Row, resolved: [String: String] = [:]) -> String {
     switch row {
     case .policy(let policy):
       let selector: String
@@ -238,7 +279,9 @@ public final class ControllersWindowController: NSWindowController {
 
       return
         ([selector, "Approved: \(policy.approved)", "Powers:"]
-        + policy.scopes.sorted().map { "  \(LaunchApprovalText.escaped($0.displayText))" })
+        + policy.scopes.sorted().flatMap {
+          ControllerReviewText.permissionLines(for: $0, prefix: "  ", resolved: resolved)
+        })
         .joined(separator: "\n")
 
     case .run(let run):
@@ -250,9 +293,10 @@ public final class ControllersWindowController: NSWindowController {
             + "process \(run.pid)",
           "Version: \(run.identity.version)", key, run.approval.displayText, "Powers it asked for:",
         ]
-        + run.scopes.sorted().map {
-          "  \(LaunchApprovalText.escaped($0.displayText))"
-            + (run.standing.contains($0) ? "" : ", asks each time")
+        + run.scopes.sorted().flatMap {
+          ControllerReviewText.permissionLines(
+            for: $0, prefix: "  ", suffix: run.standing.contains($0) ? "" : ", asks each time",
+            resolved: resolved)
         }).joined(separator: "\n")
     }
   }

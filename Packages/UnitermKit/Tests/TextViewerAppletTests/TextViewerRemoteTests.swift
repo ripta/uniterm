@@ -1,6 +1,7 @@
 import AppKit
 import AppletKit
 import DocumentTestSupport
+import SourceAccess
 import XCTest
 
 @testable import TextViewerApplet
@@ -73,6 +74,10 @@ final class RemoteRig {
   let window: NSWindow
   private let turns = TurnQueue()
 
+  /// What the caller may read and see. A rig caller holds the whole disk by default, so the tests
+  /// of a command's effect see the answers they check. The redaction tests narrow it.
+  var access = ReadAccess(scope: try? ReadScope(directories: ["/"]))
+
   init(
     applet: TextViewerApplet = Harness.applet(), size: NSSize = NSSize(width: 800, height: 500)
   ) {
@@ -106,6 +111,7 @@ final class RemoteRig {
 
     dispatcher.submit(
       submission, to: applet, authority: { nil },
+      reads: CommandReads(access: { [weak self] in self?.access ?? .none }),
       reply: { result in
         box.result = result
         box.onReply?()
@@ -851,6 +857,154 @@ final class TextViewerRemoteTests: XCTestCase {
     _ = await rig.waited(try XCTUnwrap(handle))
 
     XCTAssertEqual(pasteboard.changeCount, before)
+
+    rig.applet.close()
+  }
+
+  // MARK: Redaction
+
+  private func anotherScope(_ scratch: Scratch) throws -> ReadAccess {
+    let elsewhere = scratch.url.appendingPathComponent("elsewhere")
+
+    try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+
+    return ReadAccess(scope: try ReadScope(directories: [elsewhere.path]))
+  }
+
+  /// Catches a find that tells a caller how many times a word occurs in, or where it sits in, a
+  /// user's file outside its scope. The command still runs and the pane still moves. The wait says
+  /// only that it is done, for a wait started before the find ended and for one started after.
+  func testFindResultsOfAFileOutsideTheScopeCarryNoCountsOrAnchors() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("notes.md", Data("alpha beta alpha gamma alpha\n".utf8))
+    let rig = RemoteRig(applet: Harness.applet(startDirectory: scratch.url.path))
+
+    try rig.applet.replaceSource(with: file, startDirectory: scratch.url.path)
+
+    let opened = await Harness.eventually { rig.applet.content.markdownView?.isRendered == true }
+
+    XCTAssertTrue(opened)
+
+    let inside = try await rig.requireHandle(rig.send("find", .object(["query": .string("alpha")])))
+    let counted = await rig.waited(inside)
+
+    XCTAssertEqual(counted?["count"], .number(3), "a caller that holds the file sees the count")
+
+    rig.access = try anotherScope(scratch)
+
+    let outside = try await rig.requireHandle(
+      rig.send("find", .object(["query": .string("alpha")])))
+    let hidden = await rig.waited(outside)
+
+    XCTAssertEqual(hidden, ["state": .string("done")])
+    XCTAssertEqual(rig.applet.finder.state.query, "alpha", "the find itself still ran")
+
+    let again = await rig.waited(inside)
+
+    XCTAssertEqual(again, ["state": .string("done")], "the old handle is hidden from this caller")
+
+    rig.applet.close()
+  }
+
+  /// Catches content the caller sent itself being hidden from it. Inline text has no file, and a
+  /// file under the sent folder is the caller's own, so each is shown with no scope.
+  func testInlineAndSentContentAreShownToTheCallerThatSentThem() async throws {
+    let scratch = try Scratch(self)
+    let sent = scratch.url.appendingPathComponent("sent")
+
+    try FileManager.default.createDirectory(at: sent, withIntermediateDirectories: true)
+
+    let file = try scratch.write("sent/x.md", Data("one two one\n".utf8))
+    let rig = RemoteRig(applet: Harness.applet(startDirectory: scratch.url.path))
+
+    rig.access = ReadAccess(scope: nil, controllerSentRoot: sent.path)
+    try rig.applet.replaceSource(with: file, startDirectory: sent.path)
+
+    let opened = await Harness.eventually { rig.applet.content.markdownView?.isRendered == true }
+
+    XCTAssertTrue(opened)
+
+    let found = try await rig.requireHandle(rig.send("find", .object(["query": .string("one")])))
+
+    let sentSeen = await rig.waited(found)
+
+    XCTAssertEqual(sentSeen?["count"], .number(2))
+
+    rig.access = .none
+    await rig.show("# inline\n\nbody body\n")
+
+    let inline = try await rig.requireHandle(rig.send("find", .object(["query": .string("body")])))
+
+    let inlineSeen = await rig.waited(inline)
+
+    XCTAssertEqual(inlineSeen?["count"], .number(2), "inline text is no user's file")
+
+    rig.applet.close()
+  }
+
+  /// Catches a reload whose reply says why it failed: a file gone and a file over the cap must
+  /// look the same to a caller outside the scope, while the caller that holds it hears the code.
+  func testAReloadOfAFileOutsideTheScopeFailsWithOneCode() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("gone.md", Data("text\n".utf8))
+    let rig = RemoteRig(applet: Harness.applet(startDirectory: scratch.url.path))
+
+    try rig.applet.replaceSource(with: file, startDirectory: scratch.url.path)
+
+    let opened = await Harness.eventually { rig.applet.content.markdownView?.isRendered == true }
+
+    XCTAssertTrue(opened)
+
+    try FileManager.default.removeItem(at: file)
+
+    let reload = try await rig.requireHandle(rig.send("reload"))
+    let ended = await Harness.eventually {
+      rig.applet.remote.table.entry(reload)?.isSettled == true
+    }
+
+    XCTAssertTrue(ended)
+
+    let seen = await rig.waited(reload)
+
+    XCTAssertEqual(seen?["state"], .string("failed"))
+
+    rig.access = try anotherScope(scratch)
+
+    let hiddenSeen = await rig.waited(reload)
+
+    XCTAssertEqual(hiddenSeen, ["state": .string("failed"), "code": .string("unreadable")])
+
+    rig.applet.close()
+  }
+
+  /// Catches a scroll that measures a file outside the scope. An anchor past the end answers as one
+  /// that fits, so the caller cannot find the file's length by trying.
+  func testAScrollPastTheEndOfAFileOutsideTheScopeAnswersAsAFit() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("two.pdf", DocumentFixtures.pdf(pages: ["one", "two"]))
+    let rig = RemoteRig(applet: Harness.applet(startDirectory: scratch.url.path))
+
+    try rig.applet.replaceSource(with: file, startDirectory: scratch.url.path)
+
+    let opened = await Harness.eventually { rig.applet.content.body == .pdf }
+
+    XCTAssertTrue(opened)
+
+    let past = JSONValue.object([
+      "anchor": .object([
+        "kind": .string("page"), "page": .number(50), "x": .number(0), "y": .number(0),
+      ])
+    ])
+
+    let refused = await rig.failure(rig.send("scroll", past))
+
+    XCTAssertEqual(refused?.code, .badArgument, "a caller that holds the file is told")
+
+    rig.access = try anotherScope(scratch)
+
+    let handle = await rig.handle(rig.send("scroll", past))
+
+    XCTAssertNotNil(handle, "a caller outside the scope is not")
 
     rig.applet.close()
   }

@@ -7,6 +7,7 @@ import PaneModel
 import ProcessInspection
 import ScriptTestSupport
 import ScriptWire
+import SourceAccess
 import StatusKit
 import XCTest
 
@@ -647,6 +648,58 @@ final class ControllerConsentTests: XCTestCase {
 
     XCTAssertTrue(file.contains("\"TOKEN\""), file)
     XCTAssertTrue(file.contains("\"\(folder)\""), file)
+  }
+
+  /// Catches a read scope that stands for a run that was never allowed to keep it, and one that
+  /// outlives its run. Allow for This Run and a trusted version keep the scope. Allow once does not,
+  /// so its reads are refused. A run that ended holds none.
+  func testAReadScopeStandsOnlyForARunAllowedToKeepIt() async throws {
+    let folder = work.path
+    let reader = try package(
+      "(print \"started\")\n(flush)\n(os/sleep 30)\n",
+      permissions: [
+        Self.paneControl,
+        #"{"kind": "path-read", "version": 1, "directories": [""# + folder + #""]}"#,
+      ])
+
+    for answer in [ControllerReviewChoice.allowForSession, .allowOnce, .trustVersion] {
+      reviewAnswer = answer
+
+      let running = Task { try await self.run(reader) }
+
+      expect(await waitUntil { !self.host.allControllerRuns().isEmpty }, "the run never started")
+
+      let admitted = try XCTUnwrap(host.allControllerRuns().first)
+      let access = host.readAccess(for: admitted.connection)
+
+      XCTAssertEqual(
+        access.isDeclaredButNotGranted, answer == .allowOnce,
+        "only a run that declared the power and was allowed once is told so")
+
+      if answer == .allowOnce {
+        XCTAssertNil(access.scope, "an Allow once answer does not stand")
+      } else {
+        XCTAssertEqual(access.scope, try ReadScope(directories: [folder]))
+      }
+
+      kill(admitted.pid, SIGKILL)
+      _ = try await running.value
+      expect(await waitUntil { self.host.allControllerRuns().isEmpty })
+
+      XCTAssertNil(host.readAccess(for: admitted.connection).scope, "the run ended")
+    }
+  }
+
+  /// Catches standing scopes that add up wrongly: none gives nothing, and two give both.
+  func testStandingReadScopesAddUp() throws {
+    XCTAssertNil(ScriptHost.readScope(of: [.paneControl]))
+    XCTAssertEqual(
+      ScriptHost.readScope(
+        of: [
+          .pathRead(try ReadScope(directories: ["/a"])),
+          .pathRead(try ReadScope(directories: ["/b"])), .paneControl,
+        ]),
+      try ReadScope(directories: ["/a", "/b"]))
   }
 
   /// Catches a launch let out of its approved folder by a link inside it. The text of the path is

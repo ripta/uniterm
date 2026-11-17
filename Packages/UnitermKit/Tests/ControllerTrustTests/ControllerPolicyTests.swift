@@ -2,6 +2,7 @@ import ControllerPackage
 import ControllerTestSupport
 import Darwin
 import Foundation
+import SourceAccess
 import XCTest
 
 @testable import ControllerTrust
@@ -352,6 +353,124 @@ final class ControllerPolicyTests: XCTestCase {
     XCTAssertEqual(state.policies, [Self.policy([.paneControl])])
     XCTAssertTrue(state.writable)
     XCTAssertEqual(store.keptAsideFiles.count, 0)
+  }
+
+  // MARK: Path reading
+
+  private func reads(_ directories: String...) throws -> ControllerPermission {
+    .pathRead(try ReadScope(directories: directories))
+  }
+
+  /// Catches a path-reading approval compared on raw directories. A narrower scope is covered. A
+  /// wider one, a sibling that shares a prefix, and a protected place under an approved folder
+  /// that only contains it are not. A request held by two approvals together is covered.
+  func testPathReadingIsCoveredOnlyByAScopeThatHoldsItsEffectiveScope() throws {
+    let home = NSHomeDirectory()
+    let approved: Set<ControllerPermission> = [try reads(home + "/work", home + "/notes")]
+
+    XCTAssertEqual(
+      PermissionContainment.uncovered([try reads(home + "/work/project")], by: approved), [])
+    XCTAssertEqual(
+      PermissionContainment.uncovered([try reads(home + "/work", home + "/notes")], by: approved),
+      [])
+
+    for wider in [
+      try reads(home), try reads(home + "/work-other"), try reads(home + "/work", home + "/src"),
+    ] {
+      XCTAssertEqual(PermissionContainment.uncovered([wider], by: approved), [wider], "\(wider)")
+    }
+
+    let everything: Set<ControllerPermission> = [try reads(home)]
+
+    for protected in ["Documents", "Documents/x", "Desktop", "Downloads/a.zip"] {
+      let asked = try reads(home + "/" + protected)
+
+      XCTAssertEqual(
+        PermissionContainment.uncovered([asked], by: everything), [asked],
+        "\(protected) is broader than an approved home folder")
+    }
+
+    XCTAssertEqual(
+      PermissionContainment.uncovered(
+        [try reads(home + "/Documents/x")], by: [try reads(home, home + "/Documents")]), [])
+
+    let split: Set<ControllerPermission> = [try reads(home + "/a"), try reads(home + "/b")]
+
+    XCTAssertEqual(
+      PermissionContainment.uncovered([try reads(home + "/a/x")], by: split), [])
+    XCTAssertEqual(PermissionContainment.uncovered([.paneControl], by: split), [.paneControl])
+    XCTAssertEqual(
+      PermissionContainment.uncovered(
+        [ControllerPermission(.pathRead(try ReadScope(directories: ["/a"])), version: 2)], by: split
+      ).count,
+      1, "a version this build does not know is never covered")
+  }
+
+  /// Catches a merge that lists the power twice, which a later review would show as two powers.
+  func testMergingTwoPathReadScopesKeepsOneAndTheirUnion() throws {
+    let merged = PermissionContainment.merged(
+      [.paneControl, try reads("/a")], with: [try reads("/b"), try reads("/a/c")])
+
+    XCTAssertEqual(merged, [.paneControl, try reads("/a", "/b")])
+  }
+
+  /// Catches a path-reading scope lost in the file, or written two ways.
+  func testPathReadingRoundTripsThroughTheFile() throws {
+    let policies = [Self.policy([.paneControl, try reads("/work/b", "/work/a")])]
+    let bytes = ControllerPolicyFile.encode(policies)
+
+    XCTAssertEqual(try ControllerPolicyFile.decode(bytes), policies)
+    XCTAssertTrue(
+      String(decoding: bytes, as: UTF8.self).contains("\"directories\""), "the scope is written")
+    XCTAssertTrue(
+      String(decoding: bytes, as: UTF8.self).contains("\"format\": 1"),
+      "the policy file format did not change")
+  }
+
+  /// Catches a path-reading scope that an older build would read. A build that lacks the kind
+  /// reads the file as a newer one: it grants nothing and writes nothing, as for any unknown kind.
+  /// The test stands in for that build by naming a kind this one lacks, and checks that the current
+  /// file differs from an older build's only in that kind, with no new format number.
+  func testAnOlderBuildReadsAPathReadingFileAsNewer() throws {
+    let current = String(
+      decoding: ControllerPolicyFile.encode([Self.policy([try reads("/work")])]), as: UTF8.self)
+
+    XCTAssertTrue(current.contains("\"format\": 1"))
+
+    let older = current.replacingOccurrences(of: "\"path-read\"", with: "\"path-reading\"")
+
+    XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(older.utf8))) { error in
+      XCTAssertEqual(error as? ControllerPolicyFileError, .newer("path-reading version 1"))
+    }
+
+    let store = ControllerTrustStore(directory: folder)
+
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data(older.utf8).write(to: store.fileURL)
+
+    let state = store.read()
+
+    XCTAssertEqual(state.policies, [])
+    XCTAssertFalse(state.writable)
+    XCTAssertEqual(try Data(contentsOf: store.fileURL), Data(older.utf8))
+
+    for broken in [
+      current.replacingOccurrences(of: "\"directories\": [", with: "\"directories\": [\"rel\", "),
+      current.replacingOccurrences(of: "\"directories\"", with: "\"folders\""),
+    ] {
+      XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(broken.utf8))) { error in
+        guard case .unreadable = error as? ControllerPolicyFileError else {
+          return XCTFail("\(error)")
+        }
+      }
+    }
+  }
+
+  /// Catches a review that shows a path-reading power without its directories.
+  func testPathReadingNamesItsDirectories() throws {
+    let text = try reads("/work/b", "/work/a").displayText
+
+    XCTAssertTrue(text.contains("/work/a, /work/b"), text)
   }
 }
 

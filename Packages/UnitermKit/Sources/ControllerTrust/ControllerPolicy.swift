@@ -1,5 +1,6 @@
 import ControllerPackage
 import Foundation
+import SourceAccess
 
 /// What a remembered approval names: one exact verified version of a controller, or a signing
 /// key together with a controller ID, across every version that key signs. A script file has
@@ -108,7 +109,47 @@ public enum PermissionContainment {
   public static func uncovered(
     _ requested: Set<ControllerPermission>, by approved: Set<ControllerPermission>
   ) -> [ControllerPermission] {
-    requested.filter { wanted in !approved.contains { wanted.isCovered(by: $0) } }.sorted()
+    let reads = readScopes(in: approved)
+
+    return requested.filter { wanted in
+      if case .pathRead(let scope) = wanted.kind {
+        return !isCovered(scope, version: wanted.version, by: reads)
+      }
+
+      return !approved.contains { wanted.isCovered(by: $0) }
+    }.sorted()
+  }
+
+  /// The path-reading scopes of a set, each with the version it was approved at.
+  private static func readScopes(in permissions: Set<ControllerPermission>) -> [(
+    scope: ReadScope, version: Int
+  )] {
+    permissions.compactMap { permission in
+      guard case .pathRead(let scope) = permission.kind else { return nil }
+
+      return (scope, permission.version)
+    }
+  }
+
+  /// A read scope is covered by the union of the approved scopes whose version covers it, so two
+  /// approvals that together hold a request cover it.
+  private static func isCovered(
+    _ scope: ReadScope, version: Int, by approved: [(scope: ReadScope, version: Int)]
+  ) -> Bool {
+    guard ControllerPermission.meaning(kind: "path-read", version: version) != nil else {
+      return false
+    }
+
+    let usable = approved.filter { holder in
+      ControllerPermission.meaning(kind: "path-read", version: holder.version)?.covers
+        .contains(version) == true
+    }
+
+    guard let first = usable.first else { return false }
+
+    let union = usable.dropFirst().reduce(first.scope) { $0.union($1.scope) }
+
+    return scope.isCovered(by: union)
   }
 
   /// The union of an existing approval and a newly approved request, with nothing the new request
@@ -119,6 +160,21 @@ public enum PermissionContainment {
     var result = existing
 
     for permission in added where !result.contains(where: { permission.isCovered(by: $0) }) {
+      // Two read scopes of one version add up to one, so the list never holds the power twice.
+      if case .pathRead(let scope) = permission.kind,
+        let held = result.first(where: {
+          if case .pathRead = $0.kind { return $0.version == permission.version }
+
+          return false
+        }), case .pathRead(let heldScope) = held.kind
+      {
+        result.remove(held)
+        result.insert(
+          ControllerPermission(.pathRead(heldScope.union(scope)), version: permission.version))
+
+        continue
+      }
+
       result.insert(permission)
     }
 
@@ -132,7 +188,8 @@ extension ControllerPermission {
   /// The kinds must match, and the approved version's meaning must cover this version, so a higher
   /// version, or one this build does not know, is never covered. A host launch is narrower when it
   /// names the same executable, a directory inside the approved one, and no environment key
-  /// beyond the approved keys. Every other scope must be the same.
+  /// beyond the approved keys. A path-reading scope is narrower when its effective scope, with the
+  /// protected locations removed, lies inside the approved one. Every other scope must be the same.
   public func isCovered(by approved: ControllerPermission) -> Bool {
     guard meaning != nil, let allowed = approved.meaning, kind.name == approved.kind.name,
       allowed.covers.contains(version)
@@ -143,6 +200,9 @@ extension ControllerPermission {
       return wanted.executable == scope.executable
         && scope.allows(directory: wanted.directory)
         && Set(wanted.environmentKeys).isSubset(of: Set(scope.environmentKeys))
+
+    case (.pathRead(let wanted), .pathRead(let scope)):
+      return wanted.isCovered(by: scope)
 
     default:
       return kind == approved.kind
@@ -173,6 +233,11 @@ extension ControllerPermission {
       text =
         "Start \(scope.executable) as a driver, with any arguments, in \(scope.directory) or a "
         + "folder inside it, with environment keys \(keys) and any values"
+
+    case .pathRead(let scope):
+      text =
+        "Make applets read files and folders inside \(scope.directories.joined(separator: ", "))"
+        + ", leaving out the protected locations it contains"
     }
 
     return version == 1 ? text : "\(text) (version \(version))"

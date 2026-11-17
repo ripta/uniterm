@@ -129,7 +129,11 @@ public struct RemoteHandleTable: Sendable, Equatable {
   }
 
   /// What `wait` answers for a handle. A handle still running answers `pending`.
-  public static func reply(for entry: Entry) -> JSONValue {
+  ///
+  /// A reply for a caller that may not see the pane's file carries no detail from it. A finished
+  /// find or scroll answers `done` with nothing else, and every failure answers `unreadable`, so
+  /// the caller cannot tell a missing file from a large one or a locked one.
+  public static func reply(for entry: Entry, redacted: Bool = false) -> JSONValue {
     var fields: [String: JSONValue] = [:]
 
     switch entry.outcome {
@@ -144,10 +148,12 @@ public struct RemoteHandleTable: Sendable, Equatable {
 
     case .failed(let failure)?:
       fields["state"] = .string("failed")
-      fields["code"] = .string(failure.rawValue)
+      fields["code"] = .string(redacted ? RemoteFailure.unreadable.rawValue : failure.rawValue)
 
     case .done(let landing)?:
       fields["state"] = .string("done")
+
+      if redacted { break }
 
       if let count = landing.count { fields["count"] = .number(Double(count)) }
 

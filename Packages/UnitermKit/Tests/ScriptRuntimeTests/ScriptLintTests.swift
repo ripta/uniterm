@@ -297,6 +297,25 @@ final class ScriptLintTests: XCTestCase {
     XCTAssertTrue(found[0].message.contains("write-clipboard"))
   }
 
+  // MARK: Path reading
+
+  /// Catches a declared path-read power reported unused in a file that sends a command, and one
+  /// that sends none going unreported. A command is the only call whose argument can name a path.
+  func testPathReadIsUsedByASentCommandAndUnusedOtherwise() {
+    let declared =
+      "(declare-permissions {:kind :pane-control :version 1}\n"
+      + "  {:kind :path-read :version 1 :directories [\"/tmp\"]})\n"
+    let sends =
+      "(import uniterm)\n(uniterm/send-command p \"fixture-paths\" [1 0] \"read-file\" {})\n"
+
+    XCTAssertEqual(summary(findings(declared + sends)), [])
+
+    let idle = findings(declared + "(import uniterm)\n(uniterm/list-windows)\n")
+
+    XCTAssertEqual(idle.map(\.kind), [.unusedPower])
+    XCTAssertTrue(idle[0].message.contains("path-read"))
+  }
+
   // MARK: Layout
 
   /// Catches a layout that launches a program without declaring it, and a declared host launch

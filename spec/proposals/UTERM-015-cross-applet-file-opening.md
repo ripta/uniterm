@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-03
-**Updated:** 2026-11-08
+**Updated:** 2026-11-16
 
 ## Dependencies
 
@@ -200,7 +200,9 @@ Decision: a typed permission in UTERM-004's set. Its scope is a list of director
 scope directory are excluded unless the scope names them.
 
 - A controller declares the power and its scope at startup. The user approves it through UTERM-004's panel, with
-  Allow once, session, and remembered approvals as for every other power.
+  Allow once, session, and remembered approvals as for every other power. The power must stand for a read to run,
+  and an Allow once answer does not make it stand, so a controller that reads needs Allow for This Run or a remembered
+  approval. Amended 2026-11-16; see Decision Log.
 - The scope is a list of directories.
 - A scope directory never covers a macOS-protected location inside it unless the scope names that location. One list
   of protected locations, kept in one place with a test, names Documents, Desktop, Downloads, iCloud Drive, other
@@ -622,7 +624,7 @@ Amended 2026-11-03; see Decision Log.
 
 ### M4: The path-reading power
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Starts after UTERM-004 M1, M3, and M6
 - A controller command that makes an applet read a path is refused without the power, and with a path outside its
@@ -643,6 +645,58 @@ Amended 2026-11-03; see Decision Log.
 - A request for a path under a protected location is not covered by an approved scope that only contains it
 - The protected-location list has one owner and a test, and the approval panel names every protected location a scope
   lies in or names
+
+**As built:**
+
+- The host service is built and proven on fixture applets. No controller command reads a path today, so nothing in
+  production calls it yet. The first places it could serve are two open bugs that break the same rule, each of which
+  needs its own design call:
+  [the script snapshot reads a program-chosen path](../bugs/20261116-script-snapshot-reads-program-chosen-path.md)
+  and
+  [sent Markdown images escape the sent folder](../bugs/20261115-sent-markdown-images-escape-sent-folder.md).
+  Neither is fixed here.
+- Divergences and best guesses are in the Decision Log, 2026-11-16, M4 best guesses. The two that change a reader's
+  expectation: the walk runs off the main thread before a command is queued, and an Allow once answer does not let a
+  controller read.
+- The permission joined descriptor format 2 with no new format. An older build refuses a kind it does not know, in a
+  descriptor and in a policy file, where it reads as newer. The skew test stands in for that build with a kind the
+  current one lacks, and pins that neither format number moved.
+- The scope is its own type, and a protected place is left out of a scope that contains it. Coverage compares scopes
+  without following links, name by name after normalization, so a different spelling can only make a request ask
+  again. The open compares by the volume's own case rule. The list is one type with one test.
+- The scoped open never looks at a name outside the scope. A test counts the names it looked up, and none was outside.
+  A link target outside the scope, absolute or relative, ends the walk before any of it is looked up. Pipes and
+  devices are judged by `fstatat` and never opened, and a pipe swapped in after the look is opened without blocking and
+  refused. A rename and a link swap between the look and the open are tested with a hook in that gap.
+- Case and normalization tests follow the volume they run on. On a case-insensitive volume a name in another case
+  opens, and on a case-sensitive one it does not. The suite did not run on a case-sensitive volume.
+- A path argument type is part of the applet command schema. The dispatcher hands the applet an opened file or folder
+  and a null in place of the path. A folder opens each member through the same check. A caller that brings no opens,
+  such as an exec driver, cannot name a path.
+- The approval panel and the Controllers window name every protected place a scope lies in, names, or leaves out. A
+  scope directory that is a link into a protected place is named too, since the links are resolved off the main thread
+  once a review is queued or a row first shows. A review that asks to read paths says that Allow Once refuses its
+  reads, and a run in that state is told so, apart from the uniform refusal for a path outside the scope.
+- Delivery stays bounded for the main thread. The roots a scope resolved to are kept with each opened path, so the
+  re-check at delivery is string work and one `F_GETPATH` on an open descriptor, and a changed scope refuses. Listing
+  a folder and opening a member are async and run off the main thread.
+- Protected places match by Unicode case folding whatever the volume's rule, so a spelling that only the fold equates
+  with a protected place, such as a long s in Desktop, is never looked up. The fold uses the standard library's
+  tables. Foundation's own folding made an unrelated find test of the text viewer, which counts main-actor turns
+  while a search runs, fail whenever it ran first in the full suite.
+- Redaction covers the pane list and the text viewer's wait replies, scroll bounds, and reload failures. Terminals are
+  unchanged. Content a controller sent itself is shown to it, found by the folder it waits in. The pane list hides
+  titles and the directory for every caller outside the scope, ordinary scripts included.
+- Residuals. The redaction check compares the path the viewer recorded, so a user-opened link inside a scope whose
+  target lies outside it is shown. Resolving it would read the disk on the main thread. A hard link inside a scope
+  reaches a file
+  outside it, as the Risks entry accepts. A folder's members are checked against the scope held when the command was
+  delivered.
+- No `test-cost` target exists in this repo. The new test classes ran in under 1 s each in the package suite:
+  `ScopedOpenTests` 13 tests in 0.5 s, `ReadScopeTests` 8, `ControlDispatcherPathTests` 8 in 0.1 s, and
+  `PathReadWindowTests` 3 in 0.2 s.
+- UI test classes that script a window or a text viewer were not run by this milestone: `ScriptRunUITests`,
+  `ReplUITests`, `PresentationUITests`, `TextViewerUITests`, `ControllerRunUITests`, and `ControllerConsentUITests`.
 
 ### M5: `uniterm open`
 
@@ -905,6 +959,45 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
   fallback: when the preferred type matches no declaration, the router pools the claims of every type the system
   registers for the extension. The user chose it over claiming `com.unknown.md`, which names another app's type, and
   over leaving the refusal.
+- 2026-11-16: M4 work-queue best guesses (work-queue best guess). Amended "How the path-reading power is granted",
+  which said the user approves the power "with Allow once, session, and remembered approvals as for every other
+  power". The decision never said what Allow once means for a read, and the command that reads is not known to the
+  host until the applet's schema is. A read therefore needs the power to stand. Allow for This Run and a remembered
+  approval make it stand, and Allow once does not, so a controller allowed once cannot read. The alternative, an
+  extra question per read, would prompt once per slideshow member, which "How the path-reading power is granted"
+  rejects. Also recorded:
+  1. The walk runs off the main thread before the command is queued, not inside the authority check. A path may sit
+     on a slow volume, and ADR-08 forbids an unbounded wait on the main thread. The authority and the scope are
+     asked again as the command is delivered, and every opened descriptor's own real path is checked against the
+     scope then, with the roots kept from the open. A grant that ends while the command waits therefore leaves no
+     read, which is what the check asked for.
+  2. The permission is named `path-read`, in format 2 at version 1, with a `directories` list. The meaning table holds
+     it with no new format number, since an older build refuses an unknown kind in a descriptor and reads a policy
+     file that holds one as newer.
+  3. `/net` and `/home`, the automount points the older confined walk already refused by name, are protected places
+     beside `/Volumes` and `/Network`. They are the network volumes the settled list names.
+  4. Two approved path-reading scopes act as their union, for coverage and for the scope a run holds. A merge keeps
+     one entry.
+  5. The scope compares as the volume does. A scope directory is matched as written and with its links resolved, then
+     the walk starts from the resolved directory. The protected places are also named with the home folder's links
+     resolved.
+  6. In-scope failures keep their causes, missing, not a file or folder, not allowed, and too many links. Every
+     failure that an outside path could have returns one answer, and a command that names an outside path is
+     refused with the same text as one from a caller with no power.
+  7. Redaction applies to every caller of the pane list and the text viewer, not only a controller run, since an
+     ordinary script holds no scope. The viewer reports its source through a small protocol, and a find's counts and
+     anchors, a scroll's bounds, and a reload's failure code are hidden from a caller outside the scope. A scroll
+     past the end of a hidden file answers as a fit and moves nothing, so a caller cannot measure the file.
+  8. An exec driver brings no opens, so a command that names a path is refused for it.
+  9. The fixture applet that reads paths is a debug fixture beside the slides, notes, and chart fixtures.
+  10. A change in review fixed three things. Protected places match by case folding on every volume, since hiding more
+      is always safe. An opened path remembers the resolved scope roots, so delivery re-checks with no disk reads,
+      and a scope that changed while a command waited refuses it, the same as a revocation. The cost is that a grant
+      that grew meanwhile also refuses, and the caller asks again. A run that declared the power and was allowed once
+      gets its own refusal text, which says so, since it knows its own grant. Every other refusal stays one text.
+- 2026-11-16: ADR candidate (cuts across the system): a caller learns nothing about a user's file outside its read
+  scope from any reply, event, or listing, and every applet that shows a user's file must keep it. Undecided. Found
+  in M4.
 
 ## References
 

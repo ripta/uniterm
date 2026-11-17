@@ -734,9 +734,12 @@ enum ScriptLint {
       var needed: Set<String> = []
       var used: Set<String> = []
       var usesLayout = false
+      var usesCommand = false
 
       for use in uses {
         if use.call == .requestLayout { usesLayout = true }
+
+        if use.call == .sendCommand { usesCommand = true }
 
         guard let power = use.call?.power else { continue }
 
@@ -780,7 +783,14 @@ enum ScriptLint {
 
       if dynamic.isEmpty {
         for kind in declared.sorted() where kind != "capability" {
-          let isUsed = kind == "host-launch" ? usesLayout : used.contains(kind)
+          // A path-read power is used by a command, whose arguments may name a path. The lint
+          // cannot see the schema, so a file that sends any command may use it.
+          let isUsed =
+            switch kind {
+            case "host-launch": usesLayout
+            case "path-read": usesCommand
+            default: used.contains(kind)
+            }
 
           if !isUsed {
             findings.append(

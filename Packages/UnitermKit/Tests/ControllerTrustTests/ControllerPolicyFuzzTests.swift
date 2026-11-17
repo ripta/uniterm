@@ -1,5 +1,6 @@
 import ControllerPackage
 import Foundation
+import SourceAccess
 import TableTestSupport
 import XCTest
 
@@ -35,6 +36,7 @@ final class ControllerPolicyFuzzTests: XCTestCase {
           .paneControl, .clipboardRead, .clipboardWrite, .capability("fs-read"),
           .hostLaunch(
             try HostLaunchScope(executable: "/bin/echo", directory: "/tmp", environmentKeys: ["K"])),
+          .pathRead(try ReadScope(directories: ["/tmp/a", "/tmp/b"])),
         ], approved: "2026-11-11T10:00:00Z"),
       ControllerPolicy(
         selector: .identity(

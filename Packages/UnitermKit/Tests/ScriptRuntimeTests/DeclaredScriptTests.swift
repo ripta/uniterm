@@ -1,5 +1,6 @@
 import ControllerPackage
 import Foundation
+import SourceAccess
 import XCTest
 
 @testable import ScriptRuntime
@@ -67,6 +68,18 @@ final class DeclaredScriptTests: XCTestCase {
     XCTAssertEqual(declared.name, "Tidy")
     XCTAssertEqual(declared.permissions.count, 4)
     XCTAssertEqual(declared.capabilities, ["fs-read"])
+  }
+
+  /// Catches a path-read declaration lost on the way from Janet: its directories must reach the
+  /// shared reader as the scope the file named.
+  func testAPathReadDeclarationCarriesItsDirectories() throws {
+    let declared = try declaration(
+      """
+      (declare-permissions {:kind :path-read :version 1 :directories ["/tmp/b" "/tmp/a"]})
+      """)
+
+    XCTAssertEqual(
+      declared.permissions, [.pathRead(try ReadScope(directories: ["/tmp/a", "/tmp/b"]))])
   }
 
   /// Catches an empty declaration being treated as no declaration, and a file with only a header.

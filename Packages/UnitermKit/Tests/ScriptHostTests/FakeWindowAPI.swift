@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import PaneModel
 import ScriptWire
+import SourceAccess
 import XCTest
 
 @testable import ScriptHost
@@ -55,7 +56,7 @@ final class FakeWindowAPI: ScriptWindowAPI {
       })
   }
 
-  func listPanes(window: UInt64, caller: ScriptCaller) throws -> ScriptValue {
+  func listPanes(window: UInt64, caller: ScriptCaller, access: ReadAccess) throws -> ScriptValue {
     calls.append(.listPanes(window: window))
     callers.append(caller)
 
@@ -207,7 +208,8 @@ final class FakeWindowAPI: ScriptWindowAPI {
   func sendCommand(
     to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
     command: String,
-    arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
+    arguments: String, caller: ScriptCaller, access: @escaping @MainActor () -> ReadAccess,
+    stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
     calls.append(
       .sendCommand(

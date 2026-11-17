@@ -2,6 +2,7 @@ import AppKit
 import ControllerPackage
 import ControllerTrust
 import ScriptTestSupport
+import SourceAccess
 import XCTest
 
 @testable import ScriptHost
@@ -82,6 +83,39 @@ final class ControllersWindowTests: XCTestCase {
     XCTAssertFalse(unsigned.contains("Trust This Identity"), unsigned)
     XCTAssertFalse(unwritable.contains("Trust This"), unwritable)
     XCTAssertTrue(unwritable.contains("Allow for This Run"), unwritable)
+  }
+
+  /// Catches a review that asks to read paths without saying what Allow Once does for it, and one
+  /// that leaves out a protected place a scope lies in, names, or leaves out. A link into a
+  /// protected place is named through the resolved directories.
+  func testAPathReadingReviewSaysAllowOnceReadsNothingAndNamesProtectedPlaces() throws {
+    let home = NSHomeDirectory()
+    let scope = try ReadScope(directories: [home, home + "/notes"])
+    var reading = ControllerReview(
+      id: 3, name: "Reader",
+      identity: ControllerIdentity(
+        controllerID: "dev.uniterm.fixture.reader", version: String(repeating: "2", count: 64),
+        keyFingerprint: nil),
+      requested: [.pathRead(scope)], added: [.pathRead(scope)], revises: nil, canRemember: true,
+      notice: nil, waiting: [(1, 100)])
+
+    var text = ControllerReviewText.summary(reading)
+
+    XCTAssertTrue(text.contains(ControllerReviewText.readsNeedStanding), text)
+    XCTAssertTrue(text.contains("Allow for This Run"), text)
+    XCTAssertTrue(text.contains("Leaves out: "), text)
+    XCTAssertTrue(text.contains("Documents"), text)
+    XCTAssertTrue(text.contains("Downloads"), text)
+    XCTAssertFalse(text.contains("Lies in or names: Documents"), text)
+
+    reading.resolvedReadDirectories = [home + "/notes": home + "/Documents/notes"]
+    text = ControllerReviewText.summary(reading)
+
+    XCTAssertTrue(text.contains("Lies in or names: Documents"), text)
+
+    let plain = ControllerReviewText.summary(try review(signed: true, canRemember: true))
+
+    XCTAssertFalse(plain.contains(ControllerReviewText.readsNeedStanding), plain)
   }
 
   /// Catches a review that hides what is new, leaves out a power, or lets a name reorder the text
