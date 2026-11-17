@@ -66,6 +66,13 @@ fixed ones.
 - Seen again: 2026-11-15, twice in about five full `make test-package` runs during the UTERM-007 M5 work-queue run,
   with 54 and 58 turns. That run's only change near the search adds one completion call after it ends. It passed alone
   and with its class.
+- Seen again: 2026-11-16, in four full `make test-package` runs during the UTERM-015 M4 work-queue run, with 3 to 77
+  turns. That draft folded path names with Foundation's `String.folding(options: .caseInsensitive)` from new test
+  classes that run before `FindTests`. The test passed alone, with `TextViewerAppletTests`, and in filtered groups.
+  Skipping `ControlDispatcherPathTests` made the full suite pass. The same change with the standard library's scalar
+  case mapping in place of Foundation's folding passed the full suite. So an earlier test that warms Foundation's
+  case-insensitive tables shifts how many turns land. This supports the suspected cause below: the count measures
+  timing, not where the search runs.
 - Suspected cause: the main actor was busy for seconds at a time, likely laying out the four-million-character text,
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.
