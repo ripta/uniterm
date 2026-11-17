@@ -13,4 +13,5 @@
 | [20261116-unclaimed-command-key-reaches-terminal-program](20261116-unclaimed-command-key-reaches-terminal-program.md) | A Command key that no menu item takes reaches the terminal program, against the surface's own comment | open |
 | [20261116-disconnected-source-badge-hides-live-controller](20261116-disconnected-source-badge-hides-live-controller.md) | A disconnected pane that a live controller acts from shows no control badge | open |
 | [20261116-script-opened-pane-takes-focus](20261116-script-opened-pane-takes-focus.md) | A pane a script opens with `uniterm/open-pane` takes keyboard focus, against ADR-12 | open |
+| [20261116-ended-applet-close-gives-neighbor-keyboard](20261116-ended-applet-close-gives-neighbor-keyboard.md) | A focused pane whose applet ends on its own gives the keyboard to a neighbor, against ADR-12 | open |
 | [20261115-helper-sandbox-tests-fail-after-ui-test-build](20261115-helper-sandbox-tests-fail-after-ui-test-build.md) | The helper sandbox tests fail after a UI test build leaves test entitlements on the helpers | fixed |
