@@ -11,8 +11,8 @@
   ownership
 - UTERM-003 M3: M5's `uniterm open` uses the `uniterm` command and its listener
 - UTERM-004 M1 and M3: M4's path-reading power builds on caller identity and shared command dispatch
-- UTERM-004 M4: M1's check that a routed split never joins a group a controller owns. Until it lands, the check runs
-  against a fixture group
+- UTERM-004 M4: M1's check that a routed split never joins a group a controller owns. It runs against a real
+  controller-owned group
 - UTERM-004 M6: M4's grants, M7's approvals for senders other than Apple's openers, and M5's session approval all use
   its approval flow and pending indicator. M5 and M7 started after it, and it has landed. Amended 2026-11-17; see
   Decision Log.
@@ -1427,11 +1427,16 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
      and `testAMissingPathSaysSo` already run the real async check through the applet and prove both answers.
 - 2026-11-17: Implemented. M4 to M7 finished in the work-queue run recorded in
   `spec/reports/20261116-uterm-015-m4-m7-cross-applet-file-opening.md`, and every milestone is DONE.
-- 2026-11-17: Final review corrections. The row-fix entry re-pointed every ADR-09 citation to ADR-14. One of them was
-  wrong. Motivation says UTERM-006 settled that reading a path is a power of its own "under ADR-09", and ADR-14 did
-  not exist when UTERM-006 settled it. That historical sentence cites ADR-09 again, with "(superseded by ADR-14)". It
-  is the one exception to item 8 above. The row-fix entry also had a stray blank line before this section's
-  "Implemented" entry, now removed. No other proposal text changed.
+- 2026-11-17: Correction of fact, from the final review. The row-fix entry re-pointed every ADR-09 citation to
+  ADR-14, and one of them was wrong. ADR-14 did not exist when UTERM-006 settled the path-reading power. Motivation
+  read: "UTERM-006 also settled that asking an applet to read a path is a power of its own under ADR-14, apart from
+  pane control. ADR-14 lists no such power, and UTERM-005, UTERM-006, UTERM-007, and UTERM-009 each need the same
+  one. One definition keeps them from diverging." That historical sentence cites ADR-09 again, with "(superseded by ADR-14)". It is the one exception to item 8
+  above. A stray blank line before the "Implemented" entry was also removed.
+- 2026-11-17: Correction of fact. Dependencies read: "- UTERM-004 M4: M1's check that a routed split never joins a
+  group a controller owns. Until it lands, the check runs against a fixture group". UTERM-004 M4 has landed, and
+  `testARoutedSplitNeverJoinsAControllerGroup` runs against a real controller-owned group from `openPane` with an
+  owner. The line now says so.
 
 ## References
 
