@@ -42,5 +42,11 @@ The design call is what the window shows and where keys go until the user choose
   focus move arms a pane.
 - The focus mark moves, and the neighbor takes keys only after a short pause. ADR-12 rejects a delay.
 
+The same bug crosses windows. A window whose only pane's applet ends closes, through `closePane` and `closeLastPane`
+(`MainWindowController.swift:947-953` and `:1123-1126`). AppKit then makes another window key, and that window's
+focused pane takes the keyboard. The code path is traced. The AppKit key handoff is standard behavior, but no one has
+traced it. UTERM-026 "Focus" settles that no pane in any window becomes first responder after such a close, so the fix
+covers both cases.
+
 Whether a shell ending on `exit` counts as chosen is part of the same call. Telling it apart from an end the user did
 not cause may not be possible from the applet's exit alone.
