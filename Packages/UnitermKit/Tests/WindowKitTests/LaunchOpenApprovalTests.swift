@@ -102,6 +102,27 @@ final class LaunchOpenApprovalTests: XCTestCase {
 
   // MARK: The question
 
+  /// Catches a question that says "each" of one path, or puts the placement beside the sender's
+  /// identity. One path lands in a new pane, and several each land in their own.
+  func testTheQuestionPlacesOnePathAndSeveralPathsInTheirOwnWords() {
+    let one = LaunchOpenApprovalText.detail(
+      paths: ["/a"], skipped: 0, sender: app(200), onceOnly: false)
+    let several = LaunchOpenApprovalText.detail(
+      paths: ["/a", "/b"], skipped: 0, sender: nil, onceOnly: true)
+
+    XCTAssertTrue(
+      one.hasPrefix(
+        "The program \u{201C}com.example.launcher (team TEAM123)\u{201D} asks to open this path in "
+          + "a new pane. A new window opens when a batch or a lack of room calls for one:\n  /a\n"
+          + "uniterm has not looked at it yet."), one)
+    XCTAssertTrue(
+      several.hasPrefix(
+        "An unknown program asks to open these 2 paths, each in a new pane. A new window opens "
+          + "when a batch or a lack of room calls for one:\n  /a\n  /b\nIt may have quit already, "
+          + "and uniterm cannot tell which program it was. uniterm has not looked at them yet."),
+      several)
+  }
+
   /// Catches a question that names a sender from anything but its verified signing information,
   /// that leaves a path out, or that offers the wrong answers. The row names the signing identifier
   /// and the team, lists the path in full with the count, and offers the session answer to an app.

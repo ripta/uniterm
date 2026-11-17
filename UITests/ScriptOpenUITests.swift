@@ -127,7 +127,7 @@ final class ScriptOpenUITests: UnitermUITestCase {
 
     let shot = XCTAttachment(screenshot: panel.screenshot())
 
-    shot.name = "open-question"
+    shot.name = "script-open-session-question"
     shot.lifetime = .keepAlways
     add(shot)
 
@@ -173,6 +173,12 @@ final class ScriptOpenUITests: UnitermUITestCase {
     XCTAssertFalse(
       panel.buttons["pending-requests-allow-session"].isHittable,
       "a command outside every session is offered a session answer")
+
+    let shot = XCTAttachment(screenshot: panel.screenshot())
+
+    shot.name = "script-open-outside-session-question"
+    shot.lifetime = .keepAlways
+    add(shot)
 
     panel.buttons["pending-requests-allow-once"].click()
     closePanel(panel)

@@ -51,31 +51,45 @@ public enum OpenApprovalText {
     count == 1 ? "Open a file or folder" : "Open \(count) files or folders"
   }
 
+  /// What the program asks for, with where it lands, as the three open questions all say it. One
+  /// path goes in a new pane. Several each go in their own.
+  public static func request(count: Int) -> String {
+    count == 1
+      ? "asks to open this path in a new pane"
+      : "asks to open these \(count) paths, each in a new pane"
+  }
+
+  /// Opening a window is a power of its own, so every open question says that one may open.
+  public static let windowNote = "A new window opens when a batch or a lack of room calls for one"
+
+  /// The line that tells the user nothing was looked at, and so what the answer cannot be based on.
+  public static func notLooked(count: Int) -> String {
+    "uniterm has not looked at \(count == 1 ? "it" : "them") yet."
+  }
+
   /// `pane` is the terminal the command ran in, or nil when it ran in none.
   public static func detail(paths: [String], pane: String?) -> String {
     let list = paths.map { "  \(display($0))" }.joined(separator: "\n")
-    let count = paths.count == 1 ? "this path" : "these \(paths.count) paths"
+    let request = request(count: paths.count)
 
     let lead: String
     let tail: String
 
     if let pane {
-      lead =
-        "A program in the terminal session of pane \u{201C}\(pane)\u{201D} asks to open \(count)"
+      lead = "A program in the terminal session of pane \u{201C}\(pane)\u{201D} \(request)."
       tail =
         "Allow for This Terminal Session lets every program in this session open files without "
         + "asking, until the session ends."
     } else {
-      lead =
-        "A program that runs in no uniterm terminal session asks to open \(count). It may run in "
-        + "tmux, in screen, or outside uniterm, and uniterm cannot tell which program it is"
-      tail = "This answer covers this request only."
+      lead = "A program that runs in no uniterm terminal session \(request)."
+      tail =
+        "It may run in tmux, in screen, or outside uniterm, and uniterm cannot tell which program "
+        + "it is. \(notLooked(count: paths.count)) This answer covers this request only."
     }
 
-    let place =
-      "each in a new pane. A new window opens when a batch or a lack of room calls for one"
+    let looked = pane == nil ? "" : "\(notLooked(count: paths.count)) "
 
-    return "\(lead), \(place):\n\(list)\nuniterm has not looked at them yet. \(tail)"
+    return "\(lead) \(windowNote):\n\(list)\n\(looked)\(tail)"
   }
 }
 

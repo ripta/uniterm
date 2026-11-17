@@ -15,16 +15,17 @@ public enum LaunchOpenApprovalText {
     paths: [String], skipped: Int, sender: SenderIdentity?, onceOnly: Bool
   ) -> String {
     let list = paths.map { "  \(OpenApprovalText.display($0))" }.joined(separator: "\n")
-    let count = paths.count == 1 ? "this path" : "these \(paths.count) paths"
+    let request = OpenApprovalText.request(count: paths.count)
 
     let lead: String
+    let unknown: String
 
     if let sender {
-      lead = "The program \u{201C}\(sender.approvalLabel)\u{201D} asks to open \(count)"
+      lead = "The program \u{201C}\(sender.approvalLabel)\u{201D} \(request)."
+      unknown = ""
     } else {
-      lead =
-        "An unknown program asks to open \(count). It may have quit already, and uniterm cannot "
-        + "tell which program it was"
+      lead = "An unknown program \(request)."
+      unknown = "It may have quit already, and uniterm cannot tell which program it was. "
     }
 
     let tail: String
@@ -47,10 +48,9 @@ public enum LaunchOpenApprovalText {
       : "\(skipped) more \(skipped == 1 ? "item is" : "items are") not a local file and "
         + "will not open.\n"
 
-    let place =
-      "each in a new pane. A new window opens when a batch or a lack of room calls for one"
-
-    return "\(lead), \(place):\n\(list)\n\(skip)uniterm has not looked at them yet. \(tail)"
+    return
+      "\(lead) \(OpenApprovalText.windowNote):\n\(list)\n\(skip)\(unknown)"
+      + "\(OpenApprovalText.notLooked(count: paths.count)) \(tail)"
   }
 
   public static let sessionTitle = "Allow Until This App Quits"
