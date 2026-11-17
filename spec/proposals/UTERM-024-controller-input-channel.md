@@ -679,6 +679,9 @@ None.
   - The rationale of "How ADR-04 changes" named "UTERM-031's" change as its example.
   - The risk "The third-key-owner rule shifts under UTERM-031" is removed, since no proposal now widens where keys
     reach.
+- 2026-11-16: UTERM-028 is accepted. Its Impacts line here now says what it narrows. A driver's own pane lists its rows
+  and takes its keys even when disconnected. At a pane that is both a controller's member and a driver's own pane, keys
+  go to the driver alone, so a Janet controller's keys leave that member while the driver holds its grant.
 
 ## References
 

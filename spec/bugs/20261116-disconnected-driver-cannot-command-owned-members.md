@@ -35,8 +35,8 @@ remote-controlled member, then disconnect the driver's pane and have it send a c
 
 ## Fix
 
-The design call is which rule wins. UTERM-028 "Members while the anchor is disconnected" settles it, pending its review
-gate: apply `sourceRefusal` to layouts only, and let a member command rest on group ownership and the member's own mode,
-at every protocol version. UTERM-004 "Layout requests" keeps the remote-controlled anchor for layouts. If the gate keeps
-the 2026-11-11 rule instead, the fix is to correct `disconnect`'s doc comment and UTERM-004's general text to carve out
-drivers.
+Accepted UTERM-028 "Members while the anchor is disconnected" settles the design call. Apply `sourceRefusal` to
+layouts only, and let a member command rest on group ownership and the member's own mode, at every protocol version.
+UTERM-004 "Layout requests" keeps the remote-controlled anchor for layouts. The change lands with UTERM-028 M1, whose
+check "A version-4 driver with a disconnected anchor commands its remote-controlled members" covers it. Do not fix it
+apart from that milestone.

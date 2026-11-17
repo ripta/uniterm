@@ -26,6 +26,10 @@ A wire between uniterm and a separately deployed program keeps working when eith
   offers. A newer program on an older uniterm does the same.
 - uniterm stops accepting an old version only under a proposal that names the direction that fails and the programs it
   breaks.
+- The rule governs the wire's protocol version. A version of a contract the wire carries, such as an applet's command
+  schema version, keeps its own rule.
+- The rule holds from the versions an outside wire accepted when this ADR was adopted. The exec wire's versions 2 and 3
+  were already refused then.
 - A wire whose two sides always ship together, such as ScriptWire, may refuse every version but its own, per UTERM-024
   "Version skew".
 

@@ -43,7 +43,8 @@ same gap a Janet controller has. Today a driver hears only its own pane's applet
 ### The same commands and limits
 
 Decision: a driver's commands follow UTERM-024's rules: the same keys, the same opt-in rule for panes,
-the same key ownership, and the same cleanup when the driver ends.
+the same key ownership, and the same cleanup when the driver ends. The decisions below narrow these rules for a
+driver's own pane and for a pane two controllers share.
 
 ### How a driver gets the power
 
