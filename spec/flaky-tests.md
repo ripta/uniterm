@@ -90,7 +90,8 @@ fixed ones.
   case-insensitive tables shifts how many turns land. This supports the suspected cause below: the count measures
   timing, not where the search runs.
 - Seen again: 2026-11-17, once, in a full `make test-package` run (2810 tests) during the UTERM-015 M6 work-queue run,
-  which touches no text-viewer code. It counted 82 turns.
+  which touches no text-viewer code. It counted 82 turns. Seen again the same night, on that run's final tree, at 37
+  turns. Implementer full runs on the same code between those two passed.
 - Suspected cause: the main actor was busy for seconds at a time, likely laying out the four-million-character text,
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.

@@ -46,6 +46,22 @@ base. Whether to rebase `agent/petunia` is left to the user.
 | UTERM-015 M6: Terminal clicks | DONE | "Open the path a terminal shows on Command-click" |
 | UTERM-015 M7: Launch Services approvals | DONE | "Ask before opening files that other apps send" |
 
+Every commit this run made, in order:
+
+1. "Let a controller read paths inside an approved directory scope" (M4)
+2. "Record that warming Foundation's case tables starves the find-turns test"
+3. "Log the exec driver clipboard-bound test as a potential flake"
+4. "Open files from a terminal with `uniterm open`" (M5)
+5. "Fold the duplicate exec driver flake entry and log the terminal link test flake"
+6. "Open the path a terminal shows on Command-click" (M6)
+7. "Ask before opening files that other apps send" (M7)
+8. "Bound stuck file checks and say when an approved open may make a window" (row review fixes)
+9. "Mark UTERM-015 implemented and move its last queue row to history"
+10. "Prove a blocked walk holds up no other connection, and fix final review nits" (final review fixes)
+11. "Correct UTERM-015's stale group dependency and one re-pointed citation"
+12. "Word open questions for one path or several, and capture each panel in the UI tests"
+13. "Record the UTERM-015 run's final-tree checks and close its report", which carries this report's last amendment
+
 ## Local checks
 
 Every milestone runs `make fmt-check`, `make lint`, `make check`, and `caffeinate -dimsu make test-package`, plus a
@@ -508,6 +524,38 @@ refused click keeps the earlier handle. The Motivation sentence cites ADR-09, ma
 Decision Log has the entry "2026-11-17: Final review corrections". Checks: `make fmt-check`, `make lint`, and
 `proposals.py check` were clean. The filtered package tests (`PathReadWindowTests`, `TerminalLinkClickTests`,
 `PermissionRequestsTests`, `ScriptOpenTests`) passed 44 tests.
+
+Final-tree checks, run by the coordinator on the tree after the final review fixes:
+
+- `caffeinate -dimsu make test-package` (`cg_run` AWZ9F4) ran 2834 tests, with 10 skipped and 1 failure. The failure was
+  the known `FindTests` turn-count flake, at 37 turns. It is logged in `spec/flaky-tests.md`.
+- `caffeinate -dimsu make test-app` (`cg_run` DKPDMH, 2026-11-17 02:27 to 02:55) passed 171 of 171. That count
+  includes a new `ControllerConsentUITests` test for the path-read review.
+- `caffeinate -dimsu make test-helper-sandbox` (`cg_run` GBX5XQ) passed 9 tests.
+- `proposals.py check` is clean. The freeze check with all seven of this run's commits shows no unlogged UTERM-015
+  hunk. Both corrections of fact quote the text they replace.
+
+On-screen checks: the UI tests now attach screenshots of each panel, and the coordinator viewed them.
+
+- The path-read review lists the scope, names "other apps' containers" as a protected location it lies in, and says a
+  run allowed once is refused when it reads.
+- The Launch Services question names `dev.uniterm.app.UITests.xctrunner (no team)`, the path, and the window note, and
+  offers Allow Until This App Quits.
+- The `uniterm open` session question offers Allow for This Terminal Session. The question for a command outside any
+  session offers only Allow Once and Deny.
+- The Command-hover overlay shows the whole path.
+
+Viewing them found two text bugs. The question for a command outside any session attached "each in a new pane" to its
+tmux sentence. All three questions also said "this path, each in a new pane" for a single path. Both were fixed with
+one shared phrase builder. The coordinator reran `ScriptOpenUITests` and `LaunchServicesOpenUITests` (`cg_run` 1TH5YY),
+and they passed. The new screenshots read "this path in a new pane", with the tmux sentence after the paths.
+
+Two threads left open by earlier reviews were checked:
+- M4's new path argument type needed no applet command schema version bump. ADR-13 leaves each applet's schema
+  version to its own rule, and no shipped applet's schema gained a path argument. Only the fixture uses it.
+- M1's routed-split group test already runs against a real controller-owned group:
+  `testARoutedSplitNeverJoinsAControllerGroup` opens a pane with a `GroupOwner`. The proposal's Dependencies line
+  still said "fixture group", and it was corrected as a correction of fact.
 
 Open for the user, from adr-impact on the row-fix commit: ADR-14 makes opening a window a separate power. The
 `uniterm open` and Launch Services questions now name a possible new window, and the one answer grants it. ADR-14
