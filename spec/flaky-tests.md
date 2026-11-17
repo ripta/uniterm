@@ -54,6 +54,15 @@ fixed ones.
   before they land.
 - Status: unresolved.
 
+### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
+
+- Seen: 2026-11-17, once, in a local full `make test-package` run during the UTERM-015 M5 work-queue run. That change
+  touches the script listener and its wire, not the exec driver.
+- Evidence: it timed out after 15.5 s "waiting until the channel ends or answers both writes and the command after
+  them". It passed alone in 0.13 s, with its class, and in the next full run.
+- Suspected cause: a load-dependent wait. It was not tried on the base commit.
+- Status: unresolved.
+
 ### `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread`
 
 - Seen: 2026-11-14, once, in CI's package job, in the same run as the entry above.
