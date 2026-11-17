@@ -506,7 +506,9 @@ final class FindCoordinator {
       return
     }
 
-    if pdfMatches.count % 25 == 1 { content.pdfView.highlightedSelections = pdfMatches }
+    if FindMatching.redrawsHighlights(atMatch: pdfMatches.count) {
+      content.pdfView.highlightedSelections = pdfMatches
+    }
 
     switch reveal {
     case .first where pdfMatches.count == 1:

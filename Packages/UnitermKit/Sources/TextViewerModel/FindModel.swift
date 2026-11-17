@@ -17,6 +17,16 @@ public enum FindMatching {
     public var capped: Bool
   }
 
+  /// Whether an engine that reports matches one at a time redraws every highlight on reaching
+  /// `count` matches. Each redraw hands over every match so far.
+  ///
+  /// It redraws at each power of two, so the redraws together hand over fewer than twice the
+  /// final count. A fixed stride would grow with the square of the count. The end of a search
+  /// redraws every match anyway.
+  public static func redrawsHighlights(atMatch count: Int) -> Bool {
+    count > 0 && count & (count - 1) == 0
+  }
+
   /// A query as the engines receive it: cut to the length cap, and nil when empty.
   public static func prepared(_ query: String) -> String? {
     let cut = String(query.prefix(maxQueryLength))
