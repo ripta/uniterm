@@ -124,9 +124,13 @@ shape cannot represent that authority. Amended 2026-11-02; see "What anchors tru
 
 ### Same window only
 
+Superseded in part by UTERM-026; see Decision Log.
+
 A program may control panes only in its own window.
 
 ### Layout requests
+
+Superseded in part by UTERM-026; see Decision Log.
 
 A trusted program may request a layout for its own subtree. For example, it may ask for three panes holding a slide, a
 set of notes, and a chart.
@@ -154,6 +158,8 @@ M2 builds the group and its saved form, since its checks need owned members. M4 
 details are part of "What anchors trust" below. Amended 2026-11-10; see Decision Log.
 
 ### What anchors trust
+
+Superseded in part by UTERM-026; see Decision Log.
 
 Original question, raised by the UTERM-001 review on 2026-10-31. The settled "Trust follows the pane tree" reads trust
 from tree shape.
@@ -1623,11 +1629,17 @@ None.
   keeps commanding the remote-controlled members it owns, which supersedes in part the 2026-11-11 entry's rule that
   member commands need the driver's pane remote-controlled. Revoke Controller is offered on the pane of a driver that
   holds UTERM-028's command grant, even when the driver owns no group.
+- 2026-11-17: Superseded in part by UTERM-026. A program may control panes in its source window and in a window its
+  run opened, which holds only panes that run opened, per ADR-14. That window's layout has no anchor and holds only new
+  panes. Closing such a window ends the owner's authority there only. Closing the source window still ends it
+  everywhere.
 
 ## References
 
 - [ADR-09](../adr/ADR-09-control-authority-requires-authenticated-identity-and-explicit-scope.md): authenticated
   requester, explicit scope, and verified reuse of remembered approval
+- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): supersedes ADR-09; a controller controls what its
+  run opened, across the windows it opened
 
 - [ADR-01](../adr/ADR-01-libghostty-behind-terminal-surface-protocol.md): terminal-engine boundary
 - [ADR-02](../adr/ADR-02-pane-tree-nodes-have-stable-ids.md): stable node identities

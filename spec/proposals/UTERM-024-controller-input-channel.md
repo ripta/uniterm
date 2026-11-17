@@ -16,6 +16,9 @@
 
 ## Impacts
 
+- UTERM-026 — "The event model" and "Powers and lifecycle": a controller's groups may span its source window and one
+  window it opened, per ADR-14. An event gains `:window` beside `:pane` on ScriptWire. The cleanup "when the window
+  closes" runs when the source window closes. Closing the opened window ends neither the commands nor the pending reads.
 - UTERM-025 — the whole proposal: this is a required prerequisite of the presentation controller. Its Next Slide and
   Previous Slide are commands declared here, bound to the arrow keys and Page Up and Page Down.
 - UTERM-028 — "Any key" and "When commands are live": exec drivers gain the same commands and events. Under UTERM-028,
