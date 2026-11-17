@@ -243,8 +243,8 @@ final class PathReadWindowTests: XCTestCase {
 
   /// Catches a walk on a dead mount that parks another thread with every command. The opener
   /// blocks, as an open on a hung network volume does. A second command from the same connection
-  /// is refused at once with the answer any outside path gets, another connection is not held up by
-  /// it, and the slot comes back when the walk returns. It cannot prove how many threads the system
+  /// is refused at once with the answer any outside path gets, a walk of another connection still
+  /// starts while the first is blocked, and the slot comes back when the walk returns. It cannot prove how many threads the system
   /// would park, only that the walk count per connection stays under the bound.
   func testAConnectionCannotKeepMoreWalksRunningThanTheBound() async throws {
     let fixture = try makeFixture()
@@ -295,10 +295,19 @@ final class PathReadWindowTests: XCTestCase {
       XCTAssertEqual(error.kind, .refused)
     }
 
+    let other = Task { try await read(connection: 2) }
+
+    await waitFor(entered)
+
     gate.signal()
+    gate.signal()
+
     let firstValue = try await first.value
+    let otherValue = try await other.value
 
     XCTAssertEqual(firstValue, .record(["text": .string("inside")]))
+    XCTAssertEqual(
+      otherValue, .record(["text": .string("inside")]), "another connection was held up")
 
     let again = Task { try await read(connection: 1) }
 

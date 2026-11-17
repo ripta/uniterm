@@ -57,9 +57,9 @@ deciding it inside one applet would change the factory every applet implements. 
 to be filed before a second viewer among UTERM-006 to UTERM-008 starts its first milestone. UTERM-006 M1 is gated on it
 directly.
 
-UTERM-006 also settled that asking an applet to read a path is a power of its own under ADR-14, apart from pane
-control. ADR-14 lists no such power, and UTERM-005, UTERM-006, UTERM-007, and UTERM-009 each need the same one. One
-definition keeps them from diverging.
+UTERM-006 also settled that asking an applet to read a path is a power of its own under ADR-09 (superseded by
+ADR-14), apart from pane control. ADR-09 lists no such power, and UTERM-005, UTERM-006, UTERM-007, and UTERM-009 each
+need the same one. One definition keeps them from diverging.
 
 Today the app has no file-open path at all. It declares no document types, binds no Cmd-O, has no `uniterm` command,
 and ignores link and path clicks in the terminal. Every viewer bound no File > Open shortcut while waiting for this
@@ -1425,9 +1425,13 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
   9. Test changes. `PathSpy` moved into the shared window test fixture. The M5 and M7 placement tests each say which
      authority they isolate. `testTheAsyncCheckAnswersLikeTheSyncOne` is retired. `testAClickOpensExactlyTheShownFile`
      and `testAMissingPathSaysSo` already run the real async check through the applet and prove both answers.
-
 - 2026-11-17: Implemented. M4 to M7 finished in the work-queue run recorded in
   `spec/reports/20261116-uterm-015-m4-m7-cross-applet-file-opening.md`, and every milestone is DONE.
+- 2026-11-17: Final review corrections. The row-fix entry re-pointed every ADR-09 citation to ADR-14. One of them was
+  wrong. Motivation says UTERM-006 settled that reading a path is a power of its own "under ADR-09", and ADR-14 did
+  not exist when UTERM-006 settled it. That historical sentence cites ADR-09 again, with "(superseded by ADR-14)". It
+  is the one exception to item 8 above. The row-fix entry also had a stray blank line before this section's
+  "Implemented" entry, now removed. No other proposal text changed.
 
 ## References
 

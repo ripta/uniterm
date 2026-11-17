@@ -9,7 +9,18 @@ openers (M7). The specs live in the code repo, so every commit below is in this 
 
 ## TL;DR
 
-In progress.
+The row finished on 2026-11-17, and UTERM-015 is `implemented`.
+
+- M4 gives a controller a scoped, typed permission to make an applet read a path. Protected folders stay out of a
+  scope unless named, and a user's files outside the scope are hidden from callers.
+- M5 adds `uniterm open`, approved once or per terminal session.
+- M6 shows a link's real target on Command-hover, and opens only that exact path on Command-click. A Ghostty patch
+  keeps libghostty from touching clicked relative paths and reports OSC 7 from other hosts.
+- M7 asks before opening files that apps other than Finder, the Dock, and Spotlight send.
+
+Every milestone passed its local checks and its targeted UI classes. The full UI suite passed 170 of 170 on the
+committed row. Each milestone and the row had a review. The fixes are folded into the milestone commits and one
+row-fix commit. The rebase onto `upstream/main` was skipped, because another session had edits in the checkout.
 
 ## Run state
 
@@ -475,6 +486,45 @@ Checks: `make fmt-check`, `make lint`, `make check`, `caffeinate -dimsu make tes
 `implemented` and that its queue row should move. The coordinator reran `TerminalLinkUITests`, `ScriptOpenUITests`, and
 `LaunchServicesOpenUITests` (`cg_run` W68ESS, 2026-11-17 02:15), and they passed.
 
+### Row finish and final review
+
+Once the row-fix commit landed, UTERM-015 became `implemented`, the index followed, and the queue row `UTERM-015 M4-M7`
+moved to `history.md`. `proposals.py check` reported nothing.
+
+The final review covered the row-fix commit, the finished proposal, and an ADR review. The run added and edited no
+ADR. The freeze check with all six of this run's commits found no hunk in UTERM-015. The only hunk was the known
+origin-`other` ADR-14 line in UTERM-004. The run's code and proposal honor ADR-14.
+
+Final review findings, all sent to fix as a correction-of-fact entry on the implemented proposal:
+
+- A test's doc comment claimed another connection is not held up by a blocked walk, and nothing asserted it.
+  CONFIRMED.
+- A doc comment in `PermissionRequests` had a ragged wrap.
+- A refused second click overwrote the first click's task handle, which only tests read. PLAUSIBLE.
+- The Motivation credited a past settlement with citing ADR-14, which did not exist then.
+
+All four were fixed. The walk-bound test now drives a second connection while the first one's walk is blocked. A
+refused click keeps the earlier handle. The Motivation sentence cites ADR-09, marked superseded by ADR-14. The
+Decision Log has the entry "2026-11-17: Final review corrections". Checks: `make fmt-check`, `make lint`, and
+`proposals.py check` were clean. The filtered package tests (`PathReadWindowTests`, `TerminalLinkClickTests`,
+`PermissionRequestsTests`, `ScriptOpenTests`) passed 44 tests.
+
+Open for the user, from adr-impact on the row-fix commit: ADR-14 makes opening a window a separate power. The
+`uniterm open` and Launch Services questions now name a possible new window, and the one answer grants it. ADR-14
+does not say whether one prompt may grant two powers it names.
+
 ## Status
 
-In progress.
+The row is done, and UTERM-015 is `implemented`. Open for the user:
+
+- The skipped rebase onto `upstream/main`, since another session's edits were in the checkout.
+- The ADR-14 question above, on one prompt granting the window power.
+- The UTERM-004 References hunk adding ADR-14, which another session made.
+- Accepted residuals in the proposal:
+  - One `ssh` marks a tab possibly remote for its session's life.
+  - A session grant to a non-Apple interpreter covers any script it runs.
+  - A Deny can fold into an earlier coalesced message.
+  - Distinct live signed apps can each hold pending rows.
+- The ADR candidate "a caller learns nothing about a user's file outside its read scope", recorded Undecided in
+  UTERM-015's Decision Log.
+- Flakes logged in `spec/flaky-tests.md`: `TerminalLinkUITests`, `FindTests`, and `ExecDriverChannelTests`.

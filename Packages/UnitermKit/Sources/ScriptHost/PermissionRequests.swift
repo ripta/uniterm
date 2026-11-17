@@ -37,10 +37,13 @@ public final class ChangeObservers {
 /// requester share one row, however many arrive, so repeated requests cannot flood the user.
 /// Each row holds at most `maxPerRow` waiting operations, one requester holds at most
 /// `maxRowsPerRequester` rows, and so do all requesters that share a denial key. All requesters
-/// that stand for one open event each hold their rows together, as one requester would, since a
-/// program that sends events cannot be told apart from the next one. So do all commands that run
-/// outside any terminal session. All requesters together hold
-/// at most `maxRows`. A request past any bound is refused as busy, and the rows that wait stay.
+/// together hold at most `maxRows`. A request past any bound is refused as busy, and the rows that
+/// wait stay.
+///
+/// Some requesters are many by construction, and each kind holds its rows together as one
+/// requester would. Every requester that stands for one open event is one kind, since a program
+/// that sends events cannot be told apart from the next one. Every command that runs outside any
+/// terminal session is the other, since each is a fresh connection that holds a listener slot.
 ///
 /// Allow once releases the oldest waiting operation of a row and no other, so coalescing never
 /// turns one approval into approval of several operations. The row shows that oldest operation's

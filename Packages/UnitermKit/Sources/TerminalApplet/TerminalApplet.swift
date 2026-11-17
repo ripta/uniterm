@@ -786,7 +786,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       if isSelected { updateLinkPreview() }
 
     case .linkOpenRequested(let text):
-      linkClick = openLink(text, in: tab)
+      if let click = openLink(text, in: tab) { linkClick = click }
 
     case .remoteHostReported(let host):
       markRemote(.host(host), in: tab)
