@@ -32,7 +32,7 @@
 | [UTERM-028](UTERM-028-exec-driver-commands.md) | Exec drivers declare commands and receive their invocations | draft |
 | [UTERM-029](UTERM-029-presentation-extras.md) | PDF, image, and HTML decks, and Go to Slide, for the presenter | draft |
 | [UTERM-030](UTERM-030-text-viewer-slides.md) | A slide style and deck images for the text viewer | accepted |
-| [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | draft |
+| [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | retracted |
 | [UTERM-032](UTERM-032-run-time-input-file.md) | A script takes its input file as an argument, and its folder is granted for slide images | accepted |
 | [UTERM-033](UTERM-033-reclaim-restored-group.md) | A controller that runs again after a relaunch adopts its restored group, with the user's approval | accepted |
 
@@ -68,7 +68,6 @@ UTERM-026 ← UTERM-001, UTERM-002, UTERM-004, UTERM-013, UTERM-021, UTERM-024, 
 UTERM-028 ← UTERM-004, UTERM-013, UTERM-024
 UTERM-029 ← UTERM-003, UTERM-007, UTERM-025
 UTERM-030 ← UTERM-004, UTERM-007, UTERM-015, UTERM-024, UTERM-032
-UTERM-031 ← UTERM-013, UTERM-024
 UTERM-032 ← UTERM-003, UTERM-004, UTERM-015, UTERM-021
 UTERM-033 ← UTERM-004, UTERM-021
 ```
