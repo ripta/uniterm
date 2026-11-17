@@ -34,6 +34,20 @@ final class FindModelTests: XCTestCase {
     XCTAssertFalse(try XCTUnwrap(FindMatching.search(in: "x x", for: "x")).capped)
   }
 
+  /// Catches incremental highlight redraws whose total work grows with the square of the match
+  /// count. Each redraw hands over every match so far. Redrawing every 25 matches handed over about
+  /// two million selections on the way to the cap. That stalled the main thread for seconds and
+  /// timed out the PDF cap test on CI. The test cannot see redraw cost, only how many selections
+  /// the schedule hands over.
+  func testHighlightRedrawsStayLinearInTheMatchCount() {
+    let handedOver = (1...FindMatching.maxMatches)
+      .filter { FindMatching.redrawsHighlights(atMatch: $0) }
+      .reduce(0, +)
+
+    XCTAssertTrue(FindMatching.redrawsHighlights(atMatch: 1))
+    XCTAssertLessThanOrEqual(handedOver, 2 * FindMatching.maxMatches)
+  }
+
   /// Catches a search that cannot be stopped, and an empty query that matches everything.
   func testAnEmptyQueryFindsNothingAndACancelledSearchReturnsNil() {
     XCTAssertEqual(

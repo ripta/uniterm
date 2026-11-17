@@ -14,10 +14,11 @@ public enum ExecTestDriver {
     return url.path
   }
 
-  /// The argv for one mode, for the applet type and schema version the driver says hello with.
+  /// The argv for one mode, for the applet type and schema version the driver says hello with. The
+  /// version is "major.minor".
   public static func arguments(
-    _ mode: String, type: String, schema: Int = 1, _ rest: [String] = []
+    _ mode: String, type: String, schema: String = "1.0", _ rest: [String] = []
   ) -> [String] {
-    [perl, script, mode, type, String(schema)] + rest
+    [perl, script, mode, type, schema] + rest
   }
 }

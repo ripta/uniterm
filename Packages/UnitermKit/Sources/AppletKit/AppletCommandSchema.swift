@@ -53,27 +53,56 @@ public struct AppletMessageSchema: Sendable, Equatable {
   public let arguments: AppletObjectSchema
   public let example: JSONValue
 
+  /// True for a command that may answer with a pending reply. Only a command with no effect may
+  /// wait, since a failed pending reply tells the caller that nothing ran. Dispatch fails a
+  /// pending reply from any other command.
+  public let mayWait: Bool
+
   public init(
     name: String, summary: String, arguments: AppletObjectSchema = .empty,
-    example: JSONValue = .object([:])
+    example: JSONValue = .object([:]), mayWait: Bool = false
   ) {
     self.name = name
     self.summary = summary
     self.arguments = arguments
     self.example = example
+    self.mayWait = mayWait
   }
 }
 
+/// A command schema version, as a major and a minor.
+///
+/// A new command or a new optional reply field bumps the minor. A change in meaning or a removed
+/// command bumps the major. An applet accepts a caller written for its own major and any minor up
+/// to its own, since a caller never uses what a later minor added.
+public struct AppletSchemaVersion: Sendable, Hashable, CustomStringConvertible {
+  public let major: Int
+  public let minor: Int
+
+  public init(_ major: Int, _ minor: Int = 0) {
+    self.major = major
+    self.minor = minor
+  }
+
+  /// True when an applet at this version takes a caller written for `requested`.
+  public func accepts(_ requested: AppletSchemaVersion) -> Bool {
+    requested.major == major && requested.minor <= minor
+  }
+
+  public var description: String { "\(major).\(minor)" }
+}
+
 /// The commands an applet type takes and the events it emits, under one schema version. A caller
-/// names the type and the version it was written for, and a mismatch is refused before any effect.
+/// names the type and the version it was written for, and a version the applet does not accept is
+/// refused before any effect.
 public struct AppletCommandSchema: Sendable, Equatable {
   public let appletType: String
-  public let version: Int
+  public let version: AppletSchemaVersion
   public let commands: [AppletMessageSchema]
   public let events: [AppletMessageSchema]
 
   public init(
-    appletType: String, version: Int, commands: [AppletMessageSchema],
+    appletType: String, version: AppletSchemaVersion, commands: [AppletMessageSchema],
     events: [AppletMessageSchema]
   ) {
     self.appletType = appletType

@@ -9,7 +9,7 @@ import AppletKit
     public nonisolated static let typeID = "fixture-chart"
 
     public nonisolated static let schema = AppletCommandSchema(
-      appletType: typeID, version: 1,
+      appletType: typeID, version: AppletSchemaVersion(1, 0),
       commands: [
         AppletMessageSchema(
           name: "set-series", summary: "Replaces the series.",
@@ -60,7 +60,9 @@ import AppletKit
 
     public var commandSchema: AppletCommandSchema { Self.schema }
 
-    public func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError) -> JSONValue {
+    public func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError)
+      -> AppletCommandReply
+    {
       switch command.name {
       case "set-series":
         guard case .array(let numbers)? = command.arguments["values"] else {
@@ -71,11 +73,12 @@ import AppletKit
         selected = nil
         refresh()
 
-        return .object([
-          "count": .number(Double(values.count)),
-          "minimum": values.min().map(JSONValue.number) ?? .null,
-          "maximum": values.max().map(JSONValue.number) ?? .null,
-        ])
+        return .immediate(
+          .object([
+            "count": .number(Double(values.count)),
+            "minimum": values.min().map(JSONValue.number) ?? .null,
+            "maximum": values.max().map(JSONValue.number) ?? .null,
+          ]))
 
       case "select-point":
         let wanted = command.arguments["index"]?.integerValue ?? -1
@@ -87,7 +90,8 @@ import AppletKit
 
         select(wanted)
 
-        return .object(["index": .number(Double(wanted)), "value": .number(values[wanted])])
+        return .immediate(
+          .object(["index": .number(Double(wanted)), "value": .number(values[wanted])]))
 
       default:
         throw AppletCommandError(.unknownCommand, "the chart fixture has no \(command.name)")

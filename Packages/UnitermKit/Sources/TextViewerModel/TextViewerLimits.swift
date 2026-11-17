@@ -18,6 +18,14 @@ public struct TextViewerLimits: Equatable, Sendable {
   /// large file costs that process, never the app.
   public var maxMarkdownBytes = 32 << 20
 
+  /// The most bytes of inline Markdown a remote command carries. The script helper writes a command's
+  /// arguments as JSON and refuses more than 32 KiB. A quote or a backslash costs two bytes there,
+  /// and so does a line break. Another control character costs six. At 12 KiB, ordinary text fits
+  /// with room to spare, even if every byte needs escaping. Text made mostly of other control
+  /// characters can still pass this cap and fail in the helper, which answers with a structured
+  /// error and sends nothing.
+  public static let maxInlineMarkdownBytes = 12 * 1024
+
   /// The most bytes served for one image a Markdown document names.
   public var maxMarkdownImageBytes = 16 << 20
 

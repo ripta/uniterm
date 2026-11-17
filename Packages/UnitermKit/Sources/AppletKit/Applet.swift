@@ -291,10 +291,17 @@ public protocol Applet: AnyObject {
   /// any program can address the pane, so the applet tightens its own policies first. An applet
   /// with no policy that depends on control ignores it.
   func controlDidChange(_ control: PaneControl)
+
+  /// The host draws its control badge over the applet's top right corner, and this is how far in
+  /// from the applet's trailing edge the badge reaches, gap included. Zero when no badge shows. An
+  /// applet with a bar along its top edge keeps its trailing controls clear of that width.
+  func hostBadgeReachDidChange(_ width: CGFloat)
 }
 
 extension Applet {
   public func controlDidChange(_ control: PaneControl) {}
+
+  public func hostBadgeReachDidChange(_ width: CGFloat) {}
 
   public func closeCurrentTab() async -> TabCloseResult { .nothingToClose }
 

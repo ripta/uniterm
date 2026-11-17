@@ -3,7 +3,8 @@ import TextViewerModel
 
 extension TextViewerApplet {
   /// The text viewer opens PDF, RTF, Word, and Markdown documents and is the default for all of
-  /// them.
+  /// them. A controller may drive it, and no exec driver may, since the viewer never owns a child
+  /// process.
   public nonisolated static let typeDeclaration = AppletTypeDeclaration(
     typeID: TextViewerDescription.typeID, displayName: "Text Viewer", symbolName: "doc.text",
     opens: [
@@ -12,7 +13,8 @@ extension TextViewerApplet {
       OpenedType(TextFormatRule.word97Identifier, rank: .owner),
       OpenedType(TextFormatRule.wordXMLIdentifier, rank: .owner),
       OpenedType(TextFormatRule.markdownIdentifier, rank: .owner),
-    ])
+    ],
+    controlSupport: [.disconnected, .remoteControlled])
 
   /// The text viewer's own commands. Open has no key, since Cmd-O belongs to the window's File >
   /// Open, which routes by type.

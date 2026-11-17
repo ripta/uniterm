@@ -3,7 +3,7 @@
 #
 #   driver.pl MODE TYPE SCHEMA [ARGUMENTS...]
 #
-# TYPE and SCHEMA go into the driver's hello. MODE picks how the driver behaves or misbehaves, so
+# TYPE and SCHEMA go into the driver's hello. SCHEMA is "major.minor". MODE picks how the driver behaves or misbehaves, so
 # each test names the one behavior it proves.
 use strict;
 use warnings;
@@ -17,14 +17,15 @@ my $json = JSON::PP->new->canonical->allow_nonref;
 my $next_id = 1;
 
 # The exec protocol version this driver speaks.
-my $protocol = 3;
+my $protocol = 4;
 
 sub send_message { print $json->encode($_[0]), "\n"; }
 
 sub hello {
     my ($protocol, $schema_version) = @_;
+    my ($major, $minor) = split /\./, $schema_version;
     send_message({type => "hello", protocol => $protocol + 0, applet => $type,
-                  schema => $schema_version + 0});
+                  schema => [$major + 0, ($minor // 0) + 0]});
 }
 
 sub command {
@@ -136,6 +137,22 @@ if ($mode eq "script") {
         }
     }
     serve();
+} elsif ($mode eq "pending-order") {
+    # Sends a command that waits (ID 1), one that answers at once (ID 2), and one that satisfies the
+    # wait (ID 3). Replies match by ID, so the wait's reply comes after the second command's. It
+    # reports the order the replies arrived in.
+    read_app_hello();
+    hello($protocol, $schema);
+    command("wait-for-notes", {contains => "go"});
+    command("set-notes", {text => "not yet"});
+    command("set-notes", {text => "go"});
+    my @order;
+    while (my $line = <STDIN>) {
+        my $message = $json->decode($line);
+        next unless $message->{type} eq "reply" || $message->{type} eq "error";
+        push @order, $message->{id};
+        print STDERR "reply order: @order\n" if @order == 3;
+    }
 } elsif ($mode eq "clipboard-sizes") {
     # Writes one clipboard text of each size in the arguments, every byte a control character, so
     # the JSON encoder escapes each one to six bytes. A test sizes the text, not the argv.

@@ -95,7 +95,7 @@ enum MarkdownMessage: Equatable {
     return Int(double)
   }
 
-  private static func anchor(from fields: [String: Any]) -> MarkdownAnchor? {
+  static func anchor(from fields: [String: Any]) -> MarkdownAnchor? {
     guard let line = integer(fields["line"]), (0...maxLine).contains(line),
       let number = fields["fraction"] as? NSNumber, number.doubleValue.isFinite
     else { return nil }

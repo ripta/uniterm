@@ -98,6 +98,9 @@
   // The path stays whole in one encoded query value, so a `..` reaches the handler intact. Anything
   // else, such as a root-relative path, a `file:` URL, or a remote URL, has no image to show.
   function imageURL(reference) {
+    // Inline content has no folder. Without a source the image shows its alt text.
+    if (state.inline) return null;
+
     const trimmed = reference.trim();
 
     if (trimmed === '' || /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || /^[/\\]/.test(trimmed)) return null;
@@ -770,6 +773,7 @@
     const generation = ++state.generation;
 
     state.token = options.generation;
+    state.inline = options.inline === true;
     state.root = document.getElementById('um-root');
     state.blocks = [];
     state.headings = [];
@@ -897,6 +901,12 @@
   api.clearFind = clearFind;
   api.selectMatch = selectMatch;
   api.scrollToHeading = scrollToHeading;
+  api.currentAnchor = currentAnchor;
+  api.scrollToAnchor = function (anchor) {
+    scrollToAnchor(anchor);
+
+    return currentAnchor();
+  };
   api.selectedText = selectedText;
   api.matchInSelection = matchInSelection;
   api.foldText = function (text) { return foldText(String(text), false).text; };

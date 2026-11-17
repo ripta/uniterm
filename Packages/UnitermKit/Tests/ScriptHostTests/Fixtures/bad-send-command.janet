@@ -16,6 +16,11 @@
 (refuses "a path type" "not a path" (fn [] (uniterm/send-command pane :a/b 1 :status)))
 (refuses "a negative version" "whole number" (fn [] (uniterm/send-command pane :fixture-slides -1 :status)))
 (refuses "a fractional version" "whole number" (fn [] (uniterm/send-command pane :fixture-slides 1.5 :status)))
+(refuses "a negative minor" "whole number" (fn [] (uniterm/send-command pane :fixture-slides [1 -1] :status)))
+(refuses "a fractional major" "whole number" (fn [] (uniterm/send-command pane :fixture-slides [1.5 0] :status)))
+(refuses "a one-part tuple" "[major minor]" (fn [] (uniterm/send-command pane :fixture-slides [1] :status)))
+(refuses "a three-part tuple" "[major minor]" (fn [] (uniterm/send-command pane :fixture-slides [1 0 0] :status)))
+(refuses "a string minor" "must be a number" (fn [] (uniterm/send-command pane :fixture-slides [1 "0"] :status)))
 (refuses "a version as a string" "must be a number" (fn [] (uniterm/send-command pane :fixture-slides "1" :status)))
 (refuses "a number command" "keyword or a string" (fn [] (uniterm/send-command pane :fixture-slides 1 5)))
 (refuses "an empty command" "empty" (fn [] (uniterm/send-command pane :fixture-slides 1 "")))
@@ -25,5 +30,12 @@
 (refuses "a number key" "keyword or a string" (fn [] (uniterm/send-command pane :fixture-slides 1 :status {1 2})))
 (refuses "a repeated key" "twice" (fn [] (uniterm/send-command pane :fixture-slides 1 :status {:a 1 "a" 2})))
 (refuses "deep arguments" "nest" (fn [] (uniterm/send-command pane :fixture-slides 1 :status (deep 20))))
-(refuses "large arguments" "bytes as JSON" (fn [] (uniterm/send-command pane :fixture-slides 1 :status {:s (string/repeat "x" 40000)})))
+
+# A too-large command gets a structured error, as the app's own failures do.
+(def [ok failure] (protect (uniterm/send-command pane :fixture-slides 1 :status {:s (string/repeat "x" 40000)})))
+(assert (not ok) "large arguments were accepted")
+(assert (struct? failure) (string "the oversize error is not a struct: " failure))
+(assert (= (failure :kind) :bad-argument) (string "the oversize kind was " (failure :kind)))
+(assert (string/find "bytes as JSON" (failure :message)) (string "the oversize message was " (failure :message)))
+
 (refuses "text that is not UTF-8" "not UTF-8" (fn [] (uniterm/send-command pane :fixture-slides 1 :status {:s "\xFF"})))

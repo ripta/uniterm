@@ -41,9 +41,15 @@ final class ExecWireTests: XCTestCase {
       #"{"type":"command","id":1.5,"name":"x"}"#, #"{"type":"command","id":1,"name":""}"#,
       #"{"type":"command","id":1,"name":"x","arguments":[1]}"#,
       #"{"type":"command","id":1,"name":"x","pane":3}"#,
-      #"{"type":"command","id":1,"name":"x","pane":0,"applet":"a","schema":1}"#,
-      #"{"type":"command","id":1,"name":"x","pane":2.5,"applet":"a","schema":1}"#,
-      #"{"type":"command","id":1,"name":"x","pane":"3","applet":"a","schema":1}"#,
+      #"{"type":"command","id":1,"name":"x","pane":0,"applet":"a","schema":[1,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":2.5,"applet":"a","schema":[1,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":"3","applet":"a","schema":[1,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":1}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1,0,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1,-1]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":[1.5,0]}"#,
+      #"{"type":"command","id":1,"name":"x","pane":3,"applet":"a","schema":"1.0"}"#,
       #"{"type":"layout","id":1}"#, #"{"type":"layout","id":1,"layout":[1]}"#,
       #"{"type":"layout","layout":{}}"#,
       #"{"type":"clipboard-read"}"#, #"{"type":"clipboard-write","id":1}"#,
@@ -63,10 +69,12 @@ final class ExecWireTests: XCTestCase {
     XCTAssertEqual(
       try ExecWire.decode(
         Data(
-          #"{"type":"command","id":2,"name":"clear","pane":9,"applet":"fixture-notes","schema":1}"#
+          #"{"type":"command","id":2,"name":"clear","pane":9,"applet":"fixture-notes","schema":[1,0]}"#
             .utf8)),
       .paneCommand(
-        id: .number(2), pane: 9, appletType: "fixture-notes", schemaVersion: 1, name: "clear",
+        id: .number(2), pane: 9, appletType: "fixture-notes",
+        schemaVersion: AppletSchemaVersion(1, 0),
+        name: "clear",
         arguments: .object([:])))
 
     XCTAssertEqual(
@@ -80,6 +88,23 @@ final class ExecWireTests: XCTestCase {
     XCTAssertEqual(
       try ExecWire.decode(Data(#"{"type":"clipboard-write","id":"w","text":"a\nb"}"#.utf8)),
       .clipboardWrite(id: .string("w"), text: "a\nb"))
+  }
+
+  /// Catches a hello from another protocol that fails as a malformed line. Protocol 3 wrote its
+  /// schema as one whole number. The app must still read that hello, so the refusal names the
+  /// protocol versions and says to update. A hello of the current protocol with that schema stays
+  /// malformed.
+  func testAHelloOfAnotherProtocolDecodesWhateverShapeItsSchemaHas() throws {
+    XCTAssertEqual(
+      try ExecWire.decode(
+        Data(#"{"type":"hello","protocol":3,"applet":"fixture-notes","schema":1}"#.utf8)),
+      .hello(
+        protocolVersion: 3, appletType: "fixture-notes", schemaVersion: AppletSchemaVersion(0, 0)))
+
+    XCTAssertThrowsError(
+      try ExecWire.decode(
+        Data(
+          #"{"type":"hello","protocol":\#(ExecProtocol.version),"applet":"a","schema":1}"#.utf8)))
   }
 
   /// Catches a clipboard text that passes the byte bound and still overruns the frame once JSON

@@ -81,6 +81,9 @@ public final class ExecDriverChannel: AppletEventSink {
 
   public private(set) var phase: Phase = .greeting
 
+  /// The schema version the driver named in its hello, which its own commands carry.
+  private var driverSchemaVersion: AppletSchemaVersion?
+
   private let launch: ExecLaunch
   private let environment: ExecEnvironment
   private weak var applet: (any AppletCommandHandling)?
@@ -304,7 +307,7 @@ public final class ExecDriverChannel: AppletEventSink {
 
   /// Both sides must support the other. A driver that names another protocol, applet type, or
   /// schema version is told why, and the channel ends before any command runs.
-  private func greet(version: Int, type: String, schemaVersion: Int) {
+  private func greet(version: Int, type: String, schemaVersion: AppletSchemaVersion) {
     let refusal: (code: String, text: String)?
 
     if version != ExecProtocol.version {
@@ -318,17 +321,19 @@ public final class ExecDriverChannel: AppletEventSink {
         "unsupported-applet",
         "The driver was written for a \(type) applet, and this pane runs \(schema.appletType)."
       )
-    } else if schemaVersion != schema.version {
+    } else if !schema.version.accepts(schemaVersion) {
       refusal = (
         "unsupported-version",
-        "The driver uses \(type) schema version \(schemaVersion), and this pane takes "
-          + "\(schema.version). Update the driver or uniterm so they match."
+        "The driver was written for \(type) schema version \(schemaVersion), and this pane takes "
+          + "version \(schema.version.major) with a minor up to \(schema.version.minor). Update "
+          + "the driver or uniterm."
       )
     } else {
       refusal = nil
     }
 
     guard let refusal else {
+      driverSchemaVersion = schemaVersion
       phase = .connected
       return
     }
@@ -344,8 +349,8 @@ public final class ExecDriverChannel: AppletEventSink {
     }
 
     let submission = AppletCommandSubmission(
-      appletType: schema.appletType, schemaVersion: schema.version, name: name,
-      arguments: arguments)
+      appletType: schema.appletType, schemaVersion: driverSchemaVersion ?? schema.version,
+      name: name, arguments: arguments)
 
     dispatcher.submit(
       submission, to: applet,

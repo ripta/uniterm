@@ -32,11 +32,19 @@ final class ScriptCodecTests: XCTestCase {
       .send(pane: tab, name: "empty.txt", content: Data()),
       .send(pane: nearest, name: "near.csv", content: Data("a\n".utf8)),
       .sendCommand(
-        pane: pane, appletType: "fixture-slides", schemaVersion: 1, command: "show-slide",
+        pane: pane, appletType: "fixture-slides",
+        schemaVersion: ScriptSchemaVersion(major: 1, minor: 0),
+        command: "show-slide",
         arguments: #"{"index":2}"#),
       .sendCommand(
-        pane: nearest, appletType: "fixture-chart", schemaVersion: UInt32(Int32.max),
+        pane: nearest, appletType: "fixture-chart",
+        schemaVersion: ScriptSchemaVersion(
+          major: UInt32(Int32.max), minor: UInt32(Int32.max)),
         command: "set-series", arguments: "{}"),
+      .sendCommand(
+        pane: pane, appletType: "fixture-notes",
+        schemaVersion: ScriptSchemaVersion(major: 1, minor: 7),
+        command: "clear", arguments: "{}"),
       .requestLayout(
         pane: pane, layout: #"{"split":"row","children":[{"pane":3},{"open":"fixture-notes"}]}"#),
       .requestLayout(pane: nearest, layout: "{}"),
@@ -133,13 +141,13 @@ final class ScriptCodecTests: XCTestCase {
     }
   }
 
-  /// Catches an old command or an old app that the version 11 side accepts. Version 10 knows no
-  /// undeclared begin, so an older command would run a file with no answer from the app. Each
-  /// side refuses the other at the hello, before any call or admission.
-  func testTheUndeclaredBeginVersionRefusesTheVersionBeforeIt() {
-    XCTAssertEqual(ScriptProtocol.version, 11)
+  /// Catches an old command or an old app that the version 12 side accepts. Version 11 writes a
+  /// command's schema version as one number, so an older command would send a body the app reads
+  /// as a different call. Each side refuses the other at the hello, before any call or admission.
+  func testTheSchemaMajorMinorVersionRefusesTheVersionBeforeIt() {
+    XCTAssertEqual(ScriptProtocol.version, 12)
 
-    for older: UInt16 in [9, 10] {
+    for older: UInt16 in [10, 11] {
       XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: older)))
       XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: older)))
     }
@@ -407,15 +415,42 @@ extension ScriptCodecTests {
     }
   }
 
-  /// Catches a send-command whose arguments pass the bound, or whose schema version is past the
-  /// largest a script can name, being read as a call.
-  func testSendCommandBoundsAreRefusedWhenDecoded() {
+  /// Catches a send-command whose arguments pass the bound, or whose schema major or minor is
+  /// past the largest a script can name, being read as a call.
+  func testSendCommandBoundsAreRefusedWhenDecoded() throws {
+    func command(major: UInt32, minor: UInt32) -> ByteReader {
+      var writer = ByteWriter()
+
+      writer.put(UInt16(7))
+      writer.put(target: .nearest(kind: "fixture-slides"))
+      writer.put(string: "fixture-slides", limit: ScriptProtocol.maxKindBytes)
+      writer.put(major)
+      writer.put(minor)
+      writer.put(string: "status", limit: ScriptProtocol.maxCommandNameBytes)
+      writer.put(UInt32(2))
+      writer.put(raw: Data("{}".utf8))
+
+      return ByteReader(writer.bytes)
+    }
+
+    var fine = command(
+      major: ScriptProtocol.maxSchemaVersion, minor: ScriptProtocol.maxSchemaVersion)
+
+    XCTAssertNoThrow(try ScriptCall.decode(from: &fine))
+
+    var bigMajor = command(major: ScriptProtocol.maxSchemaVersion + 1, minor: 0)
+    var bigMinor = command(major: 1, minor: ScriptProtocol.maxSchemaVersion + 1)
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &bigMajor))
+    XCTAssertThrowsError(try ScriptCall.decode(from: &bigMinor))
+
     var body = ByteWriter()
 
     body.put(UInt16(7))
     body.put(target: .nearest(kind: "fixture-slides"))
     body.put(string: "fixture-slides", limit: ScriptProtocol.maxKindBytes)
     body.put(UInt32(1))
+    body.put(UInt32(0))
     body.put(string: "status", limit: ScriptProtocol.maxCommandNameBytes)
     body.put(UInt32(ScriptProtocol.maxCommandArgumentBytes + 1))
     body.put(raw: Data(repeating: 0x20, count: ScriptProtocol.maxCommandArgumentBytes + 1))
@@ -423,20 +458,6 @@ extension ScriptCodecTests {
     var reader = ByteReader(body.bytes)
 
     XCTAssertThrowsError(try ScriptCall.decode(from: &reader))
-
-    var version = ByteWriter()
-
-    version.put(UInt16(7))
-    version.put(target: .nearest(kind: "fixture-slides"))
-    version.put(string: "fixture-slides", limit: ScriptProtocol.maxKindBytes)
-    version.put(UInt32(ScriptProtocol.maxSchemaVersion) + 1)
-    version.put(string: "status", limit: ScriptProtocol.maxCommandNameBytes)
-    version.put(UInt32(2))
-    version.put(raw: Data("{}".utf8))
-
-    var versionReader = ByteReader(version.bytes)
-
-    XCTAssertThrowsError(try ScriptCall.decode(from: &versionReader))
   }
 
   /// Catches a layout past its bound, or one whose length runs past the body, being read as a

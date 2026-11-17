@@ -18,3 +18,4 @@
 | UTERM-003 M1-M5 | None | |
 | UTERM-004 M1-M6 | UTERM-003 | Needs the host API and listener UTERM-003 builds. Placed right after it to close the same-user control window UTERM-003 M3 opens |
 | UTERM-021 M1-M5 | None | |
+| UTERM-007 M5 | UTERM-004 M3 | Split from M1-M4: waits on remote-controlled panes and the applet command hook from UTERM-004 M3 |

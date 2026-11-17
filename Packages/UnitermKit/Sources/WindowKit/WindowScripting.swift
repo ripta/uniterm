@@ -279,8 +279,14 @@ public final class WindowScripting: ScriptWindowAPI {
   /// dispatch checks the applet type, the schema version, the command, and its arguments.
   /// Delivery checks the caller's authority again, that the target still names the same pane and
   /// applet, and that the pane's control generation has not changed.
+  ///
+  /// An applet may answer later, with a pending reply. The call then waits without holding the
+  /// main thread, and the same authority check runs before the reply reaches the script. The
+  /// window fails the call when a revocation, the run's end, a disconnect, or the pane's close
+  /// takes the authority away.
   public func sendCommand(
-    to target: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
+    command: String,
     arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
     let parsed: JSONValue
@@ -298,7 +304,9 @@ public final class WindowScripting: ScriptWindowAPI {
     let generation = controller.control(of: pane).generation
 
     let submission = AppletCommandSubmission(
-      appletType: appletType, schemaVersion: Int(schemaVersion), name: command, arguments: parsed)
+      appletType: appletType,
+      schemaVersion: AppletSchemaVersion(Int(schemaVersion.major), Int(schemaVersion.minor)),
+      name: command, arguments: parsed)
 
     let result = await withCheckedContinuation { continuation in
       controller.dispatcher.submit(

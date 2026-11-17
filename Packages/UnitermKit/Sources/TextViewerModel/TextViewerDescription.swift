@@ -51,10 +51,18 @@ public struct TextViewerAnchor: Codable, Equatable, Sendable {
 public struct TextViewerDescription: Codable, Equatable, Sendable {
   public static let typeID = "text-viewer"
 
-  /// The version of the payload this build reads and writes. A change an older build cannot
-  /// round-trip bumps it. The Markdown anchor's source line and fraction are optional fields of
-  /// version 1, and a payload without them reads unchanged.
-  public static let currentVersion = 1
+  /// The newest payload version this build reads. A change an older build cannot round-trip bumps
+  /// it. The Markdown anchor's source line and fraction are optional fields of version 1, and a
+  /// payload without them reads unchanged.
+  ///
+  /// Version 2 adds the flag that inline content was showing. An older build would drop the flag
+  /// and save the payload without it, so a description that sets the flag is written as version 2,
+  /// and an older build keeps it as written. Every other description stays at version 1, which
+  /// every build reads.
+  public static let currentVersion = 2
+
+  /// The version of a description that sets none of the version 2 fields.
+  public static let baseVersion = 1
 
   /// The directory the pane started in. An empty pane reports it as its current directory.
   public var startDirectory: String?
@@ -71,19 +79,24 @@ public struct TextViewerDescription: Codable, Equatable, Sendable {
   /// sidebar needed no version bump. A pane keeps it when it opens another file.
   public var sidebarShown: Bool
 
+  /// True while the pane shows Markdown that a program sent. The text is never part of the
+  /// description. It rides in the undo-only part, so a layout file never holds it.
+  public var inlineContent: Bool
+
   public init(
     startDirectory: String? = nil, path: String? = nil, bookmark: Data? = nil,
-    anchor: TextViewerAnchor? = nil, sidebarShown: Bool = false
+    anchor: TextViewerAnchor? = nil, sidebarShown: Bool = false, inlineContent: Bool = false
   ) {
     self.startDirectory = startDirectory
     self.path = path
     self.bookmark = bookmark
     self.anchor = anchor
     self.sidebarShown = sidebarShown
+    self.inlineContent = inlineContent
   }
 
   private enum CodingKeys: String, CodingKey {
-    case startDirectory, path, bookmark, anchor, sidebarShown
+    case startDirectory, path, bookmark, anchor, sidebarShown, inlineContent
   }
 
   public init(from decoder: any Decoder) throws {
@@ -94,11 +107,30 @@ public struct TextViewerDescription: Codable, Equatable, Sendable {
     bookmark = try values.decodeIfPresent(Data.self, forKey: .bookmark)
     anchor = try values.decodeIfPresent(TextViewerAnchor.self, forKey: .anchor)
     sidebarShown = try values.decodeIfPresent(Bool.self, forKey: .sidebarShown) ?? false
+    inlineContent = try values.decodeIfPresent(Bool.self, forKey: .inlineContent) ?? false
   }
 
-  public func appletDescription() throws -> AppletDescription {
+  public func encode(to encoder: any Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+
+    try values.encodeIfPresent(startDirectory, forKey: .startDirectory)
+    try values.encodeIfPresent(path, forKey: .path)
+    try values.encodeIfPresent(bookmark, forKey: .bookmark)
+    try values.encodeIfPresent(anchor, forKey: .anchor)
+    try values.encode(sidebarShown, forKey: .sidebarShown)
+
+    if inlineContent { try values.encode(true, forKey: .inlineContent) }
+  }
+
+  /// The version the description is written at: the lowest that holds all it says.
+  public var writtenVersion: Int {
+    inlineContent ? Self.currentVersion : Self.baseVersion
+  }
+
+  public func appletDescription(undoState: JSONValue? = nil) throws -> AppletDescription {
     AppletDescription(
-      type: Self.typeID, version: Self.currentVersion, payload: try JSONValue(encoding: self))
+      type: Self.typeID, version: writtenVersion, payload: try JSONValue(encoding: self),
+      undoState: undoState)
   }
 
   /// Reads a description. A description of another type, a newer version, or a shape that does not

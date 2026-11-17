@@ -378,6 +378,7 @@ extension MainWindowController {
     permissionRequests.end(.paneScripts(window: scriptWindowID, pane: pane.rawValue))
 
     launchAuthority.paneClosed(ExecLaunchAuthority.Target(window: scriptWindowID, pane: pane))
+    dispatcher.revalidatePending()
   }
 
   // MARK: What a driver asks of the window

@@ -6,8 +6,10 @@ import Foundation
 ///
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
+///
+/// Version 12 writes an applet command's schema version as a major and a minor.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 11
+  public static let version: UInt16 = 12
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -56,7 +58,7 @@ public enum ScriptProtocol {
   /// the rest of the call.
   public static let maxLayoutBytes = 32 * 1024
 
-  /// The largest command schema version a script may name.
+  /// The largest major or minor of a command schema version a script may name.
   public static let maxSchemaVersion: UInt32 = 1 << 31 - 1
 
   /// The longest directory a script may name, in UTF-8 bytes. It matches the system's path limit.
@@ -280,6 +282,17 @@ public enum ScriptStatusLevel: UInt8, Sendable, Equatable, CaseIterable {
   case error = 2
 }
 
+/// The command schema version a script was written for, as a major and a minor.
+public struct ScriptSchemaVersion: Equatable, Sendable {
+  public let major: UInt32
+  public let minor: UInt32
+
+  public init(major: UInt32, minor: UInt32 = 0) {
+    self.major = major
+    self.minor = minor
+  }
+}
+
 /// A host function call. Each case is one function, named on the wire by a 16-bit code that never
 /// changes meaning. A new function takes a new code and keeps the others.
 public enum ScriptCall: Equatable, Sendable {
@@ -296,7 +309,7 @@ public enum ScriptCall: Equatable, Sendable {
   /// script was written for, and the app refuses either when the pane does not support it. The
   /// arguments are a JSON object as text, which the app checks against the applet's schema.
   case sendCommand(
-    pane: ScriptTarget, appletType: String, schemaVersion: UInt32, command: String,
+    pane: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion, command: String,
     arguments: String)
 
   /// A layout for the caller's subtree, anchored at a pane it may control. The layout is a JSON
@@ -361,7 +374,8 @@ public enum ScriptCall: Equatable, Sendable {
     case .sendCommand(let pane, let type, let version, let command, let arguments):
       body.put(target: pane)
       body.put(string: type, limit: ScriptProtocol.maxKindBytes)
-      body.put(version)
+      body.put(version.major)
+      body.put(version.minor)
       body.put(string: command, limit: ScriptProtocol.maxCommandNameBytes)
       let bytes = Data(arguments.utf8.prefix(ScriptProtocol.maxCommandArgumentBytes))
 
@@ -439,9 +453,11 @@ public enum ScriptCall: Equatable, Sendable {
     case 7:
       let pane = try reader.target()
       let type = try reader.string(limit: ScriptProtocol.maxKindBytes)
-      let version = try reader.u32()
+      let major = try reader.u32()
+      let minor = try reader.u32()
 
-      guard version <= ScriptProtocol.maxSchemaVersion else {
+      guard major <= ScriptProtocol.maxSchemaVersion, minor <= ScriptProtocol.maxSchemaVersion
+      else {
         throw WireError.badValue("a schema version is too large")
       }
 
@@ -450,7 +466,8 @@ public enum ScriptCall: Equatable, Sendable {
         limit: ScriptProtocol.maxCommandArgumentBytes, what: "the arguments are")
 
       return .sendCommand(
-        pane: pane, appletType: type, schemaVersion: version, command: command,
+        pane: pane, appletType: type,
+        schemaVersion: ScriptSchemaVersion(major: major, minor: minor), command: command,
         arguments: arguments)
 
     case 8:

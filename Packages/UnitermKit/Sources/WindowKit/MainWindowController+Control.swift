@@ -86,6 +86,7 @@ extension MainWindowController {
 
     applet.controlDidChange(control)
     paneControls = table
+    dispatcher.revalidatePending()
 
     refreshControlMarks()
     onLayoutChange?()
@@ -99,7 +100,7 @@ extension MainWindowController {
 
     let control = paneControls.set(.disconnected, for: pane)
 
-    paneArea.applet(for: pane)?.controlDidChange(control)
+    pushControl(control, to: pane)
     refreshControlMarks()
     onLayoutChange?()
   }
@@ -152,11 +153,21 @@ extension MainWindowController {
         target: ExecLaunchAuthority.Target(window: scriptWindowID, pane: pane))
     }
 
+    dispatcher.revalidatePending()
     refreshControlMarks()
   }
 
+  /// Hands the pane's applet its new control. Every change of an existing pane's control issues a
+  /// new generation, so this is also where waiting replies are checked again. A path that changes
+  /// control cannot forget to.
+  ///
+  /// Two kinds of path do not call it. `enableRemoteControl` must hand the applet its control
+  /// before the window records the mode, so it checks waiting replies itself once the mode is
+  /// recorded. A pane being created has no waiting reply yet, since no call can name a pane that
+  /// is not in the tree, so those paths hand the applet its first control directly.
   func pushControl(_ control: PaneControl, to pane: NodeID) {
     paneArea.applet(for: pane)?.controlDidChange(control)
+    dispatcher.revalidatePending()
   }
 
   func runControlAction(_ action: PaneControlAction, on pane: NodeID) {

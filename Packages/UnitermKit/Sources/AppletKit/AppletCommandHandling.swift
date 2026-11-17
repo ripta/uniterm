@@ -7,6 +7,90 @@ public struct ValidatedAppletCommand: Sendable, Equatable {
   public let arguments: [String: JSONValue]
 }
 
+/// How an applet answers one command.
+public enum AppletCommandReply {
+  /// The reply is ready now.
+  case immediate(JSONValue)
+
+  /// The reply comes later, through the pending reply the applet holds. See `PendingReply`.
+  case pending(PendingReply)
+}
+
+/// A reply an applet completes later, for a command that waits on something, such as a condition
+/// that has not yet come true.
+///
+/// Only a command with no effect may pend. A pending reply can fail without the applet's say, when
+/// the caller loses its authority, the run ends, the caller disconnects, the pane closes, or the
+/// window holds too many. A failed pending reply tells the caller that nothing ran, so a command
+/// that changed anything must answer at once, where a thrown error keeps the same promise.
+///
+/// The applet keeps the reply it returns and settles it once, with `complete` or `fail`. Before
+/// `complete` reaches the caller, the dispatcher checks the caller's authority again. When the
+/// dispatcher fails the reply first, it calls `onCancel`, and the applet drops whatever it held to
+/// complete the reply. A settle after that does nothing and returns false.
+@MainActor
+public final class PendingReply {
+  /// Called once, when the dispatcher fails the reply before the applet settled it.
+  public var onCancel: (@MainActor () -> Void)?
+
+  public private(set) var isSettled = false
+
+  private var sink: (@MainActor (Result<JSONValue, AppletCommandError>) -> Void)?
+  private var early: Result<JSONValue, AppletCommandError>?
+
+  public init() {}
+
+  /// Answers the command. Returns false when the reply was already settled.
+  @discardableResult
+  public func complete(_ value: JSONValue) -> Bool {
+    settle(.success(value))
+  }
+
+  /// Fails the command, which means nothing ran. Returns false when the reply was already settled.
+  @discardableResult
+  public func fail(_ error: AppletCommandError) -> Bool {
+    settle(.failure(error))
+  }
+
+  /// Joins the reply to its caller. An applet that settled before this point, inside `perform`,
+  /// has its answer delivered now.
+  func attach(_ sink: @escaping @MainActor (Result<JSONValue, AppletCommandError>) -> Void) {
+    self.sink = sink
+
+    if let early {
+      self.early = nil
+      sink(early)
+    }
+  }
+
+  /// The dispatcher's own failure: it settles the reply and tells the applet to let go.
+  func cancel(_ error: AppletCommandError) {
+    guard !isSettled else { return }
+
+    let release = onCancel
+
+    settle(.failure(error))
+    release?()
+  }
+
+  @discardableResult
+  private func settle(_ result: Result<JSONValue, AppletCommandError>) -> Bool {
+    guard !isSettled else { return false }
+
+    isSettled = true
+    onCancel = nil
+
+    if let sink {
+      self.sink = nil
+      sink(result)
+    } else {
+      early = result
+    }
+
+    return true
+  }
+}
+
 /// The applet contract's command and event hook. An applet that adopts it publishes its command
 /// and event schemas, runs the commands shared dispatch delivers, and emits its events through its
 /// outlet. An applet that does not adopt it refuses every command.
@@ -18,8 +102,9 @@ public protocol AppletCommandHandling: Applet {
   var commandSchema: AppletCommandSchema { get }
 
   /// Runs one command and returns its reply. A thrown error must leave the applet unchanged, so a
-  /// caller that sees an error knows nothing happened.
-  func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError) -> JSONValue
+  /// caller that sees an error knows nothing happened. A command with no effect may return a
+  /// pending reply instead. See `PendingReply`.
+  func perform(_ command: ValidatedAppletCommand) throws(AppletCommandError) -> AppletCommandReply
 
   /// Where the applet emits its events. The applet owns it, and closes it when it closes.
   var events: AppletEventOutlet { get }

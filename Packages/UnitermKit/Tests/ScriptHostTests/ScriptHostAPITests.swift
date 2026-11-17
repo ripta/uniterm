@@ -167,22 +167,31 @@ final class ScriptHostAPITests: XCTestCase {
   func testSendCommandCarriesItsCallAndRaisesStructuredErrors() async throws {
     try await run("send-command")
 
-    let sent = windows.calls.compactMap { call -> (ScriptTarget, String, UInt32, String, String)? in
+    let sent = windows.calls.compactMap {
+      call -> (ScriptTarget, String, ScriptSchemaVersion, String, String)? in
       guard case .sendCommand(let pane, let type, let version, let command, let arguments) = call
       else { return nil }
 
       return (pane, type, version, command, arguments)
     }
 
-    XCTAssertEqual(sent.count, 8)
+    XCTAssertEqual(sent.count, 11)
     XCTAssertEqual(sent.map(\.0).first, .pane(pane))
     XCTAssertEqual(
       sent.map(\.1),
       [
-        "fixture-slides", "fixture-slides", "fixture-slides", "fixture-chart", "fixture-slides",
-        "fixture-slides", "fixture-slides", "fixture-slides",
+        "fixture-slides", "fixture-slides", "fixture-slides", "fixture-slides", "fixture-slides",
+        "fixture-chart", "fixture-slides", "fixture-slides", "fixture-slides", "fixture-slides",
+        "fixture-slides",
       ])
-    XCTAssertEqual(sent.map(\.2), [1, 1, 1, 1, 2, 1, 1, 1])
+    XCTAssertEqual(
+      sent.map(\.2),
+      [
+        ScriptSchemaVersion(major: 1), ScriptSchemaVersion(major: 1), ScriptSchemaVersion(major: 1),
+        ScriptSchemaVersion(major: 1), ScriptSchemaVersion(major: 1), ScriptSchemaVersion(major: 1),
+        ScriptSchemaVersion(major: 2), ScriptSchemaVersion(major: 1, minor: 1),
+        ScriptSchemaVersion(major: 1), ScriptSchemaVersion(major: 1), ScriptSchemaVersion(major: 1),
+      ])
     XCTAssertEqual(sent[1].0, .nearest(kind: "fixture-slides"))
     XCTAssertEqual(sent[1].3, "status")
     XCTAssertEqual(sent[1].4, "{}")

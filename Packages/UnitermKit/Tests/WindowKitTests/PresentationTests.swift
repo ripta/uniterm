@@ -55,7 +55,7 @@ final class PresentationTests: XCTestCase {
     """
 
   /// The unsandboxed helper that SwiftPM builds beside the test bundle.
-  private static func helper() -> URL {
+  static func helper() -> URL {
     let bundle = Bundle.allBundles.first { $0.bundlePath.hasSuffix(".xctest") }
     let products = bundle?.bundleURL.deletingLastPathComponent()
 
@@ -64,7 +64,7 @@ final class PresentationTests: XCTestCase {
 
   /// Runs the helper on a script and waits for it off the main actor, so the host answers its
   /// calls meanwhile. A helper that hangs is ended after 60 seconds.
-  private static func run(script: URL, socket: String) async throws -> (Int32, String, String) {
+  static func run(script: URL, socket: String) async throws -> (Int32, String, String) {
     let process = Process()
     var environment = ProcessInfo.processInfo.environment
 

@@ -1394,6 +1394,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     for applet in paneArea.applets { applet.close() }
 
+    dispatcher.failAllPending(AppletCommandError(.notFound, "the window closed"))
+
     ledger.removeAll()
 
     let handler = onClose
