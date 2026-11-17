@@ -56,11 +56,15 @@ public enum FileInspection: Sendable, Equatable {
   case refused(RouteRefusal)
 }
 
-enum PathInspector {
+/// Classifies a path without opening it. The router calls it for every file it routes. The system's
+/// own reader is `PathInspector.kind`, and a test passes a reader that records what it was asked.
+public typealias PathKindReader = @Sendable (URL) -> Result<FileKind, RouteRefusal>
+
+public enum PathInspector {
   /// Classifies a path with `lstat`, and `stat` after a symlink. Neither opens the path, so a FIFO
   /// or a device on it is classified and never blocked on. This can still wait on a slow network
   /// volume, so callers run it off the main thread.
-  static func kind(of url: URL) -> Result<FileKind, RouteRefusal> {
+  public static func kind(of url: URL) -> Result<FileKind, RouteRefusal> {
     var info = stat()
 
     guard lstat(url.path, &info) == 0 else {

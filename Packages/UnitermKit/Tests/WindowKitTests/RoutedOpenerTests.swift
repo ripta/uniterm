@@ -21,7 +21,12 @@ final class RoutingFixture {
 
   /// With `terminalAlsoOpensText`, the terminal claims plain text as an alternate, so the viewer
   /// owns text and the chooser lists both.
-  init(terminalAlsoOpensText: Bool = false) throws {
+  ///
+  /// `pathKind` is the router's one look at a path. A test passes a reader that records what it was
+  /// asked.
+  init(
+    terminalAlsoOpensText: Bool = false, pathKind: @escaping PathKindReader = PathInspector.kind
+  ) throws {
     directory = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("uniterm-routed-\(UUID().uuidString)", isDirectory: true)
       .resolvingSymlinksInPath()
@@ -89,7 +94,7 @@ final class RoutingFixture {
       confirmBatch: { question, _ in
         box.asked.append(question.title)
         return box.approve
-      })
+      }, pathKind: pathKind)
   }
 
   let box: RoutedBox

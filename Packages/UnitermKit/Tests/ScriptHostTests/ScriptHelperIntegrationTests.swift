@@ -289,6 +289,9 @@ final class ScriptHelperIntegrationTests: XCTestCase {
       case .fileBegun, .fileDeclared:
         XCTFail("an undeclared script helper asked for a declared file run")
 
+      case .openBegun:
+        XCTFail("a script helper asked to open files")
+
       case .pong:
         break
 

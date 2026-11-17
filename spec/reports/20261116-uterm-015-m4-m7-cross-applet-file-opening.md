@@ -31,7 +31,7 @@ base. Whether to rebase `agent/petunia` is left to the user.
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-015 M4: The path-reading power | DONE | "Let a controller read paths inside an approved directory scope" |
-| UTERM-015 M5: `uniterm open` | QUEUED | |
+| UTERM-015 M5: `uniterm open` | DONE | "Open files from a terminal with `uniterm open`" |
 | UTERM-015 M6: Terminal clicks | QUEUED | |
 | UTERM-015 M7: Launch Services approvals | QUEUED | |
 
@@ -183,6 +183,91 @@ standards' `design.md`:
 - The uniform refusal and the protected list serve the invariant that uniterm never lends its macOS privacy grants to
   a program. UTERM-015's Decision Log already declined that candidate on 2026-11-03.
 - Kept roots are an implementation of ADR-08 and ADR-09.
+
+### UTERM-015 M5: `uniterm open`
+
+The implementer built `uniterm open [--socket PATH] [--] path...`. The command joins a relative path to its own
+physical working directory and touches no target. A deleted working directory exits 66. The wire moved to
+`ScriptProtocol.version` 13 with an `openBegin` and an `openDone` message. The decoder refuses relative, empty,
+NUL-holding, and oversize paths. A caller bound to a terminal session gets Allow once or Allow for This Terminal
+Session. The session grant is keyed on the session root and its generation, and it is held in memory only. A caller in
+no session, tmux and screen included, gets a once-only row. The once-only flag on pending-indicator rows is general,
+and `decide` enforces it. A routed open from a program takes no focus.
+
+First-pass checks:
+- `make fmt-check`, `make lint`, `make check`, `caffeinate -dimsu make fuzz`, and `build-for-testing` passed.
+- The first `caffeinate -dimsu make test-package` run had one failure, in `ExecDriverChannelTests`; see below. The
+  rerun passed 2756 tests, with 10 skipped.
+- `proposals.py check` reported nothing on UTERM-015. `proposals.py freeze --row-commit <M4 commit>` returned no hunks.
+
+UI tests: the coordinator ran `ScriptOpenUITests` (new), `LaunchServicesOpenUITests`, `OpenPanelUITests`,
+`PendingRequestsUITests`, and `ScriptRunUITests` through `cg_run` (ID HGY6RA, 2026-11-17 00:07). All 8 tests passed in
+115 s. The run was on the first-pass code.
+
+New test classes:
+
+| Class | Tests | Time |
+|---|---|---|
+| `ScriptOpenTests` | 11 | 0.16 s |
+| `ScriptOpenRunTests` | 6 | 0.63 s |
+| `ScriptOpenWindowTests` | 5 | 0.49 s |
+| `ScriptOpenCommandTests` | 4 | 0.001 s |
+| `ScriptOpenUITests` | 2 | 29.9 s |
+
+Unowned failure: `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives` timed out
+after 15.5 s in one full package run. It was "waiting until the channel ends or answers both writes and the command
+after them". It passed alone in 0.13 s, passed with its class, and passed in the full rerun. The exec driver does not
+use the script listener or the wire this milestone changed. It was not tried on the base commit. It stays an open,
+load-dependent flake, and `spec/flaky-tests.md` gets an entry.
+
+Implementer best guesses and deviations, in the proposal's Decision Log entry "M5 work-queue best guesses":
+
+1. A program's open brings no existing window forward, per ADR-12. The settled text brought the most recently key
+   window forward for a caller in no session. It was amended in place.
+2. A user's Deny exits 77. Success, missing, and unsupported all exit 0, since the app replies before it looks at any
+   path. Exit 0 means only that the app took the request. Deny reveals the user's answer, not anything about a file.
+   If wrong, a Deny exits 0 too.
+3. There is no bundled-command check. Any program that sends the begin gets the same question, since the authority
+   is the terminal session.
+4. An argument that is not valid UTF-8 is refused with exit 64, so it is never repaired into another file's name.
+5. M5 gained a check that a pane or window `uniterm open` makes takes no focus.
+6. A session allow leaves that session's other waiting rows pending, each revalidated when answered.
+
+Review findings and their dispositions:
+
+- A session-bound command whose pane label is gone got no-session wording, but still offered the session button.
+  PLAUSIBLE. Sent to trace.
+- adr-impact: a new window is ordered front, while the amended text says no window is brought forward. Sent to fix.
+  The best guess: a new window holding only the routed pane is ordered front without becoming key, and a split never
+  raises its window.
+- Deviation 6 was not in the proposal. Sent to fix.
+- One As built bullet had a 201-column line. A grant that "ends" on a generation change only stops covering. Both
+  sent to fix.
+- adr-impact, advisory: the session grant has no revoke action of its own beyond session end and pane close, the same
+  as the clipboard session grants. ADR-09 asks for a revocable grant. Recorded for the user.
+
+Fix round outcome:
+
+- The nameless-pane case: the trace confirmed it. Wording, the once-only flag, the denial key, and the stored grant now
+  follow one condition: a session whose pane cannot be named counts as no session. The regression test
+  `testASessionWhoseCallerCannotBeNamedIsOnceOnlyAndStoresNoGrant` was shown failing on the old condition with 3
+  expected failures (`cg_run` R95B32), and passing with the fix (R38T2S).
+- New windows: the code orders a new routed window front without making it key or activating the app. The proposal
+  text was corrected to say so. A routed split raises no existing window.
+- Deviation 6 is now Decision Log item 14. Item 15 records the nameless-pane choice. The As built block was rewrapped
+  and says a grant stops covering on a generation change.
+
+Second-round checks: `make lint`, which includes `fmt-check`, and the full `caffeinate -dimsu make test-package` passed.
+`make fuzz` and `build-for-testing` were not rerun, since only host logic and one test changed and the wire is
+untouched. The coordinator then ran `caffeinate -dimsu make test-helper-sandbox` (ID 5FTH34). It built the app and
+passed 9 tests, including the new `testTheShippedCommandResolvesARelativePathForOpen`. The UI classes were not rerun
+after the fix round. Their run covered the first-pass code, and the change affects only a pane that vanished mid-open.
+
+ADR candidates:
+- The once-only rule for a requester that cannot be tied to a session is declined. ADR-09's last bullet already holds
+  it: "A terminal-session request that cannot identify its originating program cannot use a particular script's
+  persistent approval."
+- The uniform reply falls under M4's Undecided candidate on what a caller may learn about a user's file.
 
 ## Status
 

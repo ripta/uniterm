@@ -48,6 +48,9 @@ public final class ScriptHost {
     /// A REPL pane's helper.
     case repl
 
+    /// A `uniterm open` command.
+    case openCommand
+
     var lastsOneRun: Bool { self == .bundledRun || self == .controllerRun || self == .fileRun }
   }
 
@@ -203,6 +206,13 @@ public final class ScriptHost {
 
   private var permissionWatch: ChangeObservers.Token?
 
+  /// Where `uniterm open` sends the paths the user allowed. Without it, every open is refused.
+  public var fileOpener: (any ScriptFileOpening)?
+
+  /// The terminal sessions the user allowed to open files. Memory only, so no restore brings one
+  /// back. It ends with the session root, the window, or the host.
+  var openGrants: Set<OpenSessionGrant> = []
+
   /// The clipboard powers the user allowed for the session of an ordinary script connection.
   var clipboardGrants: [UInt64: Set<ControllerPermission>] = [:]
 
@@ -348,6 +358,7 @@ public final class ScriptHost {
     grants = [:]
     revokedControllers = []
     clipboardGrants = [:]
+    openGrants = []
     permissionRequests.end { if case .connection = $0 { return true } else { return false } }
   }
 
@@ -391,6 +402,9 @@ public final class ScriptHost {
 
     case .undeclaredBegun(let connection, let request):
       begin(connection, .undeclared(request))
+
+    case .openBegun(let connection, let request):
+      beginOpen(connection, request)
 
     case .attached(let connection, let token):
       sessions[connection.id, default: Session()].kind = .repl
@@ -699,7 +713,7 @@ public final class ScriptHost {
   /// True when the process the connection admitted still runs but is no longer what speaks on it:
   /// it started another executable, or a process it forked has taken the socket over. A peer that
   /// exited is not counted here. Its binding fails on its own, as a closed session's does.
-  private func peerWasReplaced(_ connection: ScriptConnection) -> Bool {
+  func peerWasReplaced(_ connection: ScriptConnection) -> Bool {
     !connection.peerGenerationHolds
       && ProcessInspection.isRunning(pid: connection.peer.pid, started: connection.peerStartTime)
   }
@@ -996,6 +1010,7 @@ public final class ScriptHost {
     if paneRoots[key]?.isEmpty == true { paneRoots[key] = nil }
 
     endGrants { $0.root == identity }
+    endOpenGrants { $0.root == identity }
     acting.forEach(authorityEnded)
   }
 
@@ -1006,6 +1021,7 @@ public final class ScriptHost {
     for (key, roots) in paneRoots where key.window == window {
       roots.forEach(sessionRoots.remove)
       paneRoots[key] = nil
+      endOpenGrants { grant in roots.contains(grant.root) }
     }
 
     endGrants { $0.window == window }

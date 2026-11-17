@@ -322,10 +322,16 @@ routed pane.
 
 - The anchor is the pane the request came from. A terminal click anchors to the clicked pane. `uniterm open` from a
   terminal session anchors to that session's pane, by the source-pane binding UTERM-004 settles. File > Open anchors
-  to the focused pane of the window whose menu ran it. Finder, the Dock, other Launch Services senders, and callers in
-  no terminal session anchor to the focused pane of the most recently key window, which is brought forward.
+  to the focused pane of the window whose menu ran it. Finder, the Dock, and other Launch Services senders anchor to
+  the focused pane of the most recently key window, which is brought forward. A `uniterm open` from a caller in no
+  terminal session anchors to the same pane. A routed split raises no existing window, since a program's open takes no
+  focus. Amended 2026-11-16; see Decision Log.
 - The routed pane is new and disconnected, and a routed split never joins a group a controller owns. A routed open
   never replaces the source of an existing pane.
+- A pane or window that a program's open makes takes no focus, per ADR-12. A new window that holds only the routed pane
+  is ordered in front without becoming key, and the app is not activated, so the user can see it and keeps typing where
+  they were. File > Open and Apple's openers are the user's act, and their routed pane takes the focus as before.
+  Amended 2026-11-16; see Decision Log.
 - When no window is open, or the split is refused for lack of room, or the window has a sheet attached, the file opens
   in a new window whose only pane is the routed pane. That window starts no shell beside the routed pane, and inherits
   no directory from another window. A routed folder's terminal is the routed pane itself.
@@ -378,7 +384,11 @@ A caller outside any terminal session gets Allow once only.
   screen is outside, since the multiplexer's server breaks the ancestry, so it asks on every open.
 - Nothing stats, opens, or looks up the type of a path before its open is authorized. The same holds for every
   Launch Services open that needs approval.
-- The reply never tells missing, unsupported, and denied apart without the path-reading power for that path.
+- The reply never tells missing, unsupported, and denied apart without the path-reading power for that path. The
+  command gets its reply once the user allows the request, before any path is looked at, so a file that opened, one
+  that is missing, and one no applet opens all get the same reply, and the reply carries no content. What went wrong
+  shows only in the app's own status message. A request the user denies gets the refused status, since the user's own
+  answer says nothing about a file. Amended 2026-11-16; see Decision Log.
 
 Rationale: a controller grant would require remote control on the source pane, and the only signed party is uniterm's
 own helper, a shared go-between ADR-09 forbids trusting. That is stricter than the Launch Services path, so a refused
@@ -700,7 +710,9 @@ Amended 2026-11-03; see Decision Log.
 
 ### M5: `uniterm open`
 
-**Status:** NOT STARTED
+**Status:** DONE
+
+Amended 2026-11-16; see Decision Log.
 
 - Starts after UTERM-003 M3, UTERM-004 M6, and this proposal's M4
 - `uniterm open <path>` opens the path through the router, with the authority "Who may run `uniterm open`" settles
@@ -710,7 +722,43 @@ Amended 2026-11-03; see Decision Log.
 - Nothing touches a path before its open is authorized, so an unapproved request never raises a macOS privacy prompt
 - A relative path resolves against the command's physical working directory, and a deleted one fails in the command
 - The reply carries no file content
+- A pane or window that `uniterm open` makes takes no focus, a routed split raises no existing window, and a new
+  window is never made key and never activates the app
 - An old `uniterm` command with a new app, or the reverse, is refused at the handshake
+
+**As built:**
+
+- Divergences and best guesses are in the Decision Log, 2026-11-16, M5 best guesses. The two that change a reader's
+  expectation: exit status 0 says only that the app took the request, and a program's open takes no focus and raises no
+  existing window.
+- The command is `uniterm open [--socket PATH] [--] path...`. It joins a relative path to its own working directory
+  as a string, and calls `realpath` on that directory only. It never looks at a target. Only absolute paths cross the
+  socket, and the wire reader refuses a relative one from a raw peer. A path or a count that does not fit is refused
+  in the command with a message, never cut.
+- The protocol version is 13. The begin and its reply are new messages, and an old command or an old app is refused at
+  the hello, tested in both directions.
+- The host asks through the pending indicator for every open that no session grant covers. A command in a terminal
+  session is offered Allow once and Allow for This Terminal Session. A command in no session, including one in tmux or
+  screen, is offered Allow once and Deny only. So is a command whose session's pane can no longer be named, since the
+  question could not tell the user which session a grant would cover. The row says so with a general once-only flag,
+  which a session answer cannot widen, and which the Launch Services approvals reuse.
+- A session grant binds the session root and its generation. It lives in memory only. It ends when the root is
+  removed and when its window closes, and it stops covering when the registry holds another generation, though the
+  entry stays until one of the first two. A session allow leaves the session's other waiting questions pending, each
+  checked again when answered. A denial of a session lasts for it,
+  until Ask Again or the pane closes. A command that exits while its question waits takes its row with it.
+- Nothing looks at a path before the answer. The router's one look at a path is now an injected reader, and a test
+  that runs the real host, coordinator, router, and windows records every look. A pending, denied, withdrawn, and
+  exited request each leave the record empty. An allowed one records the path.
+- The approval lists every full path with control and direction characters written out, and the count. One approval
+  covers the router's confirmation above 10 files, through an option on the route that skips it. The option also turns
+  off focus. Failures post one summary in the app's status message.
+- A program's open waits for layout restore in the coordinator's queue, as a Launch Services open does.
+- New test classes ran in under 1 s each in the package suite. See the Decision Log entry for the times.
+- UI test classes that this milestone adds or touches: `ScriptOpenUITests`, new. Nobody has run them. The shipped
+  command's own `open` is covered by a test in `CommandHelperSandboxTests`, which `make test-helper-sandbox` runs.
+- A peer filed [a bug](../bugs/20261116-script-opened-pane-takes-focus.md) that `uniterm/open-pane` takes focus. It is
+  a different function from the route this milestone changed, and it is not fixed here.
 
 ### M6: Terminal clicks
 
@@ -995,6 +1043,63 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
       and a scope that changed while a command waited refuses it, the same as a revocation. The cost is that a grant
       that grew meanwhile also refuses, and the caller asks again. A run that declared the power and was allowed once
       gets its own refusal text, which says so, since it knows its own grant. Every other refusal stays one text.
+- 2026-11-16: M5 work-queue best guesses (work-queue best guess). Amended "Where a routed pane goes", "Who may run
+  `uniterm open`", and M5.
+  1. "Where a routed pane goes" said that callers in no terminal session anchor to the focused pane of the most
+     recently key window, "which is brought forward". It now says that bringing the window forward belongs to Launch
+     Services senders, and that a `uniterm open` from a caller in no session anchors to the same pane, with no existing
+     window raised. ADR-12 says a change the user did not choose never moves keyboard focus, and a program's open is
+     not the user's act. The cost is that a command run from another terminal program opens its split in a window
+     that stays behind. If wrong, the open brings the window forward as a Launch Services open does.
+  2. The same entry adds a bullet that a pane or window a program's open makes takes no focus, and a matching M5
+     check. A new window that holds only the routed pane is ordered in front without becoming key, and the app is not
+     activated, since a window the user never sees would hide the open. A review found that the code raises such a
+     window, and the first wording said no window was brought forward, so the text now says what the code does.
+     If wrong, a new window opens behind the others.
+  3. "Who may run `uniterm open`" said the reply never tells missing, unsupported, and denied apart. The plan listed
+     "denied" in the uniform set. It now says the reply comes once the user allows the request, before any path is
+     looked at, so success, missing, and unsupported look the same, and a request the user denies gets the refused
+     status. A user's own Deny says nothing about a file, and a command that exits 0 after a Deny would mislead a
+     script. Exit 0 therefore says only that the app took the request. If wrong, a Deny exits 0 and the text says so.
+  4. The command's exit statuses: 0 for a taken request, 64 for a usage error, a path or count that does not fit, or a
+     path that is not valid UTF-8, 66 for a deleted or unresolvable working directory, 69 for no app, 70 for a version
+     mismatch, 74 for a connection lost before an answer, and 77 for a refused request. They follow the existing
+     sysexits use.
+  5. One wire change. Version 13 adds an open begin from the command and an open-done reply, and a refusal reuses the
+     existing refusal and waiting messages. The begin has its own connection role, so a connection that began an open
+     can make no call. The reader refuses what the command refuses, since a raw peer can skip the command. Nothing is
+     cut or dropped to fit: at most 256 paths, 1024 bytes each, and 48 KiB together.
+  6. A non-UTF-8 argument cannot be named in a string. The command reads one as a replacement character and refuses
+     it, so a path with a real replacement character in its name cannot be opened by this command. That is rare, and
+     a refusal is safe where a repaired name opens another file.
+  7. The command does not have to be the bundle's own command. A program that sends the begin directly gets the same
+     question and the same authority, since the authority is the terminal session and never the command. The
+     `uniterm` command is not trusted more than any other program.
+  8. A session grant is keyed on the session root and its generation, held in memory, and ended by removal of the
+     root, by the close of its window, and by a generation that no longer matches the registry. A denial is kept for
+     the session under the terminal's own requester, so a program in a loop is not asked again until the user chooses
+     Ask Again or the pane closes. A command in no session keeps its denial under its connection, so the next command
+     asks again, as the settled decision says.
+  9. The question names the pane by its applet's title and says it covers every program in the session, as the OSC 52
+     approval says. Control, format, and separator characters in a path are written out as code points, and nothing is
+     cut, so the question lists every path in full.
+  10. A program's open waits for layout restore in the Launch Services coordinator's queue. It reuses the settled rule
+      that an open arriving during restore waits, and it keeps the layout from opening a default window beside it.
+  11. The router's look at a path is an injected reader with the system's own as the default. The route has an option
+      that skips its own batch question when an approval already named the count, and turns focus off. Both are
+      reusable for Launch Services approvals.
+  12. `RoutedOpener.openWithChoice`, File > Open, and Apple's openers are unchanged.
+  13. Package test classes added or changed ran in under 1 s each: `ScriptOpenTests` 12 tests in about 0.2 s,
+      `ScriptOpenRunTests` 6 in 0.63 s, `ScriptOpenWindowTests` 5 in 0.49 s, `ScriptOpenCommandTests` 4 in 0.001 s,
+      and `ScriptCodecTests` 28 in 0.03 s. `ScriptOpenUITests` is new and was not run.
+  14. A session allow leaves the session's other waiting questions pending. The row answered is the only one decided,
+      and each other row is checked again, for the connection, the peer, and the session, when the user answers it. A
+      second row for the same session still offers the session answer, which only stores the grant again. If wrong,
+      the session answer decides every waiting row of that session, as the clipboard session answer does for a row.
+  15. A command bound to a session whose pane or applet can no longer be named is asked about as a command outside
+      every session. The question could not tell the user which session a grant would cover, so the wording, the
+      once-only flag, and the grant all follow one condition: a named pane. If wrong, the question names no pane and
+      offers the session answer.
 - 2026-11-16: ADR candidate (cuts across the system): a caller learns nothing about a user's file outside its read
   scope from any reply, event, or listing, and every applet that shows a user's file must keep it. Undecided. Found
   in M4.

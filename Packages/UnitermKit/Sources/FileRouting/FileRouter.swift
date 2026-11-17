@@ -28,15 +28,18 @@ public struct FileRouter: Sendable {
   private let declarations: [AppletTypeDeclaration]
   private let types: any ContentTypeSystem
   private let savedChoices: [String: String]
+  private let pathKind: PathKindReader
 
   /// The saved choices are a snapshot. They map an exact type identifier to an applet type ID.
+  /// `pathKind` is the one place the router looks at a path before it asks for its type.
   public init(
     declarations: [AppletTypeDeclaration], types: any ContentTypeSystem = SystemContentTypes(),
-    savedChoices: [String: String] = [:]
+    savedChoices: [String: String] = [:], pathKind: @escaping PathKindReader = PathInspector.kind
   ) {
     self.declarations = declarations
     self.types = types
     self.savedChoices = savedChoices
+    self.pathKind = pathKind
   }
 
   // MARK: Entry points
@@ -58,7 +61,7 @@ public struct FileRouter: Sendable {
   /// Looks at a path without opening it. A FIFO, a device, or a socket is refused before the type
   /// system sees it.
   public func inspect(_ file: URL) -> FileInspection {
-    switch PathInspector.kind(of: file) {
+    switch pathKind(file) {
     case .failure(let refusal):
       return .refused(refusal)
 

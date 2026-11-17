@@ -87,4 +87,65 @@ final class CommandHelperSandboxTests: XCTestCase {
     XCTAssertEqual(run.status, 0, run.standardError)
     XCTAssertEqual(run.standardOutput, "42\n", run.standardError)
   }
+
+  /// Catches a shipped command whose `open` fails under the hardened runtime, or that sends a
+  /// relative path as written. The command runs in a folder with a relative argument, and the app
+  /// receives the folder's real path joined to it. This also shows the bundle command carries the
+  /// `open` command at all, since an older build answers an unknown command with the usage status.
+  @MainActor
+  func testTheShippedCommandResolvesARelativePathForOpen() async throws {
+    guard let command = shippedCommand else {
+      throw XCTSkip(
+        "UNITERM_COMMAND_HELPER names no shipped command. Run make test-helper-sandbox.")
+    }
+
+    let directory = try ScriptFixtures.makeSocketDirectory()
+    let center = StatusCenter()
+    let opener = ShippedOpenRecorder()
+    let host = ScriptHost(
+      listener: try ScriptListener.start(directory: directory),
+      issueProducer: { center.issueProducer(kind: .script, name: $0) })
+
+    host.fileOpener = opener
+    host.start()
+    recordTestProcessAsSessionRoot(host)
+
+    let requests = host.permissionRequests
+    let answering = requests.changes.add {
+      for row in requests.rows { requests.decide(row.id, .allowOnce) }
+    }
+
+    defer {
+      withExtendedLifetime(answering) {}
+      host.stop()
+      try? FileManager.default.removeItem(at: directory)
+    }
+
+    let resolved = try XCTUnwrap(realpath(directory.path, nil))
+
+    defer { free(resolved) }
+
+    let process = Process()
+
+    process.executableURL = command
+    process.arguments = ["open", "--socket", host.instanceAddress, "relative.txt"]
+    process.currentDirectoryURL = directory
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = Pipe()
+    process.standardError = Pipe()
+    try process.run()
+
+    let run = await ScriptFixtures.finish(process)
+
+    XCTAssertEqual(run.status, 0, run.standardError)
+    XCTAssertEqual(opener.paths, [[String(cString: resolved) + "/relative.txt"]])
+  }
+}
+
+@MainActor
+private final class ShippedOpenRecorder: ScriptFileOpening {
+  private(set) var paths: [[String]] = []
+
+  func open(_ paths: [String], from caller: ScriptCaller?) { self.paths.append(paths) }
+  func label(of caller: ScriptCaller) -> String? { nil }
 }

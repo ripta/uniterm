@@ -20,6 +20,10 @@ public final class LaunchOpenCoordinator {
 
   private struct Request {
     let files: [URL]
+
+    /// Where a program's open anchors, read when the request runs. Nil for a Launch Services open,
+    /// which anchors to the most recently key window and brings it forward.
+    let programAnchor: (@MainActor () -> RouteAnchor?)?
   }
 
   private let windows: WindowSet
@@ -59,9 +63,20 @@ public final class LaunchOpenCoordinator {
       refuse(sender: name)
 
     case .userAct:
-      queue.append(Request(files: urls))
+      queue.append(Request(files: urls, programAnchor: nil))
       drainIfReady()
     }
+  }
+
+  /// Takes the files of a program's open that the user already approved. It waits for layout
+  /// restore as a Launch Services open does. The anchor is asked when the open runs, so a pane
+  /// that closed while it waited falls back to the most recently key window. The new pane takes
+  /// no focus, and no window is brought forward.
+  ///
+  /// The approval named every path and the count. Nothing here has looked at a path.
+  public func receiveProgramOpen(_ urls: [URL], anchor: @escaping @MainActor () -> RouteAnchor?) {
+    queue.append(Request(files: urls, programAnchor: anchor))
+    drainIfReady()
   }
 
   /// Layout restore is over. Replays every open that waited, then opens a window if there is none.
@@ -123,6 +138,13 @@ public final class LaunchOpenCoordinator {
     }
 
     guard !files.isEmpty else { return }
+
+    if let programAnchor = request.programAnchor {
+      await opener.open(
+        files, from: programAnchor() ?? windows.launchAnchor(), options: .approvedProgram)
+
+      return
+    }
 
     let anchor = windows.launchAnchor()
 

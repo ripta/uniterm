@@ -357,6 +357,15 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     paneArea.focus(paneArea.focusedPane)
   }
 
+  /// Shows the window the way `showWindow` does, with no keyboard change. The window is ordered in
+  /// front and never made key, and no pane takes focus, so the user keeps typing where they were.
+  func showWindowWithoutFocus() {
+    window?.orderFront(nil)
+
+    contentController.view.layoutSubtreeIfNeeded()
+    startPendingApplets()
+  }
+
   private func apply(_ palette: ThemePalette) {
     window?.backgroundColor = palette[.base].nsColor
     contentController.apply(palette)
@@ -664,7 +673,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Returns nil, and leaves the applet untouched for the caller, when the window has a sheet, the
   /// pane is not here, or there is no room in either direction.
   @discardableResult
-  public func placeRouted(_ applet: any Applet, beside pane: NodeID) -> NodeID? {
+  public func placeRouted(
+    _ applet: any Applet, beside pane: NodeID, takesFocus: Bool = true
+  ) -> NodeID? {
     guard paneActionsEnabled, contains(pane: pane) else { return nil }
 
     contentController.view.layoutSubtreeIfNeeded()
@@ -687,7 +698,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     startPendingApplets()
-    paneArea.focus(created)
+
+    if takesFocus { paneArea.focus(created) }
+
     return created
   }
 
@@ -695,10 +708,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// new pane. A nil return means the window refused: it has a sheet, or the largest pane has no
   /// room to split. The applet is untouched then, and the caller keeps it.
   @discardableResult
-  public func placeRoutedInLargestPane(_ applet: any Applet) -> NodeID? {
+  public func placeRoutedInLargestPane(_ applet: any Applet, takesFocus: Bool = true) -> NodeID? {
     guard let pane = largestPane() else { return nil }
 
-    return placeRouted(applet, beside: pane)
+    return placeRouted(applet, beside: pane, takesFocus: takesFocus)
   }
 
   /// Splits `pane` and puts a launcher in the new one, which takes the keyboard. The launcher

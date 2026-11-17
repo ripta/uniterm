@@ -41,6 +41,9 @@ final class ScriptWireFuzzTests: XCTestCase {
       ScriptHelperMessage.undeclaredBegin(
         UndeclaredBegin(name: "synthetic.janet", capabilities: ["fs-read"])
       ).frame(),
+      ScriptHelperMessage.openBegin(
+        OpenBegin(paths: ["/synthetic/a.md", "/synthetic/folder", "/synthetic/caf\u{00E9}"])
+      ).frame(),
       ScriptHelperMessage.fileDeclaration(#"{"permissions":[{"kind":"pane-control","version":1}]}"#)
         .frame(),
       ScriptHelperMessage.request(id: 3, call: .postStatus(level: .warning, text: "synthetic"))
@@ -66,6 +69,7 @@ final class ScriptWireFuzzTests: XCTestCase {
           snapshot: "/synthetic/run/script.janet", version: Data(repeating: 0x3C, count: 32)
         ).frame(),
         ScriptAppMessage.undeclaredAdmitted.frame(),
+        ScriptAppMessage.openDone.frame(),
       ]
   }
 

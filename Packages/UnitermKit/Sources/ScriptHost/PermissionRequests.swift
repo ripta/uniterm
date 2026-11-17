@@ -127,6 +127,11 @@ public final class PermissionRequests {
     /// The label of the session answer, which says what it covers.
     public let sessionTitle: String
 
+    /// True when the requester has nothing a session answer could bind to, so only Allow once and
+    /// Deny exist. The panel hides the session button, and `decide` answers a session answer as
+    /// Allow once.
+    public let onceOnly: Bool
+
     /// How many operations wait in the row.
     public var waiting: Int
   }
@@ -168,10 +173,12 @@ public final class PermissionRequests {
 
   /// Puts an operation before the user. A request whose key already has a row joins it, and the
   /// row keeps showing its oldest operation. `denialKey` names what a denial covers, when that
-  /// should outlive the requester that asks.
+  /// should outlive the requester that asks. `onceOnly` offers no session answer, for a requester
+  /// that cannot be told from the program that happens to call.
   public func ask(
     _ key: Key, deniedAs denialKey: Key? = nil, subject: String, pid: pid_t? = nil, title: String,
-    detail: String, sessionTitle: String, answer: @escaping @MainActor (Answer) -> Void
+    detail: String, sessionTitle: String, onceOnly: Bool = false,
+    answer: @escaping @MainActor (Answer) -> Void
   ) -> Outcome {
     let denialKey = denialKey ?? key
 
@@ -201,7 +208,7 @@ public final class PermissionRequests {
     rows.append(
       Row(
         id: lastID, key: key, subject: subject, pid: pid, title: title, detail: detail,
-        denialKey: denialKey, sessionTitle: sessionTitle, waiting: 1))
+        denialKey: denialKey, sessionTitle: sessionTitle, onceOnly: onceOnly, waiting: 1))
     operations[lastID] = [operation]
     changes.notify()
 
@@ -213,6 +220,7 @@ public final class PermissionRequests {
     guard answer != .withdrawn, let index = rows.firstIndex(where: { $0.id == id }) else { return }
 
     let row = rows[index]
+    let answer = row.onceOnly && answer == .allowForSession ? Answer.allowOnce : answer
     var waiting = operations[id] ?? []
     let answered: [Operation]
 

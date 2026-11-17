@@ -546,6 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows: windows, opener: routedOpener,
         openFallbackWindow: { [weak self] in self?.openWindow() })
       launchOpens = coordinator
+      scriptHost?.fileOpener = ScriptFileOpener(windows: windows, coordinator: coordinator)
 
       for early in earlyOpens {
         coordinator.receive(early.urls, from: early.sender)

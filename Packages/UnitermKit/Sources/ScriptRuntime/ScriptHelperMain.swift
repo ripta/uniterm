@@ -12,6 +12,8 @@ import ScriptWire
 /// working directory, and exit status are this process's own.
 ///
 /// The `repl` mode is `repl --socket PATH`, which only the app starts. See `ScriptReplMain`.
+///
+/// The `open` mode asks the app to open files in panes. See `ScriptOpenCommand`.
 public enum ScriptHelperMain {
   /// Exit statuses follow sysexits.h where one fits.
   public enum Exit {
@@ -62,6 +64,7 @@ public enum ScriptHelperMain {
       usage: uniterm run [--allow CAPABILITY]... [--socket PATH] file.janet [argument...]
              uniterm run [--allow CAPABILITY]... [--socket PATH] package [argument...]
              uniterm lint file.janet
+             uniterm open [--socket PATH] [--] path...
              uniterm controller --help
 
       Runs a Janet script against the running uniterm. Given a controller package's folder, it
@@ -107,6 +110,11 @@ public enum ScriptHelperMain {
 
     if arguments.dropFirst().first == "lint" {
       return ScriptLintCommand.run(arguments: Array(arguments.dropFirst(2)))
+    }
+
+    if arguments.dropFirst().first == "open" {
+      return ScriptOpenCommand.run(
+        arguments: Array(arguments.dropFirst(2)), environment: environment)
     }
 
     if arguments.dropFirst().first == "controller" {

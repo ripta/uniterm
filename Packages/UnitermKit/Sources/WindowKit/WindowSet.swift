@@ -304,8 +304,13 @@ public final class WindowSet {
   /// Opens a window whose only pane is `applet`, and returns its controller. It cascades from the
   /// active window like any new window, and it takes no directory from it. When the factory
   /// throws, nothing opens, no number is used, and the applet stays the caller's to close.
+  ///
+  /// A window that `takesFocus` is shown as any new window is. Otherwise it is ordered in front and
+  /// never made key, so a program's open does not move the user's keyboard.
   @discardableResult
-  public func open(routing applet: any Applet) throws -> MainWindowController {
+  public func open(routing applet: any Applet, takesFocus: Bool = true) throws
+    -> MainWindowController
+  {
     guard let makeRoutedController else {
       throw WindowSetError.cannotRoute
     }
@@ -324,7 +329,7 @@ public final class WindowSet {
       window.setFrameTopLeftPoint(corner)
     }
 
-    show(controller)
+    show(controller, takesFocus: takesFocus)
     return controller
   }
 
@@ -450,7 +455,7 @@ public final class WindowSet {
     controllers.append(controller)
   }
 
-  private func show(_ controller: MainWindowController) {
+  private func show(_ controller: MainWindowController, takesFocus: Bool = true) {
     if heldDropped > 0 {
       let noun = heldDropped == 1 ? "message was" : "messages were"
       controller.statusCenter.post(
@@ -464,7 +469,12 @@ public final class WindowSet {
     }
     held.removeAll()
 
-    controller.showWindow(nil)
+    if takesFocus {
+      controller.showWindow(nil)
+    } else {
+      controller.showWindowWithoutFocus()
+    }
+
     onLayoutChange?()
   }
 

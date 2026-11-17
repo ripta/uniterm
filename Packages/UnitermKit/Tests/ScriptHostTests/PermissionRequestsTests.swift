@@ -29,6 +29,32 @@ final class PermissionRequestsTests: XCTestCase {
     XCTAssertTrue(requests.rows.isEmpty, "a denied request opened a row")
   }
 
+  /// Catches a once-only row that a session answer can widen. The panel hides the session button,
+  /// and the store answers a session answer as Allow once, so only the oldest waiting operation is
+  /// released and the requester learns no session was granted.
+  func testAOnceOnlyRowAnswersASessionAnswerAsAllowOnce() {
+    let requests = PermissionRequests()
+    var answers: [PermissionRequests.Answer] = []
+
+    for index in 0..<2 {
+      let outcome = requests.ask(
+        key(1), subject: "synthetic", title: "Open a file", detail: "request \(index)",
+        sessionTitle: "Allow for This Session", onceOnly: true
+      ) { answers.append($0) }
+
+      XCTAssertEqual(outcome, .waiting)
+    }
+
+    let row = requests.rows[0]
+
+    XCTAssertTrue(row.onceOnly)
+
+    requests.decide(row.id, .allowForSession)
+
+    XCTAssertEqual(answers, [.allowOnce])
+    XCTAssertEqual(requests.rows.first?.detail, "request 1")
+  }
+
   private func key(_ index: Int) -> PermissionRequests.Key {
     PermissionRequests.Key(requester: .connection(UInt64(index)), power: "clipboard-read")
   }
