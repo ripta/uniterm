@@ -360,14 +360,15 @@ Decision: every flow is named here, and each takes its directory from the reques
 - `uniterm open` resolves a relative path against the command's own physical working directory before it sends
   anything, so only absolute paths reach the app. The command's working directory itself never crosses the socket.
   A deleted working directory fails in the command, with a message.
-- A relative path clicked in the terminal is refused. Only an absolute path or a `file:` hyperlink opens.
+- A relative path clicked in the terminal is refused with a status message. Only an absolute path or a `file:`
+  hyperlink opens. A path that starts with `~` counts as relative. Amended 2026-11-17; see Decision Log.
 
 Rationale: the file's folder comes from the request, so it is the same in a split and in a new window, and for every
 entry point. The focused pane's directory would depend on which pane had focus when a Finder event arrived. A relative
 argument to `uniterm open` means what the user's shell means by it, and resolving it in the command keeps any CLI
 state out of the app. A clicked relative path may have been printed by a remote `ls` over ssh, or before a `cd`.
 Shell integration gives no signal that output came from a remote host, so resolving it against any local directory can
-open the wrong file. Leaves undone: clicking `notes.txt` in `ls` output does nothing.
+open the wrong file. Leaves undone: clicking `notes.txt` in `ls` output opens nothing and says why in the status bar.
 
 ### Who may run `uniterm open`
 
@@ -406,14 +407,17 @@ that file, and never on output that may be remote.
 
 - On Cmd-hover, uniterm shows the target as text: the absolute path, or a hyperlink's target rather than its text.
   Showing it touches no file. libghostty's mouse-over-link action reaches the app through an addition to the terminal
-  surface protocol, per ADR-01, beside its open-URL action.
+  surface protocol, per ADR-01, beside its open-URL action. A `file:` link is shown as its decoded path. A link with a
+  query, a fragment, credentials, or characters that could show as another path is refused. Amended 2026-11-17; see
+  Decision Log.
 - The click is bound to the string that was shown. After the open, the opened descriptor's real path must match that
-  string, after normalizing macOS firmlinks such as `/tmp` to `/private/tmp`, or the open is refused. A printed symlink
-  to another file therefore opens nothing.
+  string, after normalizing the system's links into `/private`, such as `/tmp` to `/private/tmp`, or the open is
+  refused. A printed symlink to another file therefore opens nothing. Amended 2026-11-17; see Decision Log.
 - Output written while a remote client ran in the foreground keeps a remote marker, even after the client exits. The
   remote clients are `ssh`, `mosh`, and the others M6 lists, and an OSC 7 report that names another host. Where the
-  pinned libghostty cannot mark rows, the marker covers the whole pane for the rest of its life. A click on marked
-  output shows that the output may be remote and opens nothing.
+  pinned libghostty cannot mark rows, the marker covers the whole terminal tab for the rest of its session, since each
+  tab is its own session. A click on marked output shows that the output may be remote and opens nothing. Amended
+  2026-11-17; see Decision Log.
 - M6 names where each signal comes from: the pinned libghostty, an addition to the terminal surface protocol, or a
   process lookup on the pane's child.
 
@@ -423,7 +427,7 @@ can hide. Inserting `uniterm open` on the command line types program-chosen text
 as `vim` or a remote shell. Resolving the target on hover would touch a program-chosen path before any authorization.
 Signals read at click time miss a remote `ls` that is still in the scrollback after `exit`. Leaves undone: remote
 clients M6 does not list, such as `kubectl exec`, `docker exec`, and `ssh` inside a local tmux, still look local. On
-a libghostty that cannot mark rows, one remote session turns off clicks in that pane.
+a libghostty that cannot mark rows, one remote session turns off clicks in that tab.
 
 ## Design Decisions (Open)
 
@@ -457,7 +461,8 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
   terminal clicks need neither, and the gating is stated in Dependencies and each milestone.
 - **Hover and the remote marker depend on the pinned libghostty** — likelihood: medium, impact: low. Marking rows may
   need a patch or a pin bump. Mitigation: M6 names each signal's source, and without row marks the marker covers the
-  whole pane.
+  whole tab. The patch M6 carries is small, and it is rebuilt with every pin bump. Amended 2026-11-17; see Decision
+  Log.
 - **No viewer applet exists in code yet** — likelihood: high, impact: low. The router cannot be tested against real
   viewers at first. Mitigation: the router's milestones test with fixture applets, as UTERM-004 M4 does.
 
@@ -762,7 +767,9 @@ Amended 2026-11-16; see Decision Log.
 
 ### M6: Terminal clicks
 
-**Status:** NOT STARTED
+**Status:** DONE
+
+Amended 2026-11-17; see Decision Log.
 
 - Cmd-hover on an absolute path or a local `file:` hyperlink shows its target as text, with no file-system access
 - Cmd-click opens exactly the shown target through the router, and a printed symlink whose real path differs opens
@@ -773,6 +780,86 @@ Amended 2026-11-16; see Decision Log.
 - A `file:` hyperlink naming another host never opens a local file
 - A Cmd-click on a web URL or another non-file scheme does nothing
 - The open-URL and mouse-over-link actions reach the app through the terminal surface protocol
+
+**As built:**
+
+- Divergences and best guesses are in the Decision Log, 2026-11-17, M6 best guesses. The two that change a reader's
+  expectation: a remote client or an OSC 7 from another host turns off clicks for the whole tab for the rest of its
+  session, and the clicked path is opened once to verify it and again by the viewer.
+- Ghostty patch `003-remote-host-and-raw-link-text.patch` makes two changes. A non-local OSC 7 is reported as a new
+  `REMOTE_HOST` action that carries the host, and libghostty still does not adopt the path. A click on link text
+  reaches the embedder as printed, since the patch removes the join to the terminal's working directory and the access
+  check. `make ghostty` rebuilds with it. The integration test that clicks relative text failed on a build with only the
+  first change, and passed with both.
+- The surface protocol gained `linkHovered`, `linkOpenRequested`, and `remoteHostReported`. libghostty's open-URL action
+  is always taken, so its own opener never runs. `link-url`, `link-osc8`, and `link-previews` are set to `true` in the
+  terminal config and join its allow list for `true` only. The REPL pane receives the events and ignores them.
+- The click rules live in the terminal applet. A click is classified from its text alone, with no file access. An
+  absolute path and a `file:` link whose host is empty or `localhost` are the only openable text. The path of a `file:`
+  link is percent-decoded. A relative path, a path that starts with `~` or `$`, and a link to another host are refused
+  with a status message. Any other scheme does nothing, with no message. Text with control, format, line-separator,
+  paragraph-separator, or unassigned characters is refused as not a plain path. So is a `file:` link with a query, a
+  fragment, or credentials. The overlay could not show them as they are.
+- A click opens only text equal to the last hover. Anything else is refused with a message. The hover is kept per tab.
+- Before routing, the path is opened off the main thread. A `lstat` first refuses anything but a regular file or a
+  folder, and a link. The open uses `O_NOFOLLOW`, `O_NONBLOCK`, `O_NOCTTY`, and `O_CLOEXEC`. The descriptor must be the
+  file `lstat` saw. Its real path from `F_GETPATH` is then compared with the shown path. Both go through one
+  normalization, which maps `/tmp`, `/var`, and `/etc` to `/private/...` and drops trailing slashes. Any other spelling
+  difference refuses, including a doubled slash, a dot segment, and a case or link difference. A folder takes the same
+  check. The verified path goes to `RoutedOpener` as a click from the clicked pane. It takes focus, as File > Open does.
+- The overlay is at the bottom left of the terminal. It shows the decoded absolute path, middle-truncated by width, in
+  the monospaced system font on the `mantle` surface with an `overlay0` border. It passes every click through. Its
+  label's accessibility identifier is `terminal-link-preview`. It shows nothing for a relative path, a web address, or a
+  link to another host. When the tab is marked remote it shows "This output may be from another host. A click opens
+  nothing." and no target. A refusal after a click goes to the pane's status bar as a warning.
+- The remote marker covers the whole tab, since libghostty cannot mark rows, and it lasts as long as the tab's session.
+  Each tab is its own session, so a second tab is unaffected. It never clears. Two signals set it:
+  - A remote client in the session's process tree. The list is `ssh`, `mosh-client`, `mosh`, `telnet`, `rlogin`,
+    `rsh`, `et`, and `autossh`. It is one set in `RemoteClients`, and a test pins it. A process matches by the name the
+    kernel keeps or by the last component of its executable path. The source is a process lookup on the pane's child:
+    the session root from the existing child-started event, then `proc_listchildpids` for the tree. Every process in the
+    tree is watched for fork, exec, and exit through the kernel's process events, which is EVFILT_PROC through
+    `DispatchSource`. Each event rescans the tree off the main thread. A process is watched before its name is read,
+    so an exec between the listing and the watch is still seen. A 2 s timer rescans as well, for a process the system
+    will not let the watcher observe.
+  - An OSC 7 that names another host. The source is the patched libghostty's `REMOTE_HOST` action, which reaches the
+    applet through the surface protocol.
+- Known gaps. A client that starts and exits between two scans is missed. `ssh` inside a local tmux, `kubectl exec`,
+  `docker exec`, and any client not on the list look local. A shell that never reports OSC 7 gives only the process
+  signal. A local `ssh` that ends leaves the tab marked, so one `git fetch` over ssh turns off clicks in that tab
+  until it closes.
+- A report that fails earlier in libghostty's OSC 7 handling gives neither a directory change nor the remote-host
+  action. That covers an invalid or too long host name, a failed host lookup, and a missing host. The process signal
+  still covers `ssh`.
+- Residuals. The check opens the path on a GCD thread with no bound. On a dead network mount each click parks a thread,
+  and a stuck open is not cancelled. The watcher names its root by PID alone, so a PID reused within the few
+  milliseconds between the session's end and the watcher's stop could be read as the root.
+- Residual. The router and the viewer open the verified path by name again after the check. A same-user process that
+  renames or replaces the path in between changes what opens. ADR-09 accepts this as no isolation from the user's own
+  processes.
+- The terminal applet's host gained `applet(_:open:)`. The default says the host cannot open files. The window posts the
+  same message when its set has no router, and otherwise routes through the router the app gave the set.
+- No `test-cost` target exists in this repo. New and changed test classes ran in the package suite:
+  `TerminalLinkTargetTests` 14 tests in 0.01 s, `TerminalLinkClickTests` 19 in 0.03 s, `RemoteClientWatcherTests` 9 in
+  0.04 s, `ProcessInspectionTests` 5 in 0.003 s, and `TerminalConfigTests` gained 2. `TerminalSessionIntegrationTests`
+  gained 2 and took 13.3 s in all, with the new ones at 0.26 s and 0.53 s. They start a real shell and drive libghostty
+  with synthesized pointer events.
+- The overlay sizes its label from what the cell needs to draw the text, through the cell's own size. The width of the
+  bare string is a few points short, since the cell adds insets, and it cut the middle of a path that had room. A
+  package test compares the label with the cell's required size and failed on the earlier code. The pill is capped at
+  the pane width minus its margins, and a path is cut only past that.
+- A debug-level log category, `terminal-link` under the `dev.uniterm.app` subsystem, records the pointer reports with
+  position, modifier bits, and event type, the press, release, and modifier changes, each hover and open-URL action
+  with its length and kind, and the applet's click decision. It never logs the text of a link, since program output is
+  private. Debug level costs nothing in release and is not stored, so read it with `log stream --level debug`.
+- libghostty drops a pointer move of under one pixel from its stored position, and that position starts at the origin.
+  A hover or a click on a link needs a real move onto it. The UI tests therefore move the pointer from an empty area
+  onto the path, with Command held, before they read the overlay or click.
+- UI test classes this milestone adds: `TerminalLinkUITests`, 2 tests. The overlay screenshot was looked at and shows
+  the whole path. The class passed 12 of 12 iterations in two runs of three. Earlier runs failed intermittently, once
+  by the test's own typing, which mangled a quote and a backslash and is fixed. The other failures were a hover or
+  click that never reached the link, in about half of the iterations of two runs. Their cause is not established, and
+  they did not recur once the log was on. A potential flake is filed in `spec/flaky-tests.md`.
 
 ### M7: Launch Services approvals
 
@@ -1100,6 +1187,48 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
       every session. The question could not tell the user which session a grant would cover, so the wording, the
       once-only flag, and the grant all follow one condition: a named pane. If wrong, the question names no pane and
       offers the session answer.
+- 2026-11-17: M6 work-queue best guesses (work-queue best guess). Amended "Who may open by terminal click", "Start
+  directory and current directory", the Risks entry on libghostty, and M6.
+  1. The hover shows a `file:` link as its decoded path, and the click is bound to the link text. A link with a query,
+     a fragment, or credentials is refused. So is any text with a control, format, separator, or unassigned character.
+     The settled text said the overlay shows the target and was silent on text that cannot be shown as it is. A path
+     that shows as another path is the case the shown target exists to stop. The overlay does not call the status
+     bar's `sanitized`, since that collapses runs of spaces, and a path with a double space would show as another file.
+     If wrong, such links open.
+  2. The remote marker covers one terminal tab and ends with its session, where the settled text said the pane. Each
+     tab is its own session with its own tty and process tree, so one tab's `ssh` does not need to turn off another's
+     clicks. A second tab keeps working. If wrong, one tab's marker covers the pane.
+  3. Ghostty patch 003 reports a non-local OSC 7 as a new action carrying the host, and removes libghostty's join of
+     clicked text to its working directory with the access check. The hidden state flow the project rules name was
+     libghostty resolving a clicked relative path against its own tracked directory. Plan approval confirmed removing
+     it.
+     The patch is five files and kept minimal. The alternative of a `host` field on the existing working-directory
+     action would change a message type that the library also uses for local reports.
+  4. libghostty's open-URL action is always taken, so its fallback opener never runs. `link-url`, `link-osc8`, and
+     `link-previews` are written explicitly and accept `true` only. A hover for plain text needs previews on.
+  5. A click whose text differs from the last hover is refused with a message. The settled text said it opens only on
+     equality and did not say what else happens. A silent no-op after a click would be a failure with no feedback.
+  6. A path that starts with `~` or `$` counts as relative and is refused, as the plan guessed. "Start directory and
+     current directory" says the refusal posts a status message now. It said clicking `notes.txt` does nothing.
+  7. The verification is an `lstat`, then an open with the flags the plan named, then `F_GETPATH`, with one
+     normalization for both sides. The prefixes are `/tmp`, `/var`, and `/etc`, which are links into `/private`. The
+     settled text called them firmlinks, which was a mistake of fact. They are ordinary links, and the text now says so.
+     Real firmlinks keep their name in the real path, so they need no mapping. The
+     `lstat` is the one extra look at the path before the open, so a FIFO or a device is never opened. A swap between
+     the two is caught by comparing device and inode.
+  8. The scan watches every process in the session's tree, and a 2 s timer rescans. The plan named kqueue events with a
+     rescan on each. The system may refuse to let an unprivileged process watch the root, a setuid `login`, and then the
+     shell's fork would go unseen. The timer costs one tree listing per 2 s per tab. If wrong, the timer goes. A client
+     below an unwatchable process is then found only on a later event of a watched sibling.
+  9. A click takes focus and opens beside the clicked pane, with the router's default options. A click is the user's
+     act, as File > Open is.
+  10. The router and the viewer open the path again after the check. The check cannot hand the viewer a descriptor,
+      since the source-taking entry points take a path. A same-user rename in between changes what opens. This is the
+      residual the plan named. It is accepted under ADR-09.
+  11. The REPL pane gets the three new events and ignores them. A click there did nothing before either, since
+      libghostty's own opener refuses these links.
+  12. A review found a stale preview. A tab hidden while the pointer left its link showed that link again when
+      selected. A hidden tab's hover is now forgotten, so the next hover sets it and a click before that is refused.
 - 2026-11-16: ADR candidate (cuts across the system): a caller learns nothing about a user's file outside its read
   scope from any reply, event, or listing, and every applet that shows a user's file must keep it. Undecided. Found
   in M4.

@@ -32,7 +32,7 @@ base. Whether to rebase `agent/petunia` is left to the user.
 |---|---|---|
 | UTERM-015 M4: The path-reading power | DONE | "Let a controller read paths inside an approved directory scope" |
 | UTERM-015 M5: `uniterm open` | DONE | "Open files from a terminal with `uniterm open`" |
-| UTERM-015 M6: Terminal clicks | QUEUED | |
+| UTERM-015 M6: Terminal clicks | DONE | "Open the path a terminal shows on Command-click" |
 | UTERM-015 M7: Launch Services approvals | QUEUED | |
 
 ## Local checks
@@ -218,7 +218,7 @@ Unowned failure: `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAl
 after 15.5 s in one full package run. It was "waiting until the channel ends or answers both writes and the command
 after them". It passed alone in 0.13 s, passed with its class, and passed in the full rerun. The exec driver does not
 use the script listener or the wire this milestone changed. It was not tried on the base commit. It stays an open,
-load-dependent flake, and `spec/flaky-tests.md` gets an entry.
+load-dependent flake. `spec/flaky-tests.md` already had an entry for it from 2026-11-15, which gained this sighting.
 
 Implementer best guesses and deviations, in the proposal's Decision Log entry "M5 work-queue best guesses":
 
@@ -268,6 +268,100 @@ ADR candidates:
   it: "A terminal-session request that cannot identify its originating program cannot use a particular script's
   persistent approval."
 - The uniform reply falls under M4's Undecided candidate on what a caller may learn about a user's file.
+
+### UTERM-015 M6: Terminal clicks
+
+The implementer added Ghostty patch `ThirdParty/ghostty-patches/003-remote-host-and-raw-link-text.patch`. It adds a
+`REMOTE_HOST` action for an OSC 7 that names another host, and it removes libghostty's join and `accessAbsolute` for
+clicked link text. Hover and open-URL now reach the app as `TerminalEvent` cases. `OPEN_URL` is always taken, and
+`link-url`, `link-osc8`, and `link-previews` are set explicitly.
+
+On Command-hover, an overlay at the bottom-left shows the decoded target. A click opens only the string last hovered.
+It goes through an `lstat`, a no-follow open, a device and inode check, and an `F_GETPATH` compare before the router
+places the pane. A remote marker covers a terminal tab for its session's life. It is set by a listed remote client in
+the session's process tree, tracked by process sources with a 2 s rescan, or by the patched OSC 7.
+
+First-pass checks: `make ghostty` passed through `cg_run`, about 110 s per cold build. `make fmt-check`, `make lint`,
+`make check`, `caffeinate -dimsu make test-package` (2805 tests, 10 skipped), and `build-for-testing` passed.
+`proposals.py check` reported nothing on UTERM-015, and `freeze` returned no hunks. The patch's relative-text half was
+shown necessary: with only the remote-host half, `testCommandHoverAndClickReportTheLinkTextAsPrinted` got the joined
+absolute path.
+
+New test classes: `TerminalLinkTargetTests` 14 tests in 0.01 s, `TerminalLinkClickTests` 19 in 0.03 s,
+`RemoteClientWatcherTests` 9 in 0.04 s, `ProcessInspectionTests` 5 in 0.003 s. Two new tests in
+`TerminalSessionIntegrationTests` took 0.26 s and 0.53 s.
+
+UI tests, first run (`cg_run` 3A5SKG, 2026-11-17 00:42): `TerminalLinkUITests`, `TerminalUITests`, and
+`ScriptOpenUITests` ran 15 tests, and 3 failed:
+
+- `TerminalLinkUITests.testCommandClickOnARelativePathOpensNothingAndSaysWhy`: the typed text never reached the first
+  row.
+- `TerminalLinkUITests.testCommandHoverShowsTheTargetAndCommandClickOpensItBesideThePane`: "Lost connection to the
+  application (pid 4564)". No uniterm crash report was written.
+- `ScriptOpenUITests.testACommandOutsideEverySessionIsOfferedAllowOnceOnly`: the question never reached the panel. It
+  had passed at 00:08 on the M5 code.
+
+All 11 `TerminalUITests` passed. The failures went back to the implementer to diagnose.
+
+Implementer best guesses and deviations, in the Decision Log entry "M6 work-queue best guesses":
+
+1. The marker covers one terminal tab for its session's life, not the whole pane. Each tab is its own session.
+2. Text that could show as another path is refused. That covers control, format, separator, and unassigned
+   characters, and `file:` links with a query, fragment, or credentials. The overlay shows the raw path,
+   middle-truncated, not `sanitized()`, which would collapse a double space into another name.
+3. The process tree is tracked with per-process sources plus a 2 s rescan. The plan asked for events only. A setuid
+   root such as `login` cannot be watched.
+4. Patch 003 adds a new action and leaves the PWD action alone.
+5. A click whose text differs from the last hover is refused with a status message.
+6. `~` and `$VAR` paths count as relative, and a relative click posts a message. The settled text said it does
+   nothing, and it was amended.
+7. A click takes focus like File > Open, since it is the user's act.
+
+Review findings and their dispositions:
+
+- Two Rationale sentences contradicted the amended decisions, and "firmlinks such as `/tmp`" is a correction of fact.
+  Sent to fix.
+- A vacuous assertion in the OSC 7 integration test. Sent to fix.
+- No package test showed a click reaching the router, so only the UI tests covered the wiring. PLAUSIBLE. Sent to fix
+  with a window-level test.
+- A stale preview after a tab switch. Sent to fix.
+- An OSC 7 that fails earlier in `reportPwd` sends no host notice. Sent to fix as a known gap.
+- Accepted residuals: a click on a dead network mount parks one thread with no bound, and the watcher keys its root by
+  PID alone. Recorded in As built.
+- adr-impact found no conflict. Advisory: under ADR-12, the routed pane takes focus after the asynchronous check, so a
+  late focus move is possible if the user types elsewhere in the gap.
+
+Fix rounds and their outcomes:
+
+- All five review items were fixed. The stale-preview regression test was shown failing on the old code first. The new
+  `TerminalClickRouteTests`, 4 tests in under 0.2 s, proves a click reaches a real `RoutedOpener` beside the clicked
+  pane.
+- The first relative-path UI failure was a test bug. The synthesized apostrophe in `printf '...'` reached the shell as
+  a control sequence, which `TerminalUITests` already warns about. The test now types `clear; echo <text>`.
+- The second run's lost app was not a crash. The app received a normal terminate, ran for 22 s, and exited 0, and
+  nothing in M6 sends one. The sender was not found.
+- `ScriptOpenUITests.testACommandOutsideEverySessionIsOfferedAllowOnceOnly` passed on its rerun (`cg_run` V5Z2GR) and
+  in later runs. No M6 mechanism for its one failure was found.
+- The relative-path test then failed because it matched the status message by prefix, while the bar prefixes each
+  message with its source. It now uses `contains`, as `StatusBarUITests` does.
+- The overlay truncated a path that fit. The coordinator saw it in the `link-overlay` screenshot. The fix sizes the
+  label from the cell's required size. Its unit test failed first with 696.0 against 697.58 points. The coordinator
+  then saw the whole path in the next screenshot (`cg_run` W21NB8).
+- Both link tests then failed intermittently, 2 of 2 at 01:00 and 4 of 6 at 01:03. The implementer added debug-level
+  logging under the `terminal-link` category, which never logs link text, and a wrapper that streams the log during
+  the run. Two logged three-iteration runs (9X5FME, DVW2EA) passed 12 of 12. The cause is not established. The entry
+  in `spec/flaky-tests.md` has the evidence.
+
+Final-tree checks, run by the coordinator after the last code change:
+- `caffeinate -dimsu make test-package` (`cg_run` 6FGNA4) ran 2810 tests, with 10 skipped and 1 failure. The failure
+  was the known `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread` flake, at 82 turns. It is in
+  `spec/flaky-tests.md`, and M6 touches no text-viewer code.
+- `caffeinate -dimsu make ghostty-offline-check` (`cg_run` 1H9S0R) applied patches 001 to 003 and rebuilt GhosttyKit
+  `83fb95624b04-zig0.17.0-xcode17F113-sdk26.5-e4755e92` with the network off.
+
+ADR candidates: "libghostty never touches a path a program chose" is covered by ADR-01 and ADR-04 together with this
+proposal's settled click rule. "A click acts only on a path the pane showed" governs the terminal applet only. Neither
+passes the cuts-across test.
 
 ## Status
 

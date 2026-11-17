@@ -110,7 +110,8 @@ let package = Package(
         .linkedFramework("AppKit"),
       ]),
     .target(
-      name: "TerminalApplet", dependencies: ["AppletKit", "StatusKit", "TerminalSurface", "Theme"]),
+      name: "TerminalApplet",
+      dependencies: ["AppletKit", "ProcessInspection", "StatusKit", "TerminalSurface", "Theme"]),
     // Reaching a file for a viewer: the stored path and bookmark, and the errors for a missing,
     // protected, or irregular file. It has no AppKit, so the table and map targets share it.
     .target(name: "SourceAccess"),

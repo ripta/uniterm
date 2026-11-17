@@ -385,6 +385,14 @@ public final class WindowSet {
     }
   }
 
+  /// The route a click on a path in a terminal goes through. The app sets it once the router
+  /// exists.
+  public weak var routedOpener: RoutedOpener? {
+    didSet {
+      for controller in controllers { controller.routedOpener = routedOpener }
+    }
+  }
+
   /// How long the quit waits, in all, for drivers to end on SIGTERM before their groups get
   /// SIGKILL. ADR-08 lets the main thread wait this long because the bound is fixed.
   public static let driverQuitGrace: TimeInterval = 0.5
@@ -434,6 +442,7 @@ public final class WindowSet {
     controller.launchAuthority = launchAuthority
     controller.permissionRequests = permissionRequests
     controller.clipboard = clipboard
+    controller.routedOpener = routedOpener
     controller.onClose = { [weak self] controller in
       self?.windowDidClose(controller)
     }

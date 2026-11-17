@@ -118,6 +118,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// The clipboard a driver's typed clipboard requests reach. Without one, they are refused.
   weak var clipboard: (any ScriptClipboard)?
 
+  /// The route a click on a path in a pane goes through. The window set gives every window the
+  /// same one. Without one, a click says so and opens nothing.
+  weak var routedOpener: RoutedOpener?
+
   /// Counts permission questions with no scope, so each gets a key of its own.
   var lastPermissionScope: UInt64 = 0
 
@@ -1508,5 +1512,20 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     _ applet: any Applet, in pane: NodeID, sessionEnded tab: AppletTabID, pid: pid_t, started: Int
   ) {
     onSessionEnded?(scriptWindowID, pane, tab, pid, started)
+  }
+
+  /// A click on a path in a pane. The click is the user's own act, so the routed pane takes focus
+  /// as it does for File > Open. The pane checked that the path is the file it showed.
+  func applet(_ applet: any Applet, in pane: NodeID, open file: URL) {
+    guard let routedOpener else {
+      statusCenter.post(level: .warning, text: "uniterm cannot open files from this pane.")
+      return
+    }
+
+    let anchor = RouteAnchor(controller: self, pane: pane)
+
+    Task { @MainActor in
+      _ = await routedOpener.open([file], from: anchor)
+    }
   }
 }

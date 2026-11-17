@@ -540,6 +540,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       store: SavedChoiceStore(defaults: defaults))
 
     if let routedOpener {
+      windows.routedOpener = routedOpener
       fileOpens = FileOpenCommands(opener: routedOpener)
 
       let coordinator = LaunchOpenCoordinator(

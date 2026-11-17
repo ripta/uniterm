@@ -149,6 +149,32 @@ final class TerminalConfigTests: XCTestCase {
     }
   }
 
+  /// Catches a config that leaves the link match, the OSC 8 links, or the hover preview to
+  /// libghostty's defaults. A click shows its target first, so all three must stay on.
+  func testLinkMatchingAndPreviewsAreSetExplicitly() throws {
+    let text = try TerminalConfig.make(palette: .mocha).render()
+    let lines = Set(text.split(separator: "\n").map(String.init))
+
+    for line in ["link-url = true", "link-osc8 = true", "link-previews = true"] {
+      XCTAssertTrue(lines.contains(line), "missing \(line)")
+    }
+  }
+
+  /// Catches a builder that can switch a link feature off, or set the preview to the OSC 8 only
+  /// mode, which would hide the target of a plain path.
+  func testTheLinkKeysTakeOnlyTrue() {
+    var config = TerminalConfig()
+
+    for (key, value) in [
+      ("link-url", "false"), ("link-osc8", "false"), ("link-previews", "false"),
+      ("link-previews", "osc8"),
+    ] {
+      XCTAssertThrowsError(try config.set(key, value), "\(key) = \(value)") {
+        XCTAssertEqual($0 as? TerminalConfigError, .unsafeValue(key: key))
+      }
+    }
+  }
+
   /// Every rendered line holds exactly one entry, so the line count is the entry count.
   func testRenderedConfigHasOneLinePerEntry() throws {
     let config = try TerminalConfig.make(palette: .mocha)

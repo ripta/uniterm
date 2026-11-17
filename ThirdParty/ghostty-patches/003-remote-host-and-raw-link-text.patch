@@ -1,0 +1,192 @@
+diff --git i/include/ghostty.h w/include/ghostty.h
+index be6c28c..cfe6413 100644
+--- i/include/ghostty.h
++++ w/include/ghostty.h
+@@ -901,6 +901,10 @@ typedef struct {
+   int64_t pid;
+ } ghostty_action_child_started_s;
+ 
++typedef struct {
++  const char* host;
++} ghostty_action_remote_host_s;
++
+ // terminal.osc.Command.ProgressReport.State
+ typedef enum {
+   GHOSTTY_PROGRESS_STATE_REMOVE,
+@@ -1021,6 +1025,7 @@ typedef enum {
+   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
+   GHOSTTY_ACTION_RESIZE_WINDOW,
+   GHOSTTY_ACTION_CHILD_STARTED,
++  GHOSTTY_ACTION_REMOTE_HOST,
+ } ghostty_action_tag_e;
+ 
+ typedef union {
+@@ -1059,6 +1064,7 @@ typedef union {
+   ghostty_action_close_tab_mode_e close_tab_mode;
+   ghostty_surface_message_childexited_s child_exited;
+   ghostty_action_child_started_s child_started;
++  ghostty_action_remote_host_s remote_host;
+   ghostty_action_progress_report_s progress_report;
+   ghostty_action_command_finished_s command_finished;
+   ghostty_action_start_search_s start_search;
+diff --git i/src/Surface.zig w/src/Surface.zig
+index cd5a9dc..5c5504c 100644
+--- i/src/Surface.zig
++++ w/src/Surface.zig
+@@ -1136,6 +1136,22 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
+             );
+         },
+ 
++        .remote_host => |w| {
++            defer w.deinit();
++
++            var stack_buf: [256]u8 = undefined;
++            var stack: std.heap.BufferFirstAllocator = .init(&stack_buf, self.alloc);
++            const alloc = stack.allocator();
++            const str = try alloc.dupeSentinel(u8, w.slice(), 0);
++            defer alloc.free(str);
++
++            _ = try self.rt_app.performAction(
++                .{ .surface = self },
++                .remote_host,
++                .{ .host = str },
++            );
++        },
++
+         .close => self.close(),
+ 
+         .child_started => |v| {
+@@ -2195,29 +2211,6 @@ pub fn pwd(
+     return try alloc.dupe(u8, terminal_pwd);
+ }
+ 
+-/// Resolves a relative file path to an absolute path using the terminal's pwd.
+-fn resolvePathForOpening(
+-    self: *Surface,
+-    path: []const u8,
+-) Allocator.Error!?[]const u8 {
+-    if (!std.fs.path.isAbsolute(path)) {
+-        const terminal_pwd = self.io.terminal.getPwd() orelse {
+-            return null;
+-        };
+-
+-        const resolved = try std.fs.path.resolve(self.alloc, &.{ terminal_pwd, path });
+-
+-        std.Io.Dir.accessAbsolute(global.io(), resolved, .{}) catch {
+-            self.alloc.free(resolved);
+-            return null;
+-        };
+-
+-        return resolved;
+-    }
+-
+-    return null;
+-}
+-
+ /// Returns the x/y coordinate of where the IME (Input Method Editor)
+ /// keyboard should be rendered.
+ pub fn imePoint(self: *const Surface) apprt.IMEPos {
+@@ -4568,11 +4561,10 @@ fn processLinks(self: *Surface, pos: apprt.CursorPos) !bool {
+             });
+             defer self.alloc.free(str);
+ 
+-            const resolved_path = try self.resolvePathForOpening(str);
+-            defer if (resolved_path) |p| self.alloc.free(p);
+-
+-            const url_to_open = resolved_path orelse str;
+-            try self.openUrl(.{ .kind = .unknown, .url = url_to_open });
++            // The text goes to the embedder as it is on screen. A relative path is
++            // never joined to the terminal's working directory or checked on disk here,
++            // so the library touches no path that a program chose.
++            try self.openUrl(.{ .kind = .unknown, .url = str });
+         },
+ 
+         ._open_osc8 => {
+diff --git i/src/apprt/action.zig w/src/apprt/action.zig
+index 9cef233..206703d 100644
+--- i/src/apprt/action.zig
++++ w/src/apprt/action.zig
+@@ -367,6 +367,10 @@ pub const Action = union(Key) {
+     /// The spawned child process has started.
+     child_started: ChildStarted,
+ 
++    /// The program reported a working directory that names another host. The embedder
++    /// is told, and the terminal's own working directory does not change.
++    remote_host: RemoteHost,
++
+     /// Sync with: ghostty_action_tag_e
+     pub const Key = enum(c_int) {
+         quit,
+@@ -440,6 +444,7 @@ pub const Action = union(Key) {
+         move_tab_to_new_window,
+         resize_window,
+         child_started,
++        remote_host,
+ 
+         test "ghostty.h Action.Key" {
+             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+@@ -1016,6 +1021,30 @@ pub const ChildStarted = extern struct {
+     pid: i64,
+ };
+ 
++pub const RemoteHost = struct {
++    host: [:0]const u8,
++
++    // Sync with: ghostty_action_remote_host_s
++    pub const C = extern struct {
++        host: [*:0]const u8,
++    };
++
++    pub fn cval(self: RemoteHost) C {
++        return .{
++            .host = self.host.ptr,
++        };
++    }
++
++    pub fn format(
++        value: @This(),
++        comptime _: []const u8,
++        _: std.fmt.Options,
++        writer: *std.Io.Writer,
++    ) !void {
++        try writer.print("{s}{{ {s} }}", .{ @typeName(@This()), value.host });
++    }
++};
++
+ pub const CommandFinished = struct {
+     exit_code: ?u8,
+     duration: configpkg.Config.Duration,
+diff --git i/src/apprt/surface.zig w/src/apprt/surface.zig
+index dcc2332..a0a6551 100644
+--- i/src/apprt/surface.zig
++++ w/src/apprt/surface.zig
+@@ -137,6 +137,9 @@ pub const Message = union(enum) {
+     /// The terminal has reported a change in the working directory.
+     pwd_change: WriteReq,
+ 
++    /// The terminal received a working directory report that names another host.
++    remote_host: WriteReq,
++
+     /// The terminal encountered a bell character.
+     ring_bell,
+ 
+diff --git i/src/termio/stream_handler.zig w/src/termio/stream_handler.zig
+index 0f1ee50..409b03a 100644
+--- i/src/termio/stream_handler.zig
++++ w/src/termio/stream_handler.zig
+@@ -1579,6 +1579,15 @@ pub const StreamHandler = struct {
+         };
+         if (!host_valid) {
+             log.warn("OSC 7 host ({s}) must be local", .{host.bytes});
++
++            // The embedder learns that output came from another host. The terminal's own
++            // working directory stays as it was.
++            if (apprt.surface.Message.WriteReq.init(self.alloc, host.bytes)) |req| {
++                self.surfaceMessageWriter(.{ .remote_host = req });
++            } else |err| {
++                log.warn("error notifying surface of remote host err={}", .{err});
++            }
++
+             return;
+         }
+ 

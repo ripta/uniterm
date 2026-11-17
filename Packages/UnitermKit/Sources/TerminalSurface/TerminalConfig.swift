@@ -14,13 +14,14 @@ public enum TerminalConfigError: Error, Equatable {
 /// outside a small safe alphabet. It never escapes, because a rejected value cannot be misread.
 public struct TerminalConfig: Sendable, Equatable {
   /// The only keys uniterm writes. `confirm-close-surface` is here for `true` only. The inherit keys
-  /// are here for `false` only, and `working-directory` for `home` only.
+  /// are here for `false` only, and `working-directory` for `home` only. The link keys are here for
+  /// `true` only, since a click needs the link match and the hover that shows its target.
   static let allowedKeys: Set<String> = [
     "background", "foreground", "cursor-color", "cursor-text", "selection-background",
     "selection-foreground", "palette", "keybind", "shell-integration",
     "shell-integration-features", "clipboard-read", "clipboard-write", "confirm-close-surface",
     "working-directory", "window-inherit-working-directory", "tab-inherit-working-directory",
-    "split-inherit-working-directory",
+    "split-inherit-working-directory", "link-url", "link-osc8", "link-previews",
   ]
 
   private static let requiredValues: [String: String] = [
@@ -29,6 +30,9 @@ public struct TerminalConfig: Sendable, Equatable {
     "window-inherit-working-directory": "false",
     "tab-inherit-working-directory": "false",
     "split-inherit-working-directory": "false",
+    "link-url": "true",
+    "link-osc8": "true",
+    "link-previews": "true",
   ]
 
   private static let safeValueScalars: CharacterSet = {
@@ -91,6 +95,12 @@ public struct TerminalConfig: Sendable, Equatable {
     try config.set("window-inherit-working-directory", "false")
     try config.set("tab-inherit-working-directory", "false")
     try config.set("split-inherit-working-directory", "false")
+
+    // Command-hover shows a link's target and Command-click reports it. Both need the match, the
+    // OSC 8 links, and the preview on, so none of them is left to libghostty's default.
+    try config.set("link-url", "true")
+    try config.set("link-osc8", "true")
+    try config.set("link-previews", "true")
 
     // Writes ask so that libghostty sends a Kitty write to the confirm callback, which denies it.
     // OSC 52 writes still go through without a prompt.

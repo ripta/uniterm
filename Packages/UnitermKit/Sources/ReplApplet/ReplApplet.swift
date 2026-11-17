@@ -506,7 +506,8 @@ public final class ReplApplet: Applet, InputOwning {
         ProcessIdentity(pid: identity.pid, started: identity.started),
         generation: identity.sessionGeneration)
 
-    case .titleChanged, .workingDirectoryChanged, .commandFinished, .notification, .bell:
+    case .titleChanged, .workingDirectoryChanged, .commandFinished, .notification, .bell,
+      .linkHovered, .linkOpenRequested, .remoteHostReported:
       break
     }
   }

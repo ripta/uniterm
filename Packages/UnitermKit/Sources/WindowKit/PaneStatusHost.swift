@@ -124,4 +124,8 @@ final class PaneStatusHost: AppletHost {
   func applet(_ applet: any Applet, sessionEnded tab: AppletTabID, pid: pid_t, started: Int) {
     window?.applet(applet, in: pane, sessionEnded: tab, pid: pid, started: started)
   }
+
+  func applet(_ applet: any Applet, open file: URL) {
+    window?.applet(applet, in: pane, open: file)
+  }
 }

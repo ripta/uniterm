@@ -47,6 +47,36 @@ public enum ProcessInspection {
     return String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
   }
 
+  /// The name the kernel keeps for the given process, which is the last component of the path it
+  /// ran, cut to the kernel's limit. Returns nil when the process does not exist.
+  public static func name(of pid: pid_t) -> String? {
+    var buffer = [UInt8](repeating: 0, count: 256)
+    let length = proc_name(pid, &buffer, UInt32(buffer.count))
+
+    guard length > 0 else { return nil }
+
+    return String(decoding: buffer.prefix(Int(length)), as: UTF8.self)
+  }
+
+  /// The direct children of the given process that are alive now. A child that exits or forks
+  /// while this runs may be missing or new by the time the caller looks at it.
+  public static func children(of pid: pid_t) -> [pid_t] {
+    var capacity = 64
+
+    while true {
+      var buffer = [pid_t](repeating: 0, count: capacity)
+
+      // The call returns a count of PIDs, not bytes.
+      let count = Int(proc_listchildpids(pid, &buffer, Int32(capacity * MemoryLayout<pid_t>.size)))
+
+      guard count > 0 else { return [] }
+
+      if count < capacity { return buffer.prefix(count).filter { $0 > 0 } }
+
+      capacity *= 2
+    }
+  }
+
   /// The kernel's record of a live process. For a PID that does not exist, sysctl succeeds but
   /// returns no bytes, so the size and the PID are both checked.
   ///

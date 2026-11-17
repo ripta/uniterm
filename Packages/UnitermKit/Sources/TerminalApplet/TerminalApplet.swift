@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import OSLog
 import StatusKit
 import TerminalSurface
 import Theme
@@ -39,6 +40,17 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     var failedExitCode: Int?
     var processIdentity: (pid: pid_t, started: Int)?
 
+    /// The link under the pointer as of its last hover, exactly as libghostty reported it. A click
+    /// opens only a link whose text equals it.
+    var hoveredLink: String?
+
+    /// Why this tab's output may be from another host. It is set once and lives as long as the
+    /// session. libghostty cannot mark single rows, so it covers the whole tab.
+    var remoteSource: RemoteSource?
+
+    /// Looks for a remote client below the session's root process, until one is found.
+    var remoteWatcher: (any RemoteClientWatching)?
+
     /// A program-mode tab restored from a description. It has no session until the user runs it.
     var awaitingRun = false
 
@@ -55,7 +67,22 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     }
   }
 
+  /// What made a tab's output look remote.
+  enum RemoteSource: Equatable {
+    /// A remote client ran below the session's root. The value is its name.
+    case client(String)
+
+    /// A program reported a working directory on another host. The value is the host.
+    case host(String)
+  }
+
+  /// What the preview says in place of a target while the tab's output may be remote.
+  static let remoteNotice = "This output may be from another host. A click opens nothing."
+
   private static let defaultTitle = "Terminal"
+
+  /// Debug-level only. It logs outcomes and lengths, never the text of a link.
+  private static let linkLog = Logger(subsystem: "dev.uniterm.app", category: "terminal-link")
 
   public let typeID = TerminalDescription.typeID
   public let view: NSView
@@ -67,6 +94,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   private let container = TerminalContainerView()
   private let tabBar = AppletTabBar()
   private let runPrompt = TerminalRunPrompt()
+  private let linkPreview = TerminalLinkPreview()
   private let engine: any TerminalEngine
   private let mode: TerminalDescription.Mode
   private let commandLine: String?
@@ -77,6 +105,15 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   private var selectedIndex: Int
   private var started = false
   private var closingTab = false
+
+  /// Makes the watcher that looks for a remote client in a session's process tree. Tests replace
+  /// it.
+  var makeRemoteWatcher: RemoteWatcherFactory = { root, found in
+    RemoteClientWatcher(root: root, found: found)
+  }
+
+  /// The check and the open of the last click on a path. A test waits on it.
+  private(set) var linkClick: Task<Void, Never>?
 
   /// The most closed tabs the applet remembers. A policy value with no setting, equal to the
   /// window's pane undo depth.
@@ -214,6 +251,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     container.setAccessibilityIdentifier("terminal-applet")
     container.addSubview(tabBar)
     container.addSubview(runPrompt)
+    container.addSubview(linkPreview)
     runPrompt.isHidden = true
     runPrompt.onRun = { [weak self] in self?.runPendingProgram() }
     container.onResize = { [weak self] in self?.layoutContents() }
@@ -326,6 +364,8 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
         host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
         tab.processIdentity = nil
       }
+      tab.remoteWatcher?.stop()
+      tab.remoteWatcher = nil
       tab.session?.view.removeFromSuperview()
       tab.session?.close()
       tab.session = nil
@@ -362,6 +402,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   public func apply(_ palette: ThemePalette) {
     tabBar.apply(palette)
     runPrompt.apply(palette)
+    linkPreview.apply(palette)
   }
 
   /// Every running tab takes the new clipboard policy before this returns, so a tab in the
@@ -611,6 +652,8 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       host?.applet(self, sessionEnded: tab.id, pid: identity.pid, started: identity.started)
       tab.processIdentity = nil
     }
+    tab.remoteWatcher?.stop()
+    tab.remoteWatcher = nil
     tab.session?.view.removeFromSuperview()
     tab.session?.close()
     tab.session = nil
@@ -631,6 +674,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
   private func startSession(for tab: Tab) throws {
     let session = try engine.makeSession(launch: tab.launch, clipboardPolicy: clipboardPolicy)
+    tab.remoteWatcher?.stop()
+    tab.remoteWatcher = nil
+    tab.remoteSource = nil
+    tab.hoveredLink = nil
     tab.session = session
     session.onEvent = { [weak self, weak tab] event in
       guard let self, let tab else { return }
@@ -640,6 +687,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
     session.view.isHidden = true
     container.addSubview(session.view)
+    container.addSubview(linkPreview)
   }
 
   private var hasFocus: Bool {
@@ -657,6 +705,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
       if !shown {
         tab.session?.setFocused(false)
+
+        // The pointer may leave a hidden tab's link with no report, so its hover cannot be trusted
+        // when the tab shows again. The next hover sets it.
+        tab.hoveredLink = nil
       }
 
       tab.session?.setVisible(shown)
@@ -668,7 +720,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
     runPrompt.command = commandLine ?? ""
     runPrompt.isHidden = !isAwaitingRun
-    layoutContents()
+    updateLinkPreview()
   }
 
   private func layoutContents() {
@@ -685,6 +737,8 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     for tab in tabs {
       tab.session?.view.frame = content
     }
+
+    linkPreview.place(in: content)
   }
 
   // MARK: Events
@@ -713,8 +767,23 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
         host?.appletDidChange(self)
       }
 
+    case .linkHovered(let text):
+      Self.linkLog.debug(
+        "hover received present=\(text != nil, privacy: .public) selected=\(isSelected, privacy: .public)"
+      )
+      tab.hoveredLink = text
+
+      if isSelected { updateLinkPreview() }
+
+    case .linkOpenRequested(let text):
+      linkClick = openLink(text, in: tab)
+
+    case .remoteHostReported(let host):
+      markRemote(.host(host), in: tab)
+
     case .processStarted(let identity):
       tab.processIdentity = (pid: identity.pid, started: identity.started)
+      watchForRemoteClients(in: tab, root: identity.pid)
       host?.applet(
         self, sessionStarted: tab.id, pid: identity.pid, started: identity.started,
         generation: identity.sessionGeneration)
@@ -752,6 +821,135 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
         removeTab(at: index)
       }
     }
+  }
+
+  // MARK: Links
+
+  /// What the preview shows for a tab, or nil for nothing. It shows where a click would open, and
+  /// only for a link that names a path. A tab that may hold remote output says so and shows no
+  /// target.
+  private func previewText(for tab: Tab) -> String? {
+    guard let hovered = tab.hoveredLink else { return nil }
+
+    switch TerminalLinkTarget.classify(hovered) {
+    case .notAFile:
+      return nil
+
+    case .refused:
+      return tab.remoteSource == nil ? nil : Self.remoteNotice
+
+    case .file(let path):
+      return tab.remoteSource == nil ? path : Self.remoteNotice
+    }
+  }
+
+  private func updateLinkPreview() {
+    linkPreview.text = selectedTab.flatMap { previewText(for: $0) }
+    layoutContents()
+  }
+
+  /// Handles a click on a link. A click opens only a path that the preview showed, and only when
+  /// the tab holds no output that may be remote. The path is then checked against the file system
+  /// off the main thread, and routed as an open from this pane.
+  ///
+  /// Anything else says why nothing opened, except a link that is not a path, which does nothing.
+  @discardableResult
+  private func openLink(_ text: String, in tab: Tab) -> Task<Void, Never>? {
+    let target = TerminalLinkTarget.classify(text)
+
+    if target == .notAFile {
+      Self.linkLog.debug("click outcome=not-a-file")
+      return nil
+    }
+
+    guard text == tab.hoveredLink else {
+      Self.linkLog.debug(
+        "click outcome=changed hovered=\(tab.hoveredLink != nil, privacy: .public)")
+      refuse(.changed)
+      return nil
+    }
+
+    guard tab.remoteSource == nil else {
+      Self.linkLog.debug("click outcome=remote")
+      refuse(.remoteOutput)
+      return nil
+    }
+
+    switch target {
+    case .notAFile:
+      return nil
+
+    case .refused(let refusal):
+      Self.linkLog.debug(
+        "click outcome=refused reason=\(String(describing: refusal), privacy: .public)")
+      refuse(refusal)
+      return nil
+
+    case .file(let path):
+      let id = tab.id
+
+      return Task { @MainActor [weak self] in
+        let refusal = await LinkClickVerifier.verify(path)
+
+        guard let self, let tab = self.tabs.first(where: { $0.id == id }) else { return }
+
+        if let refusal {
+          Self.linkLog.debug(
+            "click outcome=verify-refused reason=\(String(describing: refusal), privacy: .public)")
+          self.refuse(refusal)
+          return
+        }
+
+        guard tab.remoteSource == nil else {
+          Self.linkLog.debug("click outcome=remote-after-verify")
+          self.refuse(.remoteOutput)
+          return
+        }
+
+        Self.linkLog.debug("click outcome=open")
+        self.host?.applet(self, open: URL(fileURLWithPath: path, isDirectory: false))
+      }
+    }
+  }
+
+  private func refuse(_ refusal: TerminalLinkRefusal) {
+    alerts.deliver(.warning, refusal.message, from: self, to: host)
+  }
+
+  /// Starts looking for a remote client below the session's root. The session root is the process
+  /// libghostty spawned, so the tree is exactly what this tab runs.
+  private func watchForRemoteClients(in tab: Tab, root: pid_t) {
+    tab.remoteWatcher?.stop()
+    tab.remoteWatcher = nil
+
+    guard tab.remoteSource == nil else { return }
+
+    let id = tab.id
+
+    tab.remoteWatcher = makeRemoteWatcher(root) { [weak self] client in
+      Task { @MainActor in
+        guard let self, let tab = self.tabs.first(where: { $0.id == id }) else { return }
+
+        self.markRemote(.client(client), in: tab)
+      }
+    }
+  }
+
+  /// Marks the tab's output as possibly remote for the rest of its session. The marker never
+  /// clears, since the output a remote client wrote stays in the scrollback after it exits.
+  private func markRemote(_ source: RemoteSource, in tab: Tab) {
+    guard tab.remoteSource == nil else { return }
+
+    tab.remoteSource = source
+    tab.remoteWatcher?.stop()
+    tab.remoteWatcher = nil
+
+    if tab === selectedTab { updateLinkPreview() }
+  }
+
+  /// Whether the tab holds output that may be from another host, and why. Tests read it.
+  func remoteSource(ofTabAt index: Int) -> RemoteSource? {
+    tabs.indices.contains(index) ? tabs[index].remoteSource : nil
   }
 
   /// The terminal's state is its directory and the exit code of the last command when it failed.

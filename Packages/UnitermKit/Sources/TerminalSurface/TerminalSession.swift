@@ -186,6 +186,19 @@ public enum TerminalEvent: Sendable {
   /// `isRunningSomething`.
   case commandFinished(exitCode: Int?, duration: Duration)
 
+  /// With Command held, the pointer moved onto a link, or off it. The text is the link's target for
+  /// an OSC 8 hyperlink, and the text on screen for any other link, so a hyperlink's text can differ
+  /// from it. Nothing is looked up for it. A program chose it.
+  case linkHovered(String?)
+
+  /// The user clicked a link with Command held. The text is the same kind as the hover's. The
+  /// engine opens nothing, so the owner decides what the click does.
+  case linkOpenRequested(String)
+
+  /// A program reported a working directory that names another host with OSC 7. The engine does not
+  /// adopt it, and `workingDirectory` keeps its value.
+  case remoteHostReported(String)
+
   /// A program sent OSC 9 or OSC 777.
   case notification(title: String, body: String)
 

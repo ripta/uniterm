@@ -1,5 +1,6 @@
 import AppKit
 internal import GhosttyKit
+import OSLog
 import UniformTypeIdentifiers
 
 /// One libghostty surface hosted in an NSView.
@@ -268,6 +269,15 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
     case .configChanged:
       configChangeCount += 1
+
+    case .linkHovered(let text):
+      onEvent?(.linkHovered(text.isEmpty ? nil : text))
+
+    case .linkOpenRequested(let text):
+      onEvent?(.linkOpenRequested(text))
+
+    case .remoteHost(let host):
+      onEvent?(.remoteHostReported(host))
 
     case .exited:
       guard !hasExited else { return }
@@ -608,6 +618,9 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   override func mouseDown(with event: NSEvent) {
     guard let surface else { return }
 
+    Self.linkLog.debug(
+      "press mods=\(Self.mods(event.modifierFlags).rawValue, privacy: .public)")
+
     if window?.firstResponder !== self {
       window?.makeFirstResponder(self)
     }
@@ -618,6 +631,9 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
   override func mouseUp(with event: NSEvent) {
     guard let surface else { return }
+
+    Self.linkLog.debug(
+      "release mods=\(Self.mods(event.modifierFlags).rawValue, privacy: .public)")
 
     ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, Self.mods(event.modifierFlags))
@@ -676,9 +692,16 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     guard let surface else { return }
 
     let position = convert(event.locationInWindow, from: nil)
-    ghostty_surface_mouse_pos(
-      surface, position.x, frame.height - position.y, Self.mods(event.modifierFlags))
+    let mods = Self.mods(event.modifierFlags)
+    Self.linkLog.debug(
+      "pointer x=\(position.x, privacy: .public) y=\(self.frame.height - position.y, privacy: .public) mods=\(mods.rawValue, privacy: .public) type=\(event.type.rawValue, privacy: .public)"
+    )
+    ghostty_surface_mouse_pos(surface, position.x, frame.height - position.y, mods)
   }
+
+  /// Debug-level only, so it costs nothing in release and is not stored. It carries positions,
+  /// modifier bits, and lengths, never the text of a link.
+  private static let linkLog = Logger(subsystem: "dev.uniterm.app", category: "terminal-link")
 
   override func scrollWheel(with event: NSEvent) {
     guard let surface else { return }
@@ -818,6 +841,10 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   }
 
   override func flagsChanged(with event: NSEvent) {
+    Self.linkLog.debug(
+      "flags mods=\(Self.mods(event.modifierFlags).rawValue, privacy: .public) key=\(event.keyCode, privacy: .public)"
+    )
+
     let mask: UInt32
 
     switch event.keyCode {
