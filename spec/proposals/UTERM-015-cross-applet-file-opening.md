@@ -1,6 +1,6 @@
 # UTERM-015: Cross-Applet File Opening
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-03
 **Updated:** 2026-11-17
 
@@ -1426,6 +1426,8 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
      authority they isolate. `testTheAsyncCheckAnswersLikeTheSyncOne` is retired. `testAClickOpensExactlyTheShownFile`
      and `testAMissingPathSaysSo` already run the real async check through the applet and prove both answers.
 
+- 2026-11-17: Implemented. M4 to M7 finished in the work-queue run recorded in
+  `spec/reports/20261116-uterm-015-m4-m7-cross-applet-file-opening.md`, and every milestone is DONE.
 
 ## References
 
