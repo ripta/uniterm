@@ -10,24 +10,6 @@ import XCTest
 
 @testable import WindowKit
 
-/// Records every path the router looked at. A request that is pending, denied, or withdrawn must
-/// leave it empty, since a look at a program-chosen path can raise a privacy prompt under uniterm's
-/// name.
-private final class PathSpy: @unchecked Sendable {
-  private let lock = NSLock()
-  private var seen: [String] = []
-
-  var looked: [String] { lock.withLock { seen } }
-
-  var reader: PathKindReader {
-    { [self] url in
-      lock.withLock { seen.append(url.path) }
-
-      return PathInspector.kind(of: url)
-    }
-  }
-}
-
 /// A program's open through the real host, listener, coordinator, router, and windows, with fixture
 /// applets. They prove that no path is looked at before the user allows it, that an allowed open
 /// lands beside the caller's pane with no focus change, and that one approval covers a batch.
@@ -149,6 +131,10 @@ final class ScriptOpenWindowTests: XCTestCase {
   /// Catches a program's open that moves the keyboard or lands in the wrong place. The approved open
   /// splits the caller's own pane, starts in the file's folder, and leaves focus on the caller's
   /// pane, as a pane a program opens must. The router looks at the path only now.
+  ///
+  /// This is the placement contract through the `uniterm open` authority: a command's own terminal
+  /// session names the anchor. The Launch Services test of the same contract isolates the sender
+  /// authority, where the focused pane of the key window is the anchor.
   func testAnAllowedOpenSplitsBesideTheCallersPaneAndTakesNoFocus() async throws {
     let file = try fixture.textFile("a.txt")
     let focused = anchor.controller.focusedPane

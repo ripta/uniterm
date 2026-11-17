@@ -240,4 +240,73 @@ final class PathReadWindowTests: XCTestCase {
         "refused": .array([.string("escape.txt")]),
       ]))
   }
+
+  /// Catches a walk on a dead mount that parks another thread with every command. The opener
+  /// blocks, as an open on a hung network volume does. A second command from the same connection
+  /// is refused at once with the answer any outside path gets, another connection is not held up by
+  /// it, and the slot comes back when the walk returns. It cannot prove how many threads the system
+  /// would park, only that the walk count per connection stays under the bound.
+  func testAConnectionCannotKeepMoreWalksRunningThanTheBound() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let (pane, _) = try pathsPane(controller)
+    let gate = DispatchSemaphore(value: 0)
+    let entered = DispatchSemaphore(value: 0)
+
+    let scripting = WindowScripting(
+      windows: fixture.windows,
+      scopedOpener: { path, scope in
+        entered.signal()
+        _ = gate.wait(timeout: .now() + 5)
+
+        return ScopedOpen.open(path: path, in: scope)
+      }, maxWalksPerCaller: 1)
+
+    let access = ReadAccess(scope: scope)
+    let path = base.path + "/scope/a.txt"
+    let window = controller.scriptWindowID
+
+    func waitFor(_ signal: DispatchSemaphore) async {
+      await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+          signal.wait()
+          continuation.resume()
+        }
+      }
+    }
+
+    func read(connection: UInt64) async throws -> ScriptValue {
+      try await scripting.sendCommand(
+        to: .pane(ScriptPaneReference(window: window, pane: pane.rawValue)),
+        appletType: PathsFixture.typeID, schemaVersion: ScriptSchemaVersion(major: 1),
+        command: "read-file", arguments: #"{"path":\#(try Self.json(path))}"#,
+        caller: ScriptCaller(connection: connection, window: window, pane: controller.focusedPane),
+        access: { access }, stillAllowed: {})
+    }
+
+    let first = Task { try await read(connection: 1) }
+
+    await waitFor(entered)
+
+    do {
+      _ = try await read(connection: 1)
+      XCTFail("a second walk ran beside the first")
+    } catch let error as ScriptCallError {
+      XCTAssertEqual(error.kind, .refused)
+    }
+
+    gate.signal()
+    let firstValue = try await first.value
+
+    XCTAssertEqual(firstValue, .record(["text": .string("inside")]))
+
+    let again = Task { try await read(connection: 1) }
+
+    await waitFor(entered)
+    gate.signal()
+
+    let againValue = try await again.value
+
+    XCTAssertEqual(againValue, .record(["text": .string("inside")]), "the slot returns")
+  }
 }

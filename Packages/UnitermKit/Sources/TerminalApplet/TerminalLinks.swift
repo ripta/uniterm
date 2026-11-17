@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import SourceAccess
 
 /// Why a click on a path opened nothing. The text goes to the pane's status bar.
 enum TerminalLinkRefusal: Equatable {
@@ -25,6 +26,9 @@ enum TerminalLinkRefusal: Equatable {
   /// Nothing opens at the path, or it is not a file or a folder.
   case unavailable
 
+  /// An earlier click in this tab is still being checked.
+  case stillChecking
+
   var message: String {
     switch self {
     case .relative:
@@ -48,6 +52,9 @@ enum TerminalLinkRefusal: Equatable {
 
     case .unavailable:
       return "Not opened: nothing there can be opened."
+
+    case .stillChecking:
+      return "Not opened: a previous click is still being checked."
     }
   }
 }
@@ -197,12 +204,7 @@ enum LinkClickVerifier {
       after.st_mode & S_IFMT == before.st_mode & S_IFMT
     else { return .differs }
 
-    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-
-    guard fcntl(descriptor, F_GETPATH, &buffer) != -1 else { return .unavailable }
-
-    let length = buffer.firstIndex(of: 0) ?? buffer.count
-    let real = String(decoding: buffer.prefix(length).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    guard let real = DescriptorPath.read(descriptor) else { return .unavailable }
 
     return TerminalLinkTarget.normalized(real) == TerminalLinkTarget.normalized(path)
       ? nil : .differs

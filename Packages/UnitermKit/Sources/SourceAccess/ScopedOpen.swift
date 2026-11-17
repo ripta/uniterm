@@ -148,7 +148,7 @@ public final class OpenedPath: @unchecked Sendable, Equatable {
 
   func openMemberNow(named name: String) -> Result<OpenedPath, ScopedOpenError> {
     guard case .folder = kind, !name.isEmpty, name != ".", name != "..", !name.contains("/"),
-      !name.utf8.contains(0), let path = ScopedOpen.realPath(of: fileDescriptor)
+      !name.utf8.contains(0), let path = DescriptorPath.read(fileDescriptor)
     else { return .failure(.unavailable) }
 
     return ScopedOpen.open(
@@ -324,24 +324,14 @@ public enum ScopedOpen {
 
   /// True when the open descriptor's real path lies in the resolved `roots` now.
   static func holds(descriptor: Int32, roots: [Root], protected: ProtectedLocations) -> Bool {
-    guard let real = realPath(of: descriptor), let names = PathComparison.plainComponents(of: real)
+    guard let real = DescriptorPath.read(descriptor),
+      let names = PathComparison.plainComponents(of: real)
     else { return false }
 
     return roots.contains { root in
       root.comparison.isInside(names, root.resolved)
         && protected.place(holding: names, strictlyInside: root.resolved) == nil
     }
-  }
-
-  /// The real path of an open descriptor, as the system reports it.
-  static func realPath(of descriptor: Int32) -> String? {
-    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
-
-    guard fcntl(descriptor, F_GETPATH, &buffer) == 0 else { return nil }
-
-    let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-
-    return String(decoding: bytes, as: UTF8.self)
   }
 
   /// Judges an opened descriptor and keeps it, or closes it. It must be a regular file or a
@@ -368,7 +358,8 @@ public enum ScopedOpen {
       return .failure(.unavailable)
     }
 
-    guard let real = realPath(of: descriptor), let names = PathComparison.plainComponents(of: real),
+    guard let real = DescriptorPath.read(descriptor),
+      let names = PathComparison.plainComponents(of: real),
       roots.contains(where: { root in
         root.comparison.isInside(names, root.resolved)
           && protected.place(

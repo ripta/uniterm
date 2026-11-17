@@ -8,6 +8,24 @@ import XCTest
 
 @testable import WindowKit
 
+/// Records every path the router looked at. A request that is pending, denied, withdrawn, or whose
+/// sender exited must leave it empty, since a look at a program-chosen path can raise a privacy
+/// prompt under uniterm's name. Pass `reader` as the fixture's `pathKind`.
+final class PathSpy: @unchecked Sendable {
+  private let lock = NSLock()
+  private var seen: [String] = []
+
+  var looked: [String] { lock.withLock { seen } }
+
+  var reader: PathKindReader {
+    { [self] url in
+      lock.withLock { seen.append(url.path) }
+
+      return PathInspector.kind(of: url)
+    }
+  }
+}
+
 /// Windows, a router, and fixture applets. A text file routes to a viewer. A folder routes to a
 /// fixture terminal. Types come from the real type database, so the fixtures use real files.
 @MainActor

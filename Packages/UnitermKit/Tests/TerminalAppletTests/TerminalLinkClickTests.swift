@@ -32,6 +32,26 @@ private final class FakeWatcher: RemoteClientWatching, @unchecked Sendable {
   }
 }
 
+/// A check that waits until the test lets it go, in place of an open that never returns.
+@MainActor
+private final class CheckGate {
+  private var continuation: CheckedContinuation<Void, Never>?
+  private(set) var started = 0
+
+  var isHolding: Bool { continuation != nil }
+
+  func hold() async {
+    started += 1
+
+    await withCheckedContinuation { continuation = $0 }
+  }
+
+  func release() {
+    continuation?.resume()
+    continuation = nil
+  }
+}
+
 /// What the applet does with a hover and a click on text in the terminal, through the session
 /// protocol and the host. The file system is real, since the check of the opened path is part of
 /// the contract.
@@ -380,6 +400,44 @@ final class TerminalLinkClickTests: XCTestCase {
 
     XCTAssertTrue(host.openedFiles.isEmpty)
     XCTAssertEqual(host.posts.map(\.text), [TerminalLinkRefusal.remoteOutput.message])
+  }
+
+  /// Catches a click loop that parks a thread per click. The check of the first click never
+  /// returns, as an open on a dead network mount does not. A second click in the tab is refused at
+  /// once and says why, and the tab clicks again once the check returns. It cannot prove the
+  /// system's thread count, only that a tab has one check at a time.
+  func testAClickWhileAnEarlierOneIsBeingCheckedIsRefused() async throws {
+    let (applet, _, host, session) = makeApplet()
+    let file = try makeFile("a.txt")
+    let gate = CheckGate()
+
+    applet.verifyLink = { _ in
+      await gate.hold()
+
+      return nil
+    }
+
+    hover(session, file)
+    session.onEvent?(.linkOpenRequested(file))
+
+    let first = try XCTUnwrap(applet.linkClick)
+
+    while !gate.isHolding { await Task.yield() }
+
+    session.onEvent?(.linkOpenRequested(file))
+
+    XCTAssertEqual(gate.started, 1, "a second check began beside the first")
+    XCTAssertEqual(host.posts.map(\.text), [TerminalLinkRefusal.stillChecking.message])
+
+    gate.release()
+    await first.value
+
+    XCTAssertEqual(host.openedFiles, [URL(fileURLWithPath: file)])
+
+    applet.verifyLink = { _ in nil }
+    await click(file, in: applet, session)
+
+    XCTAssertEqual(host.openedFiles.count, 2, "the tab never clicked again")
   }
 
   /// Catches a marker shared between tabs. One tab's session is its own terminal, so a remote

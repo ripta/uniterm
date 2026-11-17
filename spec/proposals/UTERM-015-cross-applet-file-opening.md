@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-03
-**Updated:** 2026-11-16
+**Updated:** 2026-11-17
 
 ## Dependencies
 
@@ -14,8 +14,8 @@
 - UTERM-004 M4: M1's check that a routed split never joins a group a controller owns. Until it lands, the check runs
   against a fixture group
 - UTERM-004 M6: M4's grants, M7's approvals for senders other than Apple's openers, and M5's session approval all use
-  its approval flow and pending indicator. M5 and M7 start only after it. Until it lands, M2 refuses other senders.
-  Amended 2026-11-03; see Decision Log.
+  its approval flow and pending indicator. M5 and M7 started after it, and it has landed. Amended 2026-11-17; see
+  Decision Log.
 
 ## Impacts
 
@@ -46,7 +46,7 @@ folder routed to the terminal opens a new terminal there.
 Each entry point has an authority. File > Open and Apple's own openers, such as Finder, are the user's act. Other
 programs that open files through Launch Services, and `uniterm open`, need the user's approval, which lasts at most for
 the sender's run or the terminal session. A click opens only the target uniterm showed on hover. This proposal also
-defines the path-reading power under ADR-09, which lets a controller ask an applet to read a path inside an explicit
+defines the path-reading power under ADR-14, which lets a controller ask an applet to read a path inside an explicit
 directory scope.
 
 ## Motivation
@@ -57,8 +57,8 @@ deciding it inside one applet would change the factory every applet implements. 
 to be filed before a second viewer among UTERM-006 to UTERM-008 starts its first milestone. UTERM-006 M1 is gated on it
 directly.
 
-UTERM-006 also settled that asking an applet to read a path is a power of its own under ADR-09, apart from pane
-control. ADR-09 lists no such power, and UTERM-005, UTERM-006, UTERM-007, and UTERM-009 each need the same one. One
+UTERM-006 also settled that asking an applet to read a path is a power of its own under ADR-14, apart from pane
+control. ADR-14 lists no such power, and UTERM-005, UTERM-006, UTERM-007, and UTERM-009 each need the same one. One
 definition keeps them from diverging.
 
 Today the app has no file-open path at all. It declares no document types, binds no Cmd-O, has no `uniterm` command,
@@ -97,7 +97,7 @@ every way a file arrives.
 
 ### The path-reading power
 
-Asking an applet to read a path on a controller's behalf is its own power under ADR-09. This proposal defines it once
+Asking an applet to read a path on a controller's behalf is its own power under ADR-14. This proposal defines it once
 for every applet, with the shape UTERM-006 settled:
 
 - It is separate from pane control. Control of a pane grants no read, and a read grant controls no pane.
@@ -275,17 +275,17 @@ remembered past the sender's run.
   file, and a pending indicator with no room each post a bounded, coalesced message that names the sender and says
   why, and touch no path. Amended 2026-11-17; see Decision Log.
 - A program with Automation consent over Finder can make Finder the sender. The event carries no originator, so this
-  cannot be closed. It is accepted under ADR-09's statement that uniterm gives no isolation from the user's own
+  cannot be closed. It is accepted under ADR-14's statement that uniterm gives no isolation from the user's own
   processes.
 - M2 recorded which sender `open -a` reports, cold and warm. M8 records what a cold-launch Finder open and a warm one
   report. If Finder and `open -a` cannot be told apart, this question reopens. Amended 2026-11-03; see Decision
   Log.
 
-Rationale: accepting every sender lets any program open panes with no grant, which ADR-09 forbids. Refusing every
+Rationale: accepting every sender lets any program open panes with no grant, which ADR-14 forbids. Refusing every
 other sender breaks third-party file managers and launchers with no recovery. Remembered trust in a launcher such as
-Alfred or Raycast would trust every script it runs, which ADR-09 forbids for a shared interpreter. UTERM-004 also
+Alfred or Raycast would trust every script it runs, which ADR-14 forbids for a shared interpreter. UTERM-004 also
 remembers only powers a controller declares at startup, and an Apple Event sender declares none. Allow once alone
-would ask a launcher user on every open, the habitual approval ADR-09's context warns against. A session grant honestly
+would ask a launcher user on every open, the habitual approval ADR-14's context warns against. A session grant honestly
 labelled, bound to the live sender, follows the pattern UTERM-004 already uses for OSC 52.
 
 ### Several files at once
@@ -334,15 +334,16 @@ routed pane.
 - The anchor is the pane the request came from. A terminal click anchors to the clicked pane. `uniterm open` from a
   terminal session anchors to that session's pane, by the source-pane binding UTERM-004 settles. File > Open anchors
   to the focused pane of the window whose menu ran it. Finder, the Dock, and other Launch Services senders anchor to
-  the focused pane of the most recently key window, which is brought forward. A `uniterm open` from a caller in no
-  terminal session anchors to the same pane. A routed split raises no existing window, since a program's open takes no
-  focus. Amended 2026-11-16; see Decision Log.
+  the focused pane of the most recently key window. Only Apple's openers bring that window forward. An approved
+  sender that is not an opener raises nothing and takes no focus. A `uniterm open` from a caller in no terminal
+  session anchors to the same pane. A routed split from a program's open raises no existing window, since a program's
+  open takes no focus. Amended 2026-11-17; see Decision Log.
 - The routed pane is new and disconnected, and a routed split never joins a group a controller owns. A routed open
   never replaces the source of an existing pane.
 - A pane or window that a program's open makes takes no focus, per ADR-12. A new window that holds only the routed pane
   is ordered in front without becoming key, and the app is not activated, so the user can see it and keeps typing where
-  they were. File > Open and Apple's openers are the user's act, and their routed pane takes the focus as before.
-  Amended 2026-11-16; see Decision Log.
+  they were. File > Open, a click on a terminal link, and Apple's openers are the user's act, and their routed pane
+  takes the focus as before. Amended 2026-11-17; see Decision Log.
 - When no window is open, or the split is refused for lack of room, or the window has a sheet attached, the file opens
   in a new window whose only pane is the routed pane. That window starts no shell beside the routed pane, and inherits
   no directory from another window. A routed folder's terminal is the routed pane itself.
@@ -383,7 +384,7 @@ open the wrong file. Leaves undone: clicking `notes.txt` in `ls` output opens no
 
 ### Who may run `uniterm open`
 
-Original question: opening a pane from a process is a control effect under ADR-09. Which approval a `uniterm open`
+Original question: opening a pane from a process is a control effect under ADR-14. Which approval a `uniterm open`
 request needs.
 
 Decision: a once or session approval scoped to the calling terminal session, as UTERM-004 gives shared-terminal OSC 52.
@@ -401,11 +402,17 @@ A caller outside any terminal session gets Allow once only.
   that is missing, and one no applet opens all get the same reply, and the reply carries no content. What went wrong
   shows only in the app's own status message. A request the user denies gets the refused status, since the user's own
   answer says nothing about a file. Amended 2026-11-16; see Decision Log.
+- The question says that a new window may open. Opening a window is a power of its own under ADR-14, and a batch, a
+  lack of room, or no open window each call for one. The one approval covers it. Amended 2026-11-17; see Decision
+  Log.
+- Commands that run in no terminal session share one bound on waiting questions. Each is a new connection that holds
+  a listener slot while its question waits, so past the bound a command is refused at once with exit status 77, which
+  frees its slot. The questions already waiting stay. Amended 2026-11-17; see Decision Log.
 
 Rationale: a controller grant would require remote control on the source pane, and the only signed party is uniterm's
-own helper, a shared go-between ADR-09 forbids trusting. That is stricter than the Launch Services path, so a refused
+own helper, a shared go-between ADR-14 forbids trusting. That is stricter than the Launch Services path, so a refused
 program would use `open -a` instead. Treating it as the user's act gives any process panes with no grant, against
-ADR-09, and looser than the Launch Services path. A session grant on the helper's PID would cover one call only, under
+ADR-14, and looser than the Launch Services path. A session grant on the helper's PID would cover one call only, under
 a false label.
 
 ### Who may open by terminal click
@@ -462,20 +469,20 @@ a libghostty that cannot mark rows, one remote session turns off clicks in that 
   access to a directory in the scope, on the same volume, and the controller already reads what the scope holds.
 - **Draft applets change what they claim** — likelihood: medium, impact: low. UTERM-010 is a draft. Accepted:
   declarations live with each applet, so a later claim changes no router code, and an equal-rank claim fails a test.
-- **M2's sender measurement reopens the Launch Services decision** — likelihood: medium, impact: medium. If a
-  cold-launch Finder open reports a Launch Services helper as its sender, Finder opens would be refused before UTERM-004
-  M6 and ask on every open after it. Mitigation: M2 recorded the sender `open -a` reports, and M8 records the sender
-  Finder reports, by hand. The decision says to reopen the question if Finder and `open -a` cannot be told apart.
-  Amended 2026-11-03; see Decision Log.
-- **Parts of the design wait on unbuilt work** — likelihood: high, impact: low. Third-party launchers are refused, and
-  `uniterm open` cannot ship, until UTERM-004 M6 and UTERM-003 M3 land. Accepted: Finder, the Dock, File > Open, and
-  terminal clicks need neither, and the gating is stated in Dependencies and each milestone.
+- **M2's sender measurement reopens the Launch Services decision** — resolved. M8 recorded that Finder reports
+  `com.apple.finder` and the Dock `com.apple.dock`, cold and warm, and `open -a` never does. The decision stands, and
+  M7 built the approvals. Amended 2026-11-17; see Decision Log.
+- **Parts of the design wait on unbuilt work** — resolved. UTERM-004 M6 and UTERM-003 M3 are built and shipped. M5
+  built `uniterm open` and M7 built the approvals for other Launch Services senders on them. Nothing waits. Amended
+  2026-11-17; see Decision Log.
 - **Hover and the remote marker depend on the pinned libghostty** — likelihood: medium, impact: low. Marking rows may
   need a patch or a pin bump. Mitigation: M6 names each signal's source, and without row marks the marker covers the
   whole tab. The patch M6 carries is small, and it is rebuilt with every pin bump. Amended 2026-11-17; see Decision
   Log.
-- **No viewer applet exists in code yet** — likelihood: high, impact: low. The router cannot be tested against real
-  viewers at first. Mitigation: the router's milestones test with fixture applets, as UTERM-004 M4 does.
+- **No viewer has a path-reading controller command yet** — likelihood: high, impact: low. The text, data, image,
+  and map viewers exist and declare their types, so the router works with real applets. None has a controller command
+  that reads a path, so M4 is proven on fixture applets. Mitigation: the first viewer command that reads a path goes
+  through the same host service and its tests. Amended 2026-11-17; see Decision Log.
 
 ## Milestones
 
@@ -652,13 +659,15 @@ Amended 2026-11-03; see Decision Log.
 
 **Status:** DONE
 
+Amended 2026-11-17; see Decision Log.
+
 - Starts after UTERM-004 M1, M3, and M6
 - A controller command that makes an applet read a path is refused without the power, and with a path outside its
   scope
 - A symlink or a rename between check and open cannot reach a file outside the scope
 - Missing, unsupported, and denied paths outside the scope return the same error
 - A pane whose source lies outside a controller's scope sends that controller no path or content from it
-- Revoking the grant stops queued reads, per ADR-09
+- Revoking the grant stops queued reads, per ADR-14
 - A path outside the scope raises no macOS privacy prompt, and a FIFO or device path never blocks the pane
 - Canonicalizing stops at the first component outside the scope, and never stats or reads a link target outside it
 - A dangling in-scope symlink to an outside target returns the same error as any other out-of-scope path
@@ -671,6 +680,8 @@ Amended 2026-11-03; see Decision Log.
 - A request for a path under a protected location is not covered by an approved scope that only contains it
 - The protected-location list has one owner and a test, and the approval panel names every protected location a scope
   lies in or names
+- One connection can have only a few path walks running at once, and a walk past the bound is refused as any path
+  outside the scope is
 
 **As built:**
 
@@ -713,6 +724,12 @@ Amended 2026-11-03; see Decision Log.
 - Redaction covers the pane list and the text viewer's wait replies, scroll bounds, and reload failures. Terminals are
   unchanged. Content a controller sent itself is shown to it, found by the folder it waits in. The pane list hides
   titles and the directory for every caller outside the scope, ordinary scripts included.
+- A connection has at most 4 walks running. The walk opens a program-chosen path, which never returns on a dead
+  network mount, and each stuck walk parks a thread. A walk past the bound fails with the uniform answer for a path
+  outside the scope. A test injects an opener that blocks, and failed before the bound. The members of a folder
+  source are opened by the applet for the command it was delivered, so they are not counted again.
+- The one reader of a descriptor's real path is `DescriptorPath` in the source access module. The terminal's click
+  check uses it too, so the two never decode the system's answer differently. A test pins it.
 - Residuals. The redaction check compares the path the viewer recorded, so a user-opened link inside a scope whose
   target lies outside it is shown. Resolving it would read the disk on the main thread. A hard link inside a scope
   reaches a file
@@ -728,7 +745,7 @@ Amended 2026-11-03; see Decision Log.
 
 **Status:** DONE
 
-Amended 2026-11-16; see Decision Log.
+Amended 2026-11-17; see Decision Log.
 
 - Starts after UTERM-003 M3, UTERM-004 M6, and this proposal's M4
 - `uniterm open <path>` opens the path through the router, with the authority "Who may run `uniterm open`" settles
@@ -741,6 +758,9 @@ Amended 2026-11-16; see Decision Log.
 - A pane or window that `uniterm open` makes takes no focus, a routed split raises no existing window, and a new
   window is never made key and never activates the app
 - An old `uniterm` command with a new app, or the reverse, is refused at the handshake
+- The question says that a new window may open
+- A loop of commands outside any terminal session cannot hold more than a fixed share of the listener's slots and
+  the pending rows
 
 **As built:**
 
@@ -773,6 +793,14 @@ Amended 2026-11-16; see Decision Log.
 - New test classes ran in under 1 s each in the package suite. See the Decision Log entry for the times.
 - UI test classes that this milestone adds or touches: `ScriptOpenUITests`, new. Nobody has run them. The shipped
   command's own `open` is covered by a test in `CommandHelperSandboxTests`, which `make test-helper-sandbox` runs.
+- The question says "A new window opens when a batch or a lack of room calls for one", for a command in a session
+  and for one outside any. Opening a window is a power of its own under ADR-14, and the first wording said only "each
+  in a new pane".
+- Commands outside any session ask under a requester of their own, and they share one bound of
+  `maxRowsPerRequester` rows. Without it, 32 commands held every listener slot and 32 rows while their questions
+  waited, and no script could connect. The 17th command is refused at once with the busy text and exit status 77.
+  The regression test failed first, with 20 rows. Commands in a session keep their own requester, since the pane they
+  ask for bounds them.
 - A peer filed [a bug](../bugs/20261116-script-opened-pane-takes-focus.md) that `uniterm/open-pane` takes focus. It is
   a different function from the route this milestone changed, and it is not fixed here.
 
@@ -791,6 +819,8 @@ Amended 2026-11-17; see Decision Log.
 - A `file:` hyperlink naming another host never opens a local file
 - A Cmd-click on a web URL or another non-file scheme does nothing
 - The open-URL and mouse-over-link actions reach the app through the terminal surface protocol
+- A click while an earlier one in the same tab is still being checked is refused with a message, so a click loop
+  cannot park a thread per click
 
 **As built:**
 
@@ -842,11 +872,14 @@ Amended 2026-11-17; see Decision Log.
 - A report that fails earlier in libghostty's OSC 7 handling gives neither a directory change nor the remote-host
   action. That covers an invalid or too long host name, a failed host lookup, and a missing host. The process signal
   still covers `ssh`.
-- Residuals. The check opens the path on a GCD thread with no bound. On a dead network mount each click parks a thread,
-  and a stuck open is not cancelled. The watcher names its root by PID alone, so a PID reused within the few
+- Residuals. A tab runs one check at a time, and a click while one runs says that a previous click is still being
+  checked. On a dead network mount the one check parks a thread until the mount answers, and a stuck open is not
+  cancelled, so a tab can park one thread and the tab clicks again only after it returns. The regression test failed
+  first. The watcher names its root by PID alone, so a PID reused within the few
   milliseconds between the session's end and the watcher's stop could be read as the root.
+- The clicked path's real path comes from the same reader as `uniterm open`'s scoped open, `DescriptorPath`.
 - Residual. The router and the viewer open the verified path by name again after the check. A same-user process that
-  renames or replaces the path in between changes what opens. ADR-09 accepts this as no isolation from the user's own
+  renames or replaces the path in between changes what opens. ADR-14 accepts this as no isolation from the user's own
   processes.
 - The terminal applet's host gained `applet(_:open:)`. The default says the host cannot open files. The window posts the
   same message when its set has no router, and otherwise routes through the router the app gave the set.
@@ -1249,6 +1282,9 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
       every session. The question could not tell the user which session a grant would cover, so the wording, the
       once-only flag, and the grant all follow one condition: a named pane. If wrong, the question names no pane and
       offers the session answer.
+- 2026-11-16: ADR candidate (cuts across the system): a caller learns nothing about a user's file outside its read
+  scope from any reply, event, or listing, and every applet that shows a user's file must keep it. Undecided. Found
+  in M4.
 - 2026-11-17: M6 work-queue best guesses (work-queue best guess). Amended "Who may open by terminal click", "Start
   directory and current directory", the Risks entry on libghostty, and M6.
   1. The hover shows a `file:` link as its decoded path, and the click is bound to the link text. A link with a query,
@@ -1286,7 +1322,7 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
      act, as File > Open is.
   10. The router and the viewer open the path again after the check. The check cannot hand the viewer a descriptor,
       since the source-taking entry points take a path. A same-user rename in between changes what opens. This is the
-      residual the plan named. It is accepted under ADR-09.
+      residual the plan named. It is accepted under ADR-14.
   11. The REPL pane gets the three new events and ignores them. A click there did nothing before either, since
       libghostty's own opener refuses these links.
   12. A review found a stale preview. A tab hidden while the pointer left its link showed that link again when
@@ -1338,14 +1374,64 @@ Amended 2026-11-03 and 2026-11-04; see Decision Log. Moved from M2. This milesto
       text says it covers everything the app sends. If wrong, a window opens under an approval that never said so.
   12. A review doubted that the system's watcher reports a process that already exited. A package test with a real,
       reaped process shows it does, so no liveness check was added. The test pins the behavior.
-- 2026-11-16: ADR candidate (cuts across the system): a caller learns nothing about a user's file outside its read
-  scope from any reply, event, or listing, and every applet that shows a user's file must keep it. Undecided. Found
-  in M4.
+- 2026-11-17: Row review fixes (work-queue best guess). Amended "Where a routed pane goes", "Who may run `uniterm
+  open`", M4, M5, M6, Dependencies, and three Risks. ADR-14, accepted during this run, supersedes ADR-09 and restates
+  every rule of it.
+  1. "Where a routed pane goes" said Finder, the Dock, and other Launch Services senders anchor to the focused pane of
+     the most recently key window, "which is brought forward", and that a routed split raises no existing window.
+     Since M7, only Apple's openers bring the window forward, and an approved sender that is not an opener raises
+     nothing and takes no focus. The code did this already, in the coordinator. The anchor bullet now says so. The M5
+     entry above says bringing the window forward "belongs to Launch Services senders", which was true of the opener
+     and false of an approved sender. That line stays as it was written. This entry corrects it. The focus bullet named
+     only File > Open and Apple's openers as the user's act that takes focus. It now names a terminal click too, per
+     M6. If wrong, an approved sender's open brings the window forward.
+  2. "Who may run `uniterm open`" said nothing on the question's wording, and the M5 question said only "each in a new
+     pane". An approved batch, or an open with no room, opens a new window through the same placement, and opening a
+     window is a power of its own under ADR-14. The question now says "A new window opens when a batch or a lack of
+     room calls for one", as M7's does. The decision gained a bullet, and M5 a check. If wrong, a window opens under an
+     approval that never said so.
+  3. Commands outside any terminal session each ask under a fresh connection. A loop of `uniterm open` could hold up
+     to the listener's 32 slots and 32 rows while the questions waited, and no script could connect. This was traced
+     and confirmed by a test that failed first, with 20 rows for 20 commands. They now ask under a requester that
+     shares one bound of `maxRowsPerRequester` rows, as M7 did for events. Past it the command is refused at once with
+     exit status 77, which frees its slot. The decision gained a bullet and M5 a check. Commands in a session keep
+     their own requester. If wrong, a flood can fill the listener.
+  4. A click's check opened a program-chosen path on a GCD thread with no bound, so on a dead network mount each click
+     parked a thread. A tab now runs one check at a time, and a click while one runs is refused with a status message
+     that says a previous click is still being checked. M6 gained a check, and its residual no longer says "no bound".
+     The regression test failed first. The bound is per tab, not per pane, since each tab is its own session. If
+     wrong, another bound, such as one per pane, changes only the counter.
+  5. M4's walk had the same exposure. Calls of one connection are not serialized, so a script can pipeline them, and
+     each walk runs a blocking open on the concurrency pool. A connection now has at most 4 walks running, and a walk
+     past that is refused with the uniform answer for an outside path, so it tells nothing. The bound is 4, not 1, so a
+     script that reads from a few fibers still works. A test with an injected blocking opener failed first, with two
+     walks running at once. The members of a folder source are opened by the applet while it runs the delivered
+     command, and they are not counted. If wrong, the bound is an init parameter and one constant.
+  6. The descriptor's real path was read in two places, the scoped open and the click check, each with its own buffer
+     and decode. One reader, `DescriptorPath` in the source access module, now serves both. The terminal applet gained
+     a dependency on that module. The two checks keep their meanings, containment in a scope and equality with a shown
+     string. The click check's `MAXPATHLEN` buffer became `PATH_MAX` plus one, as the scoped open's was. The two are the
+     same size on this system.
+  7. The Dependencies line said "Until it lands, M2 refuses other senders". UTERM-004 M6 has landed, and M7 built the
+     approvals. The line says so. The Risk that M2's sender measurement reopens the Launch Services decision is
+     resolved by M8's record. The Risk that third-party launchers are refused and `uniterm open` cannot ship until
+     UTERM-004 M6 and UTERM-003 M3 land is resolved, since both are built. The Risk "No viewer applet exists in code
+     yet" was false. The viewers exist and declare types. It now says that no viewer has a path-reading controller
+     command yet, so M4 is proven on fixtures. Updated is 2026-11-17.
+  8. Citations of ADR-09 in the settled text, the M4 check, and the M6 As built and its best-guess residual now cite
+     ADR-14. ADR-14 restates every ADR-09 rule, and a citation of a superseded ADR points at a stale record. The
+     References keep ADR-09, marked as superseded. Older Decision Log entries keep their citations, since they were
+     true when written. The M6 best-guess line on the same-user residual is the one exception, which the review named.
+  9. Test changes. `PathSpy` moved into the shared window test fixture. The M5 and M7 placement tests each say which
+     authority they isolate. `testTheAsyncCheckAnswersLikeTheSyncOne` is retired. `testAClickOpensExactlyTheShownFile`
+     and `testAMissingPathSaysSo` already run the real async check through the applet and prove both answers.
+
 
 ## References
 
 - [ADR-03](../adr/ADR-03-restored-state-never-runs-a-program.md): restored state is inert
 - [ADR-06](../adr/ADR-06-layout-file-versioning-and-schema-ownership.md): each applet owns its payload
 - [ADR-09](../adr/ADR-09-control-authority-requires-authenticated-identity-and-explicit-scope.md): control authority,
-  separate powers, and explicit scope
-- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): opening a window is a power of its own
+  separate powers, and explicit scope (superseded by ADR-14)
+- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): control authority, separate powers, explicit
+  scope, and opening a window as a power of its own. It restates every ADR-09 rule

@@ -31,18 +31,34 @@ public final class WindowScripting: ScriptWindowAPI {
   /// The longest title or directory reported for a pane, in UTF-8 bytes. Both come from programs.
   static let maxReportedBytes = 256
 
+  /// What opens one path inside a scope. A test replaces it with one that blocks.
+  public typealias ScopedOpener =
+    @Sendable (String, ReadScope) -> Result<OpenedPath, ScopedOpenError>
+
+  /// The most path walks one caller may have running at once. The walk opens a program-chosen path,
+  /// which does not return on a dead network mount, and each stuck walk parks a thread. A walk past
+  /// the bound is refused as any path outside the scope is, so the answer tells nothing.
+  public static let defaultMaxWalksPerCaller = 4
+
   private let windows: WindowSet
   private let directoryExists: @Sendable (String) -> Bool
+  private let scopedOpener: ScopedOpener
+  private let maxWalksPerCaller: Int
+  private var walksRunning: [UInt64: Int] = [:]
 
   /// `directoryExists` decides whether a directory a script names is a folder here. It defaults to
   /// a stat that follows links, and a test replaces it. It runs off the main actor, since a stat
   /// on a hung network mount does not return.
   public init(
     windows: WindowSet,
-    directoryExists: @escaping @Sendable (String) -> Bool = WindowScripting.isDirectory
+    directoryExists: @escaping @Sendable (String) -> Bool = WindowScripting.isDirectory,
+    scopedOpener: @escaping ScopedOpener = { ScopedOpen.open(path: $0, in: $1) },
+    maxWalksPerCaller: Int = WindowScripting.defaultMaxWalksPerCaller
   ) {
     self.windows = windows
     self.directoryExists = directoryExists
+    self.scopedOpener = scopedOpener
+    self.maxWalksPerCaller = maxWalksPerCaller
   }
 
   public nonisolated static func isDirectory(_ path: String) -> Bool {
@@ -318,7 +334,7 @@ public final class WindowScripting: ScriptWindowAPI {
       name: command, arguments: parsed)
 
     let paths = controller.dispatcher.pathArguments(of: submission, for: applet)
-    let opened = await Self.open(paths, in: access())
+    let opened = await walk(paths, for: caller.connection, in: access())
 
     let result = await withCheckedContinuation { continuation in
       controller.dispatcher.submit(
@@ -401,11 +417,34 @@ public final class WindowScripting: ScriptWindowAPI {
     ])
   }
 
+  /// Opens the paths a command names for one connection, unless that connection already has its
+  /// share of walks running. The slot is held until the walk returns, so a walk that never returns
+  /// keeps its slot, and the connection cannot park more threads than the bound.
+  private func walk(
+    _ paths: [(name: String, path: String)], for connection: UInt64, in access: ReadAccess
+  ) async -> [String: Result<OpenedPath, ScopedOpenError>] {
+    guard !paths.isEmpty else { return [:] }
+
+    guard walksRunning[connection, default: 0] < maxWalksPerCaller else {
+      return Dictionary(uniqueKeysWithValues: paths.map { ($0.name, .failure(.unavailable)) })
+    }
+
+    walksRunning[connection, default: 0] += 1
+
+    let opened = await Self.open(paths, in: access, using: scopedOpener)
+
+    walksRunning[connection, default: 1] -= 1
+
+    if walksRunning[connection] == 0 { walksRunning[connection] = nil }
+
+    return opened
+  }
+
   /// Opens each path a command names, inside `scope`, off the main actor. A caller with no scope
   /// opens nothing and touches no disk. Every path then fails the same way, whatever it names.
   @concurrent
   private nonisolated static func open(
-    _ paths: [(name: String, path: String)], in access: ReadAccess
+    _ paths: [(name: String, path: String)], in access: ReadAccess, using opener: ScopedOpener
   ) async -> [String: Result<OpenedPath, ScopedOpenError>] {
     var opened: [String: Result<OpenedPath, ScopedOpenError>] = [:]
 
@@ -415,7 +454,7 @@ public final class WindowScripting: ScriptWindowAPI {
         continue
       }
 
-      opened[name] = ScopedOpen.open(path: path, in: scope)
+      opened[name] = opener(path, scope)
     }
 
     return opened

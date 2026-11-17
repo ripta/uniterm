@@ -192,16 +192,4 @@ final class TerminalLinkTargetTests: XCTestCase {
 
     XCTAssertNil(LinkClickVerifier.check(path))
   }
-
-  /// Catches a verifier that blocks the main actor. The async form hops off the caller.
-  @MainActor
-  func testTheAsyncCheckAnswersLikeTheSyncOne() async throws {
-    let file = try makeFile("a.txt")
-
-    let passed = await LinkClickVerifier.verify(file)
-    let failed = await LinkClickVerifier.verify(root.path + "/missing")
-
-    XCTAssertNil(passed)
-    XCTAssertEqual(failed, .unavailable)
-  }
 }

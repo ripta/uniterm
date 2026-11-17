@@ -776,6 +776,7 @@ public final class ScriptHost {
   func authorityEnded(_ id: UInt64) {
     clipboardGrants[id] = nil
     permissionRequests.end(.connection(id))
+    permissionRequests.end(.unboundOpen(id))
     onControllerEnded?(id)
     controllersChanged()
   }

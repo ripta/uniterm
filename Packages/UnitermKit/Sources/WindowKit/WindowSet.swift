@@ -543,7 +543,7 @@ public final class WindowSet {
     permissionRequests.end { requester in
       switch requester {
       case .driver(let id, _, _), .terminal(let id, _), .paneScripts(let id, _): return id == window
-      case .connection, .controllerVersion, .launchSender, .launchEvent: return false
+      case .connection, .controllerVersion, .launchSender, .launchEvent, .unboundOpen: return false
       }
     }
 

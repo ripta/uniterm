@@ -38,7 +38,8 @@ public final class ChangeObservers {
 /// Each row holds at most `maxPerRow` waiting operations, one requester holds at most
 /// `maxRowsPerRequester` rows, and so do all requesters that share a denial key. All requesters
 /// that stand for one open event each hold their rows together, as one requester would, since a
-/// program that sends events cannot be told apart from the next one. All requesters together hold
+/// program that sends events cannot be told apart from the next one. So do all commands that run
+/// outside any terminal session. All requesters together hold
 /// at most `maxRows`. A request past any bound is refused as busy, and the rows that wait stay.
 ///
 /// Allow once releases the oldest waiting operation of a row and no other, so coalescing never
@@ -81,13 +82,20 @@ public final class PermissionRequests {
     /// as the user gives it, so a denial never outlives what it was about.
     case launchEvent(UInt64)
 
-    /// Whether the two count against one row bound. Every open event is its own requester, so
-    /// they bound together, as one requester would. Otherwise a loop of events would fill the
-    /// rows of every other requester.
-    func sharesBound(with other: Requester) -> Bool {
-      if case .launchEvent = self, case .launchEvent = other { return true }
+    /// A `uniterm open` command that runs in no terminal session, by its connection. Each command
+    /// is its own connection, so its question and its denial go with that connection, and the
+    /// commands bound together.
+    case unboundOpen(UInt64)
 
-      return self == other
+    /// Whether the two count against one row bound. Every open event is its own requester, and so
+    /// is every command outside a session, so each kind bounds together, as one requester would.
+    /// Otherwise a loop of them would fill the rows of every other requester, and for commands the
+    /// listener's slots too.
+    func sharesBound(with other: Requester) -> Bool {
+      switch (self, other) {
+      case (.launchEvent, .launchEvent), (.unboundOpen, .unboundOpen): return true
+      default: return self == other
+      }
     }
   }
 

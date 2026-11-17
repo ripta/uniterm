@@ -431,6 +431,50 @@ failures), and `build-for-testing` passed. The coordinator reran `LaunchServices
 ADR candidates: adr-impact named "nothing touches a path before an outside caller is approved". UTERM-015 declined it
 on 2026-11-03 as "uniterm never lends its macOS privacy grants to a program". It is not re-recorded.
 
+### Row review: UTERM-015 M4-M7
+
+A fresh reviewer and adr-impact read the four milestone commits together. Other sessions' commits in the range were
+left out.
+
+Full UI suite on the committed row: `caffeinate -dimsu make test-app` (`cg_run` 5N7QT7, 2026-11-17 01:47 to 02:14)
+passed 170 tests with 0 failures in 1623 s. New crash reports from that window, `DocumentDecoderHelper` and
+`ImageDecoderHelper`, are SIGABRT from `FaultInjection.perform` with `xctest` as parent. They are the package tests'
+deliberate helper crashes, not failures.
+
+Findings and their dispositions. All were sent to one fresh implementer and fixed, and each regression test was shown
+failing first:
+
+- "Where a routed pane goes" still said every Launch Services sender brings a window forward, while M7 made that true
+  of Apple's openers only. It also left clicks out of the user's acts that take focus. CONFIRMED. Fixed in place.
+- ADR-14: M5's `uniterm open` question never said a new window may open, which M7 had fixed for Launch Services only.
+  CONFIRMED by adr-impact. Fixed, with a test and a new M5 check.
+- Stale proposal text: the Updated date, a Dependencies line, three Risks, and ADR-09 citations that ADR-14 now
+  supersedes. Fixed. The ADR-09 entry in References is kept and marked superseded. One ADR-candidate entry was moved
+  into date order.
+- The descriptor's real path was read in two places with different buffer and error handling. Now one reader,
+  `DescriptorPath.read` in `SourceAccess`, serves both checks.
+- The duplicated `PathSpy` test helper is now one copy beside `RoutingFixture`. The two placement tests name the
+  authority each one isolates. `testTheAsyncCheckAnswersLikeTheSyncOne` was retired, since two click tests already
+  run the real check.
+- ADR-07: a click's verification and an M4 walk could each park an unbounded thread on a dead network mount. Fixed with
+  one check at a time per terminal tab, and at most 4 walks per connection. Extras are refused.
+- A loop of `uniterm open` outside every session made a new requester per command and held listener slots. Fixed:
+  those questions share one 16-row bound, and the command past it exits 77 at once.
+- Recorded for the user, no action: under ADR-14, a non-Apple interpreter such as a Homebrew `python3` can hold an
+  in-memory Launch Services session grant that covers whatever script runs in it.
+
+Best guesses from the fix round, in the Decision Log entry "2026-11-17: Row review fixes":
+
+1. The walk bound is 4 per connection, so a script reading from a few fibers still works.
+2. The click bound is per tab, since each tab is its own session.
+3. Folder-member opens do not count against the walk bound.
+4. The shared reader lives in `SourceAccess`, and `TerminalApplet` gained that dependency.
+
+Checks: `make fmt-check`, `make lint`, `make check`, `caffeinate -dimsu make test-package` (2834 tests, 10 skipped,
+0 failures), and `build-for-testing` passed. `proposals.py check` reported only that UTERM-015 should become
+`implemented` and that its queue row should move. The coordinator reran `TerminalLinkUITests`, `ScriptOpenUITests`, and
+`LaunchServicesOpenUITests` (`cg_run` W68ESS, 2026-11-17 02:15), and they passed.
+
 ## Status
 
 In progress.

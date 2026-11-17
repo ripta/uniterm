@@ -111,7 +111,9 @@ let package = Package(
       ]),
     .target(
       name: "TerminalApplet",
-      dependencies: ["AppletKit", "ProcessInspection", "StatusKit", "TerminalSurface", "Theme"]),
+      dependencies: [
+        "AppletKit", "ProcessInspection", "SourceAccess", "StatusKit", "TerminalSurface", "Theme",
+      ]),
     // Reaching a file for a viewer: the stored path and bookmark, and the errors for a missing,
     // protected, or irregular file. It has no AppKit, so the table and map targets share it.
     .target(name: "SourceAccess"),

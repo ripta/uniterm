@@ -44,6 +44,11 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     /// opens only a link whose text equals it.
     var hoveredLink: String?
 
+    /// True while a click's check of the file system runs. The check opens a path a program chose,
+    /// and on a dead network mount it never returns. One check per tab bounds the threads a click
+    /// loop can park.
+    var verifyingLink = false
+
     /// Why this tab's output may be from another host. It is set once and lives as long as the
     /// session. libghostty cannot mark single rows, so it covers the whole tab.
     var remoteSource: RemoteSource?
@@ -110,6 +115,11 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   /// it.
   var makeRemoteWatcher: RemoteWatcherFactory = { root, found in
     RemoteClientWatcher(root: root, found: found)
+  }
+
+  /// Checks that a clicked path is still the file the pane showed. Tests replace it.
+  var verifyLink: @Sendable (String) async -> TerminalLinkRefusal? = { path in
+    await LinkClickVerifier.verify(path)
   }
 
   /// The check and the open of the last click on a path. A test waits on it.
@@ -886,10 +896,20 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       return nil
 
     case .file(let path):
+      guard !tab.verifyingLink else {
+        Self.linkLog.debug("click outcome=still-checking")
+        refuse(.stillChecking)
+        return nil
+      }
+
+      tab.verifyingLink = true
+
       let id = tab.id
 
-      return Task { @MainActor [weak self] in
-        let refusal = await LinkClickVerifier.verify(path)
+      return Task { @MainActor [weak self, verifyLink] in
+        let refusal = await verifyLink(path)
+
+        tab.verifyingLink = false
 
         guard let self, let tab = self.tabs.first(where: { $0.id == id }) else { return }
 

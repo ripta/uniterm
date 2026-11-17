@@ -8,24 +8,6 @@ import XCTest
 
 @testable import WindowKit
 
-/// Records every path the router looked at. An open that is pending, denied, withdrawn, or whose
-/// sender exited must leave it empty, since a look at a program-chosen path can raise a privacy
-/// prompt under uniterm's name.
-private final class PathSpy: @unchecked Sendable {
-  private let lock = NSLock()
-  private var seen: [String] = []
-
-  var looked: [String] { lock.withLock { seen } }
-
-  var reader: PathKindReader {
-    { [self] url in
-      lock.withLock { seen.append(url.path) }
-
-      return PathInspector.kind(of: url)
-    }
-  }
-}
-
 /// Stands in for the system's process watcher, so a test ends a sender by hand.
 @MainActor
 private final class WatchLog {
@@ -253,6 +235,10 @@ final class LaunchOpenApprovalTests: XCTestCase {
 
   /// Catches an approved program's open that takes the keyboard or raises a window. It lands
   /// beside the focused pane, the first pane keeps the focus, and the file is looked at only now.
+  ///
+  /// This is the placement contract through the Launch Services authority: a sender's own
+  /// identity is asked about, and the focused pane of the key window is the anchor. The
+  /// `uniterm open` test of the same contract isolates the terminal-session anchor.
   func testAnAllowedOpenLandsBesideTheFocusedPaneAndTakesNoFocus() async throws {
     let anchor = try running()
     let original = anchor.controller.focusedPane

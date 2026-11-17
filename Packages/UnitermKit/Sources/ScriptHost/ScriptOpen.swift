@@ -72,7 +72,10 @@ public enum OpenApprovalText {
       tail = "This answer covers this request only."
     }
 
-    return "\(lead), each in a new pane:\n\(list)\nuniterm has not looked at them yet. \(tail)"
+    let place =
+      "each in a new pane. A new window opens when a batch or a lack of room calls for one"
+
+    return "\(lead), \(place):\n\(list)\nuniterm has not looked at them yet. \(tail)"
   }
 }
 
@@ -146,7 +149,11 @@ extension ScriptHost {
     let session = name == nil ? nil : boundSession
     let caller = name == nil ? nil : boundCaller
 
-    let key = PermissionRequests.Key(requester: .connection(connection.id), power: Self.openPower)
+    // A command outside every session shares one bound with the rest of them. Each is a fresh
+    // connection that holds a listener slot while it waits, so a loop of them must not fill it.
+    let requester: PermissionRequests.Requester =
+      session == nil ? .unboundOpen(connection.id) : .connection(connection.id)
+    let key = PermissionRequests.Key(requester: requester, power: Self.openPower)
 
     // A denial of a session outlives the command, so a program in a loop cannot ask again at
     // once. It goes when the pane closes. A command outside a session has nothing to bind a denial
