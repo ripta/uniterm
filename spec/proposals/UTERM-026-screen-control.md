@@ -23,7 +23,7 @@
   Closing an opened window ends only its own groups, per "Authority across windows". This supersedes that bullet in part.
 - UTERM-001 — M3's rule that a shell that exits closes its own pane and focus moves to a neighbor: a window that closes because its last applet ended follows that
   rule unchanged, per "Focus".
-- UTERM-028 — "Any key": its invocations carry UTERM-024's event fields. The `:window` field this proposal adds is
+- UTERM-028 — "How invocations reach the driver": its invocations carry UTERM-024's event fields. The `:window` field this proposal adds is
   ScriptWire only, so the exec wire does not change.
 - UTERM-004 — "Layout requests": every request is anchored at a pane the program may address. The window power's
   layout holds only new panes and has no anchor, per "A second window". This supersedes that rule in part.
@@ -146,6 +146,10 @@ permission kind of its own. A controller zoom is refused while the keyboard sits
   not key, the zoom applies, and that window's focus mark moves to the zoomed pane. So returning to the window, by a
   click or by Cmd-`, never lands on a hidden pane. The check reads the pane focus mark, synced at the effect boundary.
   Amended 2026-11-17; see Decision Log.
+- A mark that a controller's zoom moved is an unchosen move, so the zoomed pane's controller keys stay disarmed until
+  a click in its content. Returning to the window, by Cmd-` or any other window switch, does not arm them, unlike
+  UTERM-024's rule for a focus move from another window. So keys the user meant for the hidden pane never reach the
+  controller, per ADR-12.
 - `(uniterm/unzoom-pane pane)` ends a zoom of a member of the caller's group, whoever made it. Zoom state belongs to the
   pane. A controller never ends a zoom on a pane it does not own. Amended 2026-11-17; see Decision Log.
 - A controller's zoom stays after its run ends or is revoked, and the user ends it with Zoom Pane.
@@ -393,8 +397,8 @@ None.
 - In a window that is not key, a controller zoom applies even while another pane holds the focus mark, and the mark
   moves to the zoomed pane
 - Zoom Slide pressed in the notes window zooms the slide in the projector window while the terminal there holds the
-  focus mark. The mark moves to the slide, and returning with Cmd-` puts the keyboard in the slide and arms its keys,
-  per UTERM-024's rule for a focus move from another window
+  focus mark. The mark moves to the slide, and returning with Cmd-` puts the keyboard in the slide with its controller
+  keys disarmed. A Space typed then never steps the slide, and a click in the slide arms its keys
 - A controller zoom that lands while a sheet is up on its window applies. The sheet's answer still acts on the pane it
   asked about, and after the sheet closes the keyboard lands in the zoomed pane
 - `list-windows` reports the zoomed pane and who made the zoom: the user, this run, or another controller, unnamed. A
@@ -613,6 +617,12 @@ None.
 - 2026-11-17: the user named the principle behind cross-window authority: ownership, meaning who opened the window or
   pane, is who may control by default. "Authority across windows" and ADR-14 now state it, with the window rule as one
   case of it.
+- 2026-11-17 (autonomous): a final check found that a controller can zoom in a window that is not key with no command
+  from the user. UTERM-024 arms a pane's keys on a focus move from another window, so a later Cmd-` would have put the
+  controller's keys under keystrokes meant for the hidden terminal, against ADR-12. A mark a controller's zoom moved now
+  leaves the zoomed pane's keys disarmed until a click in its content. The user's choice that the keyboard lands in the
+  zoomed pane stands. Also corrected the UTERM-028 Impacts line, which cited a heading UTERM-028 does not have. Checked
+  "Names and version skew" against ADR-13, which lets ScriptWire keep its exact match.
 - 2026-11-17: Accepted. The user chose it after the review gate. ADR-14 is written and accepted, and ADR-09 is
   superseded.
 
