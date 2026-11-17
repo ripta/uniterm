@@ -62,9 +62,8 @@ What the active pane does with the key depends on what it is:
   - When the controller runs in the foreground, the controller is that program. It reads the key from its own
     terminal directly, with no help from UTERM-024 or this proposal. UTERM-024's Motivation already says a script can
     read its own terminal while that terminal has focus.
-  - When the controller runs in the background, as UTERM-025's current draft starts the presenter with a trailing `&`,
-    the shell or the demo program in the foreground gets the key. That is the user's demo, and the controller has no
-    claim on it.
+  - When the controller runs in the background, the shell or the program in the foreground gets the key. The
+    controller has no claim on it. UTERM-025's presenter runs in the foreground, and the demo runs in another pane.
 - **A slide pane that opts in.** UTERM-024 lets a body kind opt in to giving a controller's keys to the controller
   instead of to itself. The text viewer's Markdown body opts in, under UTERM-030, since it never takes typed text. A
   key reaches the controller only when all of these hold:

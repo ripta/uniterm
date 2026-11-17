@@ -271,8 +271,8 @@ None.
   changes an unsigned file's version, so the run gets "none waiting" and opens a second pane, as today. Mitigation: when
   a run's call finds a restored group on its source pane whose record does not match, the group's badge says so in the
   host's UI, and Give Group hands it over. Signing the file makes the record match across versions.
-- **In-flight proposals widen what Allow turns on** — likelihood: medium, impact: medium. UTERM-024 and UTERM-031 send
-  the user's keys from opted-in remote-controlled panes, and UTERM-026 lets a controller's panes span windows. Each
+- **In-flight proposals widen what Allow turns on** — likelihood: medium, impact: medium. UTERM-024 sends the
+  user's keys from opted-in remote-controlled panes, and UTERM-026 lets a controller's panes span windows. Each
   could make an Allow hand over more than the row says, or break the rule that the group sits in one window.
   Mitigation: each of those proposals states how an adopted group's members take part, before it is accepted.
 - **The terminal is silent while the request waits** — likelihood: medium, impact: low. An operation approval sends
@@ -382,6 +382,8 @@ None.
   None is high likelihood and high impact. The envelope bump is the one-way door, recorded with its downgrade cost.
 - 2026-11-16: Review gate: kept all. The user confirmed that Allow sets the saved modes, that the record follows the
   latest owner, that Give Group hides the waiting run, and the mismatch badge line.
+- 2026-11-16: UTERM-031 is retracted, so the risk "In-flight proposals widen what Allow turns on" no longer names it.
+  It said "UTERM-024 and UTERM-031 send the user's keys from opted-in remote-controlled panes".
 
 ## References
 
