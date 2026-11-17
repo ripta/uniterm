@@ -18,7 +18,10 @@
 
 - UTERM-025 — the whole proposal: this is a required prerequisite of the presentation controller. Its Next Slide and
   Previous Slide are commands declared here, bound to the arrow keys and Page Up and Page Down.
-- UTERM-028 — "Any key" and "When commands are live": exec drivers gain the same commands and events.
+- UTERM-028 — "Any key" and "When commands are live": exec drivers gain the same commands and events. Under UTERM-028,
+  a driver's own pane lists its rows and takes its keys even when disconnected, which narrows "Which panes take a
+  controller's keys" for that pane alone. At a pane that is both a controller's member and a driver's own pane, both
+  sets of rows are listed and keys go to the driver alone, per "Where a controller lives".
 - UTERM-031 — retracted. It weighed keys in panes that do not opt in, such as the source terminal. A key pressed in such
   a pane belongs to that pane, so "Which panes take a controller's keys" stands as written.
 - UTERM-029 — "Scope: what the presenter requires": Go to Slide needs runtime declaration, which this proposal leaves

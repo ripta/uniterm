@@ -29,7 +29,7 @@
 | [UTERM-025](UTERM-025-presentation-controller.md) | Present a Markdown deck in a text viewer pane beside the terminal, stepped with the arrow keys or the palette | accepted |
 | [UTERM-026](UTERM-026-screen-control.md) | Speaker notes in a presenter view, pane zoom, and windows across displays | draft |
 | [UTERM-027](UTERM-027-controller-plain-keys.md) | Plain keys for controllers, folded back into UTERM-024 | retracted |
-| [UTERM-028](UTERM-028-exec-driver-commands.md) | Exec drivers declare commands and receive their invocations | draft |
+| [UTERM-028](UTERM-028-exec-driver-commands.md) | Exec drivers declare commands and receive their invocations | accepted |
 | [UTERM-029](UTERM-029-presentation-extras.md) | PDF, image, and HTML decks, and Go to Slide, for the presenter | draft |
 | [UTERM-030](UTERM-030-text-viewer-slides.md) | A slide style and deck images for the text viewer | accepted |
 | [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | retracted |

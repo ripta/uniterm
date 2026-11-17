@@ -200,6 +200,8 @@ normalization. Explicit membership prevents unrelated user panes from gaining an
 
 ### Exec wire format
 
+Superseded in part by UTERM-028; see Decision Log.
+
 Original questions:
 
 - The message format on stdin and stdout, such as JSON lines.
@@ -312,6 +314,8 @@ them lets a script bypass its denied process capability through a layout request
 would leave the deferred in-pane grant workflow unavailable.
 
 ### How control is enabled
+
+Superseded in part by UTERM-028; see Decision Log.
 
 Decide the defaults for user-created and program-created panes, who changes modes, and what a caller may request
 when its source pane is disconnected.
@@ -1614,6 +1618,11 @@ None.
   after the sheet showed it, so arguments are no longer always outside a remembered scope. Allow once keeps that folder
   standing for the run beside Janet capabilities. A startup denial of a run with an input folder covers that folder
   only, and a covering approval admits such a run before the denial check.
+- 2026-11-16: Superseded in part by UTERM-028. The app's exec hello offers the versions it speaks, and the driver
+  answers with one, instead of each side refusing every version but its own. A driver whose own pane is disconnected
+  keeps commanding the remote-controlled members it owns, which supersedes in part the 2026-11-11 entry's rule that
+  member commands need the driver's pane remote-controlled. Revoke Controller is offered on the pane of a driver that
+  holds UTERM-028's command grant, even when the driver owns no group.
 
 ## References
 
