@@ -27,7 +27,7 @@
 | [UTERM-023](UTERM-023-controller-runs-with-sip-off.md) | What uniterm does for controller runs on a Mac with SIP off | draft |
 | [UTERM-024](UTERM-024-controller-input-channel.md) | Janet controllers declare palette commands bound to keys, and read the user's invocations | accepted |
 | [UTERM-025](UTERM-025-presentation-controller.md) | Present a Markdown deck in a text viewer pane beside the terminal, stepped with the arrow keys or the palette | accepted |
-| [UTERM-026](UTERM-026-screen-control.md) | Speaker notes in a presenter view, pane zoom, and windows across displays | draft |
+| [UTERM-026](UTERM-026-screen-control.md) | Speaker notes in a presenter view, pane zoom, windows across displays, and Pop Out Pane | accepted |
 | [UTERM-027](UTERM-027-controller-plain-keys.md) | Plain keys for controllers, folded back into UTERM-024 | retracted |
 | [UTERM-028](UTERM-028-exec-driver-commands.md) | Exec drivers declare commands and receive their invocations | accepted |
 | [UTERM-029](UTERM-029-presentation-extras.md) | PDF, image, and HTML decks, and Go to Slide, for the presenter | draft |
@@ -64,7 +64,7 @@ UTERM-022 ← UTERM-003, UTERM-004, UTERM-021
 UTERM-023 ← UTERM-003, UTERM-004
 UTERM-024 ← UTERM-002, UTERM-003, UTERM-004, UTERM-013, UTERM-021
 UTERM-025 ← UTERM-003, UTERM-004, UTERM-007, UTERM-015, UTERM-021, UTERM-024, UTERM-030, UTERM-032
-UTERM-026 ← UTERM-001, UTERM-002, UTERM-004, UTERM-013, UTERM-021, UTERM-024, UTERM-025
+UTERM-026 ← UTERM-001, UTERM-002, UTERM-004, UTERM-013, UTERM-021, UTERM-024, UTERM-025, UTERM-032
 UTERM-028 ← UTERM-004, UTERM-013, UTERM-024
 UTERM-029 ← UTERM-003, UTERM-007, UTERM-025
 UTERM-030 ← UTERM-004, UTERM-007, UTERM-015, UTERM-024, UTERM-032
