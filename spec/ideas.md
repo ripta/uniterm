@@ -218,6 +218,100 @@ can use existing grants, which need new mechanisms, and which would require
 explicit changes to settled decisions. The refinements below capture the open
 questions.
 
+## Sample presentation controller
+
+Ship a sample controller that presents a slide deck. It is a controller, not a
+new applet. One pane shows the current slide. Another shows speaker notes.
+Controls move to the next, previous, or a chosen slide. It gives a user a
+starting point for writing controllers, and a way to give a talk from uniterm.
+
+UTERM-004 names a presentation program in its motivation, and its as-built
+example drives slide, notes, and chart panes. That example is test-only. The
+script lives in `Packages/UnitermKit/Tests/WindowKitTests/PresentationTests.swift:28`.
+Its panes are hosted fixtures that `App/AppDelegate.swift:267` registers only in
+debug builds. The repo has no samples directory, and no `.janet` file outside
+test fixtures. The text viewer is the only production applet that takes remote
+commands. Its schema in
+`Packages/UnitermKit/Sources/TextViewerApplet/TextViewerRemote.swift:138` offers
+inline Markdown, reload, scroll to a PDF page or heading, and find.
+
+A thin version works today. A Janet script requests a layout with two text
+viewer panes. It sends each slide as inline Markdown, or sends a PDF and scrolls
+by page. The script's own terminal pane can read keys as the controls. Several
+gaps limit a richer version. The text viewer emits no events, since remote
+callers receive none (`TextViewerApplet.swift:52`), so the controller cannot see
+the user navigate. No command opens a file by path. Inline Markdown has a size
+cap. Image, browser, and canvas slides need those applets to take remote
+commands first. UTERM-024, a draft, would let the controller declare palette
+commands and shortcuts such as Next Slide, and read them as events. Clickable
+controls in a pane would wait on UTERM-022's Questions applet. Still open: where
+shipped samples live and how a user finds them.
+
+## Go client library for controllers
+
+Let a Go program act as a controller and command uniterm directly, without
+shelling out to the `uniterm` command. This would make Go a scripting language
+for uniterm beside Janet. It extends "Automations scriptable from Bash". That
+idea holds the caller identity, authority, and lifecycle questions. This one
+adds a language-neutral client contract and a Go library that speaks it.
+
+A program commands uniterm over a unix socket with the binary script wire. The
+socket address is in
+`Packages/UnitermKit/Sources/ScriptWire/ScriptAddress.swift:8`. The wire is at
+version 12 (`ScriptWire/ScriptProtocol.swift:12`), and both sides refuse any
+other version. Its only documentation is the Swift source. Any same-user process
+can connect, but it is admitted as a generic peer. Only the bundle's own
+`uniterm` command may start a controller run
+(`ScriptHost/ControllerIdentity.swift:84`). A controller package may already
+have a native entry (`ScriptWire/ScriptProtocol.swift:537`). The command execs
+that entry from a verified snapshot, and the entry connects back as the
+controller. The only native client today is a Swift test fixture. The exec
+driver wire is a different thing. It is JSON lines on a child that the app
+launches to drive one applet (`ExecDriver/ExecProtocol.swift:3`), so it cannot
+command uniterm.
+
+The framing is simple, so a Go encoder is small. The blockers are contracts,
+not code. The script wire is internal and version-locked. A third-party client
+needs a published spec, shared conformance fixtures, and a compatibility policy.
+That is a proposal-level decision, and likely an ADR. A Go process that connects
+on its own is a generic peer. It gets no verified identity, no remembered
+trust, and no declared permissions, so it falls back to per-call prompts or an
+explicit pane grant. The native-entry route gives a Go binary full controller
+identity today, if it implements the wire. It is still started through
+`uniterm run`, though the Go code never shells out after that. Still open:
+whether the library lives in this repo or its own Go module, and which identity
+route it supports.
+
+## Share a pane or tab in a screen share
+
+Share one pane or tab in a video call, such as a Google Meet screen share in
+Chrome. Sharing a whole uniterm window works today. Sharing part of a window
+does not, since Chrome's picker offers only screens, windows, and Chrome tabs.
+Native Chrome support is preferred. A sidecar program or a Chrome extension is
+acceptable.
+
+Nothing in the code captures or streams a pane. "Screenshot of a pane or tab"
+above covers still captures through an optional applet method. "Move tabs
+between panes" plans a spike that moves a live terminal surface and web view to
+another pane. Both bear on this idea, and neither covers it.
+
+The most promising route is a pop-out window that holds only the shared pane.
+Meet's own window picker then lists it, with no extension or new permission.
+Chrome captures windows through ScreenCaptureKit. Per WWDC22 session 10155, a
+single-window capture keeps working when the window is covered, but pauses when
+it is minimized. Moving a live Metal surface or web view to a new window raises
+the same unknowns as the move-tabs spike, so the two belong together. The
+original window also needs something in the pane's place. A fallback route
+streams pane frames to a local page in a Chrome tab, and the user shares that
+tab. It needs a frame source, an encoder, and a local server, and adds latency.
+Its stream of terminal contents falls under UTERM-004's trust model. Capturing
+uniterm's own window and cropping to the pane needs Screen Recording permission.
+Per-applet capture avoids that permission but may give stills, not video. A
+virtual camera through a Camera Extension works, but shows up in Meet as a
+camera rather than a presentation. It also needs a system extension, signing,
+and user approval. Chrome's Region Capture and Element Capture crop only
+captured tabs, so they cannot narrow a native window share.
+
 ## Refinements
 
 Unsettled details to resolve as we gain user experience, try different use cases,
