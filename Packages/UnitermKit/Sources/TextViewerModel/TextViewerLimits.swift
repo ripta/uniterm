@@ -20,7 +20,7 @@ public struct TextViewerLimits: Equatable, Sendable {
 
   /// The most bytes of inline Markdown a remote command carries. The script helper writes a command's
   /// arguments as JSON and refuses more than 32 KiB. A quote or a backslash costs two bytes there,
-  /// and so does a line break. Another control character costs six. At 12 KiB, ordinary text fits
+  /// and so does a line break or a tab. Another control character costs six. At 12 KiB, ordinary text fits
   /// with room to spare, even if every byte needs escaping. Text made mostly of other control
   /// characters can still pass this cap and fail in the helper, which answers with a structured
   /// error and sends nothing.
