@@ -19,7 +19,11 @@ fixed ones.
 - Evidence: `DataViewerUITests.swift:365` failed with "Invalid parameter not satisfying: point.x != INFINITY" when
   clicking Edit > Find. The test passed 6 of 6 alone.
 - Suspected cause: state in the menu bar left by earlier tests in the suite.
-- Status: unresolved.
+- Checked: a closed menu is not the cause. With the Edit click removed, XCUITest opened the menu path itself and the
+  test passed. A menu item has no frame when the app's menu bar is not on screen, so uniterm may not have been
+  frontmost. That fits the lost-key entries above.
+- Status: unresolved. The test now waits for the item to take a click, and the failure names the app's state, the
+  frontmost app, and the focused element.
 
 ### `PaneTreeUITests.testFocusMovesWithTheKeyboardAndInputReachesOnlyTheFocusedPane`
 
