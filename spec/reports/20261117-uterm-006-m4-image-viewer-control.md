@@ -139,7 +139,35 @@ Recorded as `Undecided` in UTERM-006's Decision Log:
 The shared handle-and-wait shape was weighed and not recorded. It is a mechanism, and ADR-11 already holds the
 principle behind it.
 
+### Row review and final review
+
+The row and the run cover the same range, so one reviewer ran both, with the run's ADR review. An adr-impact agent ran
+beside it on the range and found no conflicts. The reviewer found nothing blocking.
+
+1. Two test comments ran past the code width. Fixed.
+2. The last As built bullet was over-long. It claimed the text viewer's window tests cover the image viewer's dispatch.
+   Fixed: the claim now says what they cover, the shared dispatch with no per-viewer branch. It also says what they do
+   not cover, the image viewer's type-table entry and its command switch. Only the UI test proves those.
+3. A trailing blank line in `ideas.md`. Fixed.
+4. Zoom told a caller outside the scope one bit: whether the user's pane held a decodable image. Plausible. The trace
+   confirmed it. Fixed: such a caller gets a handle that settles `done` with nothing in it, whether or not an image is on
+   screen. Exec drivers keep zoom. The new test failed on the unfixed behavior before the fix. Best guess 9 in the
+   Decision Log carries the amendment.
+
+The ADR review found no ADR added or edited. Both candidates pass the bar and stay `Undecided`. The reviewer noted the
+second one may need lifting to UTERM-004's compatibility goal when the next proposal review weighs it.
+
+Checks after the fixes: `make lint`, `make check`, the focused `ImageViewerControlTests` and `BuiltInAppletsTests`, and
+`make test-package`, all exit 0. The UI test was not run again. The fix changes only zoom for a caller outside the
+scope on a pane with no image, which the UI test does not reach.
+
+Commit: "Hide whether an image pane holds an image from a zoom outside the scope".
+
 ### Left for the user
+
+- A zoom from a caller outside the scope settles at once when the pane holds no image. With an image on screen, it
+  settles after the pane does. A `wait` with a zero timeout could tell pending from done. That residue is timing only,
+  and it is left as is.
 
 - The freeze reports one hunk in UTERM-004 with origin `other`, in its References: an added ADR-14 line. Another
   session made it. The run did not touch it.

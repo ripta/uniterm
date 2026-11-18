@@ -669,6 +669,42 @@ final class ImageViewerControlTests: XCTestCase {
     XCTAssertEqual(inside["fit"], .bool(true), "a caller that may see the image still does")
   }
 
+  /// Catches a zoom that tells a caller outside the scope whether the user's file decodes. A pane
+  /// whose file is a problem answers such a caller as a pane with an image does, with a handle that
+  /// ends `done`. A caller that may see the file is still refused. A pane with no file of the user's
+  /// has nothing to hide, so it is refused for every caller.
+  func testZoomAnswersACallerOutsideTheScopeTheSameWithOrWithoutAnImage() async throws {
+    let (applet, _) = pane()
+    let elsewhere = try ReadScope(directories: [plain.path])
+    let refusal = AppletCommandError(.refused, "the pane shows no image to zoom")
+
+    XCTAssertEqual(
+      send("zoom", ["to": .string("fit")], to: applet, scope: .some(elsewhere)).result,
+      .failure(refusal), "no file of the user's")
+
+    let bad = outside.appendingPathComponent("bad.png")
+
+    try Data("not a picture".utf8).write(to: bad)
+    try applet.replaceSource(with: bad, startDirectory: outside.path)
+
+    let failed = await Harness.eventually {
+      if case .problem = applet.phase { return true }
+
+      return false
+    }
+    XCTAssertTrue(failed)
+
+    for scope in [elsewhere, nil] as [ReadScope?] {
+      let reply = try await run("zoom", ["scale": .number(2)], to: applet, scope: .some(scope))
+
+      XCTAssertEqual(reply, ["state": .string("done")], "a pane showing a problem")
+    }
+
+    XCTAssertEqual(
+      send("zoom", ["to": .string("fit")], to: applet, scope: .some(wide)).result,
+      .failure(refusal))
+  }
+
   /// Catches a failure code that says what is wrong with a file outside the scope. The user opened
   /// a folder in the controller's scope, and one member links to a file outside it that cannot
   /// decode. The controller steps onto it and is told `unreadable`, as for any path outside.

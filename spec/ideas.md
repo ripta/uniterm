@@ -415,4 +415,3 @@ stepping wait on this, as would any applet whose driver reads. A proposal would 
 scope, how the user approves it beside the run's launch approval, and how a revoked or ended grant stops queued reads.
 It would reuse UTERM-015's scope rules, which apply to a controller and have no driver form. Still open: whether the
 scope belongs in the driver's declaration, so a layout saves it, or only to a run.
-

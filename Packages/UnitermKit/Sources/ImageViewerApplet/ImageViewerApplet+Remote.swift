@@ -130,7 +130,11 @@ extension ImageViewerApplet: AppletCommandHandling {
     throws(AppletCommandError) -> AppletCommandReply
   {
     guard canZoom, let viewport = content.viewport else {
-      throw AppletCommandError(.refused, "the pane shows no image to zoom")
+      guard !access.mayShow(source: record.path) else {
+        throw AppletCommandError(.refused, "the pane shows no image to zoom")
+      }
+
+      return try zoomNothingFor(arguments)
     }
 
     let target: ImageViewerView.ZoomTarget
@@ -170,6 +174,34 @@ extension ImageViewerApplet: AppletCommandHandling {
 
     content.zoom(target)
     observeRemote()
+
+    return reply
+  }
+
+  /// A zoom from a caller that may not see the pane's source, while the pane shows no image. Whether
+  /// the pane holds a decodable image says something about the user's file, so this caller gets what
+  /// it would get with an image on screen: a handle that ends `done` with nothing else. Only the
+  /// shape of its own arguments can refuse it.
+  private func zoomNothingFor(_ arguments: [String: JSONValue]) throws(AppletCommandError)
+    -> AppletCommandReply
+  {
+    switch (arguments["to"], arguments["scale"]) {
+    case (.string("fit")?, nil), (.string("actual")?, nil), (nil, .number?):
+      break
+
+    default:
+      throw AppletCommandError(
+        .badArgument, "give either to, as fit or actual, or scale, as a multiple of actual size")
+    }
+
+    try requireRoom()
+
+    let reply = try started(.zoom, wanted: nil)
+
+    if let entry = remote.running.last {
+      remote.settle(
+        entry.id, .zoomed(ZoomReport(isFit: true, scale: 1, source: record.path, path: nil)))
+    }
 
     return reply
   }

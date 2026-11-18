@@ -619,8 +619,10 @@ Amended 2026-11-17; see Decision Log.
 - The text viewer and the image viewer each carry their own handle table and waiter. A shared one would remove about a
   hundred lines of duplicate. It was left out to keep the text viewer unchanged.
 - New UI test: `testAScriptShowsAFolderStepsAndZoomsAnImagePane`. It passed in the run, and its screenshot shows the
-  script's pane on its second image at actual size. No window-level package test drives an image pane, since the text viewer's window tests already cover the
-  dispatch path both viewers share.
+  script's pane on its second image at actual size. No window-level package test drives an image pane. The window
+  code holds no branch for either viewer, so the text viewer's window tests (`TextViewerRemoteWindowTests` and
+  `PathReadWindowTests`) cover the dispatch path the two share. Only the `image-viewer` entry in the window's type
+  table, and an image pane's remote-control switch, are proved by the UI test alone.
 
 ### M5: Exec driver reads
 
@@ -832,6 +834,10 @@ decision before this milestone can start.
      failure reads `unreadable` otherwise, and whenever the image's path is not known. A zoom to a scale past the
      ceiling is not refused for a caller that may not see the image, since the refusal names a ceiling that follows
      from the image's resolution. The zoom holds at the ceiling instead.
+     A zoom while the pane shows no image is refused only for a caller that may see the pane's source. A pane
+     with no file of the user's is always shown. For any other pane, a caller that may not see its source gets a
+     handle that ends `done` with nothing else, as it does with an image on screen. The answer then does not say
+     whether the user's pane holds a decodable image. Amended 2026-11-17.
   10. A driver's `shown` goes out when the image changes, and when the payload it would get changes. A driver's
       payload never holds the count, so a growing listing sends it nothing. A driver that attaches gets the image on
       screen once, when its hello is accepted. The alternative was no replay, which leaves a driver blind until the
