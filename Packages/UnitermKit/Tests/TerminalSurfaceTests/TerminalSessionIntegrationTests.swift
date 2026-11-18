@@ -15,6 +15,10 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   private var resources: URL!
   private var helper: URL!
   private var engine: GhosttyTerminalEngine!
+
+  /// The sessions' clipboard. It is private to the test, so another program's copy during a run
+  /// cannot change what a test reads, and no test touches the user's clipboard.
+  private var pasteboard: NSPasteboard!
   private var window: NSWindow!
   private var sessions: [any TerminalSession] = []
   private var savedEnvironment: [String: String?] = [:]
@@ -61,9 +65,11 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     setenv("ZDOTDIR", sandbox.appending(path: "home").path, 1)
     setenv("SSH_AUTH_SOCK", "", 1)
     unsetenv("SSH_ASKPASS")
+    pasteboard = NSPasteboard.withUniqueName()
     engine = try GhosttyTerminalEngine(
       configStore: TerminalConfigStore(directory: sandbox.appending(path: "config")),
-      resourcesDirectory: resources, helperDirectory: helper, palette: .latte)
+      resourcesDirectory: resources, helperDirectory: helper, palette: .latte,
+      pasteboard: pasteboard)
 
     window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 800, height: 400), styleMask: [.titled],
@@ -87,6 +93,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
       kill(pid, SIGKILL)
     }
     engine = nil
+    pasteboard.releaseGlobally()
     window.close()
     try? FileManager.default.removeItem(at: sandbox)
 
@@ -345,30 +352,23 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     XCTAssertEqual(session.gridSize, original)
   }
 
-  /// Catches copy, paste, and select all that do not work through the protocol. The pasteboard is
-  /// saved and restored, since libghostty uses the general one.
+  /// Catches copy, paste, and select all that do not work through the protocol.
   func testCopyPasteAndSelectAll() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
     let session = try startShell()
     try await waitUntil("an idle prompt") { !session.isRunningSomething }
 
     try run("echo \"K:$((40+2)):\"", in: session)
     try await waitUntil("the marker") { self.screen(session).contains("K:42:") }
 
-    NSPasteboard.general.clearContents()
+    pasteboard.clearContents()
     session.perform(.selectAll)
     session.perform(.copy)
     try await waitUntil("the copied text") {
-      NSPasteboard.general.string(forType: .string)?.contains("K:42:") == true
+      pasteboard.string(forType: .string)?.contains("K:42:") == true
     }
 
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("echo \"P:$((6*7)):\"", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString("echo \"P:$((6*7)):\"", forType: .string)
     session.perform(.paste)
     try press(session, keyCode: 0x24, characters: "\r")
     try await waitUntil("the pasted command's output") { self.screen(session).contains("P:42:") }
@@ -399,14 +399,8 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   /// While it waits, the program receives nothing. An allowed request then sends the clipboard, and
   /// a denied one sends none of it.
   func testClipboardReadIsNeverAnsweredWithoutConfirmation() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("SECRET-CB", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString("SECRET-CB", forType: .string)
     let encoded = Data("SECRET-CB".utf8).base64EncodedString()
 
     let session = try startShell()
@@ -444,14 +438,8 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   /// denied. Both a read for text and a read for the type names alone must get an `EPERM` status.
   /// The second kind reaches no confirm callback, so it proves the denial in the read callback.
   func testKittyClipboardReadsAreDenied() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("SECRET-KITTY", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString("SECRET-KITTY", forType: .string)
     let encoded = Data("SECRET-KITTY".utf8).base64EncodedString()
 
     let session = try startShell()
@@ -479,13 +467,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   /// Catches an OSC 52 write that asks the user, or that stops landing, now that `clipboard-write`
   /// is `ask`. It also catches a Kitty write that reaches the pasteboard instead of an `EPERM`.
   func testOSC52WritesLandAndKittyWritesAreDenied() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
-    NSPasteboard.general.clearContents()
+    pasteboard.clearContents()
 
     let session = try startShell()
     var requests: [TerminalClipboardRequest] = []
@@ -497,7 +479,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     let osc52 = Data("WROTE-52".utf8).base64EncodedString()
     try run("printf '\\033]52;c;\(osc52)\\a'", in: session)
     try await waitUntil("the OSC 52 write") {
-      NSPasteboard.general.string(forType: .string) == "WROTE-52"
+      pasteboard.string(forType: .string) == "WROTE-52"
     }
 
     // A Kitty write is a begin packet, a data packet for each MIME type, and an empty commit.
@@ -508,7 +490,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
         + "echo \"W:${reply#*status=}:\"", in: session)
     try await waitUntil("the Kitty write reply") { self.screen(session).contains("W:EPERM:") }
 
-    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "WROTE-52")
+    XCTAssertEqual(pasteboard.string(forType: .string), "WROTE-52")
     XCTAssertTrue(requests.isEmpty, "a clipboard write asked the user")
   }
 
@@ -517,14 +499,8 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   /// through libghostty's own write callback, with its confirm flag set. A controlled read asks
   /// too, and its session permission answers the next read without asking.
   func testAControlledSessionAsksBeforeOSC52WritesAndReads() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("BEFORE", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString("BEFORE", forType: .string)
 
     let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
     var requests: [TerminalClipboardRequest] = []
@@ -544,25 +520,25 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     requests[0].resolve(.deny)
 
     try await Task.sleep(for: .milliseconds(500))
-    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE", "a denied write landed")
+    XCTAssertEqual(pasteboard.string(forType: .string), "BEFORE", "a denied write landed")
 
     try write("W-ONCE")
     try await waitUntil("the second write request") { requests.count == 2 }
     requests[1].resolve(.allowOnce)
     try await waitUntil("the write allowed once") {
-      NSPasteboard.general.string(forType: .string) == "W-ONCE"
+      pasteboard.string(forType: .string) == "W-ONCE"
     }
 
     try write("W-SESSION")
     try await waitUntil("a write after allow once to ask again") { requests.count == 3 }
     requests[2].resolve(.allowForSession)
     try await waitUntil("the write allowed for the session") {
-      NSPasteboard.general.string(forType: .string) == "W-SESSION"
+      pasteboard.string(forType: .string) == "W-SESSION"
     }
 
     try write("W-FREE")
     try await waitUntil("a write the session covers") {
-      NSPasteboard.general.string(forType: .string) == "W-FREE"
+      pasteboard.string(forType: .string) == "W-FREE"
     }
     XCTAssertEqual(requests.count, 3, "a write the session covers asked again")
 
@@ -590,14 +566,8 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   /// for each. While a write's prompt waits, every later write is denied at once, with no prompt,
   /// and none of them reaches the clipboard. Once the prompt is answered, the next write asks.
   func testAFloodOfControlledWritesAsksOnceAndChangesNothing() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("BEFORE-FLOOD", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString("BEFORE-FLOOD", forType: .string)
 
     let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
     var requests: [TerminalClipboardRequest] = []
@@ -613,11 +583,11 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(500))
 
     XCTAssertEqual(requests.count, 1, "a flood of writes queued a prompt for each")
-    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE-FLOOD")
+    XCTAssertEqual(pasteboard.string(forType: .string), "BEFORE-FLOOD")
 
     requests[0].resolve(.deny)
     try await Task.sleep(for: .milliseconds(300))
-    XCTAssertEqual(NSPasteboard.general.string(forType: .string), "BEFORE-FLOOD")
+    XCTAssertEqual(pasteboard.string(forType: .string), "BEFORE-FLOOD")
 
     try run("printf '\\033]52;c;\(Data("AFTER".utf8).base64EncodedString())\\a'", in: session)
     try await waitUntil("a write after the answer to ask") { requests.count == 2 }
@@ -628,14 +598,8 @@ final class TerminalSessionIntegrationTests: XCTestCase {
   /// or after the session closed. A pending write and a pending read are each answered allow once
   /// after the change, and neither the clipboard nor the program gets anything.
   func testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("SECRET-STALE", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString("SECRET-STALE", forType: .string)
 
     let session = try startShell(policy: TerminalClipboardPolicy(controlled: true, generation: 1))
     var requests: [TerminalClipboardRequest] = []
@@ -670,7 +634,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
 
     try await Task.sleep(for: .milliseconds(500))
     XCTAssertEqual(
-      NSPasteboard.general.string(forType: .string), "SECRET-STALE", "a stale write landed")
+      pasteboard.string(forType: .string), "SECRET-STALE", "a stale write landed")
 
     try run("printf '\\033]52;c;\(written)\\a'", in: session)
     try await waitUntil("the write request before the close") { requests.count == 3 }
@@ -680,7 +644,7 @@ final class TerminalSessionIntegrationTests: XCTestCase {
 
     try await Task.sleep(for: .milliseconds(500))
     XCTAssertEqual(
-      NSPasteboard.general.string(forType: .string), "SECRET-STALE",
+      pasteboard.string(forType: .string), "SECRET-STALE",
       "an answer after the session closed wrote the clipboard")
   }
 
@@ -841,14 +805,8 @@ final class TerminalSessionIntegrationTests: XCTestCase {
 
   /// The menu reaches the terminal with a nil target, so AppKit finds `copy:` and the others on
   /// the first responder and asks `validateMenuItem` whether to enable them. This drives that path
-  /// in-process. The pasteboard is saved and restored.
+  /// in-process.
   func testMenuActionsReachTheFocusedTerminal() async throws {
-    let saved = NSPasteboard.general.string(forType: .string)
-    defer {
-      NSPasteboard.general.clearContents()
-      if let saved { NSPasteboard.general.setString(saved, forType: .string) }
-    }
-
     let session = try startShell()
     let view = try XCTUnwrap(session.view as? GhosttySurfaceView)
     XCTAssertTrue(window.makeFirstResponder(view))
@@ -864,14 +822,14 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     XCTAssertTrue(view.tryToPerform(#selector(TerminalMenuActions.selectAll(_:)), with: nil))
     XCTAssertTrue(view.validateMenuItem(copyItem), "Copy is disabled with a selection")
 
-    NSPasteboard.general.clearContents()
+    pasteboard.clearContents()
     XCTAssertTrue(view.tryToPerform(#selector(TerminalMenuActions.copy(_:)), with: nil))
     try await waitUntil("the copied text") {
-      NSPasteboard.general.string(forType: .string)?.contains("M:42:") == true
+      pasteboard.string(forType: .string)?.contains("M:42:") == true
     }
 
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString("echo \"V:$((5*9)):\"", forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString("echo \"V:$((5*9)):\"", forType: .string)
     XCTAssertTrue(view.tryToPerform(#selector(TerminalMenuActions.paste(_:)), with: nil))
     try press(session, keyCode: 0x24, characters: "\r")
     try await waitUntil("the pasted command's output") { self.screen(session).contains("V:45:") }
@@ -1016,7 +974,8 @@ final class TerminalSessionIntegrationTests: XCTestCase {
 
     engine = try GhosttyTerminalEngine(
       configStore: TerminalConfigStore(directory: sandbox.appending(path: "config-env")),
-      resourcesDirectory: resources, helperDirectory: helper, palette: .latte)
+      resourcesDirectory: resources, helperDirectory: helper, palette: .latte,
+      pasteboard: pasteboard)
 
     let session = try startShell()
     try await waitUntil("an idle prompt") { !session.isRunningSomething }

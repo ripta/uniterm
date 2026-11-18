@@ -184,7 +184,7 @@ final class ExecPaneUITests: UnitermUITestCase {
 
     XCTAssertTrue(
       launcher(in: window).waitForExistence(timeout: 5),
-      "Cmd-D did nothing while the driver stalled")
+      "Cmd-D did nothing while the driver stalled. \(focusReport(app))")
   }
 
   /// What each interaction found: the app's state before and after it, and how long it took. A

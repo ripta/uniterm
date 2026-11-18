@@ -138,11 +138,10 @@ private final class OpenFixture {
     for controller in windows.controllers { controller.window?.close() }
   }
 
-  /// Lets the coordinator's task run to its end.
+  /// Waits until the coordinator's drain ends. Routing runs off the main thread, so a fixed number
+  /// of yields can return before it lands, and a test of what did not happen then proves nothing.
   func settle() async {
-    for _ in 0..<50 {
-      await Task.yield()
-    }
+    await coordinator.idle()
   }
 }
 

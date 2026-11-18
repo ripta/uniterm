@@ -191,6 +191,8 @@ class UnitermUITestCase: XCTestCase {
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
     XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(
+      waitUntilHittable(row), "the review's row cannot take a click. \(focusReport(app))")
     row.click()
 
     let button = panel.buttons[identifier]
@@ -285,12 +287,52 @@ class UnitermUITestCase: XCTestCase {
     XCTAssertTrue(waitUntilGone(settings, timeout: 5))
   }
 
+  /// Waits until the element can take a click. An element can exist before it is on screen: a
+  /// closed menu's items have no frame, and a list still settling after a scroll has not moved its
+  /// rows into view yet.
+  func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+    let hittable = NSPredicate(format: "hittable == true")
+    return XCTWaiter().wait(
+      for: [XCTNSPredicateExpectation(predicate: hittable, object: element)], timeout: timeout)
+      == .completed
+  }
+
   func waitForNoSheet(in window: XCUIElement, timeout: TimeInterval = 5) -> Bool {
     let gone = NSPredicate(format: "exists == false")
     let sheet = window.sheets.firstMatch
     return XCTWaiter().wait(
       for: [XCTNSPredicateExpectation(predicate: gone, object: sheet)], timeout: timeout)
       == .completed
+  }
+
+  // MARK: Diagnostics
+
+  /// Who held the keyboard when a key seemed to go nowhere: the app's state, the frontmost app,
+  /// and the element in the app with keyboard focus. A wait that follows a key names this in its
+  /// failure. Then the failure says whether another app took the key or the app sent it elsewhere.
+  func focusReport(_ app: XCUIApplication) -> String {
+    let front = NSWorkspace.shared.frontmostApplication.map {
+      let bundle = $0.bundleIdentifier ?? "no bundle ID"
+      return "\($0.localizedName ?? "unnamed") (\(bundle), pid \($0.processIdentifier))"
+    }
+
+    let focused = app.descendants(matching: .any)
+      .matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
+    let label = focused.label.isEmpty ? "" : ", labeled '\(focused.label)',"
+    let holder = focused.exists ? "'\(focused.identifier)'\(label)" : "nothing"
+
+    return "The app is \(Self.describe(app.state)). The frontmost app is \(front ?? "none"). "
+      + "In the app, \(holder) has keyboard focus."
+  }
+
+  private static func describe(_ state: XCUIApplication.State) -> String {
+    switch state {
+    case .runningForeground: return "in the foreground"
+    case .runningBackground: return "in the background"
+    case .notRunning: return "not running"
+    case .unknown: return "in an unknown state"
+    @unknown default: return "in state \(state.rawValue)"
+    }
   }
 
   // MARK: Launcher
@@ -309,7 +351,9 @@ class UnitermUITestCase: XCTestCase {
     let window = mainWindow(number, in: app)
 
     app.typeKey(keys, modifierFlags: modifiers)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5), "the launcher never opened")
+    XCTAssertTrue(
+      launcher(in: window).waitForExistence(timeout: 5),
+      "the launcher never opened. \(focusReport(app))")
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitUntilGone(launcher(in: window), timeout: 10), "Return left the launcher")
@@ -325,7 +369,7 @@ class UnitermUITestCase: XCTestCase {
     app.typeKey("g", modifierFlags: [.command, .shift])
 
     let goTo = panel.sheets.firstMatch
-    XCTAssertTrue(goTo.waitForExistence(timeout: 5), "no go-to-folder sheet")
+    XCTAssertTrue(goTo.waitForExistence(timeout: 5), "no go-to-folder sheet. \(focusReport(app))")
 
     paste(file.path, in: app)
 
@@ -337,7 +381,10 @@ class UnitermUITestCase: XCTestCase {
       "the go-to field holds \(String(describing: typed.value)), not \(file.path)")
 
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(waitUntilGone(goTo, timeout: 5), "the go-to-folder sheet never closed")
+    XCTAssertTrue(
+      waitUntilGone(goTo, timeout: 5),
+      "the go-to-folder sheet never closed. \(focusReport(app)) "
+        + "The sheet: \(goTo.debugDescription)")
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")

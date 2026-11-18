@@ -56,7 +56,9 @@ final class PaneTreeUITests: UnitermUITestCase {
     XCTAssertTrue(waitForValue("unfocused", of: two))
 
     app.typeText("echo \"L:$((6*7)):\"\n")
-    XCTAssertTrue(waitFor(one.textViews["terminal"], timeout: 20) { $0.contains("L:42:") })
+    XCTAssertTrue(
+      waitFor(one.textViews["terminal"], timeout: 20) { $0.contains("L:42:") },
+      "the typed line never reached the focused pane. \(focusReport(app))")
     XCTAssertFalse((two.textViews["terminal"].value as? String ?? "").contains("L:42:"))
 
     app.typeKey(.rightArrow, modifierFlags: [.command, .option])
@@ -165,7 +167,9 @@ final class PaneTreeUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     openPane(in: app, keys: "d", modifiers: .command)
-    XCTAssertTrue(window.groups["pane-2"].waitForExistence(timeout: 20))
+    XCTAssertTrue(
+      window.groups["pane-2"].waitForExistence(timeout: 20),
+      "the split never opened a second pane. \(focusReport(app))")
     XCTAssertTrue(
       waitFor(window.groups["pane-2"].textViews["terminal"], timeout: 40) { $0.contains("% ") })
 

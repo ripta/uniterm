@@ -104,12 +104,16 @@ final class PendingRequestsUITests: UnitermUITestCase {
   }
 
   /// Selects the panel's first row once the outside program's request reaches it.
-  private func selectRequest(in panel: XCUIElement) {
+  private func selectRequest(in panel: XCUIElement, of app: XCUIApplication) {
     let table = panel.tables["pending-requests-table"]
     let row = table.tableRows.firstMatch
 
     XCTAssertTrue(row.waitForExistence(timeout: 30), "the request never reached the panel")
 
+    // The one failure here was a bare "Unable to find hit point" from the click. Waiting for the
+    // row to take a click first turns that into a failure that says who held the screen.
+    XCTAssertTrue(
+      waitUntilHittable(row), "the request's row cannot take a click. \(focusReport(app))")
     row.click()
   }
 
@@ -140,7 +144,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     let panel = openPendingRequests(from: indicator, in: app)
 
-    selectRequest(in: panel)
+    selectRequest(in: panel, of: app)
     panel.buttons["Grant Access\u{2026}"].click()
 
     let sheet = panel.sheets.firstMatch
@@ -172,7 +176,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     let panel = openPendingRequests(in: app)
 
-    selectRequest(in: panel)
+    selectRequest(in: panel, of: app)
     panel.buttons["Deny"].click()
 
     XCTAssertEqual(outcome(of: program), "denied\n")

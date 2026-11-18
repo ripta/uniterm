@@ -8,6 +8,23 @@
 
 set -euo pipefail
 
+# UI tests drive the one screen and keyboard. Two runs at once, from two sessions or worktrees, steal
+# each other's focus and keys, so a run waits for the screen. The lock is per user, outside every
+# checkout, so every worktree shares it.
+lock="/tmp/uniterm-ui-tests-$(id -u).lock"
+holder="$lock.holder"
+
+if [[ -z "${UNITERM_UI_LOCK_HELD:-}" ]]; then
+  if ! lockf -ks -t 0 "$lock" true; then
+    echo "Another UI test run holds the screen: $(cat "$holder" 2>/dev/null || echo "unknown run")." >&2
+    echo "Waiting for it to finish." >&2
+  fi
+
+  UNITERM_UI_LOCK_HELD=1 exec lockf -k "$lock" "$0" "$@"
+fi
+
+printf 'pid %s, started %s, in %s\n' "$$" "$(date '+%H:%M:%S')" "$PWD" >"$holder"
+
 if ! swift -e 'import CoreGraphics; exit(CGSessionCopyCurrentDictionary() == nil ? 1 : 0)' 2>/dev/null; then
   echo "error: UI tests need a logged-in GUI session, and this shell has none." >&2
   echo "Run make test-app from Terminal on the desktop." >&2
@@ -15,7 +32,7 @@ if ! swift -e 'import CoreGraphics; exit(CGSessionCopyCurrentDictionary() == nil
 fi
 
 log="$(mktemp "${TMPDIR:-/tmp}/uniterm-ui-tests.XXXXXX")"
-trap 'rm -f "$log"' EXIT
+trap 'rm -f "$log" "$holder"' EXIT
 
 if "$@" 2>&1 | tee "$log"; then
   exit 0

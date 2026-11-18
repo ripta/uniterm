@@ -81,6 +81,12 @@ final class FindCoordinator {
   static let matchColor = NSColor.systemYellow.withAlphaComponent(0.55)
   static let currentColor = NSColor.systemOrange
 
+  /// Searches a text snapshot. The type is `@concurrent`, so whatever is assigned runs off the
+  /// main actor. A document at the decoded cap is millions of characters. Tests hold the search
+  /// open to prove the main actor stays free while it runs.
+  var textSearch: @concurrent @Sendable (String, String) async -> FindMatching.Outcome? =
+    FindMatching.searchOffMain(in:for:)
+
   init(content: TextViewerView) {
     self.content = content
   }
@@ -371,9 +377,10 @@ final class FindCoordinator {
 
   private func searchText(_ query: String, token: Int, reveal: FindReveal) {
     let snapshot = content.textView.string
+    let search = textSearch
 
     task = Task { [weak self] in
-      let outcome = await FindMatching.searchOffMain(in: snapshot, for: query)
+      let outcome = await search(snapshot, query)
 
       guard let self, token == generation, let outcome else { return }
 

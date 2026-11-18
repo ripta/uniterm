@@ -9,6 +9,12 @@ import XCTest
 @testable import WindowKit
 
 /// Stands in for the system's process watcher, so a test ends a sender by hand.
+/// The task a watcher starts to report its sender's end, so a test can wait for that report.
+@MainActor
+private final class EndingBox {
+  var task: Task<Void, Never>?
+}
+
 @MainActor
 private final class WatchLog {
   var ends: [Int32: [@MainActor () -> Void]] = [:]
@@ -71,17 +77,10 @@ final class LaunchOpenApprovalTests: XCTestCase {
 
   private var requests: PermissionRequests { fixture.windows.permissionRequests }
 
+  /// Waits until the coordinator's drain ends. Routing runs off the main thread, so yields alone
+  /// can return before it lands.
   private func settle() async {
-    for _ in 0..<50 { await Task.yield() }
-  }
-
-  /// Yields until the router's off-main work has placed `count` panes, or gives up.
-  private func settle(untilPlaced count: Int) async {
-    for _ in 0..<20_000 where fixture.box.entries.count < count {
-      await Task.yield()
-    }
-
-    await settle()
+    await coordinator.idle()
   }
 
   private func messages(_ controller: MainWindowController) -> [String] {
@@ -232,7 +231,7 @@ final class LaunchOpenApprovalTests: XCTestCase {
     XCTAssertEqual(spy.looked, [])
 
     requests.decide(row.id, .allowOnce)
-    await settle(untilPlaced: 12)
+    await settle()
 
     XCTAssertTrue(fixture.box.asked.isEmpty, "the router asked a second question")
     XCTAssertEqual(fixture.box.entries.count, 12)
@@ -431,8 +430,10 @@ final class LaunchOpenApprovalTests: XCTestCase {
   func testASenderThatAlreadyExitedTouchesNothing() async throws {
     let anchor = try running()
 
+    let ending = EndingBox()
+
     let exited: SenderWatcher = { _, onEnd in
-      Task { @MainActor in onEnd() }
+      ending.task = Task { @MainActor in onEnd() }
 
       return {}
     }
@@ -442,6 +443,7 @@ final class LaunchOpenApprovalTests: XCTestCase {
     coordinator.launchFinished()
 
     coordinator.receive([try fixture.textFile("a.txt")], from: app(200))
+    await ending.task?.value
     await settle()
 
     XCTAssertTrue(requests.rows.isEmpty)

@@ -75,7 +75,9 @@ public final class LaunchOpenCoordinator {
   private var coalescer: RefusalCoalescer
   private var queue: [Request] = []
   private var ready = false
-  private var draining = false
+
+  /// The task that runs the queue, while one does. Its end means every open that could run has run.
+  private var drain: Task<Void, Never>?
   private var windowCheckDue = false
 
   /// `openFallbackWindow` runs after the replay when no window is open, so a launch whose only
@@ -129,7 +131,7 @@ public final class LaunchOpenCoordinator {
     windowCheckDue = true
     drainIfReady()
 
-    if !draining {
+    if drain == nil {
       ensureWindow()
     }
   }
@@ -233,19 +235,27 @@ public final class LaunchOpenCoordinator {
   }
 
   private func drainIfReady() {
-    guard ready, !draining, !queue.isEmpty else { return }
+    guard ready, drain == nil, !queue.isEmpty else { return }
 
-    draining = true
-
-    Task { @MainActor [weak self] in
+    drain = Task { @MainActor [weak self] in
       guard let self else { return }
 
       while !self.queue.isEmpty {
         await self.run(self.queue.removeFirst())
       }
 
-      self.draining = false
+      self.drain = nil
       self.ensureWindow()
+    }
+  }
+
+  /// Returns once no drain is running. Routing runs off the main thread, so yielding the main actor
+  /// does not wait for it, and this does. An open that waits for layout restore or for the user's
+  /// answer to a sender's question has not started a drain, so it does not hold this. A drain that
+  /// waits on a question the router asks does.
+  func idle() async {
+    while let drain {
+      await drain.value
     }
   }
 

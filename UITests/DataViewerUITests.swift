@@ -334,8 +334,10 @@ final class DataViewerUITests: UnitermUITestCase {
     let bar = app.menuBars
     bar.menuBarItems["Edit"].click()
 
+    // A menu item with no frame fails the click with a bare "point.x != INFINITY". Waiting for a
+    // frame first turns that into a failure that says who held the screen.
     let find = bar.menuItems["Find"]
-    XCTAssertTrue(find.waitForExistence(timeout: 5), "no Edit > Find")
+    XCTAssertTrue(waitUntilHittable(find), "no Edit > Find on screen. \(focusReport(app))")
     find.click()
 
     for title in ["Find\u{2026}", "Find Next", "Find Previous", "Focus Filter"] {

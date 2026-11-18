@@ -32,6 +32,7 @@ private enum GhosttyGlobal {
 public final class GhosttyTerminalEngine: TerminalEngine {
   private let logger = Logger(subsystem: "dev.uniterm.app", category: "terminal")
   private let store: TerminalConfigStore
+  private let pasteboard: NSPasteboard
   private let wakeupTarget = WakeupTarget()
   private var app: ghostty_app_t?
   private var config: ghostty_config_t?
@@ -49,10 +50,13 @@ public final class GhosttyTerminalEngine: TerminalEngine {
   ///     value inherited from another Ghostty never decides which resources the shells use.
   ///   - helperDirectory: The directory that holds uniterm's `ghostty` helper. Ghostty's shell
   ///     integration finds it through `GHOSTTY_BIN_DIR`. See `launchEnvironment`.
+  /// `pasteboard` is the clipboard every session copies to, pastes from, and answers programs
+  /// with. The app uses the system's.
   public init(
     configStore: TerminalConfigStore, resourcesDirectory: URL, helperDirectory: URL,
-    palette: ThemePalette
+    palette: ThemePalette, pasteboard: NSPasteboard = .general
   ) throws {
+    self.pasteboard = pasteboard
     self.store = configStore
     self.palette = palette
     self.helperDirectory = helperDirectory
@@ -121,7 +125,8 @@ public final class GhosttyTerminalEngine: TerminalEngine {
       launch.environment, helperDirectory: helperDirectory,
       inheritedPath: ProcessInfo.processInfo.environment["PATH"])
 
-    let view = try GhosttySurfaceView(app: app, launch: launch, clipboardPolicy: clipboardPolicy)
+    let view = try GhosttySurfaceView(
+      app: app, launch: launch, clipboardPolicy: clipboardPolicy, pasteboard: pasteboard)
     sessions.add(view)
     return view
   }

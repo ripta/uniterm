@@ -142,17 +142,26 @@ final class FindTests: XCTestCase {
   }
 
   /// Catches a text search that runs on the main thread. A decoded document may hold four million
-  /// characters, and a search of one must leave the main actor free. The pane's own find runs the
-  /// search while the main actor counts its turns, and a search on the main actor would let none
-  /// through.
-  func testSearchingTheDecodedCapNeverBlocksTheMainThread() async throws {
-    let limit = TextViewerLimits.standard.maxDecodedLength
-    let filler = String(repeating: "lorem ipsum dolor ", count: limit / 18)
-    let text = filler + "needle"
-
-    XCTAssertGreaterThan(text.utf16.count, limit - 20)
-
+  /// characters, and a search of one must leave the main actor free. The test holds the pane's
+  /// search at a gate, and only the main actor opens it, after it sees the search in flight. A
+  /// search done on the main actor never reaches the gate, or blocks the main actor there until
+  /// the gate gives up. Either way the gate is never opened from the main actor, and the test
+  /// fails without depending on how long anything takes.
+  ///
+  /// The proof does not depend on the document's size, so a short one keeps the main actor free to
+  /// open the gate well inside its bound.
+  func testATextSearchNeverRunsOnTheMainActor() async throws {
+    let text = "lorem ipsum dolor needle"
     let applet = Harness.applet()
+    let gate = SearchGate()
+
+    applet.finder.textSearch = { text, query in
+      gate.arrive()
+
+      guard gate.waitForRelease() else { return nil }
+
+      return FindMatching.search(in: text, for: query)
+    }
 
     host(applet)
     applet.show(
@@ -161,15 +170,18 @@ final class FindTests: XCTestCase {
     applet.content.findBar.query = "NEEDLE"
     applet.finder.queryChanged("NEEDLE")
 
-    var turns = 0
+    let arrived = await Harness.eventually { gate.hasArrived }
 
-    while applet.finder.state.isSearching {
-      turns += 1
-      await Task.yield()
-    }
+    XCTAssertTrue(arrived, "the search never reached the pane's searcher")
+    XCTAssertTrue(applet.finder.state.isSearching)
 
+    gate.release()
+
+    let ended = await Harness.eventually { !applet.finder.state.isSearching }
+
+    XCTAssertTrue(ended, "the search never ended")
+    XCTAssertFalse(gate.gaveUp, "the search held the main actor, so it never opened the gate")
     XCTAssertEqual(applet.finder.state.matchCount, 1)
-    XCTAssertGreaterThan(turns, 100, "the main actor ran while the search did")
   }
 
   /// Catches old matches that survive a reload. A search that is still running when another
@@ -564,5 +576,33 @@ final class FindTests: XCTestCase {
     }
 
     XCTAssertEqual(NSPasteboard(name: .find).changeCount, before)
+  }
+}
+
+/// Holds a search until the test releases it. A search that waits here on the main actor blocks
+/// the release, so the wait gives up after ten seconds instead of hanging the run.
+private final class SearchGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private let released = DispatchSemaphore(value: 0)
+  private var arrived = false
+  private var timedOut = false
+
+  var hasArrived: Bool { lock.withLock { arrived } }
+  var gaveUp: Bool { lock.withLock { timedOut } }
+
+  func arrive() {
+    lock.withLock { arrived = true }
+  }
+
+  func waitForRelease() -> Bool {
+    let opened = released.wait(timeout: .now() + 10) == .success
+
+    if !opened { lock.withLock { timedOut = true } }
+
+    return opened
+  }
+
+  func release() {
+    released.signal()
   }
 }
