@@ -196,7 +196,8 @@ final class LauncherUITests: UnitermUITestCase {
     XCTAssertFalse(last.isHittable, "the pane is tall enough to show every entry")
 
     pane.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -1000)
-    XCTAssertTrue(last.isHittable, "the scroll wheel did not scroll the list")
+    XCTAssertTrue(
+      waitUntilHittable(last), "the scroll wheel did not scroll the list. \(focusReport(app))")
     Thread.sleep(forTimeInterval: 0.5)
     attach(window, named: "launcher-quarter-height-wheel")
 
@@ -206,7 +207,7 @@ final class LauncherUITests: UnitermUITestCase {
 
     XCTAssertTrue(
       waitFor(last, timeout: 5) { $0 == "selected" }, "the arrow keys did not reach the last entry")
-    XCTAssertTrue(last.isHittable, "the last entry is out of sight")
+    XCTAssertTrue(waitUntilHittable(last), "the last entry is out of sight. \(focusReport(app))")
     Thread.sleep(forTimeInterval: 0.5)
     attach(window, named: "launcher-quarter-height-last")
   }

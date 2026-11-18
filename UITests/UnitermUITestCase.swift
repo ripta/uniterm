@@ -285,6 +285,16 @@ class UnitermUITestCase: XCTestCase {
     XCTAssertTrue(waitUntilGone(settings, timeout: 5))
   }
 
+  /// Waits until the element can take a click. An element can exist before it is on screen: a
+  /// closed menu's items have no frame, and a list still settling after a scroll has not moved its
+  /// rows into view yet.
+  func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+    let hittable = NSPredicate(format: "hittable == true")
+    return XCTWaiter().wait(
+      for: [XCTNSPredicateExpectation(predicate: hittable, object: element)], timeout: timeout)
+      == .completed
+  }
+
   func waitForNoSheet(in window: XCUIElement, timeout: TimeInterval = 5) -> Bool {
     let gone = NSPredicate(format: "exists == false")
     let sheet = window.sheets.firstMatch

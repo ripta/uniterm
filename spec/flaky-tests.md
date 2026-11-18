@@ -97,7 +97,9 @@ fixed ones.
 - Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list". The rerun passed.
 - Suspected cause: the test checks `isHittable` right after the scroll, with no wait for the list to settle. Not
   confirmed.
-- Status: unresolved.
+- Status: fix applied by "Wait for the launcher's last entry to come into view after a scroll". Both reads after a
+  scroll now wait until the entry can take a click. No forced slow scroll reproduced the failure first, so the change
+  pins the fix but does not prove the cause. Move this entry to "Fixed" if it stays quiet.
 
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
 
