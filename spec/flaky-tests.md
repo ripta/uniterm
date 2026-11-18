@@ -143,7 +143,13 @@ fixed ones.
   touches the script listener and its wire, not the exec driver. It timed out after 15.5 s "waiting until the channel
   ends or answers both writes and the command after them". It passed alone in 0.13 s, with its class, and in the next
   full run.
-- Status: unresolved. Not compared on the base commit.
+- Seen again: 2026-11-17, in full `make test-package` run KE15J2 during the UTERM-015 M6 work-queue run. The history
+  held `"got error"` and `"bad-argument"` as two entries, where the wait looks for the one line
+  `"got error bad-argument"`.
+- Cause: a product bug, not load. The driver writes that line in pieces, and the stderr ingress keeps each read as
+  whole lines. When the reader wakes between the pieces, the line splits in two. See
+  `spec/bugs/20261117-stderr-line-split-across-reads-shows-as-two-lines.md`.
+- Status: confirmed, waiting on the bug's fix. The test is right.
 
 ### `WindowsUITests.testCommandWClosesOnlyTheKeyWindow`, after its fix
 
