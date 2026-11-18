@@ -61,32 +61,6 @@ fixed ones.
 - Status: unresolved. If it fails again, run the tests with `log stream --level debug` on the `dev.uniterm.app`
   subsystem, and read the `pointer`, `press`, `hover`, and `click outcome` lines of the failing iteration.
 
-### `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread`
-
-- Seen: 2026-11-14, once, in CI's package job, in the same run as the entry above.
-- Evidence: `FindTests.swift:172` counted 3 main-actor turns during the search, where it expects more than 100. The
-  test took 6.6 s there and about 1.2 s locally, where it passed 10 of 10 alone.
-- Seen again: 2026-11-15, once, in a local full `make test-package` run during a work-queue run that touches no
-  text-viewer code. It counted 35 turns. It passed alone and in the next full run.
-- Seen again: 2026-11-15, once, in a local full `make test-package` run after a launcher layout fix that touches no
-  text-viewer code. It counted 54 turns, the only failure of 2606 tests. It passed alone right after, in 1.3 s.
-- Seen again: 2026-11-15, twice in about five full `make test-package` runs during the UTERM-007 M5 work-queue run,
-  with 54 and 58 turns. That run's only change near the search adds one completion call after it ends. It passed alone
-  and with its class.
-- Seen again: 2026-11-16, in four full `make test-package` runs during the UTERM-015 M4 work-queue run, with 3 to 77
-  turns. That draft folded path names with Foundation's `String.folding(options: .caseInsensitive)` from new test
-  classes that run before `FindTests`. The test passed alone, with `TextViewerAppletTests`, and in filtered groups.
-  Skipping `ControlDispatcherPathTests` made the full suite pass. The same change with the standard library's scalar
-  case mapping in place of Foundation's folding passed the full suite. So an earlier test that warms Foundation's
-  case-insensitive tables shifts how many turns land. This supports the suspected cause below: the count measures
-  timing, not where the search runs.
-- Seen again: 2026-11-17, once, in a full `make test-package` run (2810 tests) during the UTERM-015 M6 work-queue run,
-  which touches no text-viewer code. It counted 82 turns. Seen again the same night, on that run's final tree, at 37
-  turns. Implementer full runs on the same code between those two passed.
-- Suspected cause: the main actor was busy for seconds at a time, likely laying out the four-million-character text,
-  so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
-- Status: unresolved.
-
 ### `BrowserUITests.testCommandWClosesTheTabAndCommandShiftTReopensIt`
 
 - Seen: 2026-11-12, once, as the first test of a full `make test-app`.
@@ -181,6 +155,22 @@ fixed ones.
   revalidates pending replies when remote control turns on. Neither was ruled out by a run on the base commit.
 
 ## Fixed
+
+### `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread`, now `testATextSearchNeverRunsOnTheMainActor`
+
+Fixed by: "Prove the text search runs off the main actor with a gate, not a turn count"
+
+- Seen: about ten times between 2026-11-14 and 2026-11-17, in CI and in local full `make test-package` runs. It counted
+  3 to 82 main-actor turns where it expected more than 100. It passed alone each time.
+- Evidence: the search ran off the main actor all along. `FindMatching.searchOffMain` is `@concurrent`. Earlier test
+  classes that warmed Foundation's case-insensitive tables shifted the count, so the count tracked timing.
+- Cause: the test counted `Task.yield()` turns while the search ran. That measured how long the search took and how
+  busy the main actor was, not where the search ran. The product was right.
+- Fix: the pane's text search is now a `@concurrent` function property, so nothing assigned to it can run on the main
+  actor. The test assigns one that waits at a gate, and the main actor opens the gate only after it sees the search in
+  flight. A coordinator made to search inline on the main actor fails it, with "the search never reached the pane's
+  searcher". The test now searches a short document. Laying out four million characters could hold the main actor
+  long enough that the gate gives up, and the gate proof does not need the size.
 
 ### `LaunchOpenCoordinatorTests`, the batch and refused-package tests
 
