@@ -1,8 +1,11 @@
 # A driver whose pane is disconnected cannot command the members it owns
 
 **Status:** open
-**Validation:** not confirmed in the running app; traced in code. No shipped applet declares exec support, so the repro
-needs a test applet that does.
+**Estimate:** small; no open design decisions. UTERM-028 "Members while the anchor is disconnected" settled the one
+call. The fix is in `MainWindowController+Exec.swift`: split `beyond` so the ownership and revoke checks apply to every
+request, and `sourceRefusal` applies to layouts only. The command authority at line 432 uses the first part alone. It
+needs one regression test in `ExecLayoutTests.swift`, beside `testADriverInADisconnectedPaneCannotLayOut`. The suite
+already has a driver fixture, so no new test applet is needed.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-028
 
 ## Observed
