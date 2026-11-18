@@ -125,15 +125,6 @@ fixed ones.
 - Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
 - Status: unresolved.
 
-### `ScriptReplTests.testRestoredHistoryIsNeverEvaluated`
-
-- Seen: 2026-11-15, once, in the first CI `package` run of PR #53, which does not touch the REPL.
-- Evidence: `ScriptReplTests.swift:554` found `events.lines` empty where `["(+ 20 22)"]` was expected. The test
-  passed 20 of 20 alone, and the rerun passed.
-- Suspected cause: the test reads `events.lines` as soon as `42` shows on the pty. The `.line` event comes over the
-  host's socket, a separate path, so it can arrive after the output. Not confirmed.
-- Status: unresolved.
-
 ### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
 
 - Seen: 2026-11-15, once, in the first CI `app` run of PR #53, which does not touch the launcher.
@@ -209,6 +200,19 @@ fixed ones.
   revalidates pending replies when remote control turns on. Neither was ruled out by a run on the base commit.
 
 ## Fixed
+
+### `ScriptReplTests.testRestoredHistoryIsNeverEvaluated`
+
+Fixed by: "Wait for the REPL's line event before checking what the restored history did"
+
+- Seen: 2026-11-15, once, in the first CI `package` run of PR #53, which does not touch the REPL.
+- Evidence: `ScriptReplTests.swift:554` found `events.lines` empty where `["(+ 20 22)"]` was expected. The test
+  passed 20 of 20 alone, and the rerun passed.
+- Cause: the test read `events.lines` as soon as `42` showed on the pty. The `.line` event comes over the host's
+  socket, a separate path, so it can arrive after the output. The REPL itself was right.
+- Fix: the test waits until the socket reports the typed line and the end of its evaluation. The socket keeps its
+  order, so a restored line that ran would be reported before that. Delaying every event in the test's recorder by
+  300 ms failed the old test with the CI message, and the fixed test passed with the same delay.
 
 ### `ExecPaneTests.testAStalledDriverNeverHoldsTheMainThread`
 

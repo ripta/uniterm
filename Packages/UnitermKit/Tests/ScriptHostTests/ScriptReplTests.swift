@@ -548,6 +548,11 @@ final class ScriptReplTests: XCTestCase {
     repl.write("(+ 20 22)\n")
 
     expect(await repl.waitForOutput("42\n"), repl.standardOutput)
+
+    // The line event comes over the host's socket, not the pty, so the output can show first. The
+    // socket keeps its order, so once the typed line's evaluation ends, any restored line that
+    // ran would already have been reported.
+    expect(await waitUntil { events.lines.count == 1 && events.lastEvaluating == false })
     XCTAssertTrue(center.history.isEmpty, "a restored line posted a status")
     XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "a restored line wrote")
     XCTAssertTrue(repl.process.isRunning, "a restored line exited the REPL")
