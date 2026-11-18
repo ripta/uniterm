@@ -45,15 +45,6 @@ fixed ones.
 - Suspected cause: Cmd-Shift-G sent before the open panel took key focus, as in the pane-tree entries above.
 - Status: unresolved.
 
-### `LaunchOpenCoordinatorTests.testABatchOpensOnePanePerFileAndSummarizesFailures`
-
-- Seen: 2026-11-14, once, in CI's package job on a branch that changed only tab keys.
-- Evidence: `LaunchOpenCoordinatorTests.swift:357` saw 0 of 2 folder panes open, and no failure message. It was the
-  only failure of 1767 tests. The same code passed main's last run and a local `make ci-package`.
-- Suspected cause: `settle()` yields 50 times instead of waiting for the opens to finish, so a slow runner asserts
-  before they land.
-- Status: unresolved.
-
 ### `TerminalLinkUITests` (both tests)
 
 - Seen: 2026-11-17, during the UTERM-015 M6 work-queue run. At 01:00, both tests failed in one run. At 01:03, a
@@ -102,16 +93,6 @@ fixed ones.
 - Evidence: `BrowserUITests.swift:166` failed with "Cmd-Shift-T brought no tab" after 49.8 seconds. The other 157
   tests passed. `BrowserUITests` then passed 12 of 12 alone, this test in 11.6 seconds.
 - Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
-- Status: unresolved.
-
-### `LaunchOpenCoordinatorTests.testAPackageIsRefusedThroughTheLaunchServicesPath`
-
-- Seen: 2026-11-15, once, in the second CI `package` run of PR #49, which does not touch the launch-open code.
-- Evidence: `LaunchOpenCoordinatorTests.swift:280` found no failure message for the refused bundle. The same test passed
-  in the PR's first run.
-- Suspected cause: `settle()` yields a fixed number of times, as in the
-  `testABatchOpensOnePanePerFileAndSummarizesFailures` entry, so a slow runner asserts before the refusal lands. Not
-  confirmed.
 - Status: unresolved.
 
 ### `TextViewerUITests.testAnEditedFileReloadsInPlaceAndByRename`
@@ -200,6 +181,24 @@ fixed ones.
   revalidates pending replies when remote control turns on. Neither was ruled out by a run on the base commit.
 
 ## Fixed
+
+### `LaunchOpenCoordinatorTests`, the batch and refused-package tests
+
+Fixed by: "Wait for the launch-open coordinator's drain instead of yielding a fixed number of times"
+
+- Seen: 2026-11-14 and 2026-11-15, once each, in CI's package job on branches that do not touch the launch-open code.
+- Evidence: `testABatchOpensOnePanePerFileAndSummarizesFailures` saw 0 of 2 folder panes open, and no failure
+  message. `testAPackageIsRefusedThroughTheLaunchServicesPath` found no failure message for the refused bundle.
+- Cause: the fixture's `settle()` yielded the main actor 50 times. The router finds each path's type off the main
+  thread, so yielding never waited for it, and a slow runner asserted first. Tests that check that nothing happened,
+  such as `testAFailedWarmOpenWithNoWindowOpensNoShell`, passed without proof the same way. `LaunchOpenApprovalTests`
+  had the same flaw, with up to 20,000 yields. The coordinator itself was right.
+- Fix: the coordinator keeps its drain task, and `idle()` waits for it to end. Both fixtures' `settle()` await it.
+  `testASenderThatAlreadyExitedTouchesNothing` had used `settle()` to let its watcher's end report run, so it now awaits
+  that task. A 300 ms sleep in the coordinator fixture's type lookup failed three coordinator tests with the CI symptom,
+  then crashed the run with an index out of range. After the fix, the coordinator class passed with the sleep in
+  place. The approval fixture has no such hook, so a denial made to open its files checked those tests instead. Three
+  failed, so they do not pass by default.
 
 ### `ScriptReplTests.testRestoredHistoryIsNeverEvaluated`
 
