@@ -27,7 +27,21 @@ runs:
 
     # The source tarball, the pinned Zig, Zig's package cache, and the built artifact. The offline
     # check rebuilds from the first three, so all four are kept together.
-    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    #
+    # A new pin or patch misses the exact key. The fallback then restores an older cache, whose Zig
+    # package cache already holds every package the pinned Ghostty fetches. So the rebuild needs no
+    # network, and a dependency host that is down cannot fail it.
+    - id: ghostty-cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .cache/ghostty
         key: ghostty-${{ runner.arch }}-${{ hashFiles('ghostty.pin', 'ThirdParty/ghostty-patches/*.patch') }}
+        restore-keys: |
+          ghostty-${{ runner.arch }}-
+
+    # An older cache's artifacts were built from other pins or patches, so the build cannot use
+    # them. Dropping them keeps each saved cache to one artifact.
+    - name: Drop artifacts from an older Ghostty cache
+      if: steps.ghostty-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: rm -rf .cache/ghostty/artifacts
