@@ -132,6 +132,16 @@ final class ExecDriverChannelTests: XCTestCase {
     XCTAssertTrue(historyTexts.contains { $0.contains("did not fit and were dropped") })
   }
 
+  /// Catches a partial stderr line that never shows. The driver writes "loading" with no newline
+  /// and goes quiet while it stays connected, so only the channel's later drain can show it.
+  func testAPartialStderrLineShowsOnceTheDriverGoesQuiet() async throws {
+    let channel = try start("partial-stderr")
+
+    await waitUntil("the partial line reaches the history") { historyTexts.contains("loading") }
+
+    XCTAssertEqual(channel.phase, .connected, "the channel ended: \(ended)")
+  }
+
   /// Catches a driver exit that goes unreported, or one reported at a level guessed from text.
   func testAnExitIsATypedWarningAndEndsTheChannel() async throws {
     let channel = try start("exit", ["3"])

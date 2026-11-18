@@ -99,6 +99,9 @@ public final class ExecDriverChannel: AppletEventSink {
   private var exitStatus: Int32?
   private var drainScheduled = false
 
+  /// True while a drain waits for the stderr ingress to let a held partial line go.
+  private var tailCheckScheduled = false
+
   /// `authority` is the window's check that this driver still drives the pane. The channel adds
   /// its own: a channel that has ended commands nothing. `host` answers the driver's layout
   /// requests and its commands to other panes, and nil refuses them.
@@ -391,9 +394,33 @@ public final class ExecDriverChannel: AppletEventSink {
   }
 
   private func recordStderr() {
-    guard let batch = transport?.stderr.drain(), !batch.isEmpty else { return }
+    guard let stderr = transport?.stderr else { return }
 
-    producer?.record(stderr: batch)
+    let batch = stderr.drain()
+
+    if !batch.isEmpty { producer?.record(stderr: batch) }
+
+    scheduleTailCheck(at: stderr.tailDeadline)
+  }
+
+  /// Drains again when a held partial line is due, so a driver that writes part of a line and goes
+  /// quiet still shows it. The drain then reschedules while text keeps extending the tail.
+  private func scheduleTailCheck(at deadline: ContinuousClock.Instant?) {
+    guard let deadline, !tailCheckScheduled, !isEnded else { return }
+
+    tailCheckScheduled = true
+
+    let wait = max(.zero, deadline - ContinuousClock.now)
+    let seconds = Double(wait.components.seconds) + Double(wait.components.attoseconds) / 1e18
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+
+        self.tailCheckScheduled = false
+        self.recordStderr()
+      }
+    }
   }
 
   private func end(_ reason: End) {
@@ -402,6 +429,7 @@ public final class ExecDriverChannel: AppletEventSink {
     phase = .ended(reason)
     applet?.events.disconnect(self)
     transport?.close()
+    transport?.stderr.finish()
     recordStderr()
 
     if reason != .closed {

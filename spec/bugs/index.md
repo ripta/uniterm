@@ -17,3 +17,4 @@
 | [20261116-disconnected-driver-cannot-command-owned-members](20261116-disconnected-driver-cannot-command-owned-members.md) | A driver whose pane is disconnected cannot command the members it owns | open |
 | [20261116-groupless-driver-clipboard-grant-has-no-revoke](20261116-groupless-driver-clipboard-grant-has-no-revoke.md) | A driver that owns no group keeps its clipboard grant until its run ends | open |
 | [20261115-helper-sandbox-tests-fail-after-ui-test-build](20261115-helper-sandbox-tests-fail-after-ui-test-build.md) | The helper sandbox tests fail after a UI test build leaves test entitlements on the helpers | fixed |
+| [20261117-stderr-line-split-across-reads-shows-as-two-lines](20261117-stderr-line-split-across-reads-shows-as-two-lines.md) | A driver's stderr line split across two reads shows as two status lines | fixed |

@@ -65,14 +65,62 @@ final class StderrIngressTests: XCTestCase {
     XCTAssertEqual(batch.lines.reduce(0) { $0 + $1.count } + batch.dropped, total)
   }
 
-  /// Catches an offer that cannot tell the caller when to schedule a hop.
+  /// Catches an offer that cannot tell the caller when to schedule a hop. A held tail with nothing
+  /// else needs a hop too, so the drainer learns its deadline. The line that completes the tail
+  /// needs one as well, so it does not wait for that deadline.
   func testOfferSaysWhenTheBufferWasEmpty() {
     let ingress = StderrIngress()
 
-    XCTAssertTrue(ingress.offer("first"))
-    XCTAssertFalse(ingress.offer("second"))
+    XCTAssertTrue(ingress.offer("first\n"))
+    XCTAssertFalse(ingress.offer("second\n"))
     XCTAssertEqual(ingress.drain().lines.map(\.text), ["first", "second"])
-    XCTAssertTrue(ingress.offer("third"))
+    XCTAssertTrue(ingress.offer("thi"))
+    XCTAssertTrue(ingress.offer("rd\n"), "the finished line waits for the tail's deadline")
+    XCTAssertFalse(ingress.offer("fourth\n"))
+    XCTAssertEqual(ingress.drain().lines.map(\.text), ["third", "fourth"])
+  }
+
+  /// Catches a line that a driver writes in two pieces showing as two lines. A reader can wake
+  /// between the writes, so the pieces arrive as separate chunks.
+  func testALineSplitAcrossTwoReadsStaysOneLine() {
+    let ingress = StderrIngress()
+
+    ingress.offer("got error")
+    ingress.offer(" bad-argument\nnext\n")
+
+    XCTAssertEqual(ingress.drain().lines.map(\.text), ["got error bad-argument", "next"])
+  }
+
+  /// Catches a partial line that never shows, or one let go before its quiet period. A progress
+  /// note with no newline is held, then shows once nothing has been added for the period. Text
+  /// added to the tail starts the period again.
+  func testAPartialLineShowsAfterTheQuietPeriod() {
+    let clock = TestClock()
+    let ingress = StderrIngress(quietPeriod: .milliseconds(250), now: { clock.now })
+
+    ingress.offer("loading")
+    XCTAssertEqual(ingress.tailDeadline, clock.now + .milliseconds(250))
+
+    clock.advance(.milliseconds(200))
+    ingress.offer(" assets")
+    clock.advance(.milliseconds(200))
+    XCTAssertTrue(ingress.drain().isEmpty, "the tail went before its period")
+
+    clock.advance(.milliseconds(50))
+    XCTAssertEqual(ingress.drain().lines.map(\.text), ["loading assets"])
+    XCTAssertNil(ingress.tailDeadline)
+  }
+
+  /// Catches a held tail that is lost when the stream ends.
+  func testTheEndOfTheStreamLetsTheTailGo() {
+    let ingress = StderrIngress()
+
+    ingress.offer("done\nlast words")
+
+    XCTAssertEqual(ingress.drain().lines.map(\.text), ["done"])
+    XCTAssertTrue(ingress.finish())
+    XCTAssertEqual(ingress.drain().lines.map(\.text), ["last words"])
+    XCTAssertFalse(ingress.finish(), "an empty ingress has nothing to let go")
   }
 
   /// Catches identical neighbors that take a line each.
@@ -95,6 +143,18 @@ final class StderrIngressTests: XCTestCase {
 
     XCTAssertEqual(lines[0], "ok [0m")
     XCTAssertLessThanOrEqual(lines[1].utf8.count, 16)
+  }
+}
+
+/// A clock a test moves by hand.
+private final class TestClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var instant = ContinuousClock.now
+
+  var now: ContinuousClock.Instant { lock.withLock { instant } }
+
+  func advance(_ duration: Duration) {
+    lock.withLock { instant += duration }
   }
 }
 

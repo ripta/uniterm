@@ -134,17 +134,6 @@ fixed ones.
 - Status: unresolved. Both row clicks into the Pending Requests panel now wait for the row to take a click, and the
   failure names the app's state, the frontmost app, and the focused element.
 
-### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
-
-- Seen: 2026-11-15, once in a full `make test-package` run during the UTERM-007 M5 work-queue run.
-- Evidence: it timed out waiting on the channel. It passed alone and with its class, in 8.5 s, and in the next full
-  runs. It launches a real perl driver, so a loaded machine slows it.
-- Seen again: 2026-11-17, once, in a local full `make test-package` run during the UTERM-015 M5 work-queue run, which
-  touches the script listener and its wire, not the exec driver. It timed out after 15.5 s "waiting until the channel
-  ends or answers both writes and the command after them". It passed alone in 0.13 s, with its class, and in the next
-  full run.
-- Status: unresolved. Not compared on the base commit.
-
 ### `WindowsUITests.testCommandWClosesOnlyTheKeyWindow`, after its fix
 
 - Seen: 2026-11-15, once in a full `make test-app` run during the UTERM-007 M5 work-queue run, the only failure of 165.
@@ -168,6 +157,27 @@ fixed ones.
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
 ## Fixed
+
+### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
+
+Fixed by: "Join a driver's stderr line that arrives in pieces, and show a lone partial line after a pause"
+
+- Seen: 2026-11-15, once in a full `make test-package` run during the UTERM-007 M5 work-queue run.
+- Evidence: it timed out waiting on the channel. It passed alone and with its class, in 8.5 s, and in the next full
+  runs. It launches a real perl driver, so a loaded machine slows it.
+- Seen again: 2026-11-17, once, in a local full `make test-package` run during the UTERM-015 M5 work-queue run, which
+  touches the script listener and its wire, not the exec driver. It timed out after 15.5 s "waiting until the channel
+  ends or answers both writes and the command after them". It passed alone in 0.13 s, with its class, and in the next
+  full run.
+- Seen again: 2026-11-17, in full `make test-package` run KE15J2 during the UTERM-015 M6 work-queue run. The history
+  held `"got error"` and `"bad-argument"` as two entries, where the wait looks for the one line
+  `"got error bad-argument"`.
+- Cause: a product bug, not load. The driver writes that line in pieces, and the stderr ingress keeps each read as
+  whole lines. When the reader wakes between the pieces, the line splits in two. See
+  `spec/bugs/20261117-stderr-line-split-across-reads-shows-as-two-lines.md`.
+- Fix: the stderr ingress joins a partial line with the next read, and lets a lone one go after 250 ms of quiet. The
+  fixture driver writes each line in one piece, so the test does not depend on that period. A unit test that offers a
+  line in two pieces failed before the fix with two lines. A channel test with the tail check turned off timed out.
 
 ### `TerminalSessionIntegrationTests.testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose`
 
