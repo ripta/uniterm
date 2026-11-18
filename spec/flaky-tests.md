@@ -131,7 +131,8 @@ fixed ones.
 - Seen: 2026-11-15, once, in a five-class local run. It passed in the run before.
 - Evidence: "Unable to find hit point for ScrollView, {{20.0, 749.0}, {739.0, 180.0}}".
 - Suspected cause: the scroll view was covered or still moving when the test clicked it. Not confirmed.
-- Status: unresolved.
+- Status: unresolved. Both row clicks into the Pending Requests panel now wait for the row to take a click, and the
+  failure names the app's state, the frontmost app, and the focused element.
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
 

@@ -191,6 +191,8 @@ class UnitermUITestCase: XCTestCase {
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
     XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(
+      waitUntilHittable(row), "the review's row cannot take a click. \(focusReport(app))")
     row.click()
 
     let button = panel.buttons[identifier]
