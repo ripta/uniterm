@@ -67,6 +67,9 @@ public enum ScriptEvent: Sendable {
 
   /// A helper declared the connection a run of a script file that declares nothing.
   case undeclaredBegun(ScriptConnection, UndeclaredBegin)
+
+  /// A helper declared the connection a `uniterm open`. It makes no calls.
+  case openBegun(ScriptConnection, OpenBegin)
   case request(ScriptConnection, id: UInt32, call: ScriptCall)
 
   /// A REPL's helper presented its token. It is the first message of the connection.

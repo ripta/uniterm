@@ -34,6 +34,9 @@ public final class RecordingHost: AppletHost {
 
   public var lastStamp: UInt64 = 0
 
+  /// The files the applet asked the pane to open, in order.
+  public private(set) var openedFiles: [URL] = []
+
   private var lastRecord: StatusRecordID = 0
 
   public init() {}
@@ -107,6 +110,10 @@ public final class RecordingHost: AppletHost {
     }
 
     return answer
+  }
+
+  public func applet(_ applet: any Applet, open file: URL) {
+    openedFiles.append(file)
   }
 
   public func issueCloseStamp() -> UInt64 {

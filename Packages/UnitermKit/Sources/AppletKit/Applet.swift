@@ -128,12 +128,21 @@ public protocol AppletHost: AnyObject {
 
   /// Reports that a session ended in the given tab. The host removes the session root.
   func applet(_ applet: any Applet, sessionEnded tab: AppletTabID, pid: pid_t, started: Int)
+
+  /// The user clicked a path in the pane, and the pane checked that the path is the file it
+  /// showed. The host routes it as an open from this pane, beside the pane.
+  func applet(_ applet: any Applet, open file: URL)
 }
 
 extension AppletHost {
   /// A turn on the status bar, an entry in the history, and the unseen signal of the level.
   public func applet(_ applet: any Applet, post level: StatusLevel, text: String) {
     self.applet(applet, send: .message, level: level, text: text, presenting: nil)
+  }
+
+  /// A host that has no way to open files says so, so a click never fails silently.
+  public func applet(_ applet: any Applet, open file: URL) {
+    self.applet(applet, post: .warning, text: "uniterm cannot open files from this pane.")
   }
 
   /// A host that has no way to ask denies, so a permission is never granted by omission.

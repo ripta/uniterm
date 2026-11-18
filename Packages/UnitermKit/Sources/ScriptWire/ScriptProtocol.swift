@@ -7,9 +7,10 @@ import Foundation
 /// The hello is one message with one field, in every version. A peer built against another
 /// version can therefore always read the other's hello, and the refusal names the version.
 ///
-/// Version 12 writes an applet command's schema version as a major and a minor.
+/// Version 12 writes an applet command's schema version as a major and a minor. Version 13 adds the
+/// begin of a `uniterm open` command and the reply to it.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 12
+  public static let version: UInt16 = 13
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -592,6 +593,57 @@ public struct UndeclaredBegin: Equatable, Sendable {
   }
 }
 
+/// A `uniterm open` command, which asks the app to route files to panes. It carries absolute paths
+/// and nothing else. The command resolves a relative argument against its own working directory
+/// first, and never looks at a target, so the app sees only the names the user typed.
+///
+/// A path is never cut to fit, since a cut path names another file. The command refuses a path or a
+/// count that does not fit, and the reader refuses a frame that holds one.
+public struct OpenBegin: Equatable, Sendable {
+  /// The most paths one command may name.
+  public static let maxPaths = 256
+
+  /// The most bytes all the paths of one command may hold together. It leaves room in the control
+  /// frame for the count and each path's length.
+  public static let maxPathBytes = 48 * 1024
+
+  public let paths: [String]
+
+  public init(paths: [String]) {
+    self.paths = paths
+  }
+
+  /// Why a list of paths cannot be sent, or nil when it can. Each path must be absolute, hold no
+  /// NUL, and fit the path limit. The list must not be empty.
+  public static func problem(with paths: [String]) -> String? {
+    guard !paths.isEmpty else { return "no path was given" }
+
+    guard paths.count <= maxPaths else {
+      return "\(paths.count) paths is more than the \(maxPaths) one command may open"
+    }
+
+    var total = 0
+
+    for path in paths {
+      guard path.hasPrefix("/") else { return "a path is not absolute" }
+
+      guard !path.utf8.contains(0) else { return "a path holds a NUL byte" }
+
+      guard path.utf8.count <= ScriptProtocol.maxDirectoryBytes else {
+        return "a path is longer than \(ScriptProtocol.maxDirectoryBytes) bytes"
+      }
+
+      total += path.utf8.count
+    }
+
+    guard total <= maxPathBytes else {
+      return "the paths hold more than \(maxPathBytes) bytes together"
+    }
+
+    return nil
+  }
+}
+
 /// A message from a script helper. The app validates each one and trusts none of them.
 public enum ScriptHelperMessage: Equatable, Sendable {
   case hello(version: UInt16)
@@ -640,6 +692,11 @@ public enum ScriptHelperMessage: Equatable, Sendable {
   /// waits for review. No call is answered before the run is admitted.
   case undeclaredBegin(UndeclaredBegin)
 
+  /// Declares the connection a `uniterm open` command, in place of `begin`. The app answers with
+  /// `openDone` or `controllerRefused`, and may first say the request waits for the user. The
+  /// connection makes no call.
+  case openBegin(OpenBegin)
+
   /// The frame type of the one call that carries content.
   static let sendType: UInt8 = 4
 
@@ -660,6 +717,7 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .fileBegin: return 11
     case .fileDeclaration: return 12
     case .undeclaredBegin: return 13
+    case .openBegin: return 14
     }
   }
 
@@ -693,6 +751,19 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .undeclaredBegin(let begin):
       body.put(string: begin.name, limit: ScriptProtocol.maxNameBytes)
       body.put(capabilities: begin.capabilities)
+
+    case .openBegin(let begin):
+      // Nothing is cut or dropped. A list or a path that does not fit makes a frame the reader
+      // refuses, so the app never opens a different set of files than the user named.
+      body.put(UInt16(clamping: begin.paths.count))
+
+      for path in begin.paths {
+        let bytes = Data(path.utf8)
+        let fits = bytes.count <= ScriptProtocol.maxDirectoryBytes
+
+        body.put(UInt16(fits ? bytes.count : 0))
+        body.put(raw: fits ? bytes : Data())
+      }
 
     case .attach(let token): body.put(raw: token)
 
@@ -786,6 +857,34 @@ public enum ScriptHelperMessage: Equatable, Sendable {
 
       message = .undeclaredBegin(UndeclaredBegin(name: name, capabilities: capabilities))
 
+    case 14:
+      let count = Int(try reader.u16())
+
+      guard count <= OpenBegin.maxPaths else {
+        throw WireError.tooLong(declared: count, limit: OpenBegin.maxPaths)
+      }
+
+      var paths: [String] = []
+      var total = 0
+
+      for _ in 0..<count {
+        let path = try reader.string(limit: ScriptProtocol.maxDirectoryBytes)
+
+        total += path.utf8.count
+
+        guard total <= OpenBegin.maxPathBytes else {
+          throw WireError.tooLong(declared: total, limit: OpenBegin.maxPathBytes)
+        }
+
+        paths.append(path)
+      }
+
+      if let problem = OpenBegin.problem(with: paths) {
+        throw WireError.badValue("an open begin is not acceptable: \(problem)")
+      }
+
+      message = .openBegin(OpenBegin(paths: paths))
+
     default: throw WireError.unknownType(type)
     }
 
@@ -849,6 +948,12 @@ public enum ScriptAppMessage: Equatable, Sendable {
   /// The app admitted a script file that declares nothing. The command runs it now.
   case undeclaredAdmitted
 
+  /// The app took a `uniterm open` request. It says nothing about the files: a file that is
+  /// missing, one no applet opens, and one that opened all get this same reply, and it carries no
+  /// content. Whatever went wrong shows only in the app's own status message. A request the user
+  /// did not allow gets `controllerRefused` instead.
+  case openDone
+
   var wireType: UInt8 {
     switch self {
     case .hello: return 1
@@ -862,6 +967,7 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .controllerReviewing: return 9
     case .fileAdmitted: return 10
     case .undeclaredAdmitted: return 11
+    case .openDone: return 12
     }
   }
 
@@ -889,7 +995,7 @@ public enum ScriptAppMessage: Equatable, Sendable {
 
     case .ping(let nonce): body.put(nonce)
 
-    case .stop, .undeclaredAdmitted: break
+    case .stop, .undeclaredAdmitted, .openDone: break
 
     case .controllerAdmitted(let snapshot, let version), .fileAdmitted(let snapshot, let version):
       body.put(string: snapshot, limit: ScriptProtocol.maxDirectoryBytes)
@@ -1021,6 +1127,11 @@ public enum ScriptAppMessage: Equatable, Sendable {
       try reader.finished()
 
       return .undeclaredAdmitted
+
+    case 12:
+      try reader.finished()
+
+      return .openDone
 
     default:
       throw WireError.unknownType(type)

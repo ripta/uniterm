@@ -47,7 +47,8 @@ final class DeclaredScriptFuzzTests: XCTestCase {
       {:kind :pane-control :version 1}
       {:kind :capability :version 1 :name :fs-read}
       {:kind :host-launch :version 1 :executable "/usr/bin/git" :directory "/tmp"
-       :environment ["HOME" "PATH"]})
+       :environment ["HOME" "PATH"]}
+      {:kind :path-read :version 1 :directories ["/tmp" "/tmp/x"]})
     (print "ok")
     """,
     "(declare-permissions {:kind :pane-control :kind :pane-control :version 1})\n",

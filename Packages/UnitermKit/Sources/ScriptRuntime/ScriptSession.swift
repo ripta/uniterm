@@ -113,6 +113,40 @@ final class ScriptSession: @unchecked Sendable {
     }
   }
 
+  /// Connects and asks the app to route the files of a `uniterm open`. It returns when the app has
+  /// taken the request, which says nothing about any file. A request the user did not allow throws
+  /// `ScriptSessionError.failed`. A request that waits for the user is told once, and the wait has
+  /// no timeout, since the user may take as long as they like.
+  static func open(
+    path: String, begin: OpenBegin,
+    onReview: (String) -> Void = { FileHandle.standardError.write(Data("uniterm: \($0)\n".utf8)) }
+  ) throws {
+    let session = try connect(path: path)
+
+    defer { session.close() }
+
+    try session.socket.send(ScriptHelperMessage.openBegin(begin).frame())
+
+    var told = false
+
+    while true {
+      switch try session.readMessage() {
+      case .openDone:
+        return
+
+      case .controllerRefused(let text):
+        throw ScriptSessionError.failed(.refused, text)
+
+      case .controllerReviewing(let text) where !told:
+        told = true
+        onReview(text)
+
+      default:
+        throw WireError.badValue("the app answered an open with something else")
+      }
+    }
+  }
+
   /// Connects and asks the app to admit a controller run. The app authenticates this process,
   /// verifies the package itself, and answers with the run's snapshot and the version it verified,
   /// or with a refusal, which throws `ScriptSessionError.failed`. Nothing of the package is read

@@ -1065,6 +1065,129 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     try await assertReportsLogin(try startProgram(["/bin/sleep", "30"]))
   }
 
+  /// Catches an OSC 7 from another host that libghostty adopts as the working directory, and one
+  /// it drops with no word to the embedder. The report names its host, and the directory stays.
+  func testAnOSC7ForAnotherHostReportsItsHostAndKeepsTheDirectory() async throws {
+    let session = try startShell()
+    var hosts: [String] = []
+    var directories: [String] = []
+    session.onEvent = { event in
+      switch event {
+      case .remoteHostReported(let host): hosts.append(host)
+      case .workingDirectoryChanged(let path): directories.append(path)
+      default: break
+      }
+    }
+
+    try await waitUntil("an idle prompt") { !session.isRunningSomething && !directories.isEmpty }
+
+    try run("printf '\\033]7;file://remote.example.invalid/etc/remote-only\\007'", in: session)
+    try await waitUntil("the remote host report") { !hosts.isEmpty }
+
+    XCTAssertEqual(hosts, ["remote.example.invalid"])
+    XCTAssertFalse(
+      directories.contains { $0.contains("remote-only") }, "the remote path was adopted")
+    XCTAssertFalse(
+      session.workingDirectory?.contains("remote-only") ?? false, "the remote path was adopted")
+  }
+
+  /// Moves the pointer onto a cell of the session's grid, or clicks there, as the user does with
+  /// Command held.
+  private func point(
+    _ session: any TerminalSession, row: Int, column: Int, type: NSEvent.EventType,
+    modifiers: NSEvent.ModifierFlags = .command
+  ) throws {
+    let grid = session.gridSize
+    let size = session.view.frame.size
+    let x = size.width / CGFloat(grid.columns) * (CGFloat(column) + 0.5)
+    let fromTop = size.height / CGFloat(grid.rows) * (CGFloat(row) + 0.5)
+    let event = try XCTUnwrap(
+      NSEvent.mouseEvent(
+        with: type, location: NSPoint(x: x, y: size.height - fromTop), modifierFlags: modifiers,
+        timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+        clickCount: 1, pressure: 1))
+
+    switch type {
+    case .leftMouseDown: session.view.mouseDown(with: event)
+    case .leftMouseUp: session.view.mouseUp(with: event)
+    default: session.view.mouseMoved(with: event)
+    }
+  }
+
+  /// Catches a hover that reports a hyperlink's text in place of its target, a click that is not
+  /// reported to the embedder, and libghostty joining clicked relative text to the working
+  /// directory and checking it on disk. The relative file exists in the shell's directory, so an
+  /// unpatched libghostty would hand the embedder its absolute path.
+  func testCommandHoverAndClickReportTheLinkTextAsPrinted() async throws {
+    let session = try startShell()
+    let work = sandbox.appending(path: "work")
+
+    try FileManager.default.createDirectory(
+      at: work.appending(path: "sub"), withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: work.appending(path: "sub/file.txt"))
+
+    var hovers: [String?] = []
+    var opens: [String] = []
+    var directories = 0
+    session.onEvent = { event in
+      switch event {
+      case .linkHovered(let text): hovers.append(text)
+      case .linkOpenRequested(let text): opens.append(text)
+      case .workingDirectoryChanged: directories += 1
+      default: break
+      }
+    }
+
+    try await waitUntil("an idle prompt") { !session.isRunningSomething && directories > 0 }
+
+    let absolute = work.appending(path: "sub/file.txt").path
+
+    try run(
+      "printf '\\033[H\\033[2J%s\\n%s\\n\\033]8;;file:///etc/hosts\\033\\\\LINKTEXT\\033]8;;\\033\\\\\\n%s\\n' "
+        + "\(absolute) sub/file.txt https://example.com/x",
+      in: session)
+    try await waitUntil("the printed lines") { self.screen(session).contains("LINKTEXT") }
+
+    // The absolute path is longer than a row, so it wraps and the other lines start below it.
+    let columns = session.gridSize.columns
+    let below = (absolute.count + columns - 1) / columns
+
+    let rows: [(row: Int, expected: String)] = [
+      (0, absolute), (below, "sub/file.txt"), (below + 1, "file:///etc/hosts"),
+      (below + 2, "https://example.com/x"),
+    ]
+
+    for (row, expected) in rows {
+      hovers = []
+      opens = []
+
+      // libghostty reports a hover once the pointer has moved across cells, so the pointer keeps
+      // moving until the report arrives.
+      var column = 3
+
+      do {
+        try await waitUntil("the hover over row \(row)", timeout: .seconds(10)) {
+          column = column == 3 ? 4 : 3
+          try? self.point(session, row: row, column: column, type: .mouseMoved)
+          return hovers.compactMap { $0 }.last == expected
+        }
+      } catch {
+        XCTFail("row \(row) expected \(expected), hovers were \(hovers)")
+        throw error
+      }
+
+      try point(session, row: row, column: 3, type: .leftMouseDown)
+      try point(session, row: row, column: 3, type: .leftMouseUp)
+      try await waitUntil("the click on row \(row), saw \(opens)", timeout: .seconds(5)) {
+        !opens.isEmpty
+      }
+      XCTAssertEqual(opens, [expected], "row \(row)")
+    }
+
+    try point(session, row: 10, column: 3, type: .mouseMoved)
+    try await waitUntil("the pointer leaving the link") { hovers.last == .some(nil) }
+  }
+
   /// Catches a closed session's queued exit reaching the session that reuses its address.
   ///
   /// libghostty queues each surface's messages for the main thread. The allocator often gives a

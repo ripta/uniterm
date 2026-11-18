@@ -118,6 +118,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// The clipboard a driver's typed clipboard requests reach. Without one, they are refused.
   weak var clipboard: (any ScriptClipboard)?
 
+  /// The route a click on a path in a pane goes through. The window set gives every window the
+  /// same one. Without one, a click says so and opens nothing.
+  weak var routedOpener: RoutedOpener?
+
   /// Counts permission questions with no scope, so each gets a key of its own.
   var lastPermissionScope: UInt64 = 0
 
@@ -355,6 +359,15 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     contentController.view.layoutSubtreeIfNeeded()
     startPendingApplets()
     paneArea.focus(paneArea.focusedPane)
+  }
+
+  /// Shows the window the way `showWindow` does, with no keyboard change. The window is ordered in
+  /// front and never made key, and no pane takes focus, so the user keeps typing where they were.
+  func showWindowWithoutFocus() {
+    window?.orderFront(nil)
+
+    contentController.view.layoutSubtreeIfNeeded()
+    startPendingApplets()
   }
 
   private func apply(_ palette: ThemePalette) {
@@ -664,7 +677,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Returns nil, and leaves the applet untouched for the caller, when the window has a sheet, the
   /// pane is not here, or there is no room in either direction.
   @discardableResult
-  public func placeRouted(_ applet: any Applet, beside pane: NodeID) -> NodeID? {
+  public func placeRouted(
+    _ applet: any Applet, beside pane: NodeID, takesFocus: Bool = true
+  ) -> NodeID? {
     guard paneActionsEnabled, contains(pane: pane) else { return nil }
 
     contentController.view.layoutSubtreeIfNeeded()
@@ -687,7 +702,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     startPendingApplets()
-    paneArea.focus(created)
+
+    if takesFocus { paneArea.focus(created) }
+
     return created
   }
 
@@ -695,10 +712,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// new pane. A nil return means the window refused: it has a sheet, or the largest pane has no
   /// room to split. The applet is untouched then, and the caller keeps it.
   @discardableResult
-  public func placeRoutedInLargestPane(_ applet: any Applet) -> NodeID? {
+  public func placeRoutedInLargestPane(_ applet: any Applet, takesFocus: Bool = true) -> NodeID? {
     guard let pane = largestPane() else { return nil }
 
-    return placeRouted(applet, beside: pane)
+    return placeRouted(applet, beside: pane, takesFocus: takesFocus)
   }
 
   /// Splits `pane` and puts a launcher in the new one, which takes the keyboard. The launcher
@@ -1495,5 +1512,20 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     _ applet: any Applet, in pane: NodeID, sessionEnded tab: AppletTabID, pid: pid_t, started: Int
   ) {
     onSessionEnded?(scriptWindowID, pane, tab, pid, started)
+  }
+
+  /// A click on a path in a pane. The click is the user's own act, so the routed pane takes focus
+  /// as it does for File > Open. The pane checked that the path is the file it showed.
+  func applet(_ applet: any Applet, in pane: NodeID, open file: URL) {
+    guard let routedOpener else {
+      statusCenter.post(level: .warning, text: "uniterm cannot open files from this pane.")
+      return
+    }
+
+    let anchor = RouteAnchor(controller: self, pane: pane)
+
+    Task { @MainActor in
+      _ = await routedOpener.open([file], from: anchor)
+    }
   }
 }

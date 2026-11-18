@@ -1,5 +1,6 @@
 import AppKit
 internal import GhosttyKit
+import OSLog
 
 /// What libghostty reports about one surface, copied out of the callback so it can cross to the
 /// main actor.
@@ -13,6 +14,9 @@ enum SurfaceNotice: Sendable {
   case mouseShape(MouseShape)
   case cellSize(width: UInt32, height: UInt32)
   case configChanged
+  case linkHovered(String)
+  case linkOpenRequested(String)
+  case remoteHost(String)
   case exited
 }
 
@@ -68,6 +72,8 @@ enum GhosttyCallbacks {
     }
   }
 
+  private static let linkLog = Logger(subsystem: "dev.uniterm.app", category: "terminal-link")
+
   static func action(
     _ app: ghostty_app_t?, _ target: ghostty_target_s, _ action: ghostty_action_s
   ) -> Bool {
@@ -92,6 +98,26 @@ enum GhosttyCallbacks {
     case GHOSTTY_ACTION_CHILD_STARTED:
       let pid = action.action.child_started.pid
       notice = .processStarted(pid: pid)
+
+    case GHOSTTY_ACTION_REMOTE_HOST:
+      guard let host = action.action.remote_host.host else { return true }
+
+      notice = .remoteHost(String(cString: host))
+
+    // An empty URL says the pointer left the link. libghostty sends the hyperlink's target for an
+    // OSC 8 link and the text on screen for any other link, so the text can differ from where the
+    // link goes.
+    case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+      let raw = action.action.mouse_over_link
+      Self.linkLog.debug("hover length=\(raw.len, privacy: .public)")
+      notice = .linkHovered(Self.string(raw.url, count: Int(raw.len)))
+
+    // Always taken, so libghostty's own opener never runs. The embedder decides what a click opens.
+    case GHOSTTY_ACTION_OPEN_URL:
+      let raw = action.action.open_url
+      Self.linkLog.debug(
+        "open kind=\(raw.kind.rawValue, privacy: .public) length=\(raw.len, privacy: .public)")
+      notice = .linkOpenRequested(Self.string(raw.url, count: Int(raw.len)))
 
     case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
       let raw = action.action.desktop_notification
@@ -125,8 +151,8 @@ enum GhosttyCallbacks {
 
     case GHOSTTY_ACTION_SCROLLBAR, GHOSTTY_ACTION_RENDER, GHOSTTY_ACTION_RENDERER_HEALTH,
       GHOSTTY_ACTION_MOUSE_VISIBILITY, GHOSTTY_ACTION_COLOR_CHANGE, GHOSTTY_ACTION_INITIAL_SIZE,
-      GHOSTTY_ACTION_SIZE_LIMIT, GHOSTTY_ACTION_MOUSE_OVER_LINK,
-      GHOSTTY_ACTION_PROGRESS_REPORT, GHOSTTY_ACTION_KEY_SEQUENCE, GHOSTTY_ACTION_KEY_TABLE:
+      GHOSTTY_ACTION_SIZE_LIMIT, GHOSTTY_ACTION_PROGRESS_REPORT, GHOSTTY_ACTION_KEY_SEQUENCE,
+      GHOSTTY_ACTION_KEY_TABLE:
       return true
 
     default:
@@ -238,6 +264,14 @@ enum GhosttyCallbacks {
     }
 
     return nil
+  }
+
+  /// The bytes of a link, which carry an explicit length and need not end in a NUL.
+  private static func string(_ pointer: UnsafePointer<CChar>?, count: Int) -> String {
+    guard let pointer, count > 0 else { return "" }
+
+    let bytes = UnsafeRawBufferPointer(start: UnsafeRawPointer(pointer), count: count)
+    return String(decoding: bytes, as: UTF8.self)
   }
 
   private static func shape(_ raw: ghostty_action_mouse_shape_e) -> MouseShape {

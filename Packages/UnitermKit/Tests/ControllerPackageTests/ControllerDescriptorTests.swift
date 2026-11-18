@@ -1,6 +1,7 @@
 import ControllerTestSupport
 import CryptoKit
 import Foundation
+import SourceAccess
 import XCTest
 
 @testable import ControllerPackage
@@ -201,5 +202,85 @@ final class ControllerDescriptorTests: XCTestCase {
           try HostLaunchScope(
             executable: "/usr/bin/true", directory: "/tmp", environmentKeys: ["A_KEY", "TOKEN"])),
       ])
+  }
+
+  /// Catches a path-read permission read without its scope, with a scope that is not plain, listed
+  /// twice, or given fields of another kind. The scope is its own type, so a host launch's
+  /// directory field is not accepted in its place.
+  func testPathReadTakesAPlainListOfDirectoriesAndNothingElse() throws {
+    let files = #"{"main.janet": "sha256:\#(String(repeating: "a", count: 64))"}"#
+
+    func parse(_ permission: String) throws -> ControllerDescriptor {
+      try ControllerDescriptor.parse(
+        Data(
+          #"{"format": 2, "id": "dev.uniterm.fixture.read", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": \#(files), "permissions": [\#(permission)]}"#
+            .utf8))
+    }
+
+    let good = try parse(
+      #"{"kind": "path-read", "version": 1, "directories": ["/work/b", "/work/a"]}"#)
+
+    XCTAssertEqual(
+      good.permissions, [.pathRead(try ReadScope(directories: ["/work/a", "/work/b"]))])
+
+    for (bad, expected) in [
+      (#"{"kind": "path-read", "version": 1}"#, "needs a list of directories"),
+      (#"{"kind": "path-read", "version": 1, "directories": []}"#, "1 to"),
+      (#"{"kind": "path-read", "version": 1, "directories": ["rel"]}"#, "absolute paths"),
+      (#"{"kind": "path-read", "version": 1, "directories": ["/a/../b"]}"#, "absolute paths"),
+      (#"{"kind": "path-read", "version": 1, "directories": ["/a", "/a"]}"#, "twice"),
+      (#"{"kind": "path-read", "version": 1, "directories": [3]}"#, "string"),
+      (#"{"kind": "path-read", "version": 1, "directory": "/a"}"#, "only host-launch"),
+      (#"{"kind": "path-read", "version": 2, "directories": ["/a"]}"#, "version 2"),
+      (#"{"kind": "pane-control", "version": 1, "directories": ["/a"]}"#, "only path-read"),
+      (
+        #"{"kind": "path-read", "version": 1, "directories": ["/a"]}, {"kind": "path-read", "version": 1, "directories": ["/b"]}"#,
+        "listed twice"
+      ),
+    ] {
+      XCTAssertThrowsError(try parse(bad), bad) { error in
+        XCTAssertTrue("\(error)".contains(expected), "\(error) does not say \(expected)")
+      }
+    }
+  }
+
+  /// Catches a path-read permission that a format 1 descriptor reads. Format 1 knows two kinds.
+  func testFormatOneRefusesPathRead() {
+    let files = #"{"main.janet": "sha256:\#(String(repeating: "a", count: 64))"}"#
+
+    XCTAssertThrowsError(
+      try ControllerDescriptor.parse(
+        Data(
+          #"{"format": 1, "id": "dev.uniterm.fixture.read", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": \#(files), "permissions": [{"kind": "path-read"}]}"#
+            .utf8)))
+  }
+
+  /// Catches the descriptor format being bumped for a kind that needs no bump, which would make
+  /// every older build refuse descriptors that hold none of it. An older build refuses a kind it
+  /// does not know at any format, and it knew exactly these kinds, so a descriptor holding
+  /// path-read reads as an unknown kind there. This build's reader is the stand-in for that
+  /// refusal: it must word a kind it lacks the way the older build words this one.
+  func testPathReadJoinsFormatTwoWithoutANewFormat() throws {
+    XCTAssertEqual(ControllerDescriptor.format, 2)
+
+    let olderKinds: Set<String> = [
+      "pane-control", "capability", "clipboard-read", "clipboard-write", "host-launch",
+    ]
+    let known = Set(ControllerPermission.meanings.map(\.kind))
+
+    XCTAssertEqual(known.subtracting(olderKinds), ["path-read"])
+    XCTAssertEqual(ControllerPermission.meaning(kind: "path-read", version: 1)?.format, 2)
+
+    let files = #"{"main.janet": "sha256:\#(String(repeating: "a", count: 64))"}"#
+
+    XCTAssertThrowsError(
+      try ControllerDescriptor.parse(
+        Data(
+          #"{"format": 2, "id": "dev.uniterm.fixture.read", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": \#(files), "permissions": [{"kind": "path-reading", "version": 1, "directories": ["/a"]}]}"#
+            .utf8))
+    ) { error in
+      XCTAssertTrue(
+        "\(error)".contains("is not one descriptor format 2 knows"), "\(error)")
+    }
   }
 }

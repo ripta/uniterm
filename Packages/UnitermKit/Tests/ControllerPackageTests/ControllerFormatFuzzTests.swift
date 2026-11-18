@@ -65,6 +65,7 @@ final class ControllerFormatFuzzTests: XCTestCase {
       #"{"permissions":[{"kind":"pane-control","version":1},{"kind":"clipboard-read","version":1}]}"#,
       #"{"permissions":[{"kind":"capability","version":1,"name":"fs-read"}]}"#,
       #"{"permissions":[{"kind":"host-launch","version":1,"executable":"/usr/bin/git","directory":"/a","environment":["HOME"]}]}"#,
+      #"{"permissions":[{"kind":"path-read","version":1,"directories":["/a","/a/b"]}]}"#,
       #"{"header":{"kynd":"x"},"permissions":[{"kidn":"y"}]}"#,
     ].map { [UInt8]($0.utf8) }
 

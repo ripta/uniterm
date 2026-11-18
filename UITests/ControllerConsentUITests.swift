@@ -520,6 +520,52 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertTrue(waitUntilGone(approval, timeout: 10), "the file approval stayed after Revoke")
   }
 
+  /// Shows the review of a script file that declares reading paths under the home folder, which
+  /// lies around protected locations. The test attaches the panel for a person to read and denies
+  /// the review. It proves only that the review reaches the panel.
+  func testAPathReadingFilesReviewShowsItsDirectoriesForReading() throws {
+    let script = scratch + "-path-read-file.janet"
+
+    try write(
+      """
+      (declare-permissions {:name "Synthetic Reader"}
+        {:kind :path-read :version 1 :directories ["\(NSHomeDirectory())"]})
+
+      (print "path reading file ran")
+
+      """, to: script)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    defer { try? FileManager.default.removeItem(atPath: script) }
+
+    _ = waitForTerminal(in: app)
+
+    let run = try startRun(script, named: "path-read", in: app)
+    let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
+
+    XCTAssertTrue(
+      indicator.waitForExistence(timeout: 30),
+      "the window never showed the review. \(runReport(run))")
+
+    let panel = openPendingRequests(in: app)
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+
+    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    row.click()
+
+    XCTAssertTrue(
+      waitFor(panel.staticTexts["pending-requests-detail"], timeout: 5) {
+        $0.contains("Synthetic Reader")
+      }, "the panel does not show the file")
+
+    attach(panel, named: "path-read-review")
+    panel.buttons["Deny"].click()
+
+    XCTAssertNotEqual(waitForFile(run), "exit=0\n", "a denied review still ran")
+  }
+
   /// Catches a signed script file whose review omits the signer or hides Trust This Identity, and an
   /// identity approval that the window does not list. The signature is made here with a throwaway
   /// key over the file's bytes under the script-file domain line, as the signer writes it.

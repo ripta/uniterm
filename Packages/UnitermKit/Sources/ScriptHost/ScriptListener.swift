@@ -320,6 +320,10 @@ public final class ScriptListener: @unchecked Sendable {
     case undeclared
     case script
     case repl
+
+    /// A `uniterm open`. It sends its begin and then only listens, so every other message from it
+    /// is a violation.
+    case open
   }
 
   /// Reads until the connection ends. The declaration is due by `deadline`, and a peer that has
@@ -370,6 +374,13 @@ public final class ScriptListener: @unchecked Sendable {
           setReadTimeout(0, on: descriptor)
           continuation.yield(.undeclaredBegun(connection, begin))
 
+        case .openBegin(let begin):
+          guard role == .undeclared else { throw WireError.badValue("a second begin") }
+
+          role = .open
+          setReadTimeout(0, on: descriptor)
+          continuation.yield(.openBegun(connection, begin))
+
         case .fileDeclaration(let json):
           guard fileBegun, !fileDeclared else {
             throw WireError.badValue("a declaration from a connection that began no file, or twice")
@@ -402,8 +413,8 @@ public final class ScriptListener: @unchecked Sendable {
           continuation.yield(.replEvaluating(connection, running))
 
         case .pong(let nonce):
-          guard role != .undeclared else {
-            throw WireError.badValue("a pong from a connection that has not begun")
+          guard role != .undeclared, role != .open else {
+            throw WireError.badValue("a pong from a connection that has not begun, or an open")
           }
 
           continuation.yield(.pong(connection, nonce))
@@ -416,8 +427,8 @@ public final class ScriptListener: @unchecked Sendable {
           continuation.yield(.replMemoryLimit(connection))
 
         case .request(let id, let call):
-          guard role != .undeclared else {
-            throw WireError.badValue("a call from a connection that has not begun")
+          guard role == .script || role == .repl else {
+            throw WireError.badValue("a call from a connection that has not begun, or an open")
           }
 
           connection.slots.wait()

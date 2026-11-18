@@ -54,4 +54,35 @@ final class ProcessInspectionTests: XCTestCase {
     XCTAssertTrue(ProcessInspection.isRunning(pid: getpid(), started: started))
     XCTAssertFalse(ProcessInspection.isRunning(pid: getpid(), started: started - 1))
   }
+
+  /// Catches a child list that misses a live child, lists a process that is not one, or reads a
+  /// count of PIDs as a count of bytes. The child is a real `sleep`.
+  func testChildrenAndNameOfARealChild() throws {
+    var pid: pid_t = 0
+    let path = "/bin/sleep"
+    var argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), strdup("30"), nil]
+
+    defer {
+      for word in argv { free(word) }
+    }
+
+    XCTAssertEqual(posix_spawn(&pid, path, nil, nil, &argv, environ), 0)
+
+    defer {
+      kill(pid, SIGKILL)
+
+      var status: Int32 = 0
+      waitpid(pid, &status, 0)
+    }
+
+    XCTAssertTrue(ProcessInspection.children(of: getpid()).contains(pid))
+    XCTAssertEqual(ProcessInspection.name(of: pid), "sleep")
+    XCTAssertEqual(ProcessInspection.children(of: pid), [])
+  }
+
+  /// Catches a name or a child list for a PID with no process.
+  func testAProcessThatDoesNotExistHasNoNameAndNoChildren() {
+    XCTAssertNil(ProcessInspection.name(of: 999_999))
+    XCTAssertEqual(ProcessInspection.children(of: 999_999), [])
+  }
 }

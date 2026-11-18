@@ -1,6 +1,7 @@
 import ControllerPackage
 import ControllerTrust
 import ScriptHost
+import SourceAccess
 
 /// The text of a controller's startup review. The descriptor's name and paths come from the
 /// package, so each is escaped as a launch's inputs are, and no name can fake a line.
@@ -17,11 +18,17 @@ enum ControllerReviewText {
 
     if review.revises != nil, !review.added.isEmpty {
       lines.append("New since you trusted it:")
-      lines += review.added.map { "  + \(LaunchApprovalText.escaped($0.displayText))" }
+      lines += review.added.flatMap { permissionLines(for: $0, prefix: "  + ") }
     }
 
     lines.append("Asks for:")
-    lines += review.requested.map { "  \(LaunchApprovalText.escaped($0.displayText))" }
+    lines += review.requested.flatMap {
+      permissionLines(for: $0, prefix: "  ", resolved: review.resolvedReadDirectories)
+    }
+
+    if review.requested.contains(where: { $0.kindName == "path-read" }) {
+      lines.append(readsNeedStanding)
+    }
 
     if review.waiting.count > 1 {
       lines.append(
@@ -33,6 +40,38 @@ enum ControllerReviewText {
 
     return lines.joined(separator: "\n")
   }
+
+  /// The lines that show one permission. A path-reading power adds a line for every protected
+  /// location its scope lies in or names, and one for each it leaves out, so the user sees what
+  /// the plain directories do not say. `resolved` holds the directories with their links resolved,
+  /// read off the main thread, so a link into a protected place is named too.
+  static func permissionLines(
+    for permission: ControllerPermission, prefix: String, suffix: String = "",
+    resolved: [String: String] = [:]
+  ) -> [String] {
+    var lines = [prefix + LaunchApprovalText.escaped(permission.displayText) + suffix]
+
+    guard case .pathRead(let scope) = permission.kind else { return lines }
+
+    let labels = scope.protectedLabels(resolved: resolved)
+    let indent = String(repeating: " ", count: prefix.count + 2)
+
+    if !labels.lyingIn.isEmpty {
+      lines.append(indent + "Lies in or names: " + labels.lyingIn.joined(separator: ", "))
+    }
+
+    if !labels.leftOut.isEmpty {
+      lines.append(indent + "Leaves out: " + labels.leftOut.joined(separator: ", "))
+    }
+
+    return lines
+  }
+
+  /// What a review that asks to read paths says about the choices. A run allowed once reads
+  /// nothing, since each read would need its own question.
+  static let readsNeedStanding =
+    "Reading paths needs Allow for This Run or a trust choice. A run allowed once is refused "
+    + "when it reads."
 
   /// The choices a review offers, in the order the panel shows them. Trust This Identity is
   /// offered only for a signed controller. Neither trust choice is offered when the policy file

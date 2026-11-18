@@ -18,6 +18,9 @@ import AppletKit
       AppletTypeDeclaration(
         typeID: ChartFixture.typeID, displayName: "Chart fixture", symbolName: "chart.xyaxis.line",
         opens: [], controlSupport: ControlCombination.all),
+      AppletTypeDeclaration(
+        typeID: PathsFixture.typeID, displayName: "Paths fixture", symbolName: "doc.text",
+        opens: [], controlSupport: ControlCombination.all),
     ]
 
     public static let typeIDs: Set<String> = Set(declarations.map(\.typeID))
@@ -29,6 +32,7 @@ import AppletKit
       case SlidesFixture.typeID: return SlidesFixture()
       case NotesFixture.typeID: return NotesFixture()
       case ChartFixture.typeID: return ChartFixture()
+      case PathsFixture.typeID: return PathsFixture()
       default: return nil
       }
     }
@@ -40,6 +44,7 @@ import AppletKit
       case SlidesFixture.typeID: return try SlidesFixture(restoring: description)
       case NotesFixture.typeID: return try NotesFixture(restoring: description)
       case ChartFixture.typeID: return try ChartFixture(restoring: description)
+      case PathsFixture.typeID: return PathsFixture()
       default:
         throw AppletRestoreError.unsupported("the applet type \"\(description.type)\" is unknown")
       }

@@ -307,7 +307,9 @@ public final class PendingRequestsWindowController: NSWindowController {
 
     case .question(let question):
       sessionButton.title = question.sessionTitle
-      shown = [allowOnceButton, sessionButton, denyButton]
+      shown =
+        question.onceOnly
+        ? [allowOnceButton, denyButton] : [allowOnceButton, sessionButton, denyButton]
 
     case .denial:
       shown = [askAgainButton]

@@ -38,6 +38,12 @@ final class TextViewerRemote {
     let serial: Int
     let reply: PendingReply
     let cancelTimer: @MainActor () -> Void
+
+    /// Asked when the reply is built. False hides what came from the pane's file. It holds the
+    /// access the caller had when it began to wait, and asks the pane for its source again. A
+    /// run's power can grow while it waits and can never shrink short of ending the run, which
+    /// fails the wait, so the held access is never wider than the caller's own.
+    let mayShow: @MainActor () -> Bool
   }
 
   private(set) var table = RemoteHandleTable()
@@ -62,11 +68,9 @@ final class TextViewerRemote {
   func settle(_ id: Int, _ outcome: RemoteOutcome) {
     guard table.settle(id, outcome), let entry = table.entry(id) else { return }
 
-    let reply = RemoteHandleTable.reply(for: entry)
-
     for waiter in waiters.removeValue(forKey: id) ?? [] {
       waiter.cancelTimer()
-      waiter.reply.complete(reply)
+      waiter.reply.complete(RemoteHandleTable.reply(for: entry, redacted: !waiter.mayShow()))
     }
   }
 
@@ -83,14 +87,20 @@ final class TextViewerRemote {
   }
 
   /// Answers a wait. The reply is ready now when the handle ended, and pends when it did not.
+  ///
+  /// `mayShow` says whether the waiting caller may see what came from the pane's file. It is asked
+  /// when the reply is built, so a pane whose source changed while the caller waited is judged by
+  /// the source it shows then.
   func wait(
-    for id: Int, milliseconds: Int
+    for id: Int, milliseconds: Int, mayShow: @escaping @MainActor () -> Bool
   ) throws(AppletCommandError) -> AppletCommandReply {
     guard let entry = table.entry(id) else {
       throw AppletCommandError(.notFound, "there is no result under that handle")
     }
 
-    guard !entry.isSettled else { return .immediate(RemoteHandleTable.reply(for: entry)) }
+    guard !entry.isSettled else {
+      return .immediate(RemoteHandleTable.reply(for: entry, redacted: !mayShow()))
+    }
 
     guard milliseconds > 0 else { return .immediate(RemoteHandleTable.pendingReply) }
 
@@ -108,7 +118,8 @@ final class TextViewerRemote {
       reply.complete(RemoteHandleTable.pendingReply)
     }
 
-    waiters[id, default: []].append(Waiter(serial: serial, reply: reply, cancelTimer: cancelTimer))
+    waiters[id, default: []].append(
+      Waiter(serial: serial, reply: reply, cancelTimer: cancelTimer, mayShow: mayShow))
 
     reply.onCancel = { [weak self] in
       guard let self else { return }

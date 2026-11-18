@@ -76,6 +76,16 @@ public struct SenderIdentity: Sendable, Equatable, Hashable {
     return Self.clean(signingIdentifier)
   }
 
+  /// The sender as an approval question names it, from the verified signing information alone.
+  /// Apple's own code says so. Anyone else carries the team that signed it, or says it has none.
+  public var approvalLabel: String {
+    if isAppleAnchored { return "\(name) (Apple)" }
+
+    guard let teamIdentifier, !teamIdentifier.isEmpty else { return "\(name) (no team)" }
+
+    return "\(name) (team \(Self.clean(teamIdentifier)))"
+  }
+
   /// One line for the debug log, so a measurement can be repeated by hand.
   public var logDescription: String {
     "identifier=\(signingIdentifier ?? "none") team=\(teamIdentifier ?? "none") "

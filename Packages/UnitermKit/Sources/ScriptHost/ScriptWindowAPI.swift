@@ -1,6 +1,7 @@
 import Foundation
 import PaneModel
 import ScriptWire
+import SourceAccess
 
 /// Why a host function did not do what a script asked. The kind tells the script's mistake from a
 /// refusal. The text reaches the script as the message of a Janet error, so it never names a pane
@@ -72,7 +73,9 @@ public protocol ScriptWindowAPI: AnyObject {
   func listWindows(caller: ScriptCaller) throws -> ScriptValue
 
   /// The panes of the caller's window that the caller may address, or nil for any other window.
-  func listPanes(window: UInt64, caller: ScriptCaller) throws -> ScriptValue
+  /// A pane whose source is a user's file outside `access` is listed with no title, tab title, or
+  /// directory, since each can come from the file.
+  func listPanes(window: UInt64, caller: ScriptCaller, access: ReadAccess) throws -> ScriptValue
 
   /// Splits `beside` and starts the applet `kind` in the new pane, in the caller's group. The
   /// directory is where the new pane starts, or nil for the one the pane beside it reports. The
@@ -110,10 +113,15 @@ public protocol ScriptWindowAPI: AnyObject {
   /// applet's reply. The arguments are JSON text. The command waits its turn in the queue, and
   /// `stillAllowed` runs again as it is delivered, so a grant that ends meanwhile leaves no effect.
   /// An error leaves the applet unchanged.
+  ///
+  /// A command argument typed as a path is opened inside the scope `access` holds, off the main
+  /// thread, before the command is queued. `access` is asked again as the command is delivered, so
+  /// a grant that ended while the command waited leaves no read.
   func sendCommand(
     to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
     command: String,
-    arguments: String, caller: ScriptCaller, stillAllowed: @escaping @MainActor () throws -> Void
+    arguments: String, caller: ScriptCaller, access: @escaping @MainActor () -> ReadAccess,
+    stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue
 
   /// Lays out the caller's subtree, anchored at a pane the caller may control. The layout is JSON

@@ -1,10 +1,44 @@
 import Foundation
+import SourceAccess
 
 /// A command that shared dispatch has checked against the applet's schema. Only the dispatcher
 /// makes one, so an applet that takes it knows the name is declared and every argument fits.
 public struct ValidatedAppletCommand: Sendable, Equatable {
   public let name: String
+
+  /// The arguments as the caller sent them, except that a path-typed argument reads as null.
   public let arguments: [String: JSONValue]
+
+  /// What the host opened for each path-typed argument, by the argument's name. A nested one is
+  /// named `field.inner` or `field[0]`. The applet gets the opened file or folder and never the
+  /// path the caller wrote.
+  public let opened: [String: OpenedPath]
+
+  /// What the caller may be told. An applet whose pane shows a user's file checks it before it
+  /// puts anything from that file into a reply.
+  public let access: ReadAccess
+
+  init(
+    name: String, arguments: [String: JSONValue], opened: [String: OpenedPath] = [:],
+    access: ReadAccess = .none
+  ) {
+    self.name = name
+    self.arguments = arguments
+    self.opened = opened
+    self.access = access
+  }
+}
+
+/// An applet that shows a file or folder the user chose, and says which path it is.
+///
+/// The host asks before it tells a controller about the pane. A controller whose read scope does
+/// not hold the path is told nothing that comes from the file: not its name, its folder, or what
+/// is in it.
+@MainActor
+public protocol UserFileSourcing: Applet {
+  /// The path of the file or folder the pane shows, or nil when it shows none. The host tells
+  /// content a controller sent apart by the folder it waits in, and shows that to the controller.
+  var userFileSource: String? { get }
 }
 
 /// How an applet answers one command.

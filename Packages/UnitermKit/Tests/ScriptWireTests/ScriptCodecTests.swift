@@ -98,6 +98,8 @@ final class ScriptCodecTests: XCTestCase {
       .undeclaredBegin(UndeclaredBegin(name: "tidy.janet")),
       .undeclaredBegin(
         UndeclaredBegin(name: "caf\u{00E9}.janet", capabilities: ["fs-read", "net-connect"])),
+      .openBegin(OpenBegin(paths: ["/Users/synthetic/notes.md"])),
+      .openBegin(OpenBegin(paths: ["/tmp/caf\u{00E9}", "/a b/c", "/"])),
     ]
 
     for level in ScriptStatusLevel.allCases {
@@ -134,6 +136,7 @@ final class ScriptCodecTests: XCTestCase {
       .fileAdmitted(
         snapshot: "/tmp/run.synthetic/script.janet", version: Data(repeating: 0x5A, count: 32)),
       .undeclaredAdmitted,
+      .openDone,
     ]
 
     for message in messages {
@@ -141,16 +144,67 @@ final class ScriptCodecTests: XCTestCase {
     }
   }
 
-  /// Catches an old command or an old app that the version 12 side accepts. Version 11 writes a
-  /// command's schema version as one number, so an older command would send a body the app reads
-  /// as a different call. Each side refuses the other at the hello, before any call or admission.
-  func testTheSchemaMajorMinorVersionRefusesTheVersionBeforeIt() {
-    XCTAssertEqual(ScriptProtocol.version, 12)
+  /// Catches an old command or an old app that the version 13 side accepts. Version 12 has no open
+  /// begin, so an old command could never ask for one and an old app would read the new begin as
+  /// an unknown message. Version 11 writes a command's schema version as one number. Each side
+  /// refuses the other at the hello, before any call or admission.
+  func testTheOpenBeginVersionRefusesTheVersionBeforeIt() {
+    XCTAssertEqual(ScriptProtocol.version, 13)
 
-    for older: UInt16 in [10, 11] {
+    for older: UInt16 in [10, 11, 12] {
       XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: older)))
       XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: older)))
     }
+  }
+
+  /// Catches an open begin that changes what the user named. A list or a path that does not fit is
+  /// refused whole, and never cut or trimmed to fit, since a shorter list opens different files and
+  /// a cut path names another file. A raw peer can skip the command's own checks, so the reader
+  /// holds the same ones.
+  func testAnOpenBeginIsRefusedWholeAndNeverCut() throws {
+    func decode(paths: [String]) throws -> ScriptHelperMessage {
+      let frame = ScriptHelperMessage.openBegin(OpenBegin(paths: paths)).frame()
+      let (type, length) = try FrameHeader.parse(frame.prefix(FrameHeader.size))
+
+      return try ScriptHelperMessage.decode(
+        type: type, body: frame.dropFirst(FrameHeader.size).prefix(length))
+    }
+
+    let atTheLimit = (0..<OpenBegin.maxPaths).map { "/synthetic/\($0)" }
+
+    XCTAssertEqual(try decode(paths: atTheLimit), .openBegin(OpenBegin(paths: atTheLimit)))
+
+    let refused: [(String, [String])] = [
+      ("an empty list", []),
+      ("one path too many", atTheLimit + ["/one/more"]),
+      ("a relative path", ["/ok", "relative/path"]),
+      ("an empty path", ["/ok", ""]),
+      ("a NUL byte", ["/ok\0/bad"]),
+      (
+        "a path past the path limit",
+        ["/" + String(repeating: "a", count: ScriptProtocol.maxDirectoryBytes)]
+      ),
+      (
+        "too many bytes together",
+        (0..<60).map { "/" + String(repeating: "b", count: 999) + "\($0)" }
+      ),
+    ]
+
+    for (name, paths) in refused {
+      XCTAssertThrowsError(try decode(paths: paths), name)
+      XCTAssertNotNil(OpenBegin.problem(with: paths), name)
+    }
+
+    XCTAssertNil(OpenBegin.problem(with: atTheLimit))
+
+    var trailing = ByteWriter()
+
+    trailing.put(UInt16(1))
+    trailing.put(UInt16(2))
+    trailing.put(raw: Data("/a".utf8))
+    trailing.put(UInt8(0))
+
+    XCTAssertThrowsError(try ScriptHelperMessage.decode(type: 14, body: trailing.bytes))
   }
 
   /// Catches a hello that accepts another version, in either direction. The refusal names both

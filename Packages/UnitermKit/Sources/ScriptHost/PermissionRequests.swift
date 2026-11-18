@@ -37,7 +37,13 @@ public final class ChangeObservers {
 /// requester share one row, however many arrive, so repeated requests cannot flood the user.
 /// Each row holds at most `maxPerRow` waiting operations, one requester holds at most
 /// `maxRowsPerRequester` rows, and so do all requesters that share a denial key. All requesters
-/// together hold at most `maxRows`. A request past any bound is refused as busy.
+/// together hold at most `maxRows`. A request past any bound is refused as busy, and the rows that
+/// wait stay.
+///
+/// Some requesters are many by construction, and each kind holds its rows together as one
+/// requester would. Every requester that stands for one open event is one kind, since a program
+/// that sends events cannot be told apart from the next one. Every command that runs outside any
+/// terminal session is the other, since each is a fresh connection that holds a listener slot.
 ///
 /// Allow once releases the oldest waiting operation of a row and no other, so coalescing never
 /// turns one approval into approval of several operations. The row shows that oldest operation's
@@ -68,6 +74,32 @@ public final class PermissionRequests {
 
     /// Runs of one verified controller version, for a denied startup review.
     case controllerVersion(controllerID: String, version: String)
+
+    /// An app that opens files through Launch Services, and uniterm could name and allow for its
+    /// run. Its question, its denial, and its session grant go when it exits or starts another
+    /// executable. A reused process ID carries another version, so it is another requester.
+    case launchSender(pid: Int32, pidVersion: Int32)
+
+    /// One open event whose sender no later event can be tied to: an unidentified sender, or a
+    /// go-between that can only be allowed once. It holds one question, and its denial goes as soon
+    /// as the user gives it, so a denial never outlives what it was about.
+    case launchEvent(UInt64)
+
+    /// A `uniterm open` command that runs in no terminal session, by its connection. Each command
+    /// is its own connection, so its question and its denial go with that connection, and the
+    /// commands bound together.
+    case unboundOpen(UInt64)
+
+    /// Whether the two count against one row bound. Every open event is its own requester, and so
+    /// is every command outside a session, so each kind bounds together, as one requester would.
+    /// Otherwise a loop of them would fill the rows of every other requester, and for commands the
+    /// listener's slots too.
+    func sharesBound(with other: Requester) -> Bool {
+      switch (self, other) {
+      case (.launchEvent, .launchEvent), (.unboundOpen, .unboundOpen): return true
+      default: return self == other
+      }
+    }
   }
 
   /// One requester's question about one power. `power` names the power and anything that scopes
@@ -127,6 +159,11 @@ public final class PermissionRequests {
     /// The label of the session answer, which says what it covers.
     public let sessionTitle: String
 
+    /// True when the requester has nothing a session answer could bind to, so only Allow once and
+    /// Deny exist. The panel hides the session button, and `decide` answers a session answer as
+    /// Allow once.
+    public let onceOnly: Bool
+
     /// How many operations wait in the row.
     public var waiting: Int
   }
@@ -168,10 +205,12 @@ public final class PermissionRequests {
 
   /// Puts an operation before the user. A request whose key already has a row joins it, and the
   /// row keeps showing its oldest operation. `denialKey` names what a denial covers, when that
-  /// should outlive the requester that asks.
+  /// should outlive the requester that asks. `onceOnly` offers no session answer, for a requester
+  /// that cannot be told from the program that happens to call.
   public func ask(
     _ key: Key, deniedAs denialKey: Key? = nil, subject: String, pid: pid_t? = nil, title: String,
-    detail: String, sessionTitle: String, answer: @escaping @MainActor (Answer) -> Void
+    detail: String, sessionTitle: String, onceOnly: Bool = false,
+    answer: @escaping @MainActor (Answer) -> Void
   ) -> Outcome {
     let denialKey = denialKey ?? key
 
@@ -192,8 +231,9 @@ public final class PermissionRequests {
     // A program that opens many connections asks under each, but they share its denial key, so
     // both count against the bound.
     guard rows.count < Self.maxRows,
-      rows.count(where: { $0.key.requester == key.requester }) < Self.maxRowsPerRequester,
-      rows.count(where: { $0.denialKey.requester == denialKey.requester })
+      rows.count(where: { $0.key.requester.sharesBound(with: key.requester) })
+        < Self.maxRowsPerRequester,
+      rows.count(where: { $0.denialKey.requester.sharesBound(with: denialKey.requester) })
         < Self.maxRowsPerRequester
     else { return .busy }
 
@@ -201,7 +241,7 @@ public final class PermissionRequests {
     rows.append(
       Row(
         id: lastID, key: key, subject: subject, pid: pid, title: title, detail: detail,
-        denialKey: denialKey, sessionTitle: sessionTitle, waiting: 1))
+        denialKey: denialKey, sessionTitle: sessionTitle, onceOnly: onceOnly, waiting: 1))
     operations[lastID] = [operation]
     changes.notify()
 
@@ -213,6 +253,7 @@ public final class PermissionRequests {
     guard answer != .withdrawn, let index = rows.firstIndex(where: { $0.id == id }) else { return }
 
     let row = rows[index]
+    let answer = row.onceOnly && answer == .allowForSession ? Answer.allowOnce : answer
     var waiting = operations[id] ?? []
     let answered: [Operation]
 

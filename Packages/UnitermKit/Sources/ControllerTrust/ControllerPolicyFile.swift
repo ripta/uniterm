@@ -1,5 +1,6 @@
 import ControllerPackage
 import Foundation
+import SourceAccess
 
 /// Why a policy file was not read. Either way it authorizes nothing.
 public enum ControllerPolicyFileError: Error, Equatable, Sendable, CustomStringConvertible {
@@ -209,6 +210,10 @@ public enum ControllerPolicyFile {
         of: "a host-launch scope",
         required: ["kind", "version", "executable", "directory", "environment"])
 
+    case "path-read":
+      fields = try value.members(
+        of: "a path-read scope", required: ["kind", "version", "directories"])
+
     default:
       fields = try value.members(of: "a \(kind) scope", required: ["kind", "version"])
     }
@@ -233,6 +238,17 @@ public enum ControllerPolicyFile {
       }
 
       permission = .capability(name)
+
+    case "path-read":
+      do {
+        permission = .pathRead(
+          try ReadScope(
+            directories: try fields["directories"]!.array("a read scope's directories").map {
+              try $0.string("a read scope's directory")
+            }))
+      } catch let error as ReadScopeError {
+        throw ControllerPolicyFileError.unreadable(error.description)
+      }
 
     default:
       permission = .hostLaunch(
@@ -315,6 +331,9 @@ public enum ControllerPolicyFile {
         ("environment", .array(scope.environmentKeys.map(JSONText.string))),
         ("executable", .string(scope.executable)),
       ]
+
+    case .pathRead(let scope):
+      members.append(("directories", .array(scope.directories.map(JSONText.string))))
     }
 
     members.append(("version", .integer(permission.version)))

@@ -304,8 +304,13 @@ public final class WindowSet {
   /// Opens a window whose only pane is `applet`, and returns its controller. It cascades from the
   /// active window like any new window, and it takes no directory from it. When the factory
   /// throws, nothing opens, no number is used, and the applet stays the caller's to close.
+  ///
+  /// A window that `takesFocus` is shown as any new window is. Otherwise it is ordered in front and
+  /// never made key, so a program's open does not move the user's keyboard.
   @discardableResult
-  public func open(routing applet: any Applet) throws -> MainWindowController {
+  public func open(routing applet: any Applet, takesFocus: Bool = true) throws
+    -> MainWindowController
+  {
     guard let makeRoutedController else {
       throw WindowSetError.cannotRoute
     }
@@ -324,7 +329,7 @@ public final class WindowSet {
       window.setFrameTopLeftPoint(corner)
     }
 
-    show(controller)
+    show(controller, takesFocus: takesFocus)
     return controller
   }
 
@@ -380,6 +385,14 @@ public final class WindowSet {
     }
   }
 
+  /// The route a click on a path in a terminal goes through. The app sets it once the router
+  /// exists.
+  public weak var routedOpener: RoutedOpener? {
+    didSet {
+      for controller in controllers { controller.routedOpener = routedOpener }
+    }
+  }
+
   /// How long the quit waits, in all, for drivers to end on SIGTERM before their groups get
   /// SIGKILL. ADR-08 lets the main thread wait this long because the bound is fixed.
   public static let driverQuitGrace: TimeInterval = 0.5
@@ -429,6 +442,7 @@ public final class WindowSet {
     controller.launchAuthority = launchAuthority
     controller.permissionRequests = permissionRequests
     controller.clipboard = clipboard
+    controller.routedOpener = routedOpener
     controller.onClose = { [weak self] controller in
       self?.windowDidClose(controller)
     }
@@ -450,7 +464,7 @@ public final class WindowSet {
     controllers.append(controller)
   }
 
-  private func show(_ controller: MainWindowController) {
+  private func show(_ controller: MainWindowController, takesFocus: Bool = true) {
     if heldDropped > 0 {
       let noun = heldDropped == 1 ? "message was" : "messages were"
       controller.statusCenter.post(
@@ -464,7 +478,12 @@ public final class WindowSet {
     }
     held.removeAll()
 
-    controller.showWindow(nil)
+    if takesFocus {
+      controller.showWindow(nil)
+    } else {
+      controller.showWindowWithoutFocus()
+    }
+
     onLayoutChange?()
   }
 
@@ -524,7 +543,7 @@ public final class WindowSet {
     permissionRequests.end { requester in
       switch requester {
       case .driver(let id, _, _), .terminal(let id, _), .paneScripts(let id, _): return id == window
-      case .connection, .controllerVersion: return false
+      case .connection, .controllerVersion, .launchSender, .launchEvent, .unboundOpen: return false
       }
     }
 

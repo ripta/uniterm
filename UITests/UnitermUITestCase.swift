@@ -159,11 +159,16 @@ class UnitermUITestCase: XCTestCase {
 
   /// Waits for a file the shell writes, and returns what it holds. A file that has not appeared in
   /// 60 seconds fails the test, so a script that never ran cannot hang it.
+  ///
+  /// The shell's `echo ... > file` creates the file empty before it writes the line. So the file
+  /// counts only once it ends in a newline, which every writer's `echo` adds.
   func waitForFile(_ path: String, timeout: TimeInterval = 60) -> String? {
     let deadline = Date().addingTimeInterval(timeout)
 
     while Date() < deadline {
-      if let text = try? String(contentsOfFile: path, encoding: .utf8) { return text }
+      if let text = try? String(contentsOfFile: path, encoding: .utf8), text.hasSuffix("\n") {
+        return text
+      }
 
       Thread.sleep(forTimeInterval: 0.25)
     }

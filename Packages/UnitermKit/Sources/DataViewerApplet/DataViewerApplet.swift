@@ -610,3 +610,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     return segments
   }
 }
+
+extension DataViewerApplet: UserFileSourcing {
+  public var userFileSource: String? { record.path }
+}

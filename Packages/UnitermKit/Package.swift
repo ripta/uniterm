@@ -75,7 +75,7 @@ let package = Package(
     .target(name: "Theme", dependencies: ["ThemeCore"]),
     .target(name: "Preferences"),
     .target(name: "StatusKit"),
-    .target(name: "AppletKit", dependencies: ["StatusKit", "Theme"]),
+    .target(name: "AppletKit", dependencies: ["SourceAccess", "StatusKit", "Theme"]),
     .target(name: "PaneModel"),
     .target(name: "LayoutKit", dependencies: ["AppletKit", "AtomicFile", "PaneModel"]),
     .target(name: "FileRouting", dependencies: ["AppletKit"]),
@@ -87,7 +87,7 @@ let package = Package(
       dependencies: [
         "Theme", "Preferences", "AppletKit", "StatusKit", "PaneModel", "LayoutKit", "FileRouting",
         "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ExecDriver", "ControllerPackage",
-        "ControllerTrust",
+        "ControllerTrust", "SourceAccess",
       ]),
     .target(name: "SettingsKit", dependencies: ["Preferences"]),
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
@@ -110,7 +110,10 @@ let package = Package(
         .linkedFramework("AppKit"),
       ]),
     .target(
-      name: "TerminalApplet", dependencies: ["AppletKit", "StatusKit", "TerminalSurface", "Theme"]),
+      name: "TerminalApplet",
+      dependencies: [
+        "AppletKit", "ProcessInspection", "SourceAccess", "StatusKit", "TerminalSurface", "Theme",
+      ]),
     // Reaching a file for a viewer: the stored path and bookmark, and the errors for a missing,
     // protected, or irregular file. It has no AppKit, so the table and map targets share it.
     .target(name: "SourceAccess"),
@@ -201,11 +204,12 @@ let package = Package(
     // A controller package's descriptor, signature, snapshot, and native load check. The app,
     // the signer, and the helper's loader all read packages through it, so they read one meaning
     // from the same bytes. It has no AppKit and no Janet.
-    .target(name: "ControllerPackage", dependencies: ["ScriptWire"]),
+    .target(name: "ControllerPackage", dependencies: ["ScriptWire", "SourceAccess"]),
     // Remembered controller approvals: the selectors, the typed scopes and how one covers another,
     // and the private policy file. It has no AppKit, so the app's admission and the fuzzers share
     // one reading of the file.
-    .target(name: "ControllerTrust", dependencies: ["AtomicFile", "ControllerPackage"]),
+    .target(
+      name: "ControllerTrust", dependencies: ["AtomicFile", "ControllerPackage", "SourceAccess"]),
     // The helper side of scripting. It owns the one Janet VM of its process, on its main thread.
     .target(name: "ScriptRuntime", dependencies: ["CJanet", "ControllerPackage", "ScriptWire"]),
     // A thin main over ScriptRuntime, so tests can run a helper without the hardened runtime. The
@@ -217,7 +221,7 @@ let package = Package(
       name: "ScriptHost",
       dependencies: [
         "ControllerPackage", "ControllerTrust", "FileRouting", "HelperHost", "PaneModel",
-        "Preferences", "ProcessInspection", "ScriptWire", "StatusKit",
+        "Preferences", "ProcessInspection", "ScriptWire", "SourceAccess", "StatusKit",
       ]),
     // The REPL applet. It hosts a terminal session whose child is the REPL helper, and binds the
     // helper's control channel to its pane through the script host. It never imports Janet.
@@ -254,7 +258,8 @@ let package = Package(
     // Hosted slide, notes, and chart applets with real command and event schemas. The exec wire
     // and shared dispatch are tested against them, and a debug app can register them.
     .target(
-      name: "AppletFixtures", dependencies: ["AppletKit", "Theme"], path: "Tests/AppletFixtures"),
+      name: "AppletFixtures", dependencies: ["AppletKit", "SourceAccess", "Theme"],
+      path: "Tests/AppletFixtures"),
     // The perl driver the exec tests run, with a mode for each way a driver behaves or misbehaves.
     .target(
       name: "ExecTestSupport", path: "Tests/ExecTestSupport", resources: [.copy("Fixtures")]),
@@ -280,13 +285,13 @@ let package = Package(
       name: "ControllerPackageTests",
       dependencies: [
         "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "ScriptWire",
-        "TableTestSupport",
+        "SourceAccess", "TableTestSupport",
       ]),
     .testTarget(
       name: "ControllerTrustTests",
       dependencies: [
         "AtomicFile", "ControllerPackage", "ControllerTrust", "ControllerTestSupport",
-        "TableTestSupport",
+        "SourceAccess", "TableTestSupport",
       ]),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
@@ -355,13 +360,14 @@ let package = Package(
       name: "ScriptRuntimeTests",
       dependencies: [
         "ScriptRuntime", "ScriptWire", "CJanet", "ControllerPackage", "ControllerTestSupport",
+        "SourceAccess",
       ]),
     .testTarget(
       name: "ScriptHostTests",
       dependencies: [
         "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "FileRouting",
         "Preferences", "ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport",
-        "StatusKit",
+        "SourceAccess", "StatusKit",
       ],
       resources: [.copy("Fixtures")]),
     .testTarget(
@@ -373,7 +379,8 @@ let package = Package(
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "ProcessInspectionTests", dependencies: ["ProcessInspection"]),
     .testTarget(
-      name: "AppletKitTests", dependencies: ["AppletKit", "AppletTestSupport", "AppletFixtures"]),
+      name: "AppletKitTests",
+      dependencies: ["AppletKit", "AppletTestSupport", "AppletFixtures", "SourceAccess"]),
     .testTarget(
       name: "ExecDriverTests",
       dependencies: [
@@ -397,7 +404,7 @@ let package = Package(
         "WindowKit", "Theme", "Preferences", "StatusKit", "AppletKit", "PaneModel", "LayoutKit",
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
         "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
-        "ControllerTrust", "TestProcessGuard", "TextViewerApplet",
+        "ControllerTrust", "TestProcessGuard", "TextViewerApplet", "SourceAccess",
       ]),
   ],
   swiftLanguageModes: [.v6],

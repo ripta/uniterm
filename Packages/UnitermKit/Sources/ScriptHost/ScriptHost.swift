@@ -48,6 +48,9 @@ public final class ScriptHost {
     /// A REPL pane's helper.
     case repl
 
+    /// A `uniterm open` command.
+    case openCommand
+
     var lastsOneRun: Bool { self == .bundledRun || self == .controllerRun || self == .fileRun }
   }
 
@@ -55,6 +58,9 @@ public final class ScriptHost {
   private let issueProducer: ProducerIssuer
   private let windows: (any ScriptWindowAPI)?
   private let sentContent: ScriptSentContent?
+
+  /// Where the content programs sent waits, if the host holds any.
+  var sentContentRoot: String? { sentContent?.rootPath }
   let onRefusal: @MainActor (ScriptRefusal) -> Void
   var sessions: [UInt64: Session] = [:]
 
@@ -199,6 +205,13 @@ public final class ScriptHost {
   let clipboard: (any ScriptClipboard)?
 
   private var permissionWatch: ChangeObservers.Token?
+
+  /// Where `uniterm open` sends the paths the user allowed. Without it, every open is refused.
+  public var fileOpener: (any ScriptFileOpening)?
+
+  /// The terminal sessions the user allowed to open files. Memory only, so no restore brings one
+  /// back. It ends with the session root, the window, or the host.
+  var openGrants: Set<OpenSessionGrant> = []
 
   /// The clipboard powers the user allowed for the session of an ordinary script connection.
   var clipboardGrants: [UInt64: Set<ControllerPermission>] = [:]
@@ -345,6 +358,7 @@ public final class ScriptHost {
     grants = [:]
     revokedControllers = []
     clipboardGrants = [:]
+    openGrants = []
     permissionRequests.end { if case .connection = $0 { return true } else { return false } }
   }
 
@@ -388,6 +402,9 @@ public final class ScriptHost {
 
     case .undeclaredBegun(let connection, let request):
       begin(connection, .undeclared(request))
+
+    case .openBegun(let connection, let request):
+      beginOpen(connection, request)
 
     case .attached(let connection, let token):
       sessions[connection.id, default: Session()].kind = .repl
@@ -530,7 +547,9 @@ public final class ScriptHost {
 
     case .listPanes(let window):
       return answer {
-        try requireWindows().listPanes(window: window, caller: try requireCaller(connection))
+        try requireWindows().listPanes(
+          window: window, caller: try requireCaller(connection),
+          access: readAccess(for: connection.id))
       }
 
     case .openPane, .openTab, .sendCommand, .requestLayout, .readClipboard, .writeClipboard:
@@ -585,7 +604,9 @@ public final class ScriptHost {
         return Self.result(
           of: try await requireWindows().sendCommand(
             to: pane, appletType: type, schemaVersion: version, command: command,
-            arguments: arguments, caller: caller, stillAllowed: stillAllowed),
+            arguments: arguments, caller: caller,
+            access: { [weak self] in self?.readAccess(for: connection.id) ?? .none },
+            stillAllowed: stillAllowed),
           commandRan: true)
 
       case .requestLayout(let pane, let layout):
@@ -692,7 +713,7 @@ public final class ScriptHost {
   /// True when the process the connection admitted still runs but is no longer what speaks on it:
   /// it started another executable, or a process it forked has taken the socket over. A peer that
   /// exited is not counted here. Its binding fails on its own, as a closed session's does.
-  private func peerWasReplaced(_ connection: ScriptConnection) -> Bool {
+  func peerWasReplaced(_ connection: ScriptConnection) -> Bool {
     !connection.peerGenerationHolds
       && ProcessInspection.isRunning(pid: connection.peer.pid, started: connection.peerStartTime)
   }
@@ -755,6 +776,7 @@ public final class ScriptHost {
   func authorityEnded(_ id: UInt64) {
     clipboardGrants[id] = nil
     permissionRequests.end(.connection(id))
+    permissionRequests.end(.unboundOpen(id))
     onControllerEnded?(id)
     controllersChanged()
   }
@@ -989,6 +1011,7 @@ public final class ScriptHost {
     if paneRoots[key]?.isEmpty == true { paneRoots[key] = nil }
 
     endGrants { $0.root == identity }
+    endOpenGrants { $0.root == identity }
     acting.forEach(authorityEnded)
   }
 
@@ -999,6 +1022,7 @@ public final class ScriptHost {
     for (key, roots) in paneRoots where key.window == window {
       roots.forEach(sessionRoots.remove)
       paneRoots[key] = nil
+      endOpenGrants { grant in roots.contains(grant.root) }
     }
 
     endGrants { $0.window == window }

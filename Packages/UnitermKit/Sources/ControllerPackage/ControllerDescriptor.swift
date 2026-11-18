@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import ScriptWire
+import SourceAccess
 
 /// Why a controller package, its descriptor, its signature, or its snapshot was refused. Each case
 /// carries text for the user, which names the file or field at fault.
@@ -65,6 +66,11 @@ public enum ControllerPermissionKind: Hashable, Sendable {
   /// the user chooses Run.
   case hostLaunch(HostLaunchScope)
 
+  /// An applet may read a path inside these directories on the controller's behalf. The scope is
+  /// its own type, never a host launch's directory, and a protected location it contains but does
+  /// not name is left out.
+  case pathRead(ReadScope)
+
   /// The kind as the descriptor and the policy file spell it.
   public var name: String {
     switch self {
@@ -73,14 +79,16 @@ public enum ControllerPermissionKind: Hashable, Sendable {
     case .clipboardRead: return "clipboard-read"
     case .clipboardWrite: return "clipboard-write"
     case .hostLaunch: return "host-launch"
+    case .pathRead: return "path-read"
     }
   }
 
   /// What tells two permissions of one kind apart: a capability's name or a host launch's
-  /// executable. A descriptor lists each kind at most once for each of these.
+  /// executable. A descriptor lists each kind at most once for each of these, so it lists
+  /// path-read once, with every directory in one scope.
   var scopeName: String {
     switch self {
-    case .paneControl, .clipboardRead, .clipboardWrite: return ""
+    case .paneControl, .clipboardRead, .clipboardWrite, .pathRead: return ""
     case .capability(let name): return name
     case .hostLaunch(let scope): return scope.executable
     }
@@ -128,6 +136,10 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
     ControllerPermission(.hostLaunch(scope))
   }
 
+  public static func pathRead(_ scope: ReadScope) -> ControllerPermission {
+    ControllerPermission(.pathRead(scope))
+  }
+
   /// Every (kind, version) pair this build knows.
   public static let meanings: [ControllerPermissionMeaning] = [
     ControllerPermissionMeaning(kind: "pane-control", version: 1, covers: [1], format: 1),
@@ -135,6 +147,7 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
     ControllerPermissionMeaning(kind: "clipboard-read", version: 1, covers: [1], format: 2),
     ControllerPermissionMeaning(kind: "clipboard-write", version: 1, covers: [1], format: 2),
     ControllerPermissionMeaning(kind: "host-launch", version: 1, covers: [1], format: 2),
+    ControllerPermissionMeaning(kind: "path-read", version: 1, covers: [1], format: 2),
   ]
 
   /// The meaning of a pair, or nil when this build does not know it.
@@ -170,6 +183,8 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
     case .hostLaunch(let scope):
       return "4" + scope.executable + "\u{0}" + scope.directory + "\u{0}"
         + scope.environmentKeys.joined(separator: ",")
+    case .pathRead(let scope):
+      return "5" + scope.directories.joined(separator: "\u{0}")
     }
   }
 }
@@ -276,6 +291,10 @@ public struct ControllerDescriptor: Equatable, Sendable {
   /// The newest descriptor format this version reads. Format 2 gives every permission a required
   /// version, and adds the clipboard and host launch kinds at version 1. Format 1 knows two kinds,
   /// with no version, and refuses every other kind. Any other format is refused.
+  ///
+  /// The path-read kind joined format 2 without a new format. A build that predates it already
+  /// refuses a kind it does not know, in a descriptor and in a policy file, so it authorizes
+  /// nothing from one.
   public static let format = 2
 
   /// Every format this version reads.

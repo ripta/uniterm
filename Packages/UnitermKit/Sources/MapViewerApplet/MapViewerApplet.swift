@@ -1148,3 +1148,7 @@ extension MapViewerApplet {
     }
   }
 }
+
+extension MapViewerApplet: UserFileSourcing {
+  public var userFileSource: String? { record.path }
+}
