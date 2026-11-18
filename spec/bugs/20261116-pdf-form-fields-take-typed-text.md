@@ -1,8 +1,13 @@
 # The text viewer's PDF body likely lets the user type into form fields
 
 **Status:** open
-**Estimate:** small; no open design decisions. Set `isReadOnly` on every widget annotation in `show(pdf:)`, a trivial
-choice because it follows the fix this bug already records and it keeps the viewer read-only per UTERM-007.
+**Estimate:** small; one open design decision, which widgets to lock. Setting `isReadOnly` wins over stopping the
+field editor because it is the only fix a test proved. The PDF spec says a read-only field's widgets ignore clicks,
+so locking every widget may also stop push buttons that jump to a page. Those work today. The options are to lock
+only widgets that hold a value (text, choice, checkbox, radio), or to lock every widget. A 2026-11-18 design critic
+raised this and could not confirm PDFKit's behavior. Test push buttons first. The regression test should cover a text
+widget, a checkbox, and a choice widget. Walk the annotations in `PDFLoading.document(from:)`, which runs off the main
+thread, not in `show(pdf:)`.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-024
 
 ## Observed
