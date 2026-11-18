@@ -1,7 +1,9 @@
 # Images in Markdown a script sends resolve anywhere on the volume
 
-**Status:** open, not reproduced, traced only
-**Estimate:** small; one design decision
+**Status:** open, reproduced 2026-11-18
+**Estimate:** medium; one non-trivial design decision. Every candidate fix needs the text viewer to know a file
+came from a script, and `SourceReplacing.replaceSource(with:startDirectory:)` carries no origin. The candidates
+differ in behavior a user or script can see, and they are equally correct. The decision is which rule wins.
 **Found:** 2026-11-15, by the design critic reviewing UTERM-030
 
 ## Observed
@@ -31,7 +33,15 @@ It has no folder, so its images show alt text (UTERM-007 "Control levels").
 
 ## Repro
 
-Not yet written. A script with `{:kind :pane-control :version 1}` and no capability sends Markdown that names a test
+Reproduced on 2026-11-18 with a throwaway package test, since removed. It wrote `note.md` containing
+`![x](../../../secret.png)` three folders deep under a scratch folder, put a 5 px PNG at the scratch root, and opened the
+note with `TextViewerApplet.replaceSource(with:startDirectory:)`, the call `WindowScripting.send(to:file:caller:)` makes
+for sent content. The image loaded with a natural width of 5, where the contract expects none.
+
+The test stood in for the sent folder with a scratch folder. It did not go through a live script connection. The code
+path from `uniterm/send` to `replaceSource` was read, and it passes the file with no origin.
+
+The original setup: a script with `{:kind :pane-control :version 1}` and no capability sends Markdown that names a test
 image above the sent folder, to a remote-controlled text viewer pane.
 
 - Expected, per `ScriptSentContent.swift:7`: the image does not load.
