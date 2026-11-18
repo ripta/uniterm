@@ -131,6 +131,25 @@ final class TextViewerScriptTests: XCTestCase {
     XCTAssertEqual(output, "true false bad-argument\n", errors)
   }
 
+  /// Catches the helper's JSON writer spending six bytes on a line break or a tab. The cap's
+  /// budget counts both at two bytes, so text at the cap made only of them must reach the viewer.
+  /// Code slides are mostly short, tab-indented lines.
+  func testTheInlineCapHoldsTextMadeOfLineBreaksAndTabs() async throws {
+    let cap = TextViewerLimits.maxInlineMarkdownBytes
+    let script =
+      Self.opening
+        + """
+        (def breaks (send :show-markdown {:text (string/repeat "\\n\\r" \(cap / 2))}))
+        (def tabs (send :show-markdown {:text (string/repeat "\\t" \(cap))}))
+        (print (not (nil? (breaks :handle))) " " (not (nil? (tabs :handle))))
+        """
+
+    let (status, output, errors) = try await run(script)
+
+    XCTAssertEqual(status, 0, errors)
+    XCTAssertEqual(output, "true true\n", errors)
+  }
+
   /// Catches the UI test's script drifting from the script this file runs. The UI test cannot run
   /// here, so its text is compared to this one line by line, after Swift's own escapes are read.
   func testTheUITestRunsTheSameScript() throws {

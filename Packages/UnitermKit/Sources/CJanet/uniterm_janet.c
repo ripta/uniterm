@@ -955,6 +955,9 @@ static void json_text(JanetBuffer *out, const uint8_t *text, int32_t length,
         if (byte == '"' || byte == '\\') {
             janet_buffer_push_u8(out, '\\');
             janet_buffer_push_u8(out, byte);
+        } else if (byte == '\n' || byte == '\r' || byte == '\t') {
+            janet_buffer_push_u8(out, '\\');
+            janet_buffer_push_u8(out, byte == '\n' ? 'n' : byte == '\r' ? 'r' : 't');
         } else if (byte < 0x20) {
             char escaped[8];
 
