@@ -3,6 +3,10 @@
 **Status:** open, not reproduced, traced only
 **Validation:** not confirmed; nothing was run. The path below is traced through the code. Whether uniterm holds a
 grant for Documents, Desktop, or Downloads depends on the user's Mac.
+**Estimate:** large; two non-trivial design decisions. Who reads the script: the command (sends bytes over the wire,
+which changes `FileBegin` in `ScriptProtocol.swift`) or the app (keeps the open behind an unbuilt protected-location
+list that would refuse scripts kept in Documents). Where the sidecar `.sig` is read: it is opened by the app from the
+same program-chosen path (`DeclaredFile.swift`, `readSignature`), so it needs the same answer.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-032
 
 ## Observed
@@ -35,6 +39,13 @@ Not run. Expected repro on a Mac where uniterm holds a Documents grant and a tes
    folder under Application Support, and the command reads the copy before it refuses the declaration.
 
 Also check whether a refused run deletes its snapshot, and when.
+
+## Triage notes, 2026-11-18
+
+Re-read the code against the trace. It holds. `DeclaredFileCommands.run` sends the resolved path in `FileBegin`.
+`ScriptFiles.swift:174` passes `request.path` to `DeclaredFileSnapshot.create`, which opens any absolute path outside
+`/dev` as the app. Existing tests in `DeclaredFileTests.swift` already copy arbitrary absolute paths. The macOS grant
+difference cannot be reproduced without a TCC grant, so no run showed it. The cause is traced, not run.
 
 ## Fix
 
