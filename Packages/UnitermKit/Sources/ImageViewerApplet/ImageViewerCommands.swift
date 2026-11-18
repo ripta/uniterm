@@ -10,7 +10,7 @@ extension ImageViewerApplet {
     opens: [
       OpenedType("public.image", rank: .owner),
       OpenedType("public.folder", rank: .alternate),
-    ])
+    ], controlSupport: ControlCombination.all)
 
   /// The image viewer's own commands. Open has no key, since Cmd-O belongs to the window's File >
   /// Open, which routes by type.

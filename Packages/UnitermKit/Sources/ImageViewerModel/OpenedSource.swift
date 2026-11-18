@@ -9,11 +9,16 @@ public final class OpenedImageFile: @unchecked Sendable {
   public let modified: Double
   public let size: Int
 
+  /// The real path of the opened descriptor, as the system reports it. It differs from `path` when
+  /// a link led to the file. A controller is told about an image only when this lies in its scope.
+  public let realPath: String?
+
   fileprivate init(descriptor: Int32, path: String, modified: Double, size: Int) {
     self.descriptor = descriptor
     self.path = path
     self.modified = modified
     self.size = size
+    realPath = DescriptorPath.read(descriptor)
   }
 
   deinit {
@@ -25,18 +30,42 @@ public final class OpenedImageFile: @unchecked Sendable {
 
 /// A folder opened by descriptor. Listing it and opening its files go through that descriptor, so
 /// replacing the path afterwards changes neither.
+///
+/// A folder a controller named is scoped. It keeps the scoped open it came from, and opens every
+/// member through it, so a member that is a link out of the controller's scope is refused as any
+/// other path is. Listing such a folder never follows a link, so it never looks at a target outside
+/// the scope.
 public final class OpenedFolder: @unchecked Sendable {
   public let path: String
   private let descriptor: Int32
+  private let scoped: OpenedPath?
 
-  fileprivate init(descriptor: Int32, path: String) {
+  fileprivate init(descriptor: Int32, path: String, scoped: OpenedPath? = nil) {
     self.descriptor = descriptor
     self.path = path
+    self.scoped = scoped
+  }
+
+  /// Wraps a folder opened inside a controller's read scope. The folder's own descriptor is
+  /// duplicated, and the scoped open stays with it for the members.
+  public init?(scoped opened: OpenedPath, path: String) {
+    guard case .folder = opened.kind else { return nil }
+
+    let copy = dup(opened.fileDescriptor)
+
+    guard copy >= 0 else { return nil }
+
+    descriptor = copy
+    self.path = path
+    scoped = opened
   }
 
   deinit {
     Darwin.close(descriptor)
   }
+
+  /// True when the folder opens its members through a controller's read scope.
+  public var isScoped: Bool { scoped != nil }
 
   /// The images of the folder in `sort` order. Hidden files and subfolders are left out, and a
   /// file is an image when `types` says its name is one.
@@ -97,9 +126,18 @@ public final class OpenedFolder: @unchecked Sendable {
 
       var info = stat()
 
-      guard fstatat(descriptor, name, &info, 0) == 0, info.st_mode & S_IFMT == S_IFREG else {
+      // A scoped folder never follows a link while it lists. Whether a link's target exists, and
+      // what it is, would tell a controller about a file outside its scope. The link counts as an
+      // image by its name, and opening it later goes through the scope.
+      let follows = scoped == nil
+
+      guard fstatat(descriptor, name, &info, follows ? 0 : AT_SYMLINK_NOFOLLOW) == 0 else {
         continue
       }
+
+      let mode = info.st_mode & S_IFMT
+
+      guard mode == S_IFREG || (!follows && mode == S_IFLNK) else { continue }
 
       batch.append(ListedImage(name: name, modified: Self.seconds(info.st_mtimespec)))
 
@@ -120,11 +158,35 @@ public final class OpenedFolder: @unchecked Sendable {
 
     guard !name.contains("/"), !name.isEmpty else { return .failure(.missing(path: full)) }
 
+    if let scoped { return openScoped(named: name, in: scoped, full: full) }
+
     let file = openat(descriptor, name, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
 
     guard file >= 0 else { return .failure(.posix(errno, path: full)) }
 
     return SourceOpener.regularFile(descriptor: file, path: full)
+  }
+
+  private func openScoped(named name: String, in scoped: OpenedPath, full: String) -> Result<
+    OpenedImageFile, SourceAccessError
+  > {
+    switch scoped.openMemberBlocking(named: name) {
+    case .failure(let error):
+      switch error {
+      case .missing: return .failure(.missing(path: full))
+      case .denied: return .failure(.permissionDenied(path: full))
+      default:
+        return .failure(
+          .unreadable(path: full, reason: "it is outside the folders the program may read"))
+      }
+
+    case .success(let member):
+      guard case .file = member.kind else {
+        return .failure(.notARegularFile(path: full, kind: "a folder"))
+      }
+
+      return SourceOpener.regularFile(descriptor: member.takeDescriptor(), path: full)
+    }
   }
 
   static func seconds(_ time: timespec) -> Double {

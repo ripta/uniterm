@@ -616,4 +616,107 @@ final class ImageViewerUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "400 \u{00D7} 200" })
     attachScreenshot("image viewer, Display P3 image (compare with Preview)", of: window)
   }
+
+  /// Drives a pane from a script with the real signed helper. The script opens an image viewer
+  /// beside the terminal, shows a folder it may read, steps to the next image, and zooms in. It
+  /// prints what each wait answers, and the pane shows the second image zoomed. The folder's
+  /// path is the script's only read scope.
+  func testAScriptShowsAFolderStepsAndZoomsAnImagePane() throws {
+    let command = try bundledCommand()
+    let folder = try makeFolder()
+
+    try writePNG("a.png", in: folder, width: 1200, height: 800)
+    try writePNG("b.png", in: folder, width: 1200, height: 800)
+    try write("PROMPT='%% '\nRPROMPT=''\n", to: scratch + "-shell/.zshrc")
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+
+    _ = waitForTerminal(in: app)
+    enableRemoteControl(pane: 1, in: app)
+
+    let script = scratch + "-images.janet"
+    let shell = scratch + "-images.sh"
+    let errors = scratch + "-images.err"
+    let status = scratch + "-images.status"
+
+    try write(
+      """
+      (declare-permissions {:name "Synthetic Images"}
+        {:kind :pane-control :version 1}
+        {:kind :path-read :version 1 :directories ["\(folder.path)"]})
+
+      (import uniterm)
+
+      (def me (get (uniterm/list-windows) 0))
+      (def layout
+        (uniterm/request-layout
+          {:window (me :window) :pane (me :pane)}
+          {:split :row
+           :children [{:pane (me :pane)}
+                      {:open :image-viewer :control :remote-controlled :weight 2}]}))
+
+      (def [_ viewer] (layout :panes))
+
+      (defn send [name arguments]
+        (def [ok result] (protect (uniterm/send-command viewer :image-viewer [1 0] name arguments)))
+
+        (unless ok
+          (error (if (struct? result)
+                   (string name " failed: " (get result :kind) ": " (get result :message))
+                   (string name " failed: " result))))
+
+        result)
+
+      (defn wait-for [handle]
+        (send :wait {:handle (handle :handle) :timeout-ms 20000}))
+
+      (def shown (wait-for (send :show {:path "\(folder.path)"})))
+      (def first (wait-for (send :first {})))
+      (def stepped (wait-for (send :next {})))
+      (def zoomed (wait-for (send :zoom {:scale 1})))
+
+      (print (shown :state) " " (first :index) " " (stepped :index) " " (stepped :count) " "
+             (zoomed :state))
+      """, to: script)
+
+    try write(
+      """
+      attempts=0
+      while [ $attempts -lt 100 ]; do
+        "\(command)" run --socket "\(testSocket)" "\(script)" > "\(status).out" 2> "\(errors)"
+        code=$?
+        [ $code -ne 69 ] && break
+        attempts=$((attempts + 1))
+        sleep 0.1
+      done
+      printf '\\033[H\\033[2J\\033[3J'
+      echo "exit=$code" > "\(status)"
+      """, to: shell)
+
+    defer {
+      for path in [script, shell, errors, status, status + ".out"] {
+        try? FileManager.default.removeItem(atPath: path)
+      }
+    }
+
+    runInTerminal(shell, in: app)
+    answerFirstReview(in: app, pressing: "pending-requests-allow-session")
+
+    let result = try XCTUnwrap(waitForFile(status), "the shell never finished the script")
+    let errorText = (try? String(contentsOfFile: errors, encoding: .utf8)) ?? ""
+
+    XCTAssertEqual(result, "exit=0\n", errorText)
+
+    let output = try String(contentsOfFile: status + ".out", encoding: .utf8)
+
+    XCTAssertEqual(output, "shown 0 1 2 done\n")
+    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no image viewer pane")
+
+    // The status bar shows the focused pane, and the script left the keyboard in the terminal.
+    viewer(in: window).click()
+
+    XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0.hasSuffix("%") })
+    attachScreenshot("image viewer, driven by a script", of: window)
+  }
 }

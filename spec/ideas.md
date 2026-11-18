@@ -406,3 +406,13 @@ a proposal should name any gaps and proposed changes explicitly.
 - How would external invocations coexist with an exec driver's app-owned
   stdin/stdout protocol? Attaching a driver alone does not provide an external
   command endpoint.
+
+## Exec driver path-read power
+
+An exec driver holds no path-reading power today, so a driver cannot ask a viewer to open a path, and a viewer tells it
+nothing about the file it shows. UTERM-015's decision 8 gives a driver no opens. The image viewer's driver `show` and
+stepping wait on this, as would any applet whose driver reads. A proposal would define how a driver declares a read
+scope, how the user approves it beside the run's launch approval, and how a revoked or ended grant stops queued reads.
+It would reuse UTERM-015's scope rules, which apply to a controller and have no driver form. Still open: whether the
+scope belongs in the driver's declaration, so a layout saves it, or only to a run.
+

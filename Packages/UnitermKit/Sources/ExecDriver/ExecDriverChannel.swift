@@ -186,14 +186,20 @@ public final class ExecDriverChannel: AppletEventSink {
   /// An event goes to the driver only once both hellos are accepted. Before that, and after the
   /// channel ends, it goes nowhere. An event the schema does not declare, or whose data does not
   /// fit its schema, is the applet's mistake and is not sent.
+  ///
+  /// The driver named the schema version it was written for in its hello. An event that a later
+  /// minor added is not sent to it, and a field a later minor added is cut from the events it does
+  /// receive, so a driver never gets a message it could not know to ignore.
   public func deliver(event name: String, data: JSONValue) {
     guard isConnected, let declared = schema.event(named: name) else { return }
 
     guard case .object(let fields) = data,
-      (try? declared.arguments.validate(fields, at: "the event")) != nil
+      (try? declared.arguments.validate(fields, at: "the event")) != nil,
+      let sent = declared.event(
+        fields, deliveredTo: driverSchemaVersion ?? schema.version, of: schema)
     else { return }
 
-    transport?.send(ExecWire.frame(.event(name: name, data: data)))
+    transport?.send(ExecWire.frame(.event(name: name, data: .object(sent))))
   }
 
   public func outletClosed() {
@@ -338,6 +344,7 @@ public final class ExecDriverChannel: AppletEventSink {
     guard let refusal else {
       driverSchemaVersion = schemaVersion
       phase = .connected
+      applet?.events.sinkAttached(self)
       return
     }
 

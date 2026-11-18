@@ -161,7 +161,7 @@ let package = Package(
     .executableTarget(name: "ImageDecoderHelper", dependencies: ["ImageDecoding"]),
     // The image viewer's pure rules: folder listing and order, the request scheduler, the
     // budgets, and fit math. It has no AppKit and no ImageIO.
-    .target(name: "ImageViewerModel", dependencies: ["ImageWire", "SourceAccess"]),
+    .target(name: "ImageViewerModel", dependencies: ["AppletKit", "ImageWire", "SourceAccess"]),
     .target(
       name: "ImageViewerApplet",
       dependencies: [
@@ -321,7 +321,9 @@ let package = Package(
       dependencies: ["ImageDecoding", "ImageWire", "ImageTestSupport"]),
     .testTarget(
       name: "ImageViewerModelTests",
-      dependencies: ["ImageViewerModel", "ImageWire", "SourceAccess", "ImageTestSupport"]),
+      dependencies: [
+        "ImageViewerModel", "ImageWire", "SourceAccess", "ImageTestSupport", "AppletKit",
+      ]),
     .testTarget(
       name: "ImageViewerAppletTests",
       dependencies: [

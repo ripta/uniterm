@@ -40,6 +40,15 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   let scanPace: ScanPace
   let slideshowSleep: SlideshowSleep
 
+  /// The results of the commands a controller or a driver ran, and the outlet for the events the
+  /// pane emits. See `ImageViewerApplet+Remote`.
+  let remote = ImageViewerRemote()
+  public let events = AppletEventOutlet()
+
+  /// What the last `shown` event delivered, so an event goes out only when its payload or its image
+  /// changes. A driver that attaches gets the current state again.
+  var lastEmitted: ShownEmission?
+
   var record: ImageViewerDescription
   var describesFromRecord: Bool
   var restoreWaitsForStart: Bool
@@ -77,6 +86,9 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     var pixels: PixelSize
     var space: OutputSpace
     var bytes: Int
+
+    /// The real path of the descriptor the image was opened from.
+    var realPath: String?
   }
 
   var shot: Shot?
@@ -87,6 +99,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   /// The name and modification time of the image the display source was opened for.
   var sourceName: String?
   var sourceModified: Double?
+  var sourceRealPath: String?
 
   /// The image whose load last finished, shown or failed. `loadingName` is the one in progress.
   /// The selection may be ahead of both while the user holds a key.
@@ -259,6 +272,10 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     content.onViewportChange = { [weak self] _ in self?.viewportChanged() }
     content.onPinchBegin = { [weak self] in self?.stopSlideshow() }
     client.onEvent = { [weak self] event in self?.handle(event) }
+    events.onAttached = { [weak self] in
+      self?.lastEmitted = nil
+      self?.observeRemote()
+    }
   }
 
   var shownPixels: PixelSize? { shot?.pixels }
@@ -278,7 +295,44 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     begin(path: file.path, bookmark: nil, wanted: nil, origin: .user)
   }
 
+  /// Opens a source by path, as the user named it or a restore stored it.
   func begin(path: String, bookmark: Data?, wanted: WantedImage?, origin: LoadOrigin) {
+    let storedKind = record.kind
+    let sort = record.sort
+    let supported = types
+
+    startLoading(wanted: wanted, origin: origin) {
+      await SourceLoader.load(
+        path: path, bookmark: bookmark, storedKind: storedKind, wanted: wanted, sort: sort,
+        types: supported)
+    }
+  }
+
+  /// Shows a source the host already opened inside a controller's read scope. The pane never sees
+  /// the path the controller wrote, so it names the source by the opened descriptor's real path.
+  /// The folder's members open through the scope again, so nothing outside it opens.
+  func begin(opened: OpenedPath, scope: ReadScope, realPath: String, keeping handle: Int? = nil) {
+    record = ImageViewerDescription(
+      startDirectory: record.startDirectory, path: realPath, sort: record.sort)
+    describesFromRecord = false
+    restoreWaitsForStart = false
+
+    let sort = record.sort
+    let supported = types
+
+    startLoading(wanted: nil, origin: .user, keeping: handle) {
+      await SourceLoader.load(
+        opened: opened, scope: scope, realPath: realPath, sort: sort, types: supported)
+    }
+  }
+
+  /// The one place every source starts loading: the open panel, a drop, a restore, a script's
+  /// send, and a controller's show. A load that was running is replaced, and so is every command
+  /// still waiting on it.
+  private func startLoading(
+    wanted: WantedImage?, origin: LoadOrigin, keeping handle: Int? = nil,
+    load: @escaping @Sendable () async -> Result<LoadedSource, SourceLoadFailure>
+  ) {
     exitZoom()
     loading?.cancel()
     loadGeneration += 1
@@ -297,17 +351,14 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     prefetchFailed = []
     landing = wanted
     phase = .opening
+    remote.supersedeAll(except: handle)
+    lastEmitted = nil
     refresh()
 
     let generation = loadGeneration
-    let storedKind = record.kind
-    let sort = record.sort
-    let supported = types
 
     loading = Task { [weak self] in
-      let result = await SourceLoader.load(
-        path: path, bookmark: bookmark, storedKind: storedKind, wanted: wanted, sort: sort,
-        types: supported)
+      let result = await load()
 
       guard let self, generation == self.loadGeneration, !self.closed else { return }
 
@@ -327,6 +378,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       phase = .problem(
         PaneMessage(text: failure.localizedDescription, offersOpen: true, offersRetry: false))
       notify(.warning, failure.localizedDescription, delivery: .historyOnly)
+      failRemote(failure.remoteCode, path: record.path)
       refresh()
 
     case .success(let loaded):
@@ -378,6 +430,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     openFile = file
     sourceName = file.name
     sourceModified = file.modified
+    sourceRealPath = file.realPath
     record.current = file.name
     record.currentModified = file.modified
     loadingName = file.name
@@ -538,7 +591,14 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       text = reason
     }
 
-    problem(text, offersRetry: reason.offersRetry)
+    var code = ImageRemoteFailure.decoderFailed
+
+    switch reason {
+    case .overranTimeBound, .overFootprint: code = .limit
+    default: break
+    }
+
+    problem(text, offersRetry: reason.offersRetry, code: code)
   }
 
   private func failed(_ request: DecodeRequest?, _ kind: FailureKind, _ text: String) {
@@ -574,17 +634,28 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
         return
       }
 
-      problem(text, offersRetry: false)
+      let code: ImageRemoteFailure
+
+      switch kind {
+      case .unsupportedFormat: code = .unsupported
+      case .limit: code = .limit
+      default: code = .unreadable
+      }
+
+      problem(text, offersRetry: false, code: code)
     }
   }
 
   /// Shows `text` in place of the image. The load in progress, if any, is finished.
-  func problem(_ text: String, offersRetry: Bool) {
+  func problem(
+    _ text: String, offersRetry: Bool, code: ImageRemoteFailure = .decoderFailed
+  ) {
     if let loadingName { committedName = loadingName }
 
     loadingName = nil
     phase = .problem(PaneMessage(text: text, offersOpen: true, offersRetry: offersRetry))
     notify(.warning, text, delivery: .historyOnly)
+    failRemote(code, path: sourceRealPath)
     refresh()
     pump()
   }
@@ -649,7 +720,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     guard reserve(pixels.count) else {
       problem(
         "There is not enough memory to show \u{201C}\(imageName)\u{201D} right now. Close an image pane and retry.",
-        offersRetry: true)
+        offersRetry: true, code: .limit)
       return
     }
 
@@ -657,7 +728,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
     shot = Shot(
       name: sourceName ?? imageName, modified: sourceModified, info: info, image: image,
-      pixels: size, space: header.space, bytes: pixels.count)
+      pixels: size, space: header.space, bytes: pixels.count, realPath: sourceRealPath)
     committedName = sourceName
     loadingName = nil
     phase = .showing
@@ -733,6 +804,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     info = nil
     sourceName = nil
     sourceModified = nil
+    sourceRealPath = nil
     loadingName = nil
     plan = AnimationPlan(delays: [0])
     content.show(message: PaneMessage(text: "", offersOpen: false, offersRetry: false))
@@ -868,7 +940,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     }
   }
 
-  private func holdsCurrentFrame(_ index: Int) -> Bool {
+  func holdsCurrentFrame(_ index: Int) -> Bool {
     frames[index].map { $0.zoomLevel == zoomLevel } ?? false
   }
 
@@ -898,6 +970,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     guard plan.isAnimated, plan.window(from: currentFrame, ahead: Self.framesAhead).contains(index),
       let info
     else { return }
+
+    defer { observeRemote() }
 
     guard request.maxPixel == frameSide(for: info) else {
       fillWindow()
@@ -954,6 +1028,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    remote.close()
+    events.close()
     loading?.cancel()
     resizeCheck?.cancel()
     scanTask?.cancel()
@@ -1016,6 +1092,8 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   func refresh() {
     guard !closed else { return }
+
+    defer { observeRemote() }
 
     switch phase {
     case .empty:
