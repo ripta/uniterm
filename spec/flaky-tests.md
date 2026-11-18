@@ -165,6 +165,11 @@ fixed ones.
   and added two tests. The failure messages now report what the shell and the command wrote.
 - Suspected cause: lost keystrokes or focus races between app instances, or a system prompt holding the first test.
   Not confirmed, and not reproduced on the commit before the change.
+- Seen again: 2026-11-18, in the CI `app` rerun of PR #67. `testAPlainScriptsQuestionNamesItsRun` passed every panel
+  step, then `ControllerConsentUITests.swift:379` read `""` where `exit=0\n` was expected, 0.5 s after Deny.
+- Partial fix: "Wait for a status file's whole line before reading it". The shell's `echo ... > file` creates the file
+  empty before it writes, and `waitForFile` returned whatever it read first. It now waits for the line's newline. That
+  answers an empty read only. The other failures above carry other messages.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
