@@ -28,7 +28,12 @@ fixed ones.
   20 s. The test passed 3 of 3 alone.
 - Suspected cause: keys sent right after Cmd-Option-Left moved focus went nowhere. This is the same pattern as the fixed
   Cmd-W flake.
+- Checked: `PaneAreaView.focus()` moves the focus mark and the first responder in one synchronous call. The test's
+  wait for "focused" cannot run ahead of the responder, so a race inside the app is unlikely. Something outside the
+  app taking the keyboard fits better, such as another session's UI run or a system prompt.
 - Status: unresolved.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
 ### `PaneTreeUITests.testReopenBringsBackTheClosedPaneFromItsDescription`
 
@@ -36,6 +41,8 @@ fixed ones.
 - Evidence: `UnitermUITestCase.swift:142` found no `pane-2`. The test passed 3 of 3 alone.
 - Suspected cause: the pane-opening key went nowhere, as in the entry above.
 - Status: unresolved.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
 ### `MapViewerUITests.testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins`
 
@@ -44,6 +51,8 @@ fixed ones.
   Cmd-Shift-G. The cg server restarted while that run was going. `MapViewerUITests` then passed 8 of 8 alone.
 - Suspected cause: Cmd-Shift-G sent before the open panel took key focus, as in the pane-tree entries above.
 - Status: unresolved.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
 ### `TerminalLinkUITests` (both tests)
 
@@ -79,6 +88,8 @@ fixed ones.
   not touch the helper either. The rerun passed.
 - Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
 - Status: unresolved.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
 ### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
 
@@ -134,6 +145,8 @@ fixed ones.
   first window. That is the full-suite symptom the fix in "Fixed" below names. `WindowsUITests` passed 6 of 6 alone
   right after, on the same tree.
 - Status: the earlier fix covered the foreground read. This symptom came back once. Cause unknown.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
 ### `ExecPaneUITests.testWindowShortcutsWorkWhileTheDriverStalls`
 
@@ -144,6 +157,8 @@ fixed ones.
   class passed whole, on the same tree.
 - Status: unresolved. That run changed the exec wire's hello decoding and moved the exec protocol to 4. It also
   revalidates pending replies when remote control turns on. Neither was ruled out by a run on the base commit.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
 ## Fixed
 

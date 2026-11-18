@@ -117,7 +117,9 @@ final class WindowsUITests: UnitermUITestCase {
 
     mainWindow(1, in: app).click()
     app.typeText("echo \"K:$((6*7)):\"\n")
-    XCTAssertTrue(waitFor(first, timeout: 20) { $0.contains("K:42:") })
+    XCTAssertTrue(
+      waitFor(first, timeout: 20) { $0.contains("K:42:") },
+      "the typed line never reached the first window. \(focusReport(app))")
   }
 
   // MARK: Helpers
