@@ -1,7 +1,7 @@
 # A focused pane whose applet ends on its own gives the keyboard to a neighbor
 
 **Status:** open
-**Estimate:** small, after a design call on where the keyboard goes
+**Estimate:** small to medium; open design decisions: where the keyboard rests after the close, whether an `exit` counts as chosen, and the cross-window handoff when a window's last pane ends
 **Found:** 2026-11-16, while reviewing UTERM-026
 
 ## Observed
@@ -50,3 +50,12 @@ pane's.
 
 Whether a shell ending on `exit` counts as chosen is part of the same call. Telling it apart from an end the user did
 not cause may not be possible from the applet's exit alone.
+
+## Triage 2026-11-18
+
+Reproduced with a throwaway package test, now removed. Two fake applets sat in two panes. `appletDidExit` on the second
+closed its pane, and the first applet's `focus()` ran once. The close path in `describeAndClose` and `discard` still
+calls `paneArea.focus(next, keyboard: !isPaletteVisible)`, as the Cause section says.
+
+The fix is small in code, but the design call above is not settled. Which responder holds the keyboard after the focus
+mark moves, how an `exit` is told apart from an unchosen end, and the cross-window case are each open.
