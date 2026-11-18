@@ -23,7 +23,12 @@ The run is done. Its commits, in order:
 2. "Let a controller show, step, and zoom an image viewer pane"
 3. "Hide whether an image pane holds an image from a zoom outside the scope"
 4. "Move UTERM-006 M4 to history now that its row is done"
-5. This report's last amendments
+5. "Close the UTERM-006 M4 work-queue report"
+6. "Answer a zoom the same way whenever the caller may not see the image", which also carries this report's last
+   amendments
+
+One unpushed commit was reworded before the next one landed. Its body had opened with the behavior before the change.
+The tree, author, and date stayed the same. The untracked `.claude/` directory predates the run and is not its own.
 
 UTERM-006 stays `accepted`, since M5, "Exec driver reads", is NOT STARTED and has no queue row.
 
@@ -173,11 +178,33 @@ scope on a pane with no image, which the UI test does not reach.
 
 Commit: "Hide whether an image pane holds an image from a zoom outside the scope".
 
+### Closing the zoom leak
+
+The first zoom fix left the same bit open through timing. A caller outside the scope saw its handle settle at once with
+no image, and stay pending with one. A `wait` with a zero timeout told them apart. A limit refusal also still showed
+as a failure. A second round closed both. Such a caller's handle now settles `done` before the call returns, whatever
+the pane does, and the zoom still runs. Its test failed three ways on the earlier commit before the fix.
+
+A reviewer then checked that delta. It confirmed one more leak. A caller whose scope holds a folder but not a linked
+member's target could tell whether that target decodes. A pane with no image was refused for that caller, while a
+decoded one answered `done`. Fixed: the no-image refusal now needs the caller to see both the source and the image's
+real path. A pane with no file of the user's stays refused for everyone. The new test for this case failed on the old
+condition before the fix. The reviewer's other findings were fixed too:
+
+- The late refusal test now waits for the refusal to arrive.
+- The argument parse is shared.
+- The doc comments are split into short paragraphs.
+- Guess 9 states the prior meaning.
+
+Checks after these rounds: `make lint`, `make check`, the focused filter, and `make test-package` exit 0. The UI test
+passed twice more on the changed code.
+
+Commit: "Answer a zoom the same way whenever the caller may not see the image".
+
 ### Left for the user
 
-- A zoom from a caller outside the scope settles at once when the pane holds no image. With an image on screen, it
-  settles after the pane does. A `wait` with a zero timeout could tell pending from done. That residue is timing only,
-  and it is left as is.
+- Nothing from the review rounds. The zoom answer no longer depends on the pane for a caller that may not see the
+  image.
 
 - The freeze reports one hunk in UTERM-004 with origin `other`, in its References: an added ADR-14 line. Another
   session made it. The run did not touch it.

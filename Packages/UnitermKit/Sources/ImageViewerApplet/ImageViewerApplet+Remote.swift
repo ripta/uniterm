@@ -126,32 +126,57 @@ extension ImageViewerApplet: AppletCommandHandling {
 
   // MARK: Zoom
 
+  /// What a zoom command asks for, before the pane's image is known.
+  private enum ZoomRequest {
+    case fit
+    case actual
+    case multiple(Double)
+
+    init(_ arguments: [String: JSONValue]) throws(AppletCommandError) {
+      switch (arguments["to"], arguments["scale"]) {
+      case (.string("fit")?, nil):
+        self = .fit
+
+      case (.string("actual")?, nil):
+        self = .actual
+
+      case (nil, .number(let multiple)?):
+        self = .multiple(multiple)
+
+      default:
+        throw AppletCommandError(
+          .badArgument, "give either to, as fit or actual, or scale, as a multiple of actual size")
+      }
+    }
+  }
+
   private func zoomRemotely(_ arguments: [String: JSONValue], access: ReadAccess)
     throws(AppletCommandError) -> AppletCommandReply
   {
+    let request = try ZoomRequest(arguments)
+
     guard canZoom, let viewport = content.viewport else {
-      guard !access.mayShow(source: record.path) else {
+      guard !mayRefuseZoom(access) else {
         throw AppletCommandError(.refused, "the pane shows no image to zoom")
       }
 
-      return try zoomNothingFor(arguments)
+      return try zoomNothing()
     }
 
     let target: ImageViewerView.ZoomTarget
 
-    switch (arguments["to"], arguments["scale"]) {
-    case (.string("fit")?, nil):
+    switch request {
+    case .fit:
       target = .fit
 
-    case (.string("actual")?, nil):
+    case .actual:
       target = .actual
 
-    case (nil, .number(let multiple)?):
+    case .multiple(let multiple):
       let scale = multiple * viewport.actualScale
       let ceiling = viewport.maxScale(backing: Double(content.backingScale))
 
-      // The ceiling follows from the image's resolution. A caller that may not see the image is not
-      // refused, so it cannot read the ceiling from the refusal. The zoom holds at the ceiling.
+      // A caller that may not see the image is not refused, so the refusal cannot name the ceiling.
       guard scale <= ceiling * 1.0001 || !mayTell(access) else {
         let most = ceiling / viewport.actualScale
 
@@ -162,15 +187,13 @@ extension ImageViewerApplet: AppletCommandHandling {
       }
 
       target = .scale(scale)
-
-    default:
-      throw AppletCommandError(
-        .badArgument, "give either to, as fit or actual, or scale, as a multiple of actual size")
     }
 
     try requireRoom()
 
     let reply = try started(.zoom, wanted: nil)
+
+    if !mayTell(access) { endZoomAtOnce() }
 
     content.zoom(target)
     observeRemote()
@@ -178,30 +201,40 @@ extension ImageViewerApplet: AppletCommandHandling {
     return reply
   }
 
-  /// A zoom from a caller that may not see the pane's source, while the pane shows no image. Whether
-  /// the pane holds a decodable image says something about the user's file, so this caller gets what
-  /// it would get with an image on screen: a handle that ends `done` with nothing else. Only the
-  /// shape of its own arguments can refuse it.
-  private func zoomNothingFor(_ arguments: [String: JSONValue]) throws(AppletCommandError)
-    -> AppletCommandReply
-  {
-    switch (arguments["to"], arguments["scale"]) {
-    case (.string("fit")?, nil), (.string("actual")?, nil), (nil, .number?):
-      break
+  /// True when a zoom with no image on screen may be refused for `access`.
+  ///
+  /// The refusal says the pane holds no decodable image. That is only the caller's to know when its
+  /// scope holds the pane's source and the real path of the image the source opened. A pane with no
+  /// file of the user's has nothing to hide, so it is refused for every caller.
+  private func mayRefuseZoom(_ access: ReadAccess) -> Bool {
+    guard record.path != nil else { return true }
 
-    default:
-      throw AppletCommandError(
-        .badArgument, "give either to, as fit or actual, or scale, as a multiple of actual size")
-    }
+    return access.mayShow(source: record.path)
+      && sourceRealPath.map { access.mayShow(source: $0) } ?? false
+  }
 
+  /// Ends the zoom just started with nothing to tell.
+  ///
+  /// This caller may not see the image. How long a zoom takes, and whether the helper refuses it,
+  /// both say something about that image. So the handle reads `done` before the call returns,
+  /// whatever the pane does next. The zoom itself still runs.
+  private func endZoomAtOnce() {
+    guard let entry = remote.running.last(where: { $0.kind == .zoom }) else { return }
+
+    remote.settle(
+      entry.id, .zoomed(ZoomReport(isFit: true, scale: 1, source: record.path, path: nil)))
+  }
+
+  /// Answers a zoom that has no image to act on, for a caller that may not be told so.
+  ///
+  /// The caller gets what it would get with an image on screen, a handle that is already `done`.
+  /// Only the shape of its own arguments can refuse it, and that was checked already.
+  private func zoomNothing() throws(AppletCommandError) -> AppletCommandReply {
     try requireRoom()
 
     let reply = try started(.zoom, wanted: nil)
 
-    if let entry = remote.running.last {
-      remote.settle(
-        entry.id, .zoomed(ZoomReport(isFit: true, scale: 1, source: record.path, path: nil)))
-    }
+    endZoomAtOnce()
 
     return reply
   }

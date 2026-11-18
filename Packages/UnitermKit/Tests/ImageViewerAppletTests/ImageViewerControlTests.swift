@@ -705,6 +705,106 @@ final class ImageViewerControlTests: XCTestCase {
       .failure(refusal))
   }
 
+  /// Asks for a zoom and then waits on its handle for no time at all. It returns what a `wait` that
+  /// gives the pane no time to answer reads.
+  private func answerAtOnce(
+    _ arguments: [String: JSONValue], on applet: ImageViewerApplet, scope given: ReadScope?
+  ) throws -> [String: JSONValue] {
+    let started = send("zoom", arguments, to: applet, scope: .some(given))
+    let handle = try XCTUnwrap(started.handle, "\(String(describing: started.result))")
+
+    return waitNow(handle, on: applet, scope: given)
+  }
+
+  private func waitNow(_ handle: Int, on applet: ImageViewerApplet, scope given: ReadScope?)
+    -> [String: JSONValue]
+  {
+    send(
+      "wait", ["handle": .number(Double(handle)), "timeout-ms": .number(0)], to: applet,
+      scope: .some(given)
+    ).fields
+  }
+
+  /// Catches a zoom handle whose state tells a caller outside the scope what the image is. The
+  /// handle of such a caller ends `done` before the call returns, so a wait that gives no time reads
+  /// the same while tiles are still coming. The helper refuses the second pane's zoom after the
+  /// call returned. The handle still reads `done`, the pane goes back to fit, and nothing crashes.
+  func testAZoomHandleOfACallerOutsideTheScopeEndsDoneBeforeTheHelperAnswers() async throws {
+    let elsewhere: ReadScope? = try ReadScope(directories: [plain.path])
+    let (decoded, _) = pane()
+
+    try await large(decoded)
+
+    let first = try answerAtOnce(["scale": .number(1)], on: decoded, scope: elsewhere)
+
+    XCTAssertEqual(first, ["state": .string("done")], "while the tiles are still coming")
+
+    let tiled = await Harness.eventually { !decoded.tiles.entries.isEmpty }
+    XCTAssertTrue(tiled, "the zoom still reached the pane")
+
+    let (limited, host) = panes.make(settings: Harness.settings(maxImageBytes: 2 << 20))
+    let url = try ImageFixtures.write(
+      ImageFixtures.png(width: 1500, height: 1000), named: "wide.png", in: folder)
+
+    limited.content.backingScaleSource = { 2 }
+    _ = try await run("show", ["path": .string(url.path)], to: limited)
+
+    let started = send("zoom", ["scale": .number(1)], to: limited, scope: .some(elsewhere))
+    let handle = try XCTUnwrap(started.handle)
+
+    XCTAssertEqual(waitNow(handle, on: limited, scope: elsewhere), ["state": .string("done")])
+
+    let refused = await Harness.eventually {
+      host.sent.contains { $0.level == .warning && $0.text.contains("zoom limit was reached") }
+    }
+    XCTAssertTrue(refused, "the helper's refusal arrived after the handle ended")
+    XCTAssertEqual(waitNow(handle, on: limited, scope: elsewhere), ["state": .string("done")])
+    XCTAssertTrue(limited.content.viewport?.isFit == true, "the pane went back to fit")
+  }
+
+  /// Catches a zoom that tells a caller whether a linked image outside its scope decodes. The user
+  /// opened a folder in the controller's scope whose one member links to a file outside it. The
+  /// pane shows that file, fails on it, or has not opened it yet. A zoom answers `done` in all
+  /// three, as a wait that gives no time reads it too.
+  func testZoomAnswersTheSameWhetherALinkedImageOutsideTheScopeDecodesFailsOrIsNotOpenYet()
+    async throws
+  {
+    let root = folder.deletingLastPathComponent()
+    let garbage = outside.appendingPathComponent("garbage.png")
+
+    try Data("not a picture".utf8).write(to: garbage)
+
+    var answers: [String: [String: JSONValue]] = [:]
+
+    for (state, target) in [
+      ("decodes", outside.appendingPathComponent("o.png")), ("fails", garbage),
+      ("not open yet", outside.appendingPathComponent("o.png")),
+    ] {
+      let linked = root.appendingPathComponent(
+        "linked-\(state.replacingOccurrences(of: " ", with: "-"))")
+
+      try FileManager.default.createDirectory(at: linked, withIntermediateDirectories: true)
+      try FileManager.default.createSymbolicLink(
+        atPath: linked.appendingPathComponent("x.png").path, withDestinationPath: target.path)
+
+      let (applet, _) = pane()
+      let given: ReadScope? = try ReadScope(directories: [linked.path])
+
+      try applet.replaceSource(with: linked, startDirectory: linked.path)
+
+      if state != "not open yet" {
+        let shown = await Harness.eventually { applet.committedName == "x.png" }
+        XCTAssertTrue(shown, state)
+      }
+
+      answers[state] = try answerAtOnce(["scale": .number(1)], on: applet, scope: given)
+    }
+
+    for (state, answer) in answers {
+      XCTAssertEqual(answer, ["state": .string("done")], state)
+    }
+  }
+
   /// Catches a failure code that says what is wrong with a file outside the scope. The user opened
   /// a folder in the controller's scope, and one member links to a file outside it that cannot
   /// decode. The controller steps onto it and is told `unreadable`, as for any path outside.

@@ -834,10 +834,14 @@ decision before this milestone can start.
      failure reads `unreadable` otherwise, and whenever the image's path is not known. A zoom to a scale past the
      ceiling is not refused for a caller that may not see the image, since the refusal names a ceiling that follows
      from the image's resolution. The zoom holds at the ceiling instead.
-     A zoom while the pane shows no image is refused only for a caller that may see the pane's source. A pane
-     with no file of the user's is always shown. For any other pane, a caller that may not see its source gets a
-     handle that ends `done` with nothing else, as it does with an image on screen. The answer then does not say
-     whether the user's pane holds a decodable image. Amended 2026-11-17.
+     Before the amendment, a zoom with no image was refused for every caller, and a helper's refusal showed as
+     `zoom-limit` on the handle. Now a zoom with no image is refused only for a caller whose scope holds the
+     pane's source and the real path of the image that source opened. A pane with no file of the user's is
+     refused for every caller. Any other caller gets a handle that is already `done` with nothing else when the
+     call returns. The same holds when the pane has an image the caller may not see, so the answer and a `wait`
+     with no time do not say whether the file decodes, is still decoding, or is refused by the helper or a
+     budget. The zoom still runs when the pane can take it. The arguments are checked first, so a bad argument
+     is refused in every state. Amended 2026-11-17.
   10. A driver's `shown` goes out when the image changes, and when the payload it would get changes. A driver's
       payload never holds the count, so a growing listing sends it nothing. A driver that attaches gets the image on
       screen once, when its hello is accepted. The alternative was no replay, which leaves a driver blind until the
