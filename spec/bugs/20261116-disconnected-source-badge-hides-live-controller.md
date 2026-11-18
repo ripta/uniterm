@@ -1,7 +1,7 @@
 # A disconnected pane that a live controller acts from shows no control badge
 
-**Status:** open, not confirmed
-**Estimate:** small; may need a design call on what the default state is
+**Status:** open, reproduced at the mark level
+**Estimate:** small, one file plus one test. One non-trivial decision: whether a disconnected pane with a live controller acting from it counts as the default state. The bug records that call as open.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-025
 
 ## Observed
@@ -36,3 +36,13 @@ the slide pane, the only way left to end a background presenter is Revoke Contro
 
 If it reproduces: show the badge when `controllers` is not empty. The design call is whether a disconnected pane with a
 live controller acting from it counts as the default state.
+
+## Triage notes
+
+2026-11-18: a throwaway test built `PaneControlMark(access: .disconnected, driver: .none, owner: nil,
+inUnownedGroup: false, controllers: ["script (pid 1)"], savedIntent: nil, revokeAvailable: true)`. `isShown` returned
+false. `controlMark(for:)` fills `controllers` from `controllers(of:)`, which includes connections acting from the pane,
+so the live app builds such a mark. The running app was not driven. The throwaway test was removed.
+
+Files the fix would touch: `Packages/UnitermKit/Sources/WindowKit/PaneFrameView.swift` and a test in
+`Packages/UnitermKit/Tests/WindowKitTests`.
