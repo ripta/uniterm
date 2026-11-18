@@ -1,6 +1,7 @@
 # A pane a script opens with `uniterm/open-pane` takes keyboard focus
 
-**Status:** open
+**Status:** fixed 2026-11-18
+**Fixed:** 2026-11-18
 **Estimate:** small; no open design decisions. ADR-12 settles the behavior, and the controller's `openPane` has one caller, `WindowSet.openPane`.
 **Found:** 2026-11-16, while reviewing UTERM-026
 
@@ -38,3 +39,7 @@ Drop the `paneArea.focus(created)` call from the controller's `openPane`. The us
 themselves, so they keep moving focus to the pane the user made. Add a test that opens a pane through
 `WindowSet.openPane` and checks that the focused pane and the first responder did not change. ADR-12 settles the
 behavior, so no design call is needed.
+
+## Fix note
+
+The controller's scripted `openPane` no longer calls `paneArea.focus(created)`. A pane a script opens leaves the focused pane and the keyboard where they were. The user-driven split paths still focus the new pane. `testAScriptOpenedPaneTakesNoFocus` in `WindowScriptingTests.swift` pins it. It checks the focused pane and the new applet's focus count, not a real window's first responder.
