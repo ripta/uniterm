@@ -69,12 +69,14 @@ sub serve {
     while (my $line = <STDIN>) {
         chomp $line;
         my $message = $json->decode($line);
-        print STDERR "got $message->{type}", (defined $message->{name} ? " $message->{name}" : ""),
-            (defined $message->{error} ? " $message->{error}{code}" : ""), "\n";
+        # Each line goes out as one string. STDERR is unbuffered, so a list would be one write per
+        # piece, and a reader can wake between them.
+        print STDERR "got $message->{type}" . (defined $message->{name} ? " $message->{name}" : "")
+            . (defined $message->{error} ? " $message->{error}{code}" : "") . "\n";
         print STDERR "error message: $message->{error}{message}\n" if defined $message->{error};
         if ($message->{type} eq "reply" && ref $message->{result} eq "HASH"
             && exists $message->{result}{text}) {
-            print STDERR "clipboard text: ", ($message->{result}{text} // "(none)"), "\n";
+            print STDERR "clipboard text: " . ($message->{result}{text} // "(none)") . "\n";
         }
 
         if ($message->{type} eq "event" && $message->{name} eq "advance-requested") {
@@ -215,6 +217,12 @@ if ($mode eq "script") {
     hello($protocol, $schema);
     print STDERR "stalling\n";
     sleep 600;
+} elsif ($mode eq "partial-stderr") {
+    # Writes part of a line with no newline, then goes quiet and stays connected.
+    read_app_hello();
+    hello($protocol, $schema);
+    print STDERR "loading";
+    serve();
 } elsif ($mode eq "stderr-flood") {
     read_app_hello();
     hello($protocol, $schema);

@@ -304,7 +304,11 @@ final class ExecTransport: @unchecked Sendable {
 
       if count < 0 && errno == EINTR { continue }
 
-      guard count > 0 else { return }
+      guard count > 0 else {
+        if stderr.finish() { notify(.stderrReady) }
+
+        return
+      }
 
       if stderr.offer(String(decoding: buffer[0..<count], as: UTF8.self)) {
         notify(.stderrReady)

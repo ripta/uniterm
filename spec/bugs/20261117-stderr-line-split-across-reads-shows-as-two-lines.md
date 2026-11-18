@@ -1,6 +1,6 @@
 # A driver's stderr line split across two reads shows as two status lines
 
-**Status:** open
+**Status:** fixed by "Join a driver's stderr line that arrives in pieces, and show a lone partial line after a pause"
 **Validation:** confirmed in a unit test, and in a failed full `make test-package` run. Not checked in the running app.
 **Found:** 2026-11-17, while tracing the `ExecDriverChannelTests` flake in `spec/flaky-tests.md`
 
@@ -53,3 +53,10 @@ whose newline never comes:
 
 Either way, `testOfferSaysWhenTheBufferWasEmpty` (`StderrIngressTests.swift:69`) offers unterminated chunks and expects
 each to show at once, so it changes with the fix. The transport must also flush the tail when stderr closes.
+
+## As fixed
+
+The user chose the second option. The ingress holds the tail and joins it to the next chunk. It lets the tail go at
+its newline, at the line bound, after 250 ms with nothing added, or when stderr ends. The channel drains again at the
+tail's deadline. The fixture driver now writes each line as one string, so the channel test no longer depends on the
+quiet period being longer than the gap between writes.
