@@ -2,6 +2,7 @@
 
 **Status:** open
 **Found:** 2026-11-17, while building the image viewer's control commands
+**Estimate:** medium; one non-trivial design decision, when the scope's links are resolved. See "Triage 2026-11-18".
 
 ## Observed
 
@@ -41,3 +42,22 @@ Compare against the scope's resolved directories too, as `ScopedOpen` does with 
 ## Workarounds
 
 Write the scope with its real path, such as `/private/tmp/pics`.
+
+## Triage 2026-11-18
+
+Still reproduces. A throwaway test built a directory under `NSTemporaryDirectory()`, which is `/var/folders/...`, and
+took the file's `realpath`, which is `/private/var/folders/...`. `ReadAccess(scope: [the directory as written])
+.mayShow(source: <real path>)` returned false. The test is removed.
+
+`ScriptConsent.readAccess(for:)` is synchronous and builds `ReadAccess` with the scope as approved. It resolves nothing.
+`ReadScope.resolvedDirectories()` exists but only the approval panel uses it, off the main thread. Its callers are
+`ScriptConsent.resolveReads(ofReview:)` and `ControllersWindowController`.
+
+Files a fix would touch: `SourceAccess/ReadScope.swift`, `ScriptHost/ScriptConsent.swift`, and tests in
+`SourceAccessTests/ReadScopeTests.swift`.
+
+Decision that is not trivial: when to resolve. Resolving once at run admission is cheap per call, but it freezes a
+resolution that a later retarget of the link makes stale, and `readAccess(for:)` is synchronous on the main thread, so
+admission needs an async step. Resolving per `mayShow` reads the disk on the main thread, which the bug rules out. A
+related question is whether a resolved directory that lands in a protected place should hide what it shows, as
+`ScopedOpen` decides at open time.
