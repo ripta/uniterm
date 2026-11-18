@@ -17,6 +17,16 @@ skipped, and no work is stashed.
 |---|---|---|
 | UTERM-006 M4: Control | DONE | See "Commits" under M4 |
 
+The run is done. Its commits, in order:
+
+1. "File the read scope that hides real paths when written through a link"
+2. "Let a controller show, step, and zoom an image viewer pane"
+3. "Hide whether an image pane holds an image from a zoom outside the scope"
+4. "Move UTERM-006 M4 to history now that its row is done"
+5. This report's last amendments
+
+UTERM-006 stays `accepted`, since M5, "Exec driver reads", is NOT STARTED and has no queue row.
+
 ## The user's choice in the plan
 
 M4's first check says an exec driver can `show` a path and step through it. The shipped code gives an exec driver no
