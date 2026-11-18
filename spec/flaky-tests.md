@@ -156,6 +156,17 @@ fixed ones.
 - Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
+### `ControllerRunUITests.testTheBundledCommandRunsAVerifiedPackageAndNotAChangedOne`
+
+- Seen: 2026-11-18, once in a full `make test` run at the start of a bug sweep. It was the only failure of 138 UI
+  tests.
+- Evidence: the test hung in `runInTerminal`. Typing the `sh` command into the terminal took 18 s. The next wait for
+  the app to idle never returned, and the test hit its 60 s allowance. It then passed 3 of 3 alone. It also passed with
+  `ControllerConsentUITests` run first, as in the full suite, on the same tree.
+- Status: unresolved. The app was slow before the hang, much like the `ExecPaneUITests` entry above. No crash report
+  from uniterm appeared in that window.
+- Next sighting: note what ran just before it, and whether the app was slow in earlier tests of that run.
+
 ## Fixed
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
