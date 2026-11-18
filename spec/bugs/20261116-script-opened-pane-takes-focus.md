@@ -1,7 +1,7 @@
 # A pane a script opens with `uniterm/open-pane` takes keyboard focus
 
 **Status:** open
-**Estimate:** small
+**Estimate:** small; no open design decisions. ADR-12 settles the behavior, and the controller's `openPane` has one caller, `WindowSet.openPane`.
 **Found:** 2026-11-16, while reviewing UTERM-026
 
 ## Observed
@@ -11,6 +11,8 @@ or form that a program opens takes no focus, and focus stays where the user left
 the script runs from has their next keys land in the new pane.
 
 Confirmed by tracing the code. No one has watched it in the running app.
+
+Reproduced 2026-11-18 with a throwaway test. It opened a pane through the scripting fixture's `openPane` and compared `focusedPane` before and after. The focused pane changed to the new pane.
 
 ## Cause
 
