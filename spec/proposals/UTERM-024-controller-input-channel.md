@@ -1,6 +1,6 @@
 # UTERM-024: Controller Input Channel
 
-**Status:** draft
+**Status:** accepted
 **Created:** 2026-11-15
 **Updated:** 2026-11-16
 
@@ -11,6 +11,8 @@
 - UTERM-004, for controller runs, groups and their members, the disconnected mode, revocation, and the permission kinds
 - UTERM-013, for command owners, reserved keys, and the order in which a key finds its command
 - UTERM-021, for the `declare-permissions` spelling a new permission kind must define
+- UTERM-032, for the rule that each permission meaning names where its kind may appear, which keeps the new kind out
+  of packages
 
 ## Impacts
 
@@ -29,10 +31,15 @@
   applet events" stands and nothing there is superseded. ScriptWire's version goes up.
 - UTERM-030 — "The Markdown page opts in": the text viewer's Markdown body opts in to controller keys, per "Which panes
   take a controller's keys".
-- UTERM-019 — "Page events": the event read here takes the same cursor, timeout, and dropped-count shape, if Open
-  question "The event model" settles that way.
-- UTERM-022 — "Where the form calls live": a host-side waiting call is the precedent this proposal weighs in Open
-  question "Where the read lives".
+- UTERM-019 — "Page events" and "Script helpers": the event read here takes the same cursor, timeout, and
+  dropped-count shape, and the helpers read through an explicit reader. See "The event model" and "Names".
+- UTERM-022 — "Where the form calls live": the read is a host-side waiting call, as there. See "Where the read lives".
+- UTERM-032 — "Names": the new kind relies on its placement rule to stay out of `controller.json`. See "Packages".
+- ADR-04 — if the third-key-owner rule becomes an ADR, it is a narrower new one, and ADR-04 gains a reference to it.
+  See "How ADR-04 changes".
+- UTERM-030 — M1's check "The Markdown body delivers controller keys": UTERM-024 M2 builds the Markdown body's
+  opt-in, since M2's checks need a body that opts in. UTERM-030 keeps the decision, and its next review drops or
+  repoints that check.
 
 ## Summary
 
@@ -109,11 +116,9 @@ controller learning typed text.
 Decision: a controller may bind any key, with or without modifiers. Each controller binds the keys its job needs, such
 as UTERM-025's arrows and Page Up and Page Down.
 
-- uniterm's reserved keys and the user's remaps win over a controller's key, as for applet keys under UTERM-013. Where a
-  controller's key falls against the focused applet's own keys is open. See "Against the applet's own keys". The
-  menu's key route lives in the window's key-equivalent handling. Whether plain arrows reach it is unverified, so the
-  check runs where the controller's keys arrive, and M2 proves a remap onto a plain arrow still wins. A key that loses
-  is dropped, and the user is told.
+- uniterm's reserved keys, the user's remaps, and the focused applet's own keys win over a controller's key. See
+  "Against the applet's own keys" and "How keys reach the controller". M2 proves a remap onto a plain arrow still
+  wins. A key that loses is dropped, and the user is told.
 
 Rationale: the input channel is general. The opt-in rule, not a key list, keeps typed text from a controller, so a
 list would only limit controllers with no safety gain. The user chose this.
@@ -121,22 +126,24 @@ list would only limit controllers with no safety gain. The user chose this.
 ### When commands are live
 
 Decision: a controller's palette entries and its keys go live on the same rule. They are live while keyboard focus is
-in the content of a member pane that is not disconnected. A key is live only in an opted-in applet type.
+in the content of a member pane that is not disconnected. A key is live only in an opted-in body kind.
 
-- A command goes live when keyboard focus moves into such a pane, never while focus is already there. A layout request
-  that makes an open pane a member, or a declaration that arrives while the user is typing, waits for the next focus
-  change, per ADR-12.
+- A command goes live when the user moves keyboard focus into such a pane, or clicks in its content. A change the user
+  did not make never makes it live. A layout request that makes an open pane a member, or a declaration that arrives
+  while the user is typing, waits for the user's next focus change or click, per ADR-12. See "A body that changes while
+  the pane has focus". Amended 2026-11-16; see Decision Log.
 - A command that is not live is not listed in the palette. Its keys reach the pane as if it did not exist.
 - The palette judges liveness by the pane whose content had keyboard focus when the palette opened, since opening the
   palette moves focus out of the pane.
 - Each pane where a controller's keys are live shows that the controller is taking keys, and the user can revoke the
-  controller from there. How it shows is open. See "The key indicator".
+  controller from there. See "The key indicator".
 
 ### Palette only, with the controller named
 
 Decision: controller commands appear in the palette and are bound to keys. They have no menu bar item. Every palette row
-for a controller command names the controller it came from, using the name the transport verified, per ADR-09. A
-controller cannot style that name or leave it out.
+for a controller command names the controller it came from, in the text pane chrome shows for it. uniterm draws that
+text with the kind of program and its PID. A claimed ID never appears without them. A controller cannot style that name
+or leave it out. Amended 2026-11-16; see Decision Log.
 
 Rationale: a palette row that names its controller cannot pass for uniterm's own command, and the user knows which
 program acts. UTERM-022's requester header is the precedent. A command's key is carried where the key arrives, so it
@@ -146,8 +153,7 @@ needs no menu item. The user chose palette only, and asked that rows say where t
 
 Decision: these follow from accepted ADRs.
 
-- Declaring commands is a power of its own. Pane control does not grant it, per ADR-09. Its name and spelling are open.
-  See "Names".
+- Declaring commands is a power of its own. Pane control does not grant it, per ADR-09. See "Names".
 - An invocation is recorded when the user acts. The read only waits for recorded events, so it may hold a pending
   reply, per ADR-11. Recording never waits on the controller, per ADR-08.
 - When the run ends, the grant is revoked, or the window closes, the controller's commands leave the palette and the
@@ -163,87 +169,304 @@ Decision: ScriptWire refuses an unknown version at the hello, as it does today.
 - A new helper with an old app, or an old helper with a new app: the run fails at the hello before any effect, with
   the message to relaunch uniterm. The helper is the bundle's own, so a relaunch heals it.
 - A declared file that names the new permission kind or declares commands is refused whole by an older build.
-- A policy file holding an approval of the new kind makes an older build treat the whole file as newer, so every
-  remembered approval goes inert until the user is back on the new build. That fails closed, as UTERM-022 found for
-  `ask-user`. See Risks.
+- A file store holding an approval of the new kind makes an older build treat that whole store as newer. See "Stores
+  that older builds read" and Risks.
 
 Rationale: the helper and the app ship in one bundle, so exact-match refusal costs nothing but a relaunch.
 
-## Design Decisions (Open)
-
 ### Where the read lives
 
-- **A host call, like UTERM-022's form calls.** ScriptHost holds the pending read for the connection. It knows the
-  caller, needs no applet behind it, and does not count against the per-window cap of 64 pending applet replies.
-- **A pending reply in the applet dispatcher, like UTERM-019's `next-events`.** It reuses `PendingReply` and the
-  authority recheck. There is no applet behind a controller's commands, so it would need a stand-in target, and it
-  would share the per-window cap with browser reads.
+Original question: a host call like UTERM-022's form calls, or a pending reply in the applet dispatcher like
+UTERM-019's `next-events`.
+
+Decision: a ScriptWire host call. ScriptHost holds the pending read for the connection. (autonomous)
+
+- The host fails a pending read through its one path for ended authority, the same path that run end, revocation,
+  a closed connection, and the source session's end already take.
+- Before a read completes, the host checks again that the caller still holds the power to declare commands and is the
+  same run. A caller that fails the check gets the read failed as ended, never the events.
+- A read counts against its connection's in-flight calls, not against a window's pending applet replies.
+
+Rationale: the host already knows the caller, its run, and its authority. No applet stands behind a controller's
+commands, so a dispatcher reply would need a stand-in target. The dispatcher cancels any pending reply whose applet is
+gone, so a stand-in would have to be kept alive by hand. It would also share a window's cap of 64 with browser reads,
+so a busy browser could starve the presenter. A push stream was also weighed. The helper reads one reply at a time, and
+the host disconnects a peer whose write queue fills, so a slow controller would be cut off. Converged in 1 pass.
 
 ### The event model
 
-- **A per-run cursor buffer, like UTERM-019.** Bounded by count. It drops the oldest events and reports how many were
-  dropped. Several readers can each keep a cursor. A read only looks, so a failed or lost reply loses nothing.
-- **A single-reader queue.** Each event is delivered once. Removing an event is an effect, so under ADR-11 a read that
-  fails or loses its reply loses the event. This option must say how it avoids that.
+Original question: a per-run cursor buffer like UTERM-019, or a single-reader queue. Either way: the bound, whether a
+drop raises an error in Janet by default, and what an event carries.
 
-Either way: the bound, whether a drop raises an error in Janet by default as UTERM-019's helpers do, and whether an
-event carries the pane that had focus and the input that triggered it, palette or key.
+Decision: a per-run cursor buffer, in UTERM-019's shape. (autonomous)
+
+- The buffer holds at most 256 events. A full buffer drops its oldest events and counts them. It never grows past its
+  bound and never waits on the controller.
+- A read takes a cursor and a timeout. It replies when events past the cursor exist or the timeout passes. The reply
+  carries the events, the new cursor, and how many events were dropped since the cursor.
+- A read only looks. A failed or lost reply loses nothing, and several readers can each keep a cursor.
+- An event carries the command's name, the node ID of the member pane whose content had focus, and the input: the
+  palette, or the key that triggered it. Node IDs are unique within a window, and a controller's groups are all in its
+  own window, per UTERM-004 "Same window only".
+- The raw read returns the dropped count. The shipped Janet helper raises a structured error carrying that count, as
+  UTERM-019's helpers do.
+
+Rationale: a read with no effect satisfies ADR-11 with no extra mechanism. A queue that removes on delivery loses the
+user's input when a reply is lost. A queue whose next read names the last event it saw is a cursor that also deletes,
+so it gives up several readers and adds nothing. Raising on a drop makes a stalled controller fail loudly rather than
+skip input silently. Converged in 1 pass.
 
 ### Registry mechanism
 
-- The registry is fixed after launch today. Registering a type twice trips a precondition. Controller commands need
-  adding and removing at runtime, without disturbing uniterm's and the applets' commands.
-- Availability is keyed by applet type today. Controller commands need it keyed by group membership.
-- How the controller's name looks in a palette row, and how a search matches it.
+Original question: how controller commands are added and removed at runtime, how their availability follows group
+membership, and how the controller's name looks in a palette row and in search.
 
-### Against the applet's own keys
+Decision: `CommandRegistry` stays fixed after launch. Controller commands live in one store the whole app shares, keyed
+by run. (autonomous)
 
-The text viewer binds Cmd-F, Cmd-G, Cmd-Shift-G, Cmd-E, and Cmd-R. A controller can bind the same key. Options:
+- The host owns which commands each run declared and whether its authority holds. Each window owns membership, through
+  its own tree's group owners. A window queries the store when its palette opens and when a key arrives. Nothing is
+  mirrored into windows, so a revoked controller can never linger in a window that missed an update.
+- Menu building, the menu's key route, and applet key resolution never see controller commands.
+- A controller's commands are namespaced by its run. A bad declaration is refused with an error, never a precondition.
+- A controller's key is checked against the reserved keys and remaps that are live when the key arrives. The check at
+  declaration exists only to warn the user early.
+- A palette row for a controller command keeps a kind word uniterm draws, "Controller", in the right-label slot, where
+  uniterm's own commands read "Command". The row also names the controller in the text pane chrome shows for it. Search
+  matches that name at the detail tier, so it never outranks a title match.
 
-- **The applet's key wins.** The controller's key is dropped in that pane, and the user is told, as for a reserved key.
-- **The controller's key wins.** The user loses that applet command in the controller's panes.
-
-Either way the order joins the ADR in "How ADR-04 changes": uniterm, the user's remaps, then the controller and the
-applet in the chosen order, then the view.
-
-### Packages
-
-Whether a controller package's `controller.json` can declare commands. The presenter ships as a declared file, so the
-hot path needs only the declared-file spelling.
+Rationale: controller commands share none of the registry's machinery. They have no menu item, a different owner and
+lifetime, and liveness that latches when focus moves. A mutable registry would need runtime special cases in code built
+for a fixed set. It traps on a duplicate ID and lists unavailable commands dimmed, where controller commands must not be
+listed at all. Per-window mirrors would add a sync step that must finish at once on revocation. The kind word keeps a
+program-set name from passing for a uniterm label, which is the reason the label slot exists. Converged in 1 pass.
 
 ### How keys reach the controller
 
-Plain keys arrive through each view's `keyDown`, and keys with modifiers may arrive as key equivalents first. Options:
+Original question: whether the window offers a key to the controller before the focused view, or the opted-in body's
+content view offers its keys to the window first.
 
-- The window offers a key to the controller before the focused view, only while the controller's keys are live there.
-- The opted-in applet's content view offers its keys to the window first.
+Decision: the window owns one controller-key decision, and calls it from both points where AppKit delivers a key.
+(autonomous)
+
+- For a key that arrives as a key equivalent, the window's menu route asks after remapped and uniterm items. Its place
+  against the applet's items follows "Against the applet's own keys".
+- For a key that does not arrive that way, the window's `sendEvent` asks before the event reaches the first responder.
+  It checks remaps through the same menu matching first, so a remap onto a plain arrow still wins.
+- Once one point claims a key, the other never sees it.
+- A body only reports that it opts in, through a protocol the window can query. The decision asks only when the first
+  responder sits inside an opted-in body's content view of a live member pane. A find field, a sidebar, and the palette
+  field fall out by construction.
+
+Rationale: AppKit offers key equivalents, which include Command keys and some Control chords, before `sendEvent` runs.
+A `sendEvent` check alone would let AppKit's order, not this design, decide which owner wins. Per-body key overrides
+would make every body that opts in repeat the ordering, and a body that called its superclass first would send a key to
+both WebKit and the controller. Converged in 1 pass.
+
+### Against the applet's own keys
+
+Original question: the text viewer binds Cmd-F, Cmd-G, Cmd-Shift-G, Cmd-E, and Cmd-R, and a controller can bind the
+same key. Whether the applet's key or the controller's key wins.
+
+Decision: the applet's key wins. The controller's key is dropped in a pane whose applet binds the same key, and the user
+is told, naming the controller. (autonomous)
+
+- The applet binds a key when one of its live menu items matches it, enabled or not, after the user's remaps. A remap
+  that moves Find off Cmd-F frees Cmd-F for the controller. A disabled Reload still keeps Cmd-R from the controller.
+- A later uniterm build that gives an applet a new key drops a controller key that held it. The user is told then, as
+  ADR-04 already accepts for new window keys.
+- The controller's command stays in the palette.
+- The full order is uniterm's keys, the user's remaps, the applet's keys, the controller's keys, then the view.
+
+Rationale: a more general owner already drops a less general owner's key and tells the user, and a controller is the
+least trusted key owner. The menu stays truthful. If the controller won, Edit > Find would show Cmd-F while Cmd-F ran
+something else. Hiding the key in the menu would need menu building to see controller commands, which "Registry
+mechanism" rules out. Refusing a colliding declaration would let a uniterm update break a working controller at load.
+UTERM-025's keys touch no applet key. Converged in 1 pass.
+
+### What a remembered approval covers
+
+Original question: Trust This Version binds to the file's hash, so any edit asks again. Under Trust This Identity, a
+signed new version runs without review when it asks for nothing new, per UTERM-021. Whether a new command, a new key,
+or a changed key counts as asking for something new.
+
+Decision: the set of keys a controller takes is the scope of its approval. (autonomous)
+
+- Keys are compared in canonical form, as uniterm's key reservations already treat two spellings of one key as one.
+- A version whose key set is the same or smaller reuses the approval. A version that takes a key outside the approved
+  set asks again, and the review lists the new keys.
+- Commands, their titles, and which command a key triggers are data. The review shows them, and they never widen the
+  approval.
+- A wider approval covers every subset of its keys. It replaces the narrower stored approval it covers, so a policy
+  does not grow with each signed version that adds a key.
+
+Rationale: a key is the one thing a controller takes from the user, so ADR-09's rule that broader scopes need consent
+applies to it. A palette entry or a title grants nothing, and each row is already attributed with uniterm's kind word.
+What a command does is the controller's code, and identity trust never reviews code. Asking again on retitles or
+rebinds would guard nothing and train habitual approval, which ADR-09 names as the harm. Asking again on removals would
+contradict ADR-09's rule that a narrower request reuses its approval. Treating the commands as unscoped data would let a
+signed update take new keys with no consent. Converged in 1 pass.
+
+### Packages
+
+Original question: whether a controller package's `controller.json` can declare commands.
+
+Decision: no addition. Packages cannot declare commands under this proposal. A `controller.json` that names the new
+permission kind is refused, and the error says a package cannot declare commands. (autonomous)
+
+- The refusal comes from UTERM-032's rule that each permission meaning names where its kind may appear. Packages and
+  declared files share one permission reader, so a format number alone cannot keep the kind out of packages.
+- Left undone: a commanded controller that outgrows one file has no package form. UTERM-021 sends such a script to a
+  package, so the presenter cannot become one until a follow-up proposal adds commands to `controller.json`. File that
+  proposal when a packaged controller needs commands.
+
+Rationale: the settled "Scope" holds only what UTERM-025 needs, and the presenter ships as a declared file. Package
+commands would bring in a new descriptor format, signer and lint support, and a skew row for the package store. They
+would also widen the downgrade risk to every package approval. Converged in 1 pass.
 
 ### The key indicator
 
-The slide pane is the pane being projected, so a badge listing the controller's keys shows to the audience. Options: a
-small mark in the pane chrome with the list on hover, the list in the status bar while the pane has focus, or both.
+Original question: the slide pane is projected, so a list of the controller's keys shows to the audience. Whether the
+mark lives in the pane chrome, in the status bar while the pane has focus, or both.
+
+Decision: the pane's existing control badge takes a distinct look while the controller's keys are live in that pane.
+Its tooltip and menu list the keys, and the menu keeps Revoke Controller. (autonomous)
+
+- The listed commands carry the "Controller" kind word, and the list is bounded with a count of the rest.
+- The badge's accessibility value says the controller is taking keys.
+
+Rationale: every member pane already shows the badge, so the audience sees nothing new beyond a change of look. The
+list shows only on hover or in the menu. The status bar cannot be hidden, so a key list there would show to the
+audience for the whole talk. It would also need a window-state segment that follows focus, which no window state does
+today. Converged in 1 pass.
 
 ### Names
 
-The permission kind and its declaration spelling, the spelling for declaring commands and their keys, and the Janet
-functions. Each follows UTERM-021's "The declaration's data shape" and UTERM-003's verb-noun naming.
+Original question: the permission kind and its declaration spelling, the spelling for declaring commands and their
+keys, and the Janet functions. Each follows UTERM-021's "The declaration's data shape" and UTERM-003's verb-noun naming.
+
+Decision: commands are fields of the permission entry, and the helpers read through an explicit reader. (autonomous)
+
+```janet
+(declare-permissions {:id "dev.example.presenter" :name "Presenter"}
+  {:kind :controller-commands :version 1
+   :commands [{:name :next-slide :title "Next Slide" :keys [:right :down :page-down :space]}
+              {:name :previous-slide :title "Previous Slide" :keys [:left :up :page-up]}]})
+```
+
+- The kind is `:controller-commands`. Command names and keys are keywords, and titles are strings.
+- A key with modifiers is one keyword, with modifiers first in a fixed order, such as `:cmd-shift-g`. A key that cannot
+  appear in a keyword has a named token, such as `:cmd-left-bracket`. The modifiers are a closed set, so `:cmd--` is
+  Cmd-Minus. An unknown key refuses the file.
+- The declaration's converter types every field inside `:commands`, so a string where a keyword belongs refuses the
+  file. The shared reader cannot tell the two apart once they are JSON.
+- The app derives the approval's scope, the canonical key set, from the entry itself.
+- A stored approval holds each key in this keyword spelling, which never changes meaning. A later build that folds
+  keys differently, such as through another keyboard layout, adds a new version of the kind rather than changing how a
+  stored key reads.
+- `(uniterm/read-command-events cursor timeout)` is the raw read. It returns `{:events [...] :cursor n :dropped n}`.
+- `(uniterm/command-events)` returns a reader that holds its own cursor. `(uniterm/next-command reader &opt timeout)`
+  returns one event, or nil on timeout, and raises on a drop. `(uniterm/each-command reader handlers &opt stop)` calls a
+  handler per event, as UTERM-019's `each-event` does. Event names come back as keywords, so a handler table keyed by
+  `:next-slide` matches.
+
+Rationale: one entry carries both the power and its scope, so the reader, the review, and the store work on the
+permission list alone, as UTERM-032's entry does. A second top-level form would sit outside every check UTERM-021
+built for the first form, including the merged-duplicate-key check, the lint, and the fuzzer. It would also make new
+invalid states expressible, such as the kind with no commands or commands placed after code. A hidden cursor shared by
+the helpers would let one helper eat another's events. UTERM-019 rejected that for the same reason. Converged in 1
+pass.
 
 ### How ADR-04 changes
 
-ADR-04 says an applet binds keys only for its own actions. A controller is a third key owner, and its keys
-pre-empt a pane's ordinary handling of those keys, not only its bindings. Options:
+Original question: a new ADR that supersedes ADR-04, restating its rules with three owners, or a narrower ADR that adds
+controller keys and leaves ADR-04's text in force for the other two.
 
-- A new ADR that supersedes ADR-04, restating its rules with three owners.
-- A narrower ADR that adds controller keys and leaves ADR-04's text in force for the other two.
+Decision: ADR-04 stays in force unchanged. If the controller-key rule ever becomes an ADR, it is a narrower new one
+beside ADR-04, never a replacement. At acceptance the user chose no ADR, so the rule lives in this proposal.
+(autonomous) Amended 2026-11-16; see Decision Log.
+
+- No ADR-04 Decision bullet becomes false. A controller comes after uniterm's keys and the user's remaps, and ADR-04's
+  applet rule constrains only applets. Only its Context line that keys have two owners goes stale.
+- Such an ADR would name the invariants, not the mechanisms. A program that is neither uniterm nor an applet may take keys
+  only in panes it controls, after uniterm's keys, the user's remaps, and the applet's keys. It never receives a key
+  from content that takes typed text.
+- It cites ADR-09 for the separate power and ADR-12 for the focus-change rule, rather than restating them.
+- It says what the user can do about a controller key, since a controller command has no menu item to remap. The user
+  can remap another command onto the key, which then wins, or revoke the controller.
+
+Rationale: superseding ADR-04 would restate an unchanged Ghostty-config decision. It would also leave every spec that
+cites ADR-04 pointing at a superseded record. A narrower ADR keeps a later change to controller keys, such as
+UTERM-031's, from reopening ADR-04. Converged in 1 pass.
+
+### A body that changes while the pane has focus
+
+Original question: liveness latches when focus moves into a member pane, but a key reaches the controller only from an
+opted-in body. A user typing into a PDF form field in a live member pane, followed by a controller's `show-markdown`,
+swaps the body to Markdown with no new focus change. If the first responder lands in the Markdown view, the next typed
+letters go to the controller.
+
+Decision: liveness latches per body kind. A program-driven change into an opted-in body from a body that does not opt
+in disarms the controller's keys and palette rows until the user arms them again. (autonomous)
+
+- A message body, such as "Opening…" or the notice that the page's process ended, is transparent. A change is judged
+  from the last body that was not a message to the next one, so PDF, then "Opening…", then Markdown is a change from PDF.
+- A pane whose first body is program-driven counts as changing from a body that does not opt in.
+- A change between opted-in bodies keeps the keys live, through any message bodies between them. So the presenter's
+  steps keep working, and so does a Markdown page that ends its process and reloads.
+- A change between bodies that do not opt in, such as one PDF to the next, keeps the palette rows. No key is live there
+  in any case.
+- A first-responder move the user did not make, into an opted-in body, disarms the keys. A move inside a change
+  between opted-in bodies does not.
+- After a disarm, only a click in the content, or a user move of focus from another pane or window, arms the keys
+  again. Focus that comes back from a surface over the pane, such as the palette or a sheet, does not arm them. A key
+  never arms them, Tab and Escape included, since a key the user meant for the body that just closed would then arm
+  the one that replaced it, per ADR-12. A click counts even when focus is already in the pane.
+- Palette rows disarm and arm on the same rule as keys. A disarm while the palette is open removes the controller's
+  rows from it.
+
+Rationale: ADR-12 makes new content inert after a program-driven change until a deliberate choice, and lets a
+multi-step flow stay fast within one requester. Checking only at key time would leave that rule to where AppKit happens
+to put the first responder when a focused view is hidden. Clearing the latch on every change would send the second
+arrow press of a talk to WebKit. Converged in 1 pass.
+
+### Stores that older builds read
+
+Original question: the new kind lands only in file stores: `files.json`, or UTERM-032's store for runs with an input
+folder, where the presenter's approval goes. An older build reads such a store as newer.
+
+Decision: no addition. Accept the skew, and state it per store. (autonomous)
+
+- On a build without the kind, `files.json` and UTERM-032's input-folder store read as newer. Every approval in them
+  stops working, and that build can neither remember a new approval nor revoke one there. It shows its notice that a
+  newer uniterm wrote the file, and it never moves the file aside.
+- `policy.json` holds no approval of the kind, since packages cannot declare it, so package approvals keep working.
+- Dev and release builds share one store folder, so this is the common case on a development machine.
+- UTERM-032 kept its folder policies out of older builds' stores for a list change. A new declarable kind is a
+  different case, as UTERM-022 found for `ask-user`. The window closes once a build with both proposals ships.
+- Left undone: a reader that skips only the policy it cannot read, instead of the whole store. It would change the
+  trust-store contract UTERM-021 owns, and it cannot reach builds already installed.
+
+Rationale: the failure is closed, and no data is lost. A store of its own for commanded approvals would go whole-newer
+at the kind's next version, and would override UTERM-032's rule that a folder policy lives whole in its store. Never
+remembering the kind would also remove Remember for the run's other powers, including the presenter's folder.
+Converged in 1 pass.
+
+## Design Decisions (Open)
+
+None.
 
 ## Risks
 
-- **A new ScriptWire version and permission kind are published contracts** — likelihood: high, impact: medium.
-  Mitigation: ScriptWire refuses an unknown version at the hello, and an unknown permission kind fails closed. See
-  "Version skew".
-- **Downgrading leaves every remembered approval inert** — likelihood: low, impact: medium. After an approval of the
-  new kind is saved, an older build treats the whole policy file as newer. Accepted: it fails closed, as UTERM-022
-  accepted, and the approvals come back on the new build.
+- **A new ScriptWire version, permission kind, Janet functions, and event shape are published contracts** —
+  likelihood: high, impact: medium. Mitigation: ScriptWire refuses an unknown version at the hello, and an unknown
+  permission kind fails closed. See "Version skew". The Janet names follow UTERM-019's rule that a name never changes
+  meaning and a rename adds a name, and an event gains fields only by adding them.
+- **An older build stops honoring every file approval** — likelihood: high on a development machine, low elsewhere,
+  impact: medium. After an approval of the new kind is saved, a build without the kind reads `files.json` and
+  UTERM-032's input-folder store as newer. It cannot use, remember, or revoke any approval in them. `policy.json` is
+  untouched. Accepted: it fails closed with no data lost, as UTERM-022 accepted for `ask-user`, and the approvals come
+  back on the new build. See "Stores that older builds read".
 - **Navigation-key capture confuses the user** — likelihood: medium, impact: medium. A viewer stops scrolling on the
   arrow keys, and the user does not know why. Mitigation: the key indicator, the scope to the controller's own members,
   and revoking from the pane.
@@ -253,12 +476,24 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
   the REPL, the browser, and the viewer's PDF and text bodies never deliver a key, and a test fails if the sanitizer
   ever allows an element or attribute that takes text.
 - **A controller key and an applet key mask each other** — likelihood: medium, impact: low. One of them goes dead in the
-  controller's panes. Mitigation: settle "Against the applet's own keys", and tell the user about the loser.
-- **A controller's palette entry passes for uniterm's** — likelihood: medium, impact: medium. Mitigation: attribution
-  in the palette. See "Registry mechanism".
-- **Changing the registry at runtime destabilizes the menu and keys** — likelihood: medium, impact: medium.
-  Mitigation: M1 tests adding and removing controller commands while uniterm's and the applets' commands keep their
-  keys and menu places.
+  controller's panes. Mitigation: the applet's key always wins, and the user is told which controller key was
+  dropped. See "Against the applet's own keys".
+- **A controller's palette entry passes for uniterm's** — likelihood: medium, impact: medium. Mitigation: the row keeps
+  uniterm's "Controller" kind word and the name pane chrome draws. See "Registry mechanism".
+- **Adding controller commands at runtime destabilizes the menu and keys** — likelihood: low, impact: medium.
+  Mitigation: `CommandRegistry` stays fixed, and controller commands live in a separate store the menu never sees. M1
+  tests adding and removing controller commands while uniterm's and the applets' commands keep their keys and menu
+  places.
+- **The third-key-owner rule shifts under UTERM-031** — likelihood: medium, impact: low. UTERM-031 weighs keys in panes
+  that do not opt in, such as the source terminal. Mitigation: the rule is worded around typed text, not around
+  today's bodies, so UTERM-031 can widen where keys reach without reopening it. If the rule becomes an ADR, it is a
+  narrower one of its own, so a change there supersedes only that ADR.
+- **The stored key spelling is a published contract** — likelihood: low, impact: high. If a later build read a stored
+  key differently, two keys could compare equal and widen an approval without consent. Mitigation: a stored key's
+  spelling never changes meaning, and a new folding is a new version of the kind. See "Names".
+- **The package refusal waits on UTERM-032's placement rule** — likelihood: medium, impact: medium. UTERM-032 is
+  accepted but not built. If UTERM-024 M1 is built first, nothing keeps the kind out of `controller.json`.
+  Mitigation: UTERM-032 is a dependency, so the queue orders UTERM-032 M1 before UTERM-024 M1.
 - **A waiting read blocks the Janet thread** — likelihood: high, impact: low. A controller cannot serve other work while
   it waits. Accepted: the read takes a timeout. A controller that needs both reads with short timeouts. A Janet event
   loop is out of scope.
@@ -278,6 +513,30 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
 - Adding and removing controller commands leaves uniterm's and the applets' commands with the same keys and menu places
 - A restored layout has no controller commands
 - The approval panel lists each declared command and its key
+- A pending read fails as soon as the source session ends, without waiting out its timeout
+- A pending read whose caller lost the power to declare commands fails as ended and returns no events
+- A cursor past the newest event, or from before the run, is refused. The dropped count stays right after the buffer
+  wraps
+- With focus in a member's find field when the palette opens, the controller's commands are not listed
+- A declaration that repeats a command name is refused with an error, and the app keeps running
+- Under Trust This Identity, a signed version that takes a key outside the approved set asks again and lists the new
+  keys. One that takes the same keys, fewer keys, or the same key spelled another way runs without review
+- After a wider key set is approved, every subset of it reuses the approval
+- A declaration with more commands or keys than the bound is refused
+- Approving a wider key set replaces the narrower stored approval it covers, so a policy does not grow with each signed
+  version
+- A controller's title is neutralized and bounded in the palette, as tab details are
+- A declaration of the new kind without pane control is refused, and its error says to add pane control
+- Revoking a controller while the palette is open removes its rows, and choosing a stale row records nothing
+- An older command and a newer app refuse each other at the hello. A build without the kind reads a store holding it
+  as newer, without moving the file aside
+- A `controller.json` that names the new permission kind is refused, and its error says a package cannot declare
+  commands
+- Every key a key chord can hold has a spelling, and two spellings of one chord compare equal
+- A string where a keyword belongs inside `:commands`, or the reverse, refuses the file
+- A version that changes only titles, or which command a key triggers, reuses a stored approval
+- `next-command` advances its reader past a drop before raising, so the next call does not raise again.
+  `each-command` stops by its stop rule. A handler key that names no declared command is refused
 
 ### M2: Keys
 
@@ -291,13 +550,37 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
 - A text viewer member showing a PDF or a text file delivers no key to the controller
 - A test fails if the Markdown sanitizer allows an element or attribute that takes text
 - A remap that appears after declaration drops the controller's key, and the user is told then
-- Key repeat follows ADR-12's rule on repeated input
+- A dropped controller key is reported once per run, not on every press
+- A user typing in a PDF form field of a live member, followed by the controller's `show-markdown`, sends no key to the
+  controller until the user clicks the page or moves focus back in
+- A member whose last body before a message body was Markdown keeps its keys live when Markdown returns. The bound key
+  reaches the controller after the message. Focus never falls to a neighbor pane during the message, and is not pulled
+  back if the user moved it elsewhere. An inline Markdown-to-Markdown step never hides the web view
+- A click made while a message body shows does not arm the body that follows it
+- A program-driven first Markdown body in a focused pane has its keys disarmed
+- A controller's `show-markdown` that lands while the palette is open removes the controller's rows. Dismissing the
+  palette with Escape leaves the keys disarmed, and no controller key fires afterwards
+- A palette-driven step from one PDF member document to the next keeps the controller's rows
+- After a disarm, a click in the content or a focus move into the pane from outside it arms the keys. Tab, Escape, and
+  every other key do not
+- A Markdown member that reopens its file, or reloads after its page's process ended, keeps its keys live through the
+  "Opening…" or ended-process message
+- The repeats of a key pressed before the controller's keys went live reach the pane as before, per ADR-12's rule that
+  repeated input is not a choice
+- The text viewer's Markdown body adopts the opt-in protocol, and its PDF and text bodies do not
+- A Command key and a Control chord bound by a controller each reach it, or lose to the applet's key on the same
+  chord, by the order "Against the applet's own keys" sets, never by AppKit's delivery order
+- A controller key that matches a text viewer item stays dropped while the item is disabled, such as Reload on a slide
+  with no file. After the user remaps Find off Cmd-F, the controller's Cmd-F reaches it
+- The badge's menu lists the controller's commands with the "Controller" kind word, bounded with a count of the rest,
+  and its accessibility value says the controller is taking keys
 - A letter key bound by a controller never reaches it from a terminal, REPL, or browser member, or a find field
-- A command never goes live while keyboard focus is already in the pane
+- With keyboard focus already in the pane, only a click in its content makes a command live
 - A reserved uniterm key and a user's remap win over a controller key, including a remap onto a plain arrow. The
   dropped key is reported to the user
 - The key indicator shows on each pane where the controller's keys are live
-- The ADR for the third key owner is accepted
+- A controller key reaches it only after uniterm's keys, the user's remaps, and the applet's keys, and never from
+  content that takes typed text. Amended 2026-11-16; see Decision Log.
 
 ## Decision Log
 
@@ -316,9 +599,9 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
 - 2026-11-15: commands are declared in the controller's file only. The user confirmed it on 2026-11-16. Runtime declaration serves only UTERM-029's
   Go to Slide. The source pane is never live, since it is not a member and chords left. Nested groups need no rule,
   since liveness is by membership.
-- 2026-11-15: ADR candidate (cuts across the system): a program that is neither uniterm nor an applet may own keys,
-  only in panes it controls, and only after uniterm's keys and the user's remaps. Pending: its form is the open
-  question "How ADR-04 changes".
+- 2026-11-15: ADR candidate (cuts across the system): a program that is neither uniterm nor an applet may take keys
+  only in panes it controls, after uniterm's keys, the user's remaps, and the applet's keys, and never from content
+  that takes typed text. Declined on 2026-11-16: the user chose no ADR, so the rule lives in this proposal.
 - 2026-11-16: Any key may be bound, with or without modifiers. The user corrected an agent trim that had limited
   UTERM-024 to the presenter's six keys. The input channel stays general, and UTERM-025 binds only what it needs. The
   opt-in rule keeps typed text from a controller. Keys with modifiers come back too, since the Ctrl-C finding was about
@@ -329,6 +612,62 @@ pre-empt a pane's ordinary handling of those keys, not only its bindings. Option
 - 2026-11-16 (agent): the opt-in unit is the kind of body, not the applet type. The design critic found that the
   text viewer's PDF body can hold form fields, so an applet-wide opt-in would let a controller read what is typed into
   them. This narrows the user's choice that the text viewer's page opts in to its Markdown body.
+- 2026-11-16: Review start: 2 milestones, 8 settled decisions, 8 risks, no `**Live after:**` lines or row gates, 10
+  open questions. Out of scope: exec drivers, keys in panes that do not opt in, runtime declaration, screen control, a
+  Janet event loop, and invoking registry commands. At commit "Apply the fourth critique to the presenter hot path".
+  The user asked for an autonomous review of the open questions.
+- 2026-11-16 (autonomous): added the open question "What a remembered approval covers". The ADR check found that
+  UTERM-021 runs a signed new version under a trusted identity when it "asks for nothing new". This proposal never
+  says whether a new command or key is new.
+- 2026-11-16 (autonomous): the read is a ScriptWire host call that ScriptHost holds per connection.
+- 2026-11-16 (autonomous): events go in a per-run cursor buffer of 256, in UTERM-019's shape. Each event carries the
+  command, the member pane's node ID, and the input. The shipped helper raises on a drop.
+- 2026-11-16 (autonomous): controller commands live in one app-wide store keyed by run. `CommandRegistry` stays fixed
+  after launch. A palette row keeps the kind word "Controller" and names the controller as pane chrome does.
+- 2026-11-16 (autonomous): the window owns one controller-key decision. It is called from the menu route for key
+  equivalents and from `sendEvent` for other keys.
+- 2026-11-16 (autonomous): amended "Palette only, with the controller named". It said rows use "the name the transport
+  verified, per ADR-09". An unsigned declared file's ID is claimed, not verified. Rows now use the text pane chrome
+  shows, which uniterm draws with the kind of program and its PID.
+- 2026-11-16 (autonomous): the applet's key wins over a controller's key, judged by the applet's live menu items after
+  remaps, enabled or not.
+- 2026-11-16 (autonomous): the set of keys a controller takes is its approval's scope. Commands and titles are data.
+- 2026-11-16 (autonomous): packages cannot declare commands. UTERM-032's placement rule refuses the kind in
+  `controller.json`. Added UTERM-032 to Dependencies for that rule.
+- 2026-11-16 (autonomous): the key indicator is a distinct look on the existing control badge, with the keys in its
+  tooltip and menu.
+- 2026-11-16 (autonomous): names. The `:controller-commands` kind carries its commands as fields. Keys are keywords
+  with named tokens for punctuation. The helpers read through an explicit reader: `command-events`, `next-command`, and
+  `each-command`, over the raw `read-command-events`.
+- 2026-11-16 (autonomous): the third key owner gets a narrower new ADR, and ADR-04 stays in force.
+- 2026-11-16 (autonomous): amended M2. It said "The ADR for the third key owner is accepted". A proposal's ADR is
+  accepted with the proposal, not at a milestone, so the check is now that the built key path holds the ADR's rules.
+  Amended again the same day to state the rules themselves, since whether the ADR is written is still the user's call.
+- 2026-11-16 (autonomous): coherence fixes. "When commands are live" now says body kind where it said applet type. The
+  third-key-owner rule's text no longer assumes its ADR exists. The stored key spelling is fixed, with its own risk. A
+  wider approval replaces the narrower one it covers. UTERM-024 M2 builds the Markdown body's opt-in, since M2's
+  checks need it and UTERM-030 depends on UTERM-024. The package refusal's wait on UTERM-032 joins the risks.
+- 2026-11-16 (autonomous): added the open questions "A body that changes while the pane has focus" and "Stores that
+  older builds read" from the whole-proposal review.
+- 2026-11-16 (autonomous): liveness latches per body kind. A program-driven change from a body that takes typed text
+  into an opted-in body disarms the keys, and a click in the content arms them. Amended "When commands are live". It
+  said a command goes live when focus moves in, "never while focus is already there".
+- 2026-11-16 (autonomous): accepted the file-store skew, restated per store and rated high on development machines.
+  Left undone: a reader that skips only the policy it cannot read.
+- 2026-11-16 (autonomous): re-check fixes to "A body that changes while the pane has focus". Message bodies are
+  transparent, so PDF, then "Opening…", then Markdown disarms. Tab and Escape no longer arm the keys, per ADR-12. Only a
+  click in the content or a focus move from outside the pane does. Palette rows follow the same rule.
+- 2026-11-16 (autonomous): second re-check fixes, not re-checked since the loop's three passes were spent. Focus that
+  comes back from the palette or a sheet does not arm the keys. Only a click in the content, or a user move from
+  another pane or window, does. A change between bodies that do not opt in keeps the palette rows, and only a change
+  into an opted-in body from one that does not opt in disarms.
+- 2026-11-16 (autonomous): risk review. The published-contract risk now covers the Janet functions and the event
+  shape. The file-store skew is rated high on development machines and accepted. No risk is rated high likelihood and
+  high impact.
+- 2026-11-16: Review gate: kept all. The user kept the body-swap rule, with its last fixes not re-checked, and left
+  the tolerant trust-store reader out.
+- 2026-11-16: Accepted. No ADR for the third key owner. Amended "How ADR-04 changes". It said "a narrower new ADR
+  that adds controller keys", and now says ADR-04 stays unchanged, with that form kept for any later ADR.
 
 ## References
 

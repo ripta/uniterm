@@ -245,6 +245,8 @@ failure that refusing unknown fields does not already catch.
 
 ### Trust records for files
 
+Superseded in part by UTERM-032; see Decision Log.
+
 Decision: file approvals live in their own policy file, beside the controller policy file, with their own selectors.
 
 - A file's version selector names the file's SHA-256 alone, so an unsigned file needs no ID.
@@ -757,6 +759,10 @@ a socket that belongs to another user never reached the app, so it keeps 69.
   which is the point of the change." The package tests' script fixtures stay undeclared, and the scripts the UI tests
   run through the bundled command carry declarations or run in unsafe mode, as the fixtures entry above records. The
   bullet now says that, and its other sentences are unchanged.
+
+- 2026-11-16: Superseded in part by UTERM-032. A file policy that holds a remembered input folder lives in a third
+  store beside the two policy files, so an older build's file trust keeps working beside a newer build. A declared file
+  also gains the `input-file` permission kind.
 
 ## References
 
