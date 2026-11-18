@@ -16,10 +16,19 @@
 
 ## Impacts
 
+- UTERM-026 — "The event model" and "Powers and lifecycle": a controller's groups may span its source window and one
+  window it opened, per ADR-14. An event gains `:window` beside `:pane` on ScriptWire. The cleanup "when the window
+  closes" runs when the source window closes. Closing the opened window ends neither the commands nor the pending reads.
+  "A body that changes while the pane has focus": a focus mark that a controller's zoom moved leaves the zoomed pane
+  disarmed, and only a click in its content arms it, not a focus move from another window.
 - UTERM-025 — the whole proposal: this is a required prerequisite of the presentation controller. Its Next Slide and
   Previous Slide are commands declared here, bound to the arrow keys and Page Up and Page Down.
-- UTERM-028 — "Any key" and "When commands are live": exec drivers gain the same commands and events.
-- UTERM-031 — "Which panes take a controller's keys": keys in panes that do not opt in, such as the source terminal.
+- UTERM-028 — "Any key" and "When commands are live": exec drivers gain the same commands and events. Under UTERM-028,
+  a driver's own pane lists its rows and takes its keys even when disconnected, which narrows "Which panes take a
+  controller's keys" for that pane alone. At a pane that is both a controller's member and a driver's own pane, both
+  sets of rows are listed and keys go to the driver alone, per "Where a controller lives".
+- UTERM-031 — retracted. It weighed keys in panes that do not opt in, such as the source terminal. A key pressed in such
+  a pane belongs to that pane, so "Which panes take a controller's keys" stands as written.
 - UTERM-029 — "Scope: what the presenter requires": Go to Slide needs runtime declaration, which this proposal leaves
   out.
 - UTERM-003 — "Scope": supersedes in part its out-of-scope line "Invoking or registering UTERM-002 registry commands
@@ -47,8 +56,8 @@ A Janet controller declares commands. They appear in the command palette while o
 focus. A command may be bound to a key, with or without modifiers. When the user invokes one, uniterm records an
 event. The controller reads its events and acts on them.
 
-This is a required prerequisite of the presentation controller, UTERM-025. Exec drivers, keys in panes that do not opt
-in, and screen control are not required, and live in UTERM-028, UTERM-031, and UTERM-026.
+This is a required prerequisite of the presentation controller, UTERM-025. Exec drivers and screen control are not
+required, and live in UTERM-028 and UTERM-026. A key pressed in a pane that does not opt in stays with that pane.
 
 ## Motivation
 
@@ -70,7 +79,8 @@ Decision: this proposal holds only what UTERM-025 cannot work without. That is J
 the controller's file, their palette entries, their keys, and the events their invocations produce.
 
 - Commands declared by exec drivers are UTERM-028.
-- Keys in panes that do not opt in, such as the source terminal, are UTERM-031.
+- Keys in panes that do not opt in, such as the source terminal, stay with those panes. UTERM-031 weighed them and is
+  retracted.
 - Declaring commands at runtime serves only Go to Slide, UTERM-029.
 - Pane zoom, full screen, and presenter windows are UTERM-026.
 
@@ -85,8 +95,9 @@ members of the groups it owns, which are the panes its layout requests opened. I
 - The controller's keys and commands are live only in members of its own groups. A pane the user split off inside the
   group's area is not a member, and neither is a pane of another controller's nested group, per UTERM-004 "Group node
   kind". So no pane has two controllers' keys.
-- The source pane is not a member, so the controller's commands are not live there. Its terminal keeps every key.
-  UTERM-031 weighs keys there.
+- The source pane is not a member, so the controller's commands are not live there. Its terminal keeps every key, and
+  each key goes to the terminal's foreground program. When the controller runs in the foreground, it reads them there
+  itself.
 - Group membership is by stable node ID, per ADR-02.
 
 Rationale: a controller acts only on what it opened. Keying liveness to membership reuses the rule UTERM-004 already
@@ -396,8 +407,8 @@ beside ADR-04, never a replacement. At acceptance the user chose no ADR, so the 
   can remap another command onto the key, which then wins, or revoke the controller.
 
 Rationale: superseding ADR-04 would restate an unchanged Ghostty-config decision. It would also leave every spec that
-cites ADR-04 pointing at a superseded record. A narrower ADR keeps a later change to controller keys, such as
-UTERM-031's, from reopening ADR-04. Converged in 1 pass.
+cites ADR-04 pointing at a superseded record. A narrower ADR keeps a later change to controller keys from
+reopening ADR-04. Converged in 1 pass.
 
 ### A body that changes while the pane has focus
 
@@ -484,10 +495,6 @@ None.
   Mitigation: `CommandRegistry` stays fixed, and controller commands live in a separate store the menu never sees. M1
   tests adding and removing controller commands while uniterm's and the applets' commands keep their keys and menu
   places.
-- **The third-key-owner rule shifts under UTERM-031** — likelihood: medium, impact: low. UTERM-031 weighs keys in panes
-  that do not opt in, such as the source terminal. Mitigation: the rule is worded around typed text, not around
-  today's bodies, so UTERM-031 can widen where keys reach without reopening it. If the rule becomes an ADR, it is a
-  narrower one of its own, so a change there supersedes only that ADR.
 - **The stored key spelling is a published contract** — likelihood: low, impact: high. If a later build read a stored
   key differently, two keys could compare equal and widen an approval without consent. Mitigation: a stored key's
   spelling never changes meaning, and a new folding is a new version of the kind. See "Names".
@@ -668,6 +675,18 @@ None.
   the tolerant trust-store reader out.
 - 2026-11-16: Accepted. No ADR for the third key owner. Amended "How ADR-04 changes". It said "a narrower new ADR
   that adds controller keys", and now says ADR-04 stays unchanged, with that form kept for any later ADR.
+- 2026-11-16: UTERM-031 is retracted, since a key pressed in a pane that does not opt in belongs to that pane. Every
+  line that sent work to UTERM-031 now says so instead:
+  - The Summary said keys in panes that do not opt in "live in UTERM-028, UTERM-031, and UTERM-026".
+  - "Scope: what the presenter requires" said those keys "are UTERM-031".
+  - "Where a controller lives" said "UTERM-031 weighs keys there". It now says the source terminal's keys go to its
+    foreground program, which is the controller itself when the controller runs in the foreground.
+  - The rationale of "How ADR-04 changes" named "UTERM-031's" change as its example.
+  - The risk "The third-key-owner rule shifts under UTERM-031" is removed, since no proposal now widens where keys
+    reach.
+- 2026-11-16: UTERM-028 is accepted. Its Impacts line here now says what it narrows. A driver's own pane lists its rows
+  and takes its keys even when disconnected. At a pane that is both a controller's member and a driver's own pane, keys
+  go to the driver alone, so a Janet controller's keys leave that member while the driver holds its grant.
 
 ## References
 

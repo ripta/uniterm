@@ -54,6 +54,22 @@ fixed ones.
   before they land.
 - Status: unresolved.
 
+### `TerminalLinkUITests` (both tests)
+
+- Seen: 2026-11-17, during the UTERM-015 M6 work-queue run. At 01:00, both tests failed in one run. At 01:03, a
+  three-iteration run failed 4 of 6: the relative-path test 3 of 3, and the hover test 1 of 3.
+- Evidence: "no overlay with Command held over the path" (`TerminalLinkUITests.swift:62`, then `:77`), and "the
+  message does not say why. It reads" with an empty status message (`:107`, then `:120`). The UI hierarchy showed the
+  printed path in the terminal, an empty status message, and no overlay, so no link hover reached the app.
+- Not reproduced: two later three-iteration runs with the debug `terminal-link` log streaming passed 12 of 12. The log
+  showed each relative click refused as relative and each absolute click opened. Between the failing and passing
+  runs, only the test's pointer moves and the debug logging changed.
+- Known mechanism, not proven to be this one: libghostty drops a pointer move within 1 px of its stored position, so
+  a hover that starts on the target sees no link. The test now moves across cells before it hovers. A real pointer
+  moved by a person during the run would also break the synthesized hover.
+- Status: unresolved. If it fails again, run the tests with `log stream --level debug` on the `dev.uniterm.app`
+  subsystem, and read the `pointer`, `press`, `hover`, and `click outcome` lines of the failing iteration.
+
 ### `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread`
 
 - Seen: 2026-11-14, once, in CI's package job, in the same run as the entry above.
@@ -66,6 +82,15 @@ fixed ones.
 - Seen again: 2026-11-15, twice in about five full `make test-package` runs during the UTERM-007 M5 work-queue run,
   with 54 and 58 turns. That run's only change near the search adds one completion call after it ends. It passed alone
   and with its class.
+- Seen again: 2026-11-16, in four full `make test-package` runs during the UTERM-015 M4 work-queue run, with 3 to 77
+  turns. That draft folded path names with Foundation's `String.folding(options: .caseInsensitive)` from new test
+  classes that run before `FindTests`. The test passed alone, with `TextViewerAppletTests`, and in filtered groups.
+  Skipping `ControlDispatcherPathTests` made the full suite pass. The same change with the standard library's scalar
+  case mapping in place of Foundation's folding passed the full suite. So an earlier test that warms Foundation's
+  case-insensitive tables shifts how many turns land. This supports the suspected cause below: the count measures
+  timing, not where the search runs.
+- Seen again: 2026-11-17, once, in a full `make test-package` run (2810 tests) during the UTERM-015 M6 work-queue run,
+  which touches no text-viewer code. It counted 82 turns.
 - Suspected cause: the main actor was busy for seconds at a time, likely laying out the four-million-character text,
   so few turns came while the off-main search ran. Counting turns measures time, not where the search runs.
 - Status: unresolved.
@@ -153,6 +178,10 @@ fixed ones.
 - Seen: 2026-11-15, once in a full `make test-package` run during the UTERM-007 M5 work-queue run.
 - Evidence: it timed out waiting on the channel. It passed alone and with its class, in 8.5 s, and in the next full
   runs. It launches a real perl driver, so a loaded machine slows it.
+- Seen again: 2026-11-17, once, in a local full `make test-package` run during the UTERM-015 M5 work-queue run, which
+  touches the script listener and its wire, not the exec driver. It timed out after 15.5 s "waiting until the channel
+  ends or answers both writes and the command after them". It passed alone in 0.13 s, with its class, and in the next
+  full run.
 - Status: unresolved. Not compared on the base commit.
 
 ### `WindowsUITests.testCommandWClosesOnlyTheKeyWindow`, after its fix

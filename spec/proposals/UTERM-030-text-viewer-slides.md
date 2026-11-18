@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-16
+**Updated:** 2026-11-17
 
 ## Dependencies
 
@@ -23,6 +23,8 @@
 - UTERM-006 — its remote schema follows the same rule, so a new optional argument counts as a minor bump there too.
 - UTERM-032 — "Slide images": no reply about slide content carries a landing anchor, which keeps UTERM-032's rule
   that the grant returns nothing to the script.
+- UTERM-029 — "PDF page references": amends "Slide images" and "Version skew". A slide image may name one page of a
+  PDF, drawn in the sandboxed document helper, and the schema gains a minor version for it.
 - UTERM-004 — "How the grant reaches the viewer": the applet command contract gains a capability that a command's
   schema declares, so dispatch hands an applet more than a name and arguments.
 
@@ -82,8 +84,10 @@ file's folder the user granted, under UTERM-032. The viewer reads each image und
 - A missing, refused, or out-of-scope image shows the same alt text, so the outcome tells the controller nothing about
   what exists. No reply about content sent with the slide style carries a landing anchor, since an image's size could
   change it. The viewer refuses `scroll` and `find` on that content, and any other reply about it omits its anchor.
-  Amended 2026-11-16; see Decision Log.
 - Remote, root-relative, and data-URI images stay refused, as for any Markdown the viewer shows.
+- An image may name one page of a PDF inside the granted folder, as `talk.pdf#page=3`, per UTERM-029 "PDF page
+  references". The page is drawn in the sandboxed document helper, never with PDFKit in the app, and every failure shows
+  the same alt text. Amended 2026-11-17; see Decision Log.
 - Once the grant ends, the viewer reads no further image. A slide that renders again, such as after WebKit's content
   process restarts or an undo restores it, shows alt text.
 
@@ -98,7 +102,7 @@ Decision: each milestone adds one minor version to the viewer's remote schema. M
 base folder argument is 1.2. The schema treats a new optional argument as a minor bump, like a new command. A
 controller written for a newer minor that reaches an older viewer is refused before any effect, under the schema's
 major and minor rule. An older controller reaching a newer viewer gets the document style and no images, as today.
-Amended 2026-11-16; see Decision Log.
+UTERM-029's PDF page references are 1.3. Amended 2026-11-17; see Decision Log.
 
 ### The style's wire shape
 
@@ -303,6 +307,9 @@ None.
   optional argument bumps the minor. Declined: the shared schema rule and its doc comment record it, and no
   component can break it without the dispatcher's field check refusing.
 - 2026-11-16: Accepted. The user chose it after the review gate. One minor at M2 and one release for both were weighed.
+- 2026-11-17: Amended by UTERM-029. "Slide images" gains PDF page references drawn in the sandboxed document helper.
+  "Version skew" gains schema 1.3 for them. Both decisions carried the marker "Amended 2026-11-16", which this one
+  replaces. Their earlier text stands, and the new bullet and sentence are added.
 
 ## References
 

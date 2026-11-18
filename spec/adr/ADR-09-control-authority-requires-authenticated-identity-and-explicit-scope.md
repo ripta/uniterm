@@ -1,6 +1,6 @@
 # ADR-09: Control Authority Requires Authenticated Identity and Explicit Scope
 
-**Status:** accepted
+**Status:** superseded by [ADR-14](ADR-14-a-controller-controls-what-it-opened.md)
 **Date:** 2026-11-02
 
 ## Context
