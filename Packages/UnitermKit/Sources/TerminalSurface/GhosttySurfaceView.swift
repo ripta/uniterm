@@ -35,6 +35,10 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
   private(set) var clipboardPolicy: TerminalClipboardPolicy
 
+  /// The clipboard that copies, pastes, and programs' clipboard requests use. The app passes the
+  /// system's. Tests pass a private one, so another program's copy cannot change what they see.
+  private let pasteboard: NSPasteboard
+
   /// The kinds of clipboard request the user allowed for the rest of the session, under the
   /// current policy. A new policy clears them.
   private var sessionAllowed: Set<TerminalClipboardRequest.Kind> = []
@@ -49,9 +53,12 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   private(set) var workingDirectory: String?
   private(set) var hasExited = false
 
-  init(app: ghostty_app_t, launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy) throws
-  {
+  init(
+    app: ghostty_app_t, launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy,
+    pasteboard: NSPasteboard
+  ) throws {
     self.clipboardPolicy = clipboardPolicy
+    self.pasteboard = pasteboard
     super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
     setAccessibilityIdentifier("terminal")
 
@@ -299,7 +306,7 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     guard let surface else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
 
     if pasting && request.isListingOnly {
-      complete(state, surface: surface, text: nil, available: Self.pasteboardMIMETypes())
+      complete(state, surface: surface, text: nil, available: pasteboardMIMETypes())
       return GHOSTTY_CLIPBOARD_READ_STARTED
     }
 
@@ -310,7 +317,7 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
     // An empty clipboard tells a program only that there is no text. libghostty answers it
     // without a prompt, so a Kitty read learns that much.
-    guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+    guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
       return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
     }
 
@@ -429,9 +436,9 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
   /// The clipboard's types as MIME types, for a paste event. A type with no MIME equivalent is
   /// left out.
-  private static func pasteboardMIMETypes() -> [String] {
+  private func pasteboardMIMETypes() -> [String] {
     var seen: Set<String> = []
-    return (NSPasteboard.general.types ?? []).compactMap { type in
+    return (pasteboard.types ?? []).compactMap { type in
       guard let mime = UTType(type.rawValue)?.preferredMIMEType, seen.insert(mime).inserted
       else { return nil }
 
@@ -447,7 +454,7 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     let asked = clipboardPolicy
 
     guard fromProgram, asked.controlled, !sessionAllowed.contains(.write) else {
-      Self.store(text)
+      store(text)
       return
     }
 
@@ -473,12 +480,12 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
 
     if answer == .allowForSession { sessionAllowed.insert(.write) }
 
-    Self.store(text)
+    store(text)
   }
 
-  private static func store(_ text: String) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
+  private func store(_ text: String) {
+    pasteboard.clearContents()
+    pasteboard.setString(text, forType: .string)
   }
 
   // MARK: Menu actions

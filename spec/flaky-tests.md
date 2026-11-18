@@ -88,15 +88,6 @@ fixed ones.
   confirmed.
 - Status: unresolved.
 
-### `TerminalSessionIntegrationTests.testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose`
-
-- Seen: 2026-11-15, once, in a local `make test-package` run during a work-queue run that touches no terminal code.
-- Evidence: the test asserted that the system pasteboard held `SECRET-STALE`. It held text another session had just
-  written to it. The test passed alone, and the next full run passed.
-- Suspected cause: the test reads the real, shared system pasteboard. Any other program that writes it mid-run
-  changes what the test sees. Not confirmed.
-- Status: unresolved.
-
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
 
 - Seen: 2026-11-15, in four local runs during the work-queue run that added strict and unsafe script modes. Each run
@@ -155,6 +146,20 @@ fixed ones.
   revalidates pending replies when remote control turns on. Neither was ruled out by a run on the base commit.
 
 ## Fixed
+
+### `TerminalSessionIntegrationTests.testAPendingClipboardAnswerIsStaleAfterAPolicyChangeOrAClose`
+
+Fixed by: "Give terminal sessions their clipboard, so tests use a private one"
+
+- Seen: 2026-11-15, once, in a local `make test-package` run during a work-queue run that touches no terminal code.
+- Evidence: the test asserted that the system pasteboard held `SECRET-STALE`. It held text another session had just
+  written to it. The test passed alone, and the next full run passed.
+- Cause: the terminal surface read and wrote `NSPasteboard.general`, and so did the tests. Any other program that
+  copied mid-run changed what the test saw. The product's clipboard policy was right.
+- Fix: the terminal engine takes the pasteboard its sessions use, and the app passes the system's. The integration
+  tests make their own with `NSPasteboard.withUniqueName()`, so they no longer save and restore the user's clipboard.
+  A thread that wrote the system pasteboard every 50 ms failed the old test with "a stale write landed". The fixed
+  test passed with the same thread running.
 
 ### `FindTests.testSearchingTheDecodedCapNeverBlocksTheMainThread`, now `testATextSearchNeverRunsOnTheMainActor`
 
