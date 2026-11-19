@@ -9,6 +9,8 @@ own. The two differ in what the user sees, and both are equally correct. The fix
 `MemoryClipboard`. After Allow for This Run on a driver's clipboard write, `clipboardGrants` held the write power,
 `controllers(of:)` was empty, and `canRevokeController` was false. `revokeController` then did nothing: the grant stayed
 and the attachment was not marked revoked. The test was deleted after the run.
+**Re-verified:** 2026-11-18 against the current code. `controllers(of:)`, `canRevokeController`, and `revokeController` are
+unchanged, and no proposal or ADR settles the clipboard case. UTERM-028 settles only the command grant.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-028
 
 ## Observed
