@@ -55,3 +55,9 @@ The fix needs a design call on who reads the script:
   them. The app never opens the program's path. This matches UTERM-032's input file.
 - The app keeps the open, but only after a check that the path lies in no protected location, under UTERM-015's list.
   That list is unbuilt, and it would refuse scripts kept in Documents.
+
+## Triage notes, 2026-11-19
+
+Re-checked against the current code. `ScriptFiles.snapshotFile` still passes `request.path` from the peer's `FileBegin`
+to `DeclaredFileSnapshot.create`. The cause is unchanged and still traced only. No ADR or proposal settles who reads
+the script, so the two non-trivial decisions above stay open. The estimate stands.
