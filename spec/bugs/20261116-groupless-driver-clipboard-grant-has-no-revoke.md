@@ -1,8 +1,14 @@
 # A driver that owns no group keeps its clipboard grant until its run ends
 
 **Status:** open
-**Validation:** not confirmed in the running app; traced in code. No shipped applet declares exec support, so the repro
-needs a test applet that does.
+**Estimate:** small to medium; one non-trivial design decision. Whether Revoke Controller on the driver's own pane
+covers a per-run clipboard grant, or the Pending Requests panel lists the driver's per-run grants with a Revoke of their
+own. The two differ in what the user sees, and both are equally correct. The fix would touch `MainWindowController+Control.swift`
+(`canRevokeController`, `controllers(of:)` or `revokeController`), and possibly `PendingRequestsWindowController.swift`.
+**Reproduced:** 2026-11-18, with a throwaway `WindowKitTests` case using the `ExecPaneFixture` driver and a
+`MemoryClipboard`. After Allow for This Run on a driver's clipboard write, `clipboardGrants` held the write power,
+`controllers(of:)` was empty, and `canRevokeController` was false. `revokeController` then did nothing: the grant stayed
+and the attachment was not marked revoked. The test was deleted after the run.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-028
 
 ## Observed
