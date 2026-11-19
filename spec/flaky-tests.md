@@ -222,6 +222,16 @@ fixed ones.
 - Status: unresolved. Something closed the overlay right after it opened. A lost key window would close it, which fits
   the lost-key entries above. That is not confirmed.
 
+### `StatusBarUITests.testClickingTheDismissControlClearsAnError`
+
+- Seen: 2026-11-19, once in a full `make test` run for a text viewer fix that does not touch the status bar. It was the
+  only failure of 172 UI tests.
+- Evidence: `StatusBarUITests.swift:119` failed with "the error stayed on the bar". The click on `status-dismiss` fell
+  back to the element's center point at 2.89 s, and synthesizing it took until 8.20 s. The message then stayed on the
+  bar through the whole wait. The test passed 3 of 3 alone on the same tree.
+- Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
+  `ControllerRunUITests`, and `ExecPaneUITests` entries above. Whether the click reached the control is not known.
+
 ## Fixed
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
