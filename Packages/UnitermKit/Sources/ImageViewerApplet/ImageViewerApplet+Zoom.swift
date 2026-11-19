@@ -273,6 +273,7 @@ extension ImageViewerApplet {
 
     lastGood = viewport
     refreshTiles()
+    observeRemote()
   }
 
   // MARK: Limits
@@ -280,6 +281,7 @@ extension ImageViewerApplet {
   /// The helper declined a zoom, or could not make the tiles for it. The pane goes back to the last
   /// zoom that showed tiles, and falls back to fit when that fails too.
   func zoomRefused(_ detail: String) {
+    failRemoteZoom()
     notify(.warning, "The zoom limit was reached. \(detail)", delivery: .message)
 
     let good = lastGood
@@ -297,6 +299,8 @@ extension ImageViewerApplet {
   /// The helper died while it made tiles. The pane keeps its backdrop at fit and opens the image
   /// again, since the helper's copy of it went with the process.
   func zoomEnded(_ reason: HelperEnd) {
+    failRemoteZoom()
+
     let name = "\u{201C}\(record.current ?? title)\u{201D}"
     let text: String
 

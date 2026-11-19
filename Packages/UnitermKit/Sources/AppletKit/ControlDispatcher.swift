@@ -360,7 +360,8 @@ public final class ControlDispatcher {
 
   /// The one answer for a path the caller may not read, whatever the reason. It never says whether
   /// the path exists, what it is, or whether the scope held it.
-  static let unreadable = AppletCommandError(.refused, "uniterm cannot read that path for you")
+  public static let unreadable = AppletCommandError(
+    .refused, "uniterm cannot read that path for you")
 
   private static func refusal(for error: ScopedOpenError) -> AppletCommandError {
     switch error {

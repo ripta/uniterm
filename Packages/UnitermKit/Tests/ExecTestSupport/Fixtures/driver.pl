@@ -74,6 +74,8 @@ sub serve {
         print STDERR "got $message->{type}" . (defined $message->{name} ? " $message->{name}" : "")
             . (defined $message->{error} ? " $message->{error}{code}" : "") . "\n";
         print STDERR "error message: $message->{error}{message}\n" if defined $message->{error};
+        print STDERR "event data: " . $json->encode($message->{data}) . "\n"
+            if $message->{type} eq "event";
         if ($message->{type} eq "reply" && ref $message->{result} eq "HASH"
             && exists $message->{result}{text}) {
             print STDERR "clipboard text: " . ($message->{result}{text} // "(none)") . "\n";

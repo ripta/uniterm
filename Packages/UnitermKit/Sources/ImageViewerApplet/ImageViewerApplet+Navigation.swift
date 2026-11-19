@@ -104,6 +104,7 @@ extension ImageViewerApplet {
         PaneMessage(
           text: error.localizedDescription, offersOpen: true,
           offersRetry: false))
+      failRemote(.unreadable, path: record.path)
       refresh()
       return
     }
@@ -120,6 +121,7 @@ extension ImageViewerApplet {
 
     phase = .problem(PaneMessage(text: text, offersOpen: true, offersRetry: false))
     notify(.warning, text, delivery: .historyOnly)
+    failRemote(.noImages, path: record.path)
   }
 
   /// Selects the image nearest `wanted` once the scan has ended and loads it.

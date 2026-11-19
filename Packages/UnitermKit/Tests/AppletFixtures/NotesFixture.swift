@@ -8,7 +8,7 @@ import AppletKit
     public nonisolated static let typeID = "fixture-notes"
 
     public nonisolated static let schema = AppletCommandSchema(
-      appletType: typeID, version: AppletSchemaVersion(1, 0),
+      appletType: typeID, version: AppletSchemaVersion(1, 1),
       commands: [
         AppletMessageSchema(
           name: "set-notes", summary: "Replaces the notes.",
@@ -24,11 +24,23 @@ import AppletKit
       events: [
         AppletMessageSchema(
           name: "notes-shown", summary: "The notes changed.",
-          arguments: AppletObjectSchema(["length": .init(.integer(minimum: 0, maximum: 4096))])),
+          arguments: AppletObjectSchema([
+            "length": .init(.integer(minimum: 0, maximum: 4096)),
+            "empty": .init(.boolean, required: false, since: 1),
+          ])),
         AppletMessageSchema(name: "notes-acknowledged", summary: "The user pressed Done."),
+        AppletMessageSchema(
+          name: "notes-cleared", summary: "The notes were removed. Added in minor 1.",
+          arguments: AppletObjectSchema([
+            "length": .init(.integer(minimum: 0, maximum: 4096)),
+            "previous-length": .init(
+              .integer(minimum: 0, maximum: 4096), required: false, since: 1),
+          ]),
+          since: 1),
       ])
 
     public private(set) var text = ""
+    private var previousLength = 0
 
     /// The replies still waiting for the notes to contain their text.
     private var waiters: [(contains: String, reply: PendingReply)] = []
@@ -111,6 +123,7 @@ import AppletKit
         text = value
 
       case "clear":
+        previousLength = text.utf8.count
         text = ""
 
       default:
@@ -118,7 +131,15 @@ import AppletKit
       }
 
       refresh()
-      events.emit("notes-shown", .object(["length": .number(Double(text.utf8.count))]))
+      events.emit(
+        "notes-shown",
+        .object(["length": .number(Double(text.utf8.count)), "empty": .bool(text.isEmpty)]))
+
+      if command.name == "clear" {
+        events.emit(
+          "notes-cleared",
+          .object(["length": .number(0), "previous-length": .number(Double(previousLength))]))
+      }
 
       let answer: JSONValue = .object(["length": .number(Double(text.utf8.count))])
       let ready = waiters.filter { text.contains($0.contains) }

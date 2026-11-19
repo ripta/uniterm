@@ -78,6 +78,71 @@ public enum SourceLoader {
       types: types)
   }
 
+  /// Loads a source a controller named, which the host already opened inside the controller's read
+  /// scope. The result has the same shape as a load by path, so the pane takes both the same way.
+  ///
+  /// A folder opens its members through the scope, so a member that is a link out of it is refused.
+  /// A file's folder is opened through the scope too, and a file whose folder the scope cannot
+  /// open shows alone, as a file whose folder macOS protects does.
+  @concurrent
+  public static func load(
+    opened: OpenedPath, scope: ReadScope, realPath: String, sort: ImageSort,
+    types: SupportedImageTypes
+  ) async -> Result<LoadedSource, SourceLoadFailure> {
+    loadBlocking(opened: opened, scope: scope, realPath: realPath, sort: sort, types: types)
+  }
+
+  public static func loadBlocking(
+    opened: OpenedPath, scope: ReadScope, realPath: String, sort: ImageSort,
+    types: SupportedImageTypes
+  ) -> Result<LoadedSource, SourceLoadFailure> {
+    let resolved: ResolvedSource
+
+    if case .success(let found) = SourceResolver.resolveBlocking(path: realPath, bookmark: nil) {
+      resolved = found
+    } else {
+      resolved = ResolvedSource(
+        file: URL(fileURLWithPath: realPath), bookmark: nil, movedFrom: nil)
+    }
+
+    switch opened.kind {
+    case .folder:
+      guard let folder = OpenedFolder(scoped: opened, path: realPath) else {
+        return .failure(.access(.unreadable(path: realPath, reason: "it could not be opened")))
+      }
+
+      return .success(
+        LoadedSource(
+          resolved: resolved, kind: .folder, folder: folder, folderNotListed: false, image: nil))
+
+    case .file:
+      let name = (realPath as NSString).lastPathComponent
+
+      guard types.supports(fileName: name) else { return .failure(.notAnImage(name: name)) }
+
+      let file: OpenedImageFile
+
+      switch SourceOpener.regularFile(descriptor: opened.takeDescriptor(), path: realPath) {
+      case .success(let kept): file = kept
+      case .failure(let error): return .failure(.access(error))
+      }
+
+      let parent = (realPath as NSString).deletingLastPathComponent
+
+      guard case .success(let container) = ScopedOpen.open(path: parent, in: scope),
+        let folder = OpenedFolder(scoped: container, path: parent)
+      else {
+        return .success(
+          LoadedSource(
+            resolved: resolved, kind: .file, folder: nil, folderNotListed: true, image: file))
+      }
+
+      return .success(
+        LoadedSource(
+          resolved: resolved, kind: .file, folder: folder, folderNotListed: false, image: file))
+    }
+  }
+
   /// Opens the image named `name` in `folder` off the calling thread, as a step or a prefetch
   /// does. A file deleted since the scan reports as missing.
   @concurrent

@@ -117,6 +117,12 @@ public final class OpenedPath: @unchecked Sendable, Equatable {
     openMemberNow(named: name)
   }
 
+  /// The same open as `openMember`, for a caller that already runs off the main actor, such as a
+  /// slideshow's worker. It reads the disk, so the main thread must not call it.
+  public func openMemberBlocking(named name: String) -> Result<OpenedPath, ScopedOpenError> {
+    openMemberNow(named: name)
+  }
+
   func listMembers(limit: Int = 10_000) -> [String] {
     guard case .folder = kind else { return [] }
 

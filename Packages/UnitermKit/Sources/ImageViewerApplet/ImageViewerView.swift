@@ -383,6 +383,10 @@ final class ImageViewerView: NSView {
     case fit
     case actual
     case step(zoomingIn: Bool)
+
+    /// An exact scale in points per image pixel. A scale at or below fit shows fit, and one past
+    /// the ceiling is held at it.
+    case scale(Double)
   }
 
   /// Changes the zoom. Returns false when nothing changed, as at fit when zooming out.
@@ -398,6 +402,8 @@ final class ImageViewerView: NSView {
     case .step(let zoomingIn):
       next.setScale(
         next.steppedScale(zoomingIn: zoomingIn), anchor: anchor, backing: Double(backingScale))
+    case .scale(let scale):
+      next.setScale(scale, anchor: anchor, backing: Double(backingScale))
     }
 
     guard next != before else { return false }

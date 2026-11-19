@@ -2,14 +2,15 @@
 
 **Status:** accepted
 **Created:** 2026-10-31
-**Updated:** 2026-11-09
+**Updated:** 2026-11-17
 
 ## Dependencies
 
 - UTERM-001
 - UTERM-002's command registry and UTERM-013: the viewer's zoom and navigation commands are registry entries it
   declares
-- UTERM-003 M2 and UTERM-004 M2 and M3: M4's control and exec support
+- UTERM-003 M2 and UTERM-004 M2 and M3: M4's control, and its exec zoom and events
+- A driver path-read power, which no proposal defines yet: M5's exec `show` and stepping
 - UTERM-015: app-level opening, and the path-reading power M4's `show` uses
 
 ## Impacts
@@ -165,7 +166,10 @@ power to read a path for a controller is defined once, outside this proposal.
 
 - Commands: `show` (a file or folder path), `next`, `previous`, `first`, and `last` in the order "Navigation" settles,
   and `zoom` (fit, actual, or a scale). Event: `shown`, with the path, the index, the count, and whether the count is
-  still partial while the folder lists.
+  still partial while the folder lists. A remote caller has no event channel, so it learns the same fields from the
+  reply to `wait` on a command's handle. An exec driver holds no path-reading power, so in M4 it takes `zoom` and
+  receives `shown` with no path, index, or count, only that the image is outside scope. Its `show` and stepping wait on
+  a driver path-read power in M5. Amended 2026-11-17; see Decision Log.
 - When the pane's source lies outside the controller's directory scope, whether the user opened it or a restore found
   it, `shown` carries no path, index, or count, only that the image is outside scope. `next`, `previous`, `first`, and
   `last` from that controller are refused with the scope error, since stepping would reveal what the folder holds.
@@ -570,24 +574,70 @@ None.
 
 ### M4: Control
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-- A controller or an exec driver can `show` a file or a folder, step through it, and set zoom, and receives `shown`
+- A controller can `show` a file or a folder, step through it, set zoom, and learn what is shown through `wait`. An exec
+  driver can set zoom and receives `shown`, which carries no path, index, or count
 - A path outside the controller's directory scope is refused with one error, whether it is missing, not an image, or
   denied, and the scope is checked on the opened descriptor
 - UTERM-003's send reaches the same `show` path
 - An exec driver with a different schema version is refused before any effect
-- `shown` marks its count as partial while a folder listing is still running
+- A controller's reply to `wait` marks the count as partial while a folder listing is still running
 - A relative `show` path is refused
-- A pane whose source is outside the controller's scope sends `shown` with no path, index, or count, and refuses that
-  controller's stepping commands
+- A pane whose source is outside the controller's scope answers that controller, and sends every exec driver, with no
+  path, index, or count, and refuses that controller's stepping commands
 - A driver that requires a newer schema minor is refused at the hello, before any effect
 - A new event type or a new argument value, such as a new `zoom` mode, follows the minor or major rule, and an old
   driver never receives an event it cannot ignore
-- When stepping in an in-scope folder reaches a symlink whose real path is outside the controller's scope, `shown`
-  withholds the path, index, and count for that image
+- When stepping in an in-scope folder reaches a symlink whose real path is outside the controller's scope, the reply
+  and `shown` withhold the path, index, and count for that image
 - A controller's `next`, `previous`, and `shown` never reveal a file outside its directory scope, even in a pane whose
   source was opened by the user or restored
+
+Amended 2026-11-17; see Decision Log.
+
+**As built:**
+
+- The viewer adopts the command hook at schema 1.0, and declares every control combination. Commands: `show`, `next`,
+  `previous`, `first`, `last`, `zoom`, and `wait`. Event: `shown`. Show, step, and zoom answer at once with a handle,
+  and `wait` settles with the same fields as the event, under the same redaction. Index counts from zero.
+- `show` hands the dispatcher's opened path to a variant of the one load entry point. The open panel, a drop, a restore,
+  and a script's send reach the same entry, which replaces every command still waiting on the load it replaces.
+- The best guesses are in the Decision Log, 2026-11-17, M4 work-queue best guesses. The ones that change a reader's
+  expectation: a step onto a member of a controller's folder that links outside the scope is skipped like a deleted
+  file, and its handle reads superseded. A scoped folder never follows a link while it lists.
+- An exec driver's `shown` is always the outside-scope form, since a driver holds no scope. The reads that need one are
+  M5, split out by the user's choice. See the Decision Log, 2026-11-17, first entry.
+- Event and field gating by schema minor is shared code in AppletKit. Every event and every optional event field records
+  the minor that added it. An exec channel sends a driver only what its hello's minor knows. Tests cover a driver one
+  minor behind, a driver at the current minor, and the rule alone. The earlier hello tests already refuse another major
+  and a newer minor before any effect.
+- A scope compares as written, and the pane reports real paths. A scope written through a link, such as `/tmp/x`, then
+  holds none of the paths the pane reports, so a controller with that scope is told every image is outside it. That is
+  safe and confusing. It is not fixed here. See
+  [the bug](../bugs/20261117-read-scope-compared-as-written-hides-real-paths.md).
+- The text viewer and the image viewer each carry their own handle table and waiter. A shared one would remove about a
+  hundred lines of duplicate. It was left out to keep the text viewer unchanged.
+- New UI test: `testAScriptShowsAFolderStepsAndZoomsAnImagePane`. It passed in the run, and its screenshot shows the
+  script's pane on its second image at actual size. No window-level package test drives an image pane. The window
+  code holds no branch for either viewer, so the text viewer's window tests (`TextViewerRemoteWindowTests` and
+  `PathReadWindowTests`) cover the dispatch path the two share. Only the `image-viewer` entry in the window's type
+  table, and an image pane's remote-control switch, are proved by the UI test alone.
+
+### M5: Exec driver reads
+
+**Status:** NOT STARTED
+
+Waits on a driver path-read power that no proposal defines yet. It is in `ideas.md`, and it needs a proposal and an ADR
+decision before this milestone can start.
+
+- An exec driver can `show` a file or a folder in its scope, and step through it
+- A driver's `show` path outside its scope is refused with one error, whether it is missing, not an image, or denied
+- A driver's `shown` carries the path, index, count, and partial flag when its scope holds the source and the image
+- A pane whose source is outside the driver's scope sends that driver no path, index, or count, and refuses its stepping
+  commands
+- Every file a folder source opens for a driver passes the same scope check, so a symlinked member cannot reach outside it
+- Ending or revoking the driver's grant stops its queued reads
 
 ## Decision Log
 
@@ -748,6 +798,59 @@ None.
 - 2026-11-07: (best guess) The double tap did nothing in the user's hands-on check. It now zooms to actual size around
   the pointer. When an image already shows at actual size at fit, it steps in once, as Zoom In does. A second double
   tap returns to fit.
+- 2026-11-17: Split exec reads out of M4, the user's choice in the work-queue plan. M4's first check said an exec driver
+  can `show` a path and step through it. UTERM-015's decision 8 gives an exec driver no opens, so a driver holds no
+  read scope and cannot `show`. The user chose to build full remote control in M4, with exec `zoom` and a `shown` that
+  withholds the path, index, and count, and to move the driver's `show` and stepping to a new M5 that waits on a
+  driver path-read power. Amended: the Commands bullet of "Control levels", M4's first, partial-count, outside-scope,
+  and symlink checks, and Dependencies. Added M5 with the checks that M4 no longer holds. The text said before: "A
+  controller or an exec driver can `show` a file or a folder, step through it, and set zoom, and receives `shown`".
+  The user turned down building a driver power inside this proposal, since UTERM-015 settles the power once for every
+  applet. The idea is in `ideas.md`.
+- 2026-11-17: (work-queue best guess) M4 values no document set.
+  1. A remote caller learns `shown` through `wait` on a handle, since it has no event channel. If wrong, only the
+     reply shape changes.
+  2. `zoom` takes `to` as `fit` or `actual`, or `scale` as a multiple of actual size, where 1 is actual size and
+     matches the status bar percent. A scale below fit shows fit. A scale past the 32 device-pixel ceiling is a bad
+     argument. A zoom the helper or a budget refuses fails its handle with the code `zoom-limit`.
+  3. Inside the scope, "not an image" and "no images" keep their own codes. Outside it, every failure reads as
+     `unreadable`.
+  4. A step at either end answers with the image on screen. A step while the first image has not shown is busy, with
+     the handle to wait on.
+  5. Gating events by schema minor is shared AppletKit code, since the rule is UTERM-004's for every applet.
+  6. A controller's folder opens its members through the scope, so a member that links outside it is refused when the
+     pane reaches it. The pane skips it as it skips a deleted file, and the step's handle reads superseded. Listing a
+     scoped folder never follows a link, so a link counts by its name whatever it points to. The proposal said `shown`
+     withholds that image, which holds for a folder the user opened, since the pane shows its link and the reply
+     withholds it. If wrong, a controller's folder shows the linked image to the user and withholds it from the
+     controller, at the cost of the pane reading a file outside the scope.
+  7. A reply reports the real path of the image's own descriptor, and judges both it and the source by the scope as
+     written. A scope written through a link hides every image from its own controller.
+  8. A newer show or step replaces the running one, and a newer zoom replaces the running zoom, so a pane never fills
+     with handles that cannot end. A new load replaces them all. A zoom ends when the pane holds a tile or its whole
+     window of frames, or is at fit.
+  9. A reply tells a caller about an image only when its scope holds the pane's source and the image's own real
+     path. A zoom reply carries `fit` and `scale` only then, since at fit the scale follows from the image's size. A
+     failure reads `unreadable` otherwise, and whenever the image's path is not known. A zoom to a scale past the
+     ceiling is not refused for a caller that may not see the image, since the refusal names a ceiling that follows
+     from the image's resolution. The zoom holds at the ceiling instead.
+     Before the amendment, a zoom with no image was refused for every caller, and a helper's refusal showed as
+     `zoom-limit` on the handle. Now a zoom with no image is refused only for a caller whose scope holds the
+     pane's source and the real path of the image that source opened. A pane with no file of the user's is
+     refused for every caller. Any other caller gets a handle that is already `done` with nothing else when the
+     call returns. The same holds when the pane has an image the caller may not see, so the answer and a `wait`
+     with no time do not say whether the file decodes, is still decoding, or is refused by the helper or a
+     budget. The zoom still runs when the pane can take it. The arguments are checked first, so a bad argument
+     is refused in every state. Amended 2026-11-17.
+  10. A driver's `shown` goes out when the image changes, and when the payload it would get changes. A driver's
+      payload never holds the count, so a growing listing sends it nothing. A driver that attaches gets the image on
+      screen once, when its hello is accepted. The alternative was no replay, which leaves a driver blind until the
+      next step.
+- 2026-11-17: ADR candidate (cuts across the system): a controller learns nothing about a user's file outside its
+  read scope, from any reply, event, or error, including the file's size or the cause of a failure. Undecided. Found in
+  UTERM-006 M4.
+- 2026-11-17: ADR candidate (hard to reverse): a driver never receives an event or an event field newer than the
+  schema version it named in its hello. Undecided. Found in UTERM-006 M4.
 
 ## References
 

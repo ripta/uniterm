@@ -39,9 +39,18 @@ public struct AppletObjectSchema: Sendable, Equatable {
     public let schema: AppletValueSchema
     public let isRequired: Bool
 
-    public init(_ schema: AppletValueSchema, required: Bool = true) {
+    /// The minor version that added this field. An event field newer than a driver's minor is
+    /// left out of the event the driver receives. A field added after the first minor is always
+    /// optional, since an older driver never sends or reads it.
+    public let addedInMinor: Int
+
+    public init(_ schema: AppletValueSchema, required: Bool = true, since minor: Int = 0) {
+      precondition(minor >= 0, "a field cannot be added before minor 0")
+      precondition(!(required && minor > 0), "a field added after minor 0 must be optional")
+
       self.schema = schema
       isRequired = required
+      addedInMinor = minor
     }
   }
 
@@ -66,15 +75,43 @@ public struct AppletMessageSchema: Sendable, Equatable {
   /// pending reply from any other command.
   public let mayWait: Bool
 
+  /// The minor version that added this command or event. An event newer than a driver's minor is
+  /// never sent to that driver, since the driver could not know to ignore it.
+  public let addedInMinor: Int
+
   public init(
     name: String, summary: String, arguments: AppletObjectSchema = .empty,
-    example: JSONValue = .object([:]), mayWait: Bool = false
+    example: JSONValue = .object([:]), mayWait: Bool = false, since minor: Int = 0
   ) {
+    precondition(minor >= 0, "a message cannot be added before minor 0")
+
     self.name = name
     self.summary = summary
     self.arguments = arguments
     self.example = example
     self.mayWait = mayWait
+    addedInMinor = minor
+  }
+
+  /// The event `data` as a caller written for `version` may receive it. Nil when the event came
+  /// after that version's minor, so the caller never sees a message it cannot ignore. A field that
+  /// came after it is dropped, and the rest of the event is kept.
+  ///
+  /// A caller written for another major is never sent anything, since a change of meaning is what
+  /// bumps the major.
+  public func event(
+    _ data: [String: JSONValue], deliveredTo version: AppletSchemaVersion,
+    of schema: AppletCommandSchema
+  ) -> [String: JSONValue]? {
+    guard version.major == schema.version.major, addedInMinor <= version.minor else { return nil }
+
+    var kept = data
+
+    for (name, field) in arguments.fields where field.addedInMinor > version.minor {
+      kept.removeValue(forKey: name)
+    }
+
+    return kept
   }
 }
 

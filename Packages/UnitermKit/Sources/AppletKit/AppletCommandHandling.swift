@@ -164,6 +164,11 @@ public final class AppletEventOutlet {
   private var sink: (any AppletEventSink)?
   public private(set) var isClosed = false
 
+  /// Called when a sink has finished attaching and now receives events, as when a driver's hello
+  /// is accepted. An applet that sends an event only when its state changes uses it to send the
+  /// current state to the sink that just arrived.
+  public var onAttached: (@MainActor () -> Void)?
+
   public init() {}
 
   public var isConnected: Bool { sink != nil }
@@ -179,6 +184,13 @@ public final class AppletEventOutlet {
 
     self.sink = sink
     return true
+  }
+
+  /// The connected sink says it now receives events.
+  public func sinkAttached(_ sink: any AppletEventSink) {
+    guard self.sink === sink, !isClosed else { return }
+
+    onAttached?()
   }
 
   /// Lets go of `sink` when it is the one connected.

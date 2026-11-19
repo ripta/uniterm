@@ -217,6 +217,47 @@ final class ExecDriverChannelTests: XCTestCase {
     XCTAssertEqual(channel.phase, .connected)
   }
 
+  /// Catches an event or a field that a later minor added reaching a driver written for an earlier
+  /// one, which could not know to ignore it. The pane takes 1.1. A driver at 1.0 gets `notes-shown`
+  /// without its `empty` field, and never gets `notes-cleared`. The set-notes after the clear is the
+  /// barrier, since it shows the driver kept receiving events past the dropped one.
+  func testAnEventAndAFieldANewerMinorAddedNeverReachAnOlderDriver() async throws {
+    let notes = NotesFixture()
+
+    _ = try start(
+      "script", type: NotesFixture.typeID, schema: "1.0",
+      [
+        command("set-notes", #"{"text":"abc"}"#), command("clear", "{}"),
+        command("set-notes", #"{"text":"z"}"#),
+      ], hosting: notes)
+
+    await waitUntil("the last notes show") { notes.text == "z" }
+    await waitUntil("the driver saw three notes events") {
+      historyTexts.filter { $0 == "got event notes-shown" }.count >= 3
+    }
+
+    XCTAssertFalse(historyTexts.contains("got event notes-cleared"))
+    XCTAssertTrue(historyTexts.contains(#"event data: {"length":3}"#), "\(historyTexts)")
+    XCTAssertFalse(historyTexts.contains { $0.contains("empty") })
+  }
+
+  /// Proves the gate above is not a blanket drop. A driver at 1.1 gets the later minor's event and
+  /// its field.
+  func testADriverAtTheCurrentMinorGetsTheLaterMinorsEventAndFields() async throws {
+    let notes = NotesFixture()
+
+    _ = try start(
+      "script", type: NotesFixture.typeID, schema: "1.1",
+      [command("set-notes", #"{"text":"abc"}"#), command("clear", "{}")], hosting: notes)
+
+    await waitUntil("the driver sees the cleared event") {
+      historyTexts.contains("got event notes-cleared")
+    }
+
+    XCTAssertTrue(historyTexts.contains(#"event data: {"length":0,"previous-length":3}"#))
+    XCTAssertTrue(historyTexts.contains(#"event data: {"empty":false,"length":3}"#))
+  }
+
   /// Catches a malformed line, a partial line at the end, or a line past the frame bound that
   /// leaves the channel open or that runs anything.
   func testBadFramesCloseTheChannelVisibly() async throws {

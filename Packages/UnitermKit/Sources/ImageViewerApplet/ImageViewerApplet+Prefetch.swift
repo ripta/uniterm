@@ -14,6 +14,7 @@ struct PrefetchJob {
   var source: UInt32?
   var requestID: UInt32?
   var info: SourceInfo?
+  var realPath: String?
   var phase = Phase.opening
 
   /// The user stepped to this image while it was still being prepared, so its result is shown when
@@ -63,6 +64,8 @@ extension ImageViewerApplet {
       switch result {
       case .success(let file):
         let source = self.client.open(file, role: .prefetch)
+
+        self.prefetch?.realPath = file.realPath
 
         if source == nil {
           self.prefetch = nil
@@ -197,14 +200,14 @@ extension ImageViewerApplet {
     let decoded = Shot(
       name: job.name, modified: job.modified, info: opened, image: image,
       pixels: PixelSize(width: Int(header.width), height: Int(header.height)), space: header.space,
-      bytes: pixels.count)
+      bytes: pixels.count, realPath: job.realPath)
     let entry = FitCache<Shot>.Entry(name: job.name, modified: job.modified, value: decoded)
 
     if job.promoted {
       guard reserve(pixels.count) else {
         problem(
           "There is not enough memory to show \u{201C}\(job.name)\u{201D} right now. Close an image pane and retry.",
-          offersRetry: true)
+          offersRetry: true, code: .limit)
         return
       }
 
