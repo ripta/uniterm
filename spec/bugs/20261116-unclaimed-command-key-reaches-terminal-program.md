@@ -4,7 +4,8 @@
 **Estimate:** medium; one non-trivial decision. What an unclaimed Command key is in a terminal. Dropping it removes
 Command keys from kitty-protocol programs. Forwarding it makes the comment wrong. Both are equally correct, and each
 changes what a user observes. The fix would touch `TerminalSurface/GhosttySurfaceView.swift` (`keyDown`, `keyUp`,
-`flagsChanged`, the doc comment) and a test in `TerminalSessionIntegrationTests.swift`.
+`flagsChanged`, the doc comment) and a test in `TerminalSessionIntegrationTests.swift`. Re-checked 2026-11-19 against
+the current code. The code and comment are unchanged, and UTERM-031's retraction leaves the decision open.
 **Found:** 2026-11-16, while reviewing UTERM-031
 
 ## Observed
