@@ -101,9 +101,12 @@ fixed ones.
 - Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list". The rerun passed.
 - Suspected cause: the test checks `isHittable` right after the scroll, with no wait for the list to settle. Not
   confirmed.
-- Status: fix applied by "Wait for the launcher's last entry to come into view after a scroll". Both reads after a
-  scroll now wait until the entry can take a click. No forced slow scroll reproduced the failure first, so the change
-  pins the fix but does not prove the cause. Move this entry to "Fixed" if it stays quiet.
+- Tried: "Wait for the launcher's last entry to come into view after a scroll". Both reads after a scroll now wait
+  until the entry can take a click. No forced slow scroll reproduced the failure first.
+- Seen again: 2026-11-18, in the CI `app` run of PR #69, with that wait in place. Line 199 failed with the same
+  message. The report ruled out another app holding the screen. uniterm was frontmost, and the launcher's filter box
+  held keyboard focus. The wheel event reached the app, and the list did not move.
+- Status: unresolved. The wait did not help, so a list still settling is not the cause. The cause is unknown.
 
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
 
@@ -166,6 +169,23 @@ fixed ones.
 - Status: unresolved. The app was slow before the hang, much like the `ExecPaneUITests` entry above. No crash report
   from uniterm appeared in that window.
 - Next sighting: note what ran just before it, and whether the app was slow in earlier tests of that run.
+
+### `MarkdownViewTests.testATwentyMegabyteDocumentNeverStallsTheMainThread`
+
+- Seen: 2026-11-18, once, in the CI `package` rerun of PR #68. That PR changes only the CI cache step.
+- Evidence: the longest gap between main run loop turns was 0.54 s, against the test's 0.5 s bound. The first
+  `package` run of the same head passed this test.
+- Suspected cause: a loaded runner delaying the test's 20 ms sleeps, or a real main-thread stall during the 20 MB
+  render. Not confirmed. The test does not tell the two apart.
+- Status: unresolved.
+
+### `ScriptHostAPITests.testOpenTabCarriesItsArgumentsToTheApp`
+
+- Seen: 2026-11-18, once, in a local `make ci-package` run for PR #67 while another test run loaded the machine.
+- Evidence: the test ran past its 120 s limit. A sample showed `ScriptFixtures.finish` waiting, with the listener idle
+  in its accept loop. The class then passed 5 of 5 alone at about 0.1 s per test, and the full rerun passed.
+- Suspected cause: unknown. PR #67 changed the listener, and whether that plays a part is not settled.
+- Status: unresolved.
 
 ## Fixed
 
