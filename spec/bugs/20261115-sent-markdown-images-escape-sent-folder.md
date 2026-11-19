@@ -4,6 +4,8 @@
 **Estimate:** medium; one non-trivial design decision. Every candidate fix needs the text viewer to know a file
 came from a script, and `SourceReplacing.replaceSource(with:startDirectory:)` carries no origin. The candidates
 differ in behavior a user or script can see, and they are equally correct. The decision is which rule wins.
+Re-checked against the code on 2026-11-18. `MarkdownLoading` and `ConfinedFile` are unchanged, and
+`replaceSource(with:startDirectory:)` still carries no origin.
 **Found:** 2026-11-15, by the design critic reviewing UTERM-030
 
 ## Observed
