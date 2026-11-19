@@ -354,6 +354,11 @@ None.
   working when either side is older. Each version keeps one fixed meaning, and an old version is dropped only under a
   proposal that names the direction that fails. Written as ADR-13.
 - 2026-11-16: Accepted.
+- 2026-11-18: The member half of "Members while the anchor is disconnected" landed ahead of M1, in "Let a driver whose
+  pane is disconnected keep commanding the members it owns". The user chose to fix the bug it covered now. M1's check
+  "A version-4 driver with a disconnected anchor commands its remote-controlled members" is met by it. So is the first
+  half of "A driver whose anchor is disconnected commands a remote-controlled member it owns", and its layout refusal.
+  M1 still owes the keys staying live there.
 
 ## References
 
