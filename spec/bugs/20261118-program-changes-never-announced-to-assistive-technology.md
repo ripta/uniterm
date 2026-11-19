@@ -1,6 +1,7 @@
 # A change a program makes is never announced to assistive technology, against ADR-12
 
 **Status:** open
+**Estimate:** medium; three open design decisions: what each announcement says, whether a non-key window announces, and which changes count (including a program's close).
 **Validation:** not confirmed with VoiceOver; traced in code only.
 **Found:** 2026-11-18, by the design critic reviewing the fix for a script-opened pane that took focus
 
