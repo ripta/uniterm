@@ -201,6 +201,16 @@ fixed ones.
   not touch the launch panel.
 - Status: unresolved. The change under test was not ruled out by a run on the base commit.
 
+### `CommandPaletteUITests.testAProgramTitleShowsNeutralizedAsATab`
+
+- Seen: 2026-11-18, once in a full `make test` run right after a rebase onto upstream main. It was the only failure of
+  172 UI tests.
+- Evidence: `CommandPaletteUITests.swift:290` failed with "the palette never showed". Typing Cmd-K took 20 s, from
+  3.91 s to 24.36 s. The palette did not appear in the 5 s wait after it. The test then passed 3 of 3 alone on the same
+  tree.
+- Status: unresolved. A single keystroke that takes about 20 s also shows in the `ControllerRunUITests` and
+  `ExecPaneUITests` entries above. The app may stall now and then in a long run. That is not confirmed.
+
 ## Fixed
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
