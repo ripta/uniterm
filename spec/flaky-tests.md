@@ -211,6 +211,17 @@ fixed ones.
 - Status: unresolved. A single keystroke that takes about 20 s also shows in the `ControllerRunUITests` and
   `ExecPaneUITests` entries above. The app may stall now and then in a long run. That is not confirmed.
 
+### `DockedPaletteUITests.testTheTopStripSitsInTheTitleBarRowAndTheOverlayOpensAwayFromTheEdge`
+
+- Seen: 2026-11-18, once in a full `make test` run that set the baseline for a bug sweep. It was the only failure of
+  172 UI tests.
+- Evidence: `DockedPaletteUITests.swift:135` failed with "Failed to get matching snapshot: No matches found" for
+  `command-palette-results`. In the top-docked half, Cmd-K showed the results overlay at 2.83 s. The overlay was gone
+  when the test read its frame at 3.13 s, and two retries did not find it. The test then passed 3 of 3 alone on the
+  same tree.
+- Status: unresolved. Something closed the overlay right after it opened. A lost key window would close it, which fits
+  the lost-key entries above. That is not confirmed.
+
 ## Fixed
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
