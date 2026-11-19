@@ -271,8 +271,8 @@ extension MainWindowController {
         && contains(pane: pane)
     }
 
-    let beyond: @MainActor () -> ScriptCallError? = { [weak self, weak attachment] in
-      guard let self, let attachment, drives(), attachment.owner == owner else {
+    let beyond: @MainActor () -> ScriptCallError? = { [weak attachment] in
+      guard let attachment, drives(), attachment.owner == owner else {
         return .refused("the driver no longer drives this pane")
       }
 
@@ -282,7 +282,7 @@ extension MainWindowController {
             + "new run to act beyond it.")
       }
 
-      return sourceRefusal(pane)
+      return nil
     }
 
     let channel = ExecDriverChannel(
@@ -306,7 +306,9 @@ extension MainWindowController {
           break
         }
 
-        if let refusal = beyond() { return reply(.failure(Self.driverFailure(refusal))) }
+        if let refusal = beyond() ?? driverRefusal(for: request, from: pane, as: owner) {
+          return reply(.failure(Self.driverFailure(refusal)))
+        }
 
         driverAsked(request, from: pane, as: owner, beyond: beyond, reply: reply)
       },
@@ -384,9 +386,10 @@ extension MainWindowController {
   // MARK: What a driver asks of the window
 
   /// Answers a driver's layout request or its command to another pane. `beyond` says why the run
-  /// may not act beyond its own pane now, and is asked again at every authority check. A command
-  /// reaches only a remote-controlled member of a group this run owns, and its authority is
-  /// checked again when it is delivered.
+  /// may no longer act beyond its own pane, and is asked again at every authority check. It holds
+  /// for every request. A layout also needs the driver's own pane remote-controlled. A command
+  /// needs that only while the run owns no group, and then reaches only a remote-controlled
+  /// member of a group this run owns. Its authority is checked again when it is delivered.
   private func driverAsked(
     _ request: ExecDriverChannel.HostRequest, from pane: NodeID, as owner: GroupOwner,
     beyond: @escaping @MainActor () -> ScriptCallError?, reply: @escaping ControlDispatcher.Reply
@@ -403,7 +406,9 @@ extension MainWindowController {
           let panes = try await requestLayout(
             parsed, anchor: pane, owner: owner,
             authorize: { [self] in
-              if let refusal = beyond() { throw refusal }
+              if let refusal = beyond() ?? sourceRefusal(pane, doing: "lay out other panes") {
+                throw refusal
+              }
 
               try checkPlacedPanes(of: parsed) { $0 == pane || owns($0, owner) }
             },
@@ -429,7 +434,9 @@ extension MainWindowController {
       let authority: ControlDispatcher.Authority = { [weak self] in
         guard let self else { return AppletCommandError(.refused, "uniterm is quitting") }
 
-        if let refusal = beyond() { return Self.driverFailure(refusal) }
+        if let refusal = beyond() ?? driverRefusal(for: request, from: pane, as: owner) {
+          return Self.driverFailure(refusal)
+        }
 
         guard contains(pane: member), owns(member, owner) else {
           return AppletCommandError(.notFound, "the pane is not open in that window")
@@ -590,15 +597,35 @@ extension MainWindowController {
     }
   }
 
-  /// A driver acts beyond its own pane only while the user has that pane remote-controlled.
-  private func sourceRefusal(_ pane: NodeID) -> ScriptCallError? {
+  /// Why a driver's pane keeps this request from running, once `beyond` allows it. A layout needs
+  /// the driver's own pane remote-controlled. A command rests on the groups the run owns, so it
+  /// needs that only while the run owns none.
+  private func driverRefusal(
+    for request: ExecDriverChannel.HostRequest, from pane: NodeID, as owner: GroupOwner
+  ) -> ScriptCallError? {
+    switch request {
+    case .layout:
+      return sourceRefusal(pane, doing: "lay out other panes")
+
+    case .command:
+      guard !paneArea.tree.groups.contains(where: { $0.owner == owner }) else { return nil }
+
+      return sourceRefusal(pane, doing: "command other panes")
+
+    case .clipboardRead, .clipboardWrite:
+      return nil
+    }
+  }
+
+  /// A driver lays out, or commands without a group, only while the user has its own pane
+  /// remote-controlled.
+  private func sourceRefusal(_ pane: NodeID, doing action: String) -> ScriptCallError? {
     guard contains(pane: pane) else { return .notFound("the driver's pane is closed") }
 
     guard control(of: pane).access == .remoteControlled else {
       return .refused(
-        "This driver's pane is disconnected, so it cannot lay out or command other panes. To "
-          + "allow it, choose Enable Remote Control from the pane's control badge or the File "
-          + "menu.")
+        "This driver's pane is disconnected, so it cannot \(action). To allow it, choose Enable "
+          + "Remote Control from the pane's control badge or the File menu.")
     }
 
     return nil

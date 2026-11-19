@@ -127,6 +127,11 @@ fixed ones.
 - Partial fix: "Wait for a status file's whole line before reading it". The shell's `echo ... > file` creates the file
   empty before it writes, and `waitForFile` returned whatever it read first. It now waits for the line's newline. That
   answers an empty read only. The other failures above carry other messages.
+- Seen again: 2026-11-18, `testAPlainScriptsQuestionNamesItsRun` was the only failure of 172 in a full `make test`.
+  It failed at `ControllerConsentUITests.swift:352` with "the window never showed the review. The shell wrote none".
+  The class then passed 9 of 9 alone on the same tree. That tree changed only which exec driver requests need a
+  remote-controlled pane, which this script path does not reach. The partial fix above does not cover it. The typed
+  shell line never ran, so no status file appeared.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
@@ -186,6 +191,25 @@ fixed ones.
   in its accept loop. The class then passed 5 of 5 alone at about 0.1 s per test, and the full rerun passed.
 - Suspected cause: unknown. PR #67 changed the listener, and whether that plays a part is not settled.
 - Status: unresolved.
+
+### `ExecPaneUITests.testARestoredExecPaneRunsOnlyAfterValuesAndApprovalThenDrivesTheApplet`
+
+- Seen: 2026-11-18, once, in a filtered `ExecPaneUITests` run during a bug fix that split the driver's
+  disconnected-pane refusal.
+- Evidence: it failed with "the panel did not show the launch's argv", a Pending Requests panel check. It passed when
+  rerun alone once, on the same tree. The fix changed only which driver requests need a remote-controlled pane. It did
+  not touch the launch panel.
+- Status: unresolved. The change under test was not ruled out by a run on the base commit.
+
+### `CommandPaletteUITests.testAProgramTitleShowsNeutralizedAsATab`
+
+- Seen: 2026-11-18, once in a full `make test` run right after a rebase onto upstream main. It was the only failure of
+  172 UI tests.
+- Evidence: `CommandPaletteUITests.swift:290` failed with "the palette never showed". Typing Cmd-K took 20 s, from
+  3.91 s to 24.36 s. The palette did not appear in the 5 s wait after it. The test then passed 3 of 3 alone on the same
+  tree.
+- Status: unresolved. A single keystroke that takes about 20 s also shows in the `ControllerRunUITests` and
+  `ExecPaneUITests` entries above. The app may stall now and then in a long run. That is not confirmed.
 
 ## Fixed
 

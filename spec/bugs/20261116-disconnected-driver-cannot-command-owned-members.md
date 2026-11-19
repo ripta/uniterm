@@ -1,15 +1,10 @@
 # A driver whose pane is disconnected cannot command the members it owns
 
-**Status:** open
-**Estimate:** small; one open design decision, whether to fix it now or with UTERM-028 M1. The Fix section below
-says to land it only with that milestone. A 2026-11-18 design critic found no technical coupling to M1, so the
-question is scheduling. Fixing it now also owes a note in M1, whose checks would already be met. UTERM-028 "Members
-while the anchor is disconnected" settled the authority call. A driver whose pane is disconnected and that owns no
-group keeps the enable-remote-control refusal, as `requireSomeAuthority` does for scripts. The refusal text and three
-doc comments become layout-only. The fix is in `MainWindowController+Exec.swift`: split `beyond` so the ownership and revoke checks apply to every
-request, and `sourceRefusal` applies to layouts only. The command authority at line 432 uses the first part alone. It
-needs one regression test in `ExecLayoutTests.swift`, beside `testADriverInADisconnectedPaneCannotLayOut`. The suite
-already has a driver fixture, so no new test applet is needed.
+**Status:** fixed 2026-11-18
+**Fixed:** 2026-11-18
+**Estimate:** small; no open design decisions. UTERM-028 "Members while the anchor is disconnected" settled the
+authority call, and the fix did not wait for that milestone. A driver whose pane is disconnected and that owns no group
+keeps the enable-remote-control refusal, as `requireSomeAuthority` does for scripts.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-028
 
 ## Observed
@@ -44,6 +39,18 @@ remote-controlled member, then disconnect the driver's pane and have it send a c
 
 Accepted UTERM-028 "Members while the anchor is disconnected" settles the design call. Apply `sourceRefusal` to
 layouts only, and let a member command rest on group ownership and the member's own mode, at every protocol version.
-UTERM-004 "Layout requests" keeps the remote-controlled anchor for layouts. The change lands with UTERM-028 M1, whose
-check "A version-4 driver with a disconnected anchor commands its remote-controlled members" covers it. Do not fix it
-apart from that milestone.
+UTERM-004 "Layout requests" keeps the remote-controlled anchor for layouts. The fix was first held for UTERM-028 M1,
+whose check "A version-4 driver with a disconnected anchor commands its remote-controlled members" covers it. On
+2026-11-18 the user chose to land it ahead of that milestone.
+
+## Fix note
+
+`MainWindowController+Exec.swift` now splits the old `beyond` check. The driver, owner, and revoke refusals apply to
+every request. The disconnected-pane refusal applies to layouts, and to commands only while the run owns no group. A
+disconnected driver keeps commanding the remote-controlled members it owns. A disconnected driver with no group, and a
+disconnected anchor's layout, still get the enable-remote-control refusal, now worded for the request kind. A revoke
+still ends member commands.
+
+Regression test: `ExecLayoutTests.testADisconnectedDriverStillCommandsTheMembersItOwns`, which failed on the unfixed
+code with the disconnect refusal. `testADisconnectedDriverWithNoGroupIsToldToEnableRemoteControl` and
+`testAMalformedLayoutFromADisconnectedPaneIsRefusedForTheDisconnect` pin the refusals that stay.
