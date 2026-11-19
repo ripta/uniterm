@@ -42,6 +42,34 @@ enum PDFLoading {
 
     if document.isLocked { return .failure(.locked) }
 
+    lockFormFields(in: document)
+
     return .success(LoadedPDF(document: document))
+  }
+
+  /// The viewer shows documents and does not edit them, so every form widget refuses input. Push
+  /// buttons stay unlocked. They take no typed text, and their go-to actions work today. Locking
+  /// everything else by default also covers signature widgets and types PDFKit adds later.
+  private static func lockFormFields(in document: PDFDocument) {
+    for index in 0..<document.pageCount {
+      guard let page = document.page(at: index) else { continue }
+
+      for annotation in page.annotations where annotation.isWidget {
+        if annotation.widgetFieldType == .button, annotation.widgetControlType == .pushButtonControl
+        {
+          continue
+        }
+
+        annotation.isReadOnly = true
+      }
+    }
+  }
+}
+
+extension PDFAnnotation {
+  /// PDFKit reports the subtype of a widget as `Widget`, while `PDFAnnotationSubtype.widget` is
+  /// spelled with the leading slash of a PDF name.
+  fileprivate var isWidget: Bool {
+    type.map { "/" + $0 } == PDFAnnotationSubtype.widget.rawValue
   }
 }
