@@ -106,6 +106,8 @@ fixed ones.
 - Seen again: 2026-11-18, in the CI `app` run of PR #69, with that wait in place. Line 199 failed with the same
   message. The report ruled out another app holding the screen. uniterm was frontmost, and the launcher's filter box
   held keyboard focus. The wheel event reached the app, and the list did not move.
+- Seen again: 2026-11-19, in the first CI `app` run of PR #74, which does not touch the launcher. Line 199 failed with
+  the same message, with uniterm frontmost and the filter box focused. The rerun passed.
 - Status: unresolved. The wait did not help, so a list still settling is not the cause. The cause is unknown.
 
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
@@ -231,6 +233,16 @@ fixed ones.
   bar through the whole wait. The test passed 3 of 3 alone on the same tree.
 - Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
   `ControllerRunUITests`, and `ExecPaneUITests` entries above. Whether the click reached the control is not known.
+
+### `ScriptRunCommandTests.testSubprocessAndNetworkAreDeniedByDefaultAndGrantedByTheirNames`
+
+- Seen: 2026-11-19, once, in the first CI `package` run of PR #74, which changes only the exec driver's member commands.
+- Evidence: `ScriptRunCommandTests.swift:176` failed with "XCTAssertEqual failed: ("13") is not equal to ("0")". The
+  `denied-subprocess` script, run with the `subprocess` grant, exited 13 with empty standard error. The same test
+  passed in `make ci-package` locally on that tree, in CI on PRs #72 and #73, and in the rerun of the failed job.
+- Suspected cause: 13 is SIGPIPE's number. The script or its `/usr/bin/true` child may write to a pipe that already
+  closed. Not confirmed.
+- Status: unresolved.
 
 ## Fixed
 
