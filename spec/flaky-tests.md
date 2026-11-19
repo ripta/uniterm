@@ -187,6 +187,15 @@ fixed ones.
 - Suspected cause: unknown. PR #67 changed the listener, and whether that plays a part is not settled.
 - Status: unresolved.
 
+### `ExecPaneUITests.testARestoredExecPaneRunsOnlyAfterValuesAndApprovalThenDrivesTheApplet`
+
+- Seen: 2026-11-18, once, in a filtered `ExecPaneUITests` run during a bug fix that split the driver's
+  disconnected-pane refusal.
+- Evidence: it failed with "the panel did not show the launch's argv", a Pending Requests panel check. It passed when
+  rerun alone once, on the same tree. The fix changed only which driver requests need a remote-controlled pane. It did
+  not touch the launch panel.
+- Status: unresolved. The change under test was not ruled out by a run on the base commit.
+
 ## Fixed
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
