@@ -127,6 +127,11 @@ fixed ones.
 - Partial fix: "Wait for a status file's whole line before reading it". The shell's `echo ... > file` creates the file
   empty before it writes, and `waitForFile` returned whatever it read first. It now waits for the line's newline. That
   answers an empty read only. The other failures above carry other messages.
+- Seen again: 2026-11-18, `testAPlainScriptsQuestionNamesItsRun` was the only failure of 172 in a full `make test`.
+  It failed at `ControllerConsentUITests.swift:352` with "the window never showed the review. The shell wrote none".
+  The class then passed 9 of 9 alone on the same tree. That tree changed only which exec driver requests need a
+  remote-controlled pane, which this script path does not reach. The partial fix above does not cover it. The typed
+  shell line never ran, so no status file appeared.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
