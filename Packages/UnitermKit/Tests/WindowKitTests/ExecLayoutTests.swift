@@ -107,9 +107,8 @@ final class ExecLayoutTests: XCTestCase {
     XCTAssertEqual(controller.paneIDs.count, 3)
   }
 
-  /// Catches a driver that lays out from a pane the user has not enabled, or that commands a pane
-  /// it does not own. The driver's own pane is disconnected, so the layout is refused, and the
-  /// tree is as it was.
+  /// Catches a driver that lays out from a pane the user has not enabled. The driver's own pane is
+  /// disconnected, so the layout is refused, and the tree is as it was.
   func testADriverInADisconnectedPaneCannotLayOut() async throws {
     let fixture = try makeFixture()
     let controller = try fixture.openWindow()
@@ -123,6 +122,80 @@ final class ExecLayoutTests: XCTestCase {
 
     XCTAssertEqual(controller.paneIDs, [pane])
     XCTAssertTrue(controller.paneArea.tree.groups.isEmpty)
+  }
+
+  /// Catches a disconnected anchor whose malformed layout is answered as a bad argument. The
+  /// refusal to enable remote control comes before the layout is parsed.
+  func testAMalformedLayoutFromADisconnectedPaneIsRefusedForTheDisconnect() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let pane = controller.focusedPane
+
+    try controller.declareExecDriver(
+      fixture.declaration("script", [#"{"type":"layout","layout":{"bogus":1}}"#]), for: pane)
+    controller.runExecDriver(pane)
+
+    let authority = fixture.windows.launchAuthority
+
+    authority.decide(try XCTUnwrap(authority.requests.first?.id), .allowOnce)
+
+    await waitUntil("the driver hears the refusal") {
+      history(controller).contains {
+        $0.contains("error message:") && $0.contains("disconnected")
+          && $0.contains("Enable Remote Control")
+      }
+    }
+  }
+
+  /// Catches a disconnected driver that owns no group and is answered as if the pane were missing.
+  /// It still hears that the user must enable remote control.
+  func testADisconnectedDriverWithNoGroupIsToldToEnableRemoteControl() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let pane = controller.focusedPane
+    let command =
+      #"{"type":"command","pane":\#(pane.rawValue),"applet":"fixture-notes","schema":[1,0],"#
+      + #""name":"clear"}"#
+
+    try controller.declareExecDriver(fixture.declaration("script", [command]), for: pane)
+    controller.runExecDriver(pane)
+
+    let authority = fixture.windows.launchAuthority
+
+    authority.decide(try XCTUnwrap(authority.requests.first?.id), .allowOnce)
+
+    await waitUntil("the driver hears the refusal") {
+      history(controller).contains {
+        $0.contains("error message:") && $0.contains("disconnected")
+          && $0.contains("Enable Remote Control")
+      }
+    }
+  }
+
+  /// Catches a driver that loses the members it owns when the user disconnects its own pane. The
+  /// group stays the run's, so a later command from the driver still reaches a remote-controlled
+  /// member.
+  func testADisconnectedDriverStillCommandsTheMembersItOwns() async throws {
+    let fixture = try makeFixture()
+    let controller = try fixture.openWindow()
+    let later =
+      #"{"leaf":1,"later":true,"applet":"fixture-notes","schema":[1,0],"name":"set-notes","#
+      + #""arguments":{"text":"after"}}"#
+
+    let (pane, members) = try await presented(fixture, controller, later: [later])
+    let notes = try XCTUnwrap(controller.paneArea.applet(for: members[0]) as? NotesFixture)
+    let slides = try XCTUnwrap(fixture.slides(controller, pane))
+
+    await waitUntil("the driver commands its members") { notes.text == "Hi" }
+
+    controller.disconnect(pane)
+
+    slides.button.performClick(nil)
+
+    await waitUntil(
+      "the disconnected driver commands its member",
+      detail: { history(controller).joined(separator: "\n") },
+      { notes.text == "after" })
   }
 
   /// Catches a revoke that leaves a driver its group, or a driver command that reaches a pane
