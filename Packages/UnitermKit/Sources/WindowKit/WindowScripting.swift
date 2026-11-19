@@ -265,7 +265,7 @@ public final class WindowScripting: ScriptWindowAPI {
 
     do {
       try target.replaceSource(
-        with: file, startDirectory: applet.currentDirectory ?? NSHomeDirectory())
+        withSent: file, startDirectory: applet.currentDirectory ?? NSHomeDirectory())
     } catch {
       throw ScriptCallError.failed(
         "the pane could not open the content: \(error.localizedDescription)")

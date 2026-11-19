@@ -264,6 +264,78 @@ final class MarkdownAppletTests: XCTestCase {
     XCTAssertNil(applet.content.markdownView)
   }
 
+  /// Catches Markdown a script sent that reads an image above its sent folder. A script sends bytes
+  /// and a name, never a path, so its Markdown must not name files outside what it sent. The same
+  /// note opened as the user's own file still loads the image, which shows the path is a real one.
+  /// It cannot prove that no other path reaches a file, only that `..` does not.
+  func testSentMarkdownLoadsNoImageAboveItsFolderAndTheUsersOwnFileDoes() async throws {
+    let scratch = try Scratch(self)
+    let deep = scratch.url.appendingPathComponent("a/b/c", isDirectory: true)
+
+    try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+    try Pixels.png(width: 5).write(to: scratch.url.appendingPathComponent("secret.png"))
+
+    let note = deep.appendingPathComponent("note.md")
+
+    try Data("![x](../../../secret.png)\n".utf8).write(to: note)
+
+    func source(_ applet: TextViewerApplet) async -> (loaded: Bool, hasSource: Bool?) {
+      guard let view = applet.content.markdownView else { return (false, nil) }
+
+      let sourceScript =
+        "const i = document.querySelector('img[alt=x]'); return i ? (i.hasAttribute('src') ? 1 : 0) : -1"
+      let widthScript =
+        "const i = document.querySelector('img[alt=x]'); return i && i.complete ? i.naturalWidth : 0"
+      let deadline = ContinuousClock.now + .seconds(10)
+      var hasSource: Bool?
+
+      while ContinuousClock.now < deadline {
+        let state = await view.run(sourceScript) as? NSNumber
+
+        if let state, state.intValue >= 0 {
+          hasSource = state.intValue == 1
+          break
+        }
+
+        try? await Task.sleep(for: .milliseconds(50))
+      }
+
+      let width = await view.run(widthScript) as? NSNumber
+
+      return ((width?.intValue ?? 0) > 0, hasSource)
+    }
+
+    let own = Harness.applet(startDirectory: scratch.url.path)
+
+    host(own)
+    try own.replaceSource(with: note, startDirectory: scratch.url.path)
+
+    let ownRendered = await rendered(own)
+    XCTAssertTrue(ownRendered)
+
+    var ownSource = await source(own)
+
+    for _ in 0..<100 where !ownSource.loaded {
+      try await Task.sleep(for: .milliseconds(50))
+      ownSource = await source(own)
+    }
+
+    XCTAssertTrue(ownSource.loaded, "the user's own note loads the image above it")
+
+    let sent = Harness.applet(startDirectory: scratch.url.path)
+
+    host(sent)
+    try sent.replaceSource(withSent: note, startDirectory: scratch.url.path)
+
+    let sentRendered = await rendered(sent)
+    XCTAssertTrue(sentRendered)
+
+    let sentSource = await source(sent)
+
+    XCTAssertEqual(sentSource.hasSource, false, "a sent note's image keeps no source")
+    XCTAssertFalse(sentSource.loaded, "a sent note loads no image above its folder")
+  }
+
   /// Catches a closed pane that keeps its web view alive.
   func testClosingThePaneEndsThePage() async throws {
     let scratch = try Scratch(self)
