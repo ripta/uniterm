@@ -136,7 +136,17 @@ public final class ScriptHost {
   let controllerSettings: ControllerSettings?
 
   /// The admitted controller runs, by the connection each is bound to.
-  var controllerRuns: [UInt64: ControllerRun] = [:]
+  var controllerRuns: [UInt64: ControllerRun] = [:] {
+    didSet { refreshReadResolutions() }
+  }
+
+  /// The read-scope directories of the live runs with their links resolved, by the directory as
+  /// written. Resolving reads the disk, so it happens off the main actor whenever a run gains a
+  /// directory. A directory with no link in it, or none on disk, maps to itself.
+  var resolvedReadDirectories: [String: String] = [:]
+
+  /// The directories being resolved, so one change does not start the same work twice.
+  var resolvingReadDirectories: Set<String> = []
 
   /// The snapshot of each Janet run, by connection. It outlives the run's authority, which a revoke
   /// ends, and goes when the connection closes, since the helper may still load from it until then.

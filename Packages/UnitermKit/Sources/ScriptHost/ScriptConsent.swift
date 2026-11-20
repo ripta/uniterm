@@ -443,7 +443,37 @@ extension ScriptHost {
     }
 
     return ReadAccess(
-      scope: scope, controllerSentRoot: sent, isDeclaredButNotGranted: scope == nil && declared)
+      scope: scope, controllerSentRoot: sent, isDeclaredButNotGranted: scope == nil && declared,
+      resolvedDirectories: resolvedReadDirectories)
+  }
+
+  /// Resolves the links in every read-scope directory a live run holds, off the main actor, and
+  /// drops the resolutions no run needs. A reply that comes before the answer arrives compares the
+  /// directories as written, which hides paths and never shows extra ones.
+  func refreshReadResolutions() {
+    let wanted = Set(
+      controllerRuns.values.flatMap { Self.readScope(of: $0.standing)?.directories ?? [] })
+
+    resolvedReadDirectories = resolvedReadDirectories.filter { wanted.contains($0.key) }
+    resolvingReadDirectories.formIntersection(wanted)
+
+    let missing = wanted.subtracting(resolvedReadDirectories.keys)
+      .subtracting(resolvingReadDirectories)
+
+    guard !missing.isEmpty else { return }
+
+    resolvingReadDirectories.formUnion(missing)
+
+    Task { [weak self] in
+      let resolved = await Task.detached { ReadScope.resolve(missing) }.value
+
+      guard let self else { return }
+
+      for directory in missing where self.resolvingReadDirectories.contains(directory) {
+        self.resolvedReadDirectories[directory] = resolved[directory] ?? directory
+        self.resolvingReadDirectories.remove(directory)
+      }
+    }
   }
 
   /// The directories every path-reading power in `standing` covers together, or nil when none
