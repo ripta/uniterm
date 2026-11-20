@@ -1,13 +1,14 @@
-# The text viewer's PDF body likely lets the user type into form fields
+# The text viewer's PDF body lets the user type into form fields
 
-**Status:** open
-**Estimate:** small; one open design decision, which widgets to lock. Setting `isReadOnly` wins over stopping the
-field editor because it is the only fix a test proved. The PDF spec says a read-only field's widgets ignore clicks,
-so locking every widget may also stop push buttons that jump to a page. Those work today. The options are to lock
-only widgets that hold a value (text, choice, checkbox, radio), or to lock every widget. A 2026-11-18 design critic
-raised this and could not confirm PDFKit's behavior. Test push buttons first. The regression test should cover a text
-widget, a checkbox, and a choice widget. Walk the annotations in `PDFLoading.document(from:)`, which runs off the main
-thread, not in `show(pdf:)`.
+**Status:** fixed 2026-11-18
+**Fixed:** 2026-11-18
+**Estimate:** small; no open design decisions. Re-verified 2026-11-18: `PDFLoading.document(from:)` and `show(pdf:)` still
+do no annotation handling, and the build passes. Setting `isReadOnly` wins over stopping the field editor because it is
+the only fix a test proved. Lock only the widgets that hold a value: text, choice, checkbox, and radio. Leave push
+buttons alone. They take no typed text, so locking them would only risk the page-jump actions that work today. The PDF
+spec says a read-only field's widgets ignore clicks, and PDFKit's behavior there is unconfirmed. Walk the annotations in
+`PDFLoading.document(from:)`, which runs off the main thread, not in `show(pdf:)`. The regression test should cover a
+text widget, a checkbox, and a choice widget, and a push button that stays unlocked.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-024
 
 ## Observed
@@ -38,3 +39,11 @@ Open a PDF with a fillable text field in a text viewer pane. Click the field and
 
 It reproduces. Make widget annotations read-only when a document loads, or stop the view from starting a field
 editor. Write the failing test first, with a synthetic form PDF.
+
+## Fix note
+
+`PDFLoading.document(from:)` now sets `isReadOnly` on every widget annotation except push buttons, before the
+document is handed over. The text field takes no typed text, and a checkbox does not toggle on click. A choice widget is
+locked by the same flag, but a test cannot drive its menu, so only the flag is checked. Files changed:
+`Packages/UnitermKit/Sources/TextViewerApplet/PDFLoading.swift`. The regression tests are in
+`Packages/UnitermKit/Tests/TextViewerAppletTests/PDFFormFieldTests.swift`.
