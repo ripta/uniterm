@@ -6,14 +6,13 @@
 ## Context
 
 Programs change what uniterm shows. A script opens a pane, applies a layout, or asks the user a form. A permission
-question waits in Pending Requests. A run ends, and the pane or tab it owned closes. None of these changes is one the
-user chose at that moment.
+question waits in Pending Requests. None of these changes is one the user chose at that moment.
 
 The user's keystrokes are already in flight when such a change lands. Someone may be typing a `sudo` password in one
 pane while a background script's form appears beside it. Someone may be filling one script's form when that script
 ends and another script's form would take its place. Wherever the keyboard lands after the change, the next characters
 and the next Return go there. A Return can confirm a question the user never read. Text can reach a program it was
-not meant for. Typed text can run as a shell command in a terminal the keyboard fell back to.
+not meant for.
 
 Guarding only some keys does not close this. Each patch to which keys arm a surface left a neighboring key open.
 
@@ -27,7 +26,6 @@ A change the user did not choose never moves keyboard focus, and never puts live
   activates a default, never counts as that choice.
 - An unchosen change never shows one program's input surface in place of another's. The user picks it. Only input
   that cannot continue work on the previous surface counts as choosing a different program's surface.
-- When an unchosen close would move focus, the keyboard does not fall to a neighbor.
 
 ## Rationale
 
@@ -40,8 +38,7 @@ small next to a confirmation given by accident or a password typed into a script
 
 - A program can never rely on the keyboard answering it at once. A script that asks a question waits for the user to
   choose it.
-- Every surface a program can open or change needs an inert state and a defined arming input. Every close path needs
-  to say where focus goes.
+- Every surface a program can open or change needs an inert state and a defined arming input.
 - A multi-step flow can stay fast within one requester when the user resolved the previous step. The new content
   still ignores input from before it appeared.
 - Announcing a change to assistive technology replaces moving focus to it. That keeps an unchosen change visible to
