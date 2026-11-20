@@ -15,6 +15,12 @@ import UniformTypeIdentifiers
 public protocol SourceReplacing: Applet {
   func replaceSource(with file: URL, startDirectory: String) throws
 
+  /// Shows a file that a script sent, in place of what the pane shows. The file lives in uniterm's
+  /// own folder for sent content, and the script chose its bytes and its name, never its place.
+  /// An applet whose source can name other files must not let this one reach them. By default a
+  /// sent file opens like any other.
+  func replaceSource(withSent file: URL, startDirectory: String) throws
+
   /// The file types the pane's open panel accepts, or nil for any file. Folders are always
   /// choosable.
   var openPanelContentTypes: [UTType]? { get }
@@ -22,6 +28,10 @@ public protocol SourceReplacing: Applet {
 
 extension SourceReplacing {
   public var openPanelContentTypes: [UTType]? { nil }
+
+  public func replaceSource(withSent file: URL, startDirectory: String) throws {
+    try replaceSource(with: file, startDirectory: startDirectory)
+  }
 }
 
 extension AppletCommand {

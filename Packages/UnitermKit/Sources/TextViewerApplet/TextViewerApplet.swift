@@ -70,6 +70,10 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   private var posted = AppletNotices()
   private var alerts = AppletAlerts()
   private var loadOrigin = LoadOrigin.user
+
+  /// True while the pane shows a file a program sent. A pane shows one source at a time, and a
+  /// user's open, a drop, or inline content replaces this one.
+  private var sentByProgram = false
   private var restoreWaitsForStart: Bool
   private var describesFromRecord: Bool
 
@@ -270,6 +274,19 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   /// Shows `file` in place of what the pane shows. The load before it stops. Nothing here touches
   /// the disk, so a missing or unreadable file shows its message in the pane.
   public func replaceSource(with file: URL, startDirectory: String) throws {
+    replace(with: file, startDirectory: startDirectory, sentByProgram: false)
+  }
+
+  /// Shows a file a program sent. Its Markdown images resolve against no folder, as inline
+  /// Markdown does. The flag stays until the pane takes another source, so a reload of the file
+  /// keeps it.
+  public func replaceSource(withSent file: URL, startDirectory: String) throws {
+    replace(with: file, startDirectory: startDirectory, sentByProgram: true)
+  }
+
+  private func replace(with file: URL, startDirectory: String, sentByProgram: Bool) {
+    self.sentByProgram = sentByProgram
+
     record = TextViewerDescription(
       startDirectory: startDirectory, path: file.path, sidebarShown: record.sidebarShown)
     describesFromRecord = false
@@ -358,6 +375,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     keepsRender = false
     restoreWaitsForStart = false
     restoredInline = nil
+    sentByProgram = false
     describesFromRecord = anchor != nil
     record.path = nil
     record.bookmark = nil
@@ -646,7 +664,8 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   private func loadMarkdown(file: URL, anchor: TextViewerAnchor?, generation: Int) async {
     let name = file.lastPathComponent
     let limits = settings.limits
-    let result = await MarkdownLoading.load(path: file.path, limit: limits.maxMarkdownBytes)
+    let result = await MarkdownLoading.load(
+      path: file.path, limit: limits.maxMarkdownBytes, sentByProgram: sentByProgram)
 
     guard generation == openGeneration, !closed else { return }
 

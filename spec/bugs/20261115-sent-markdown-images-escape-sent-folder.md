@@ -1,9 +1,12 @@
 # Images in Markdown a script sends resolve anywhere on the volume
 
-**Status:** open, reproduced 2026-11-18
+**Status:** fixed 2026-11-19
+**Fixed:** 2026-11-19
 **Estimate:** medium; one non-trivial design decision. Every candidate fix needs the text viewer to know a file
 came from a script, and `SourceReplacing.replaceSource(with:startDirectory:)` carries no origin. The candidates
 differ in behavior a user or script can see, and they are equally correct. The decision is which rule wins.
+Re-checked against the code on 2026-11-18. `MarkdownLoading` and `ConfinedFile` are unchanged, and
+`replaceSource(with:startDirectory:)` still carries no origin.
 **Found:** 2026-11-15, by the design critic reviewing UTERM-030
 
 ## Observed
@@ -58,3 +61,18 @@ This needs a design call. The candidates:
 
 UTERM-030 "Slide images" designs scoped image loading for controllers. It should use whichever rule
 this settles.
+
+## Fix note
+
+Markdown a script sends through `uniterm/send` now opens with no image folder, as inline Markdown does. A sent
+note's images keep no source, so the page shows their alt text. A note the user opens still resolves relative images,
+including ones above it. `SourceReplacing` gained `replaceSource(withSent:startDirectory:)`, which opens a file like
+any other unless the applet overrides it. `WindowScripting.send` calls it, and the text viewer overrides it.
+
+The rule that settled the fix was the first candidate above. UTERM-030 "Slide images" should reuse it for sent decks.
+
+Files changed: `Packages/UnitermKit/Sources/AppletKit/SourceReplacing.swift`,
+`Packages/UnitermKit/Sources/TextViewerApplet/MarkdownLoading.swift`,
+`Packages/UnitermKit/Sources/TextViewerApplet/TextViewerApplet.swift`, and
+`Packages/UnitermKit/Sources/WindowKit/WindowScripting.swift`. The regression test is
+`MarkdownAppletTests.testSentMarkdownLoadsNoImageAboveItsFolderAndTheUsersOwnFileDoes`.
