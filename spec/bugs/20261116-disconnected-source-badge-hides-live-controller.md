@@ -46,3 +46,7 @@ so the live app builds such a mark. The running app was not driven. The throwawa
 
 Files the fix would touch: `Packages/UnitermKit/Sources/WindowKit/PaneFrameView.swift` and a test in
 `Packages/UnitermKit/Tests/WindowKitTests`.
+
+2026-11-18, second pass: re-read `isShown` and `controlMark(for:)` against the current tree. Neither changed, and the
+mark-level result above still holds. The estimate stands. The default-state call stays open in this file, so the bug
+needs a design answer before a fix.

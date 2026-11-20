@@ -59,3 +59,8 @@ calls `paneArea.focus(next, keyboard: !isPaletteVisible)`, as the Cause section 
 
 The fix is small in code, but the design call above is not settled. Which responder holds the keyboard after the focus
 mark moves, how an `exit` is told apart from an unchosen end, and the cross-window case are each open.
+
+Re-verified 2026-11-18 against the current code. The line numbers in Cause have drifted. `appletDidExit` is now at
+`MainWindowController.swift:1432`, `closePane` at `:965`, and the two `paneArea.focus(next, keyboard: !isPaletteVisible)`
+calls at `:1102` and `:1121`. The behavior is unchanged. The estimate stands, and the open decisions above keep this
+bug out of the fix-candidate class.

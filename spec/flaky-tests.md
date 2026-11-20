@@ -106,6 +106,8 @@ fixed ones.
 - Seen again: 2026-11-18, in the CI `app` run of PR #69, with that wait in place. Line 199 failed with the same
   message. The report ruled out another app holding the screen. uniterm was frontmost, and the launcher's filter box
   held keyboard focus. The wheel event reached the app, and the list did not move.
+- Seen again: 2026-11-19, in the first CI `app` run of PR #74, which does not touch the launcher. Line 199 failed with
+  the same message, with uniterm frontmost and the filter box focused. The rerun passed.
 - Status: unresolved. The wait did not help, so a list still settling is not the cause. The cause is unknown.
 
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
@@ -210,6 +212,37 @@ fixed ones.
   tree.
 - Status: unresolved. A single keystroke that takes about 20 s also shows in the `ControllerRunUITests` and
   `ExecPaneUITests` entries above. The app may stall now and then in a long run. That is not confirmed.
+
+### `DockedPaletteUITests.testTheTopStripSitsInTheTitleBarRowAndTheOverlayOpensAwayFromTheEdge`
+
+- Seen: 2026-11-18, once in a full `make test` run that set the baseline for a bug sweep. It was the only failure of
+  172 UI tests.
+- Evidence: `DockedPaletteUITests.swift:135` failed with "Failed to get matching snapshot: No matches found" for
+  `command-palette-results`. In the top-docked half, Cmd-K showed the results overlay at 2.83 s. The overlay was gone
+  when the test read its frame at 3.13 s, and two retries did not find it. The test then passed 3 of 3 alone on the
+  same tree.
+- Status: unresolved. Something closed the overlay right after it opened. A lost key window would close it, which fits
+  the lost-key entries above. That is not confirmed.
+
+### `StatusBarUITests.testClickingTheDismissControlClearsAnError`
+
+- Seen: 2026-11-19, once in a full `make test` run for a text viewer fix that does not touch the status bar. It was the
+  only failure of 172 UI tests.
+- Evidence: `StatusBarUITests.swift:119` failed with "the error stayed on the bar". The click on `status-dismiss` fell
+  back to the element's center point at 2.89 s, and synthesizing it took until 8.20 s. The message then stayed on the
+  bar through the whole wait. The test passed 3 of 3 alone on the same tree.
+- Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
+  `ControllerRunUITests`, and `ExecPaneUITests` entries above. Whether the click reached the control is not known.
+
+### `ScriptRunCommandTests.testSubprocessAndNetworkAreDeniedByDefaultAndGrantedByTheirNames`
+
+- Seen: 2026-11-19, once, in the first CI `package` run of PR #74, which changes only the exec driver's member commands.
+- Evidence: `ScriptRunCommandTests.swift:176` failed with "XCTAssertEqual failed: ("13") is not equal to ("0")". The
+  `denied-subprocess` script, run with the `subprocess` grant, exited 13 with empty standard error. The same test
+  passed in `make ci-package` locally on that tree, in CI on PRs #72 and #73, and in the rerun of the failed job.
+- Suspected cause: 13 is SIGPIPE's number. The script or its `/usr/bin/true` child may write to a pipe that already
+  closed. Not confirmed.
+- Status: unresolved.
 
 ## Fixed
 
