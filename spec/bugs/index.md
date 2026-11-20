@@ -14,7 +14,7 @@
 | [20261116-disconnected-source-badge-hides-live-controller](20261116-disconnected-source-badge-hides-live-controller.md) | A disconnected pane that a live controller acts from shows no control badge | fixed |
 | [20261116-script-opened-pane-takes-focus](20261116-script-opened-pane-takes-focus.md) | A pane a script opens with `uniterm/open-pane` takes keyboard focus, against ADR-12 | fixed |
 | [20261116-disconnected-driver-cannot-command-owned-members](20261116-disconnected-driver-cannot-command-owned-members.md) | A driver whose pane is disconnected cannot command the members it owns | fixed |
-| [20261116-groupless-driver-clipboard-grant-has-no-revoke](20261116-groupless-driver-clipboard-grant-has-no-revoke.md) | A driver that owns no group keeps its clipboard grant until its run ends | open |
+| [20261116-groupless-driver-clipboard-grant-has-no-revoke](20261116-groupless-driver-clipboard-grant-has-no-revoke.md) | A driver that owns no group keeps its clipboard grant until its run ends | fixed |
 | [20261115-helper-sandbox-tests-fail-after-ui-test-build](20261115-helper-sandbox-tests-fail-after-ui-test-build.md) | The helper sandbox tests fail after a UI test build leaves test entitlements on the helpers | fixed |
 | [20261117-stderr-line-split-across-reads-shows-as-two-lines](20261117-stderr-line-split-across-reads-shows-as-two-lines.md) | A driver's stderr line split across two reads shows as two status lines | fixed |
 | [20261117-read-scope-compared-as-written-hides-real-paths](20261117-read-scope-compared-as-written-hides-real-paths.md) | A read scope written through a link hides every path from its own controller | open |
