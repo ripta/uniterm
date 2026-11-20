@@ -1,11 +1,7 @@
 # A Command key that no menu item takes reaches the terminal program, against the surface's own comment
 
-**Status:** open, reproduced 2026-11-18
-**Estimate:** medium; one non-trivial decision. What an unclaimed Command key is in a terminal. Dropping it removes
-Command keys from kitty-protocol programs. Forwarding it makes the comment wrong. Both are equally correct, and each
-changes what a user observes. The fix would touch `TerminalSurface/GhosttySurfaceView.swift` (`keyDown`, `keyUp`,
-`flagsChanged`, the doc comment) and a test in `TerminalSessionIntegrationTests.swift`. Re-checked 2026-11-19 against
-the current code. The code and comment are unchanged, and UTERM-031's retraction leaves the decision open.
+**Status:** fixed 2026-11-19
+**Fixed:** 2026-11-19. An unclaimed Command key is terminal input, and the comment now says so.
 **Found:** 2026-11-16, while reviewing UTERM-031
 
 ## Observed
@@ -48,10 +44,30 @@ Legacy mode was checked above. It reads nothing for Command-J.
 
 ## Fix
 
-The fix needs a design call on what an unclaimed Command key is in a terminal:
+The fix needed a design call on what an unclaimed Command key is in a terminal. Two answers were weighed:
 
-- Not terminal input. The surface drops every super-modified press, repeat, release, and modifier change that no menu
-  item takes. The comment becomes true. Programs that map Command keys through the kitty protocol lose them. UTERM-031
-  weighs this as the ground for controller Command keys in terminals.
-- Terminal input. The surface keeps forwarding, and the comment is corrected to say so. Then no Command key is safe for
-  a controller to take from a terminal.
+- Not terminal input. The surface would drop every super-modified press, repeat, release, and modifier change that no
+  menu item takes. Programs that map Command keys through the kitty protocol would lose them.
+- Terminal input. The surface keeps forwarding, and the comment is corrected to say so.
+
+The user chose terminal input on 2026-11-19. Forwarding is the behavior kitty-protocol programs already get, and it
+matches Ghostty upstream. The menu still sees every Command key first.
+
+An earlier draft of this report said forwarding leaves no Command key safe for a controller to take from a terminal.
+That came from UTERM-031's original design and no longer holds. UTERM-031 was retracted on 2026-11-16. Under its
+routing, no key reaches a controller from a pane that does not opt in, and a terminal never opts in. A controller still
+reacts through uniterm's commands, from an opted-in slide pane, and in its own terminal as the foreground program.
+Forwarding changes none of these.
+
+The code was already right. The fix is to the comment and the proof:
+
+- `TerminalSurface/GhosttySurfaceView.swift`: the `performKeyEquivalent` doc comment no longer says an unclaimed
+  Command key is not terminal input. It now says uniterm leaves out only upstream's Command-period replay. The plain
+  key down reaches the program with the super modifier.
+- `TerminalSessionIntegrationTests.testAnUnclaimedCommandKeyReachesAKittyProgramAndNotALegacyOne` pins the contract.
+  The surface declines Command-J in `performKeyEquivalent`. A kitty-protocol program then reads `ESC [ 106 ; 9 u`, and a
+  legacy program reads nothing.
+
+The test pins the fix, not the bug. The bug was a comment that disagreed with the code, so no test could fail on it.
+The test was checked against a mutation instead. With `keyDown` returning early for Command keys, the kitty case failed
+with an empty read.
