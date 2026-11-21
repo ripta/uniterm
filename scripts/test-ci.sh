@@ -44,7 +44,8 @@ expect_changes() {
 
 expect_result() {
   local name="$1" changes="$2" required="$3" package="$4" app="$5" ghostty="$6" expected="$7" actual
-  if CHANGES_RESULT="$changes" BUILD_REQUIRED="$required" PACKAGE_RESULT="$package" \
+  local tested="${8:-}"
+  if CHANGES_RESULT="$changes" BUILD_REQUIRED="$required" TESTED="$tested" PACKAGE_RESULT="$package" \
     APP_RESULT="$app" GHOSTTY_OFFLINE_RESULT="$ghostty" \
     bash "$root/scripts/ci-result.sh" >"$scratch/log" 2>&1; then
     actual=0
@@ -139,6 +140,113 @@ expect_result "missing decision fails" success "" skipped skipped skipped 1
 expect_result "malformed decision fails" success maybe skipped skipped skipped 1
 expect_result "unexpected work on docs path fails" success false skipped failure skipped 1
 expect_result "unexpected success on docs path fails" success false success skipped skipped 1
+expect_result "a tested tree passes with only the offline check" success true skipped skipped success 0 true
+expect_result "a tested tree still needs the offline check" success true skipped skipped failure 1 true
+expect_result "a tested tree with a skipped offline check fails" success true skipped skipped skipped 1 true
+expect_result "a tested tree that ran the app job fails" success true skipped success success 1 true
+expect_result "an untested tree needs every job" success true skipped skipped success 1 false
+expect_result "a docs skip cannot carry a tested tree" success false skipped skipped skipped 1 true
+expect_result "a malformed tested answer fails" success true skipped skipped success 1 maybe
+
+# GitHub's API is the one outside input to the tested-tree check. The fake answers with JSON shaped
+# like GitHub's and applies the script's own --jq filter with jq, so the filters are proved too.
+fake_gh="$scratch/fake-gh"
+cat >"$fake_gh" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == api && "$3" == --jq ]] || exit 2
+case "$2" in
+  */commits/*/pulls) body="$FAKE_PULLS" ;;
+  */git/commits/*) body="$FAKE_COMMIT" ;;
+  */check-runs\?check_name=ci\&filter=latest) body="$FAKE_CHECKS" ;;
+  *) exit 2 ;;
+esac
+[[ "$body" != fail ]] || exit 1
+printf '%s' "$body" | jq -r "$4"
+FAKE
+chmod +x "$fake_gh"
+
+pr_head=1111111111111111111111111111111111111111
+merge_tree="$(git -C "$repo" rev-parse "$mixed^{tree}")"
+other_tree="$(git -C "$repo" rev-parse "$license^{tree}")"
+
+pulls_json() {
+  local merge_sha="$1" merged_at="${2:-2026-11-21T00:00:00Z}"
+  printf '[{"number":82,"merged_at":"%s","merge_commit_sha":"%s","head":{"sha":"%s"}}]' \
+    "$merged_at" "$merge_sha" "$pr_head"
+}
+
+checks_json() {
+  local conclusions="$1" runs="" conclusion
+  for conclusion in $conclusions; do
+    runs+="${runs:+,}{\"name\":\"ci\",\"conclusion\":\"$conclusion\"}"
+  done
+  printf '{"total_count":%s,"check_runs":[%s]}' "$(wc -w <<<"$conclusions")" "$runs"
+}
+
+expect_tested() {
+  local name="$1" event="$2" head="$3" pulls="$4" commit="$5" checks="$6" expected="$7" actual
+  : >"$scratch/output"
+  (
+    cd "$repo"
+    GITHUB_EVENT_NAME="$event" HEAD_SHA="$head" GITHUB_REPOSITORY=example/repo \
+      CI_TESTED_TREE_GH="$fake_gh" FAKE_PULLS="$pulls" FAKE_COMMIT="$commit" FAKE_CHECKS="$checks" \
+      GITHUB_OUTPUT="$scratch/output" bash "$root/scripts/ci-tested-tree.sh" >"$scratch/log" 2>&1
+  )
+  IFS= read -r actual <"$scratch/output"
+  if [[ "$actual" != "tested=$expected" ]]; then
+    echo "FAIL: $name: expected $expected, got $actual" >&2
+    cat "$scratch/log" >&2
+    exit 1
+  fi
+  echo "PASS: $name"
+}
+
+same_tree="{\"sha\":\"$pr_head\",\"tree\":{\"sha\":\"$merge_tree\"}}"
+passed="$(checks_json success)"
+
+expect_tested "a merge of a passing PR's exact tree is tested" push "$mixed" \
+  "$(pulls_json "$mixed")" "$same_tree" "$passed" true
+expect_tested "a PR head with another tree is untested" push "$mixed" \
+  "$(pulls_json "$mixed")" "{\"tree\":{\"sha\":\"$other_tree\"}}" "$passed" false
+expect_tested "a failed ci check is untested" push "$mixed" \
+  "$(pulls_json "$mixed")" "$same_tree" "$(checks_json failure)" false
+expect_tested "a ci check still running is untested" push "$mixed" \
+  "$(pulls_json "$mixed")" "$same_tree" '{"total_count":1,"check_runs":[{"name":"ci","conclusion":null}]}' false
+expect_tested "no ci check is untested" push "$mixed" \
+  "$(pulls_json "$mixed")" "$same_tree" "$(checks_json "")" false
+expect_tested "two ci checks are untested" push "$mixed" \
+  "$(pulls_json "$mixed")" "$same_tree" "$(checks_json "success success")" false
+expect_tested "an unmerged PR is untested" push "$mixed" \
+  "$(pulls_json "$mixed" null | sed 's/"null"/null/')" "$same_tree" "$passed" false
+expect_tested "a PR that only contains the commit is untested" push "$mixed" \
+  "$(pulls_json "$license")" "$same_tree" "$passed" false
+expect_tested "two merged PRs naming the commit are untested" push "$mixed" \
+  "[$(pulls_json "$mixed" | tr -d '[]'),$(pulls_json "$mixed" | tr -d '[]')]" "$same_tree" "$passed" false
+expect_tested "an unreadable PR list is untested" push "$mixed" fail "$same_tree" "$passed" false
+expect_tested "an unreadable PR head is untested" push "$mixed" "$(pulls_json "$mixed")" fail "$passed" false
+expect_tested "an unreadable ci check is untested" push "$mixed" "$(pulls_json "$mixed")" "$same_tree" fail false
+expect_tested "a PR event is never tested" pull_request "$mixed" \
+  "$(pulls_json "$mixed")" "$same_tree" "$passed" false
+expect_tested "a manual run is never tested" workflow_dispatch "$mixed" \
+  "$(pulls_json "$mixed")" "$same_tree" "$passed" false
+expect_tested "a malformed head is untested" push "not-a-sha" \
+  "$(pulls_json "$mixed")" "$same_tree" "$passed" false
+expect_tested "a head missing locally is untested" push aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  "$(pulls_json aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)" "$same_tree" "$passed" false
+
+# The offline job looks up main's Ghostty cache by the setup action's key. A key that drifted would
+# miss on every tested push, and each one would rebuild Ghostty.
+ghostty_keys() {
+  grep -h -o 'key: ghostty-\${{ runner.arch }}-.*' "$@" | sort -u
+}
+setup_key="$(ghostty_keys "$root/.github/actions/macos-setup/action.yml")"
+workflow_key="$(ghostty_keys "$root/.github/workflows/ci.yml")"
+if [[ -z "$setup_key" || "$setup_key" != "$workflow_key" ]]; then
+  echo "FAIL: the workflow's Ghostty cache key '$workflow_key' differs from the setup action's '$setup_key'" >&2
+  exit 1
+fi
+echo "PASS: the offline job looks up the setup action's Ghostty cache key"
 
 # The proven key must change with every input of the offline rebuild, and must never repeat on a
 # runner that reports no image version.

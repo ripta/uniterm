@@ -191,6 +191,10 @@ ci-app: test-helper-sandbox test-app ## Run CI's app job: the app build, the hel
 ci-changes:
 	bash scripts/ci-changes.sh
 
+.PHONY: ci-tested-tree
+ci-tested-tree:
+	bash scripts/ci-tested-tree.sh
+
 .PHONY: ci-result
 ci-result:
 	bash scripts/ci-result.sh
