@@ -74,27 +74,24 @@ Rationale: the user wants a short, uninterrupted stretch, not the cost of a new 
 ### The proposal stays deferred while controllers send no input
 
 Decision: this proposal stays `deferred` for as long as controllers cannot send keystrokes or clicks. Its revisit hook
-is UTERM-019 M6. Chosen by the user on 2026-11-21. See "Whether the deferral still holds", which a review raised.
+is UTERM-019 M6. Chosen by the user on 2026-11-21.
 
 Rationale: without synthesized input, no controller can type into the tab the user types in.
 
-## Design Decisions (Open)
-
 ### Whether the deferral still holds
 
-The deferral rests on controllers sending no keystrokes or clicks. They send none today, but they already move the
-keyboard by opening panes and browser tabs, per the Motivation. A controller with browser navigation can load a page
-it serves, and focus lands in that page, so the page can read what the user types today. UTERM-019 M3 adds dialogs
-and injected JavaScript before M6. Candidates:
+Original question: the deferral rests on controllers sending no keystrokes or clicks. They send none today, but they
+already move the keyboard by opening panes and browser tabs, per the Motivation. A controller with browser navigation
+can load a page it serves, and focus lands in that page, so the page can read what the user types today. UTERM-019 M3
+adds dialogs and injected JavaScript before M6. The candidates were keeping the M6 hook, moving the hook to M3, and
+ending the deferral now.
 
-- Keep the deferral and the M6 hook. Leaves undone: until M6, a controller's pane and tab opens still take the
-  keyboard, and a page it loads can read the user's keys, with no way to pause it.
-- Keep the deferral, and move the hook to UTERM-019 M3, when dialogs start taking the keyboard. Leaves undone: the
-  same focus moves and page reads until M3.
-- End the deferral now, since focus moves and pages a controller loads already reach the user's typing.
+Decision: keep the deferral and the M6 hook. Chosen by the user on 2026-11-21, after the critique raised it.
 
-The settled deferral's rationale says no controller can type into the tab the user types in. That is true, but a
-controller can already move the user's typing into a page it chose.
+- Leaves undone: until M6, a controller's pane and tab opens still take the keyboard, and a page it loads can read the
+  user's keys, with no way to pause it. UTERM-036 accepts the focus moves as "Keys in flight reach the new pane".
+
+## Design Decisions (Open)
 
 ### What a pause covers
 
@@ -209,8 +206,8 @@ from that. A pause that survives would be new stored state.
   may still run too. A user who pauses to type or copy a secret could expose it. Mitigation: "What a pause covers" and "'Pause at the next action'
   and work already running" decide what a pause stops, and the wording must say what it does not stop.
 - **The revisit hook fires too late** — likelihood: high, impact: medium. Focus moves already interrupt typing, and
-  UTERM-019 M3 adds dialogs and page JavaScript before M6. Mitigation: the open question "Whether the deferral still
-  holds".
+  UTERM-019 M3 adds dialogs and page JavaScript before M6. Accepted by the user on 2026-11-21: the deferral keeps the
+  M6 hook, per "Whether the deferral still holds".
 - **ADR-15 is proposed, not accepted** — likelihood: medium, impact: medium. The authority framing of a pause, and the
   conflict a hold has with ADR-15, depend on its final text. Mitigation: re-read ADR-15 when this proposal resumes.
 - **A wire change** — likelihood: low, impact: medium. A paused-control event or a new error kind changes the exec
@@ -249,6 +246,8 @@ from that. A pause that survives would be new stored state.
   that page can read the user's keys today. The deferral question and the safety risk now say so. `busy` is dropped
   as a refusal kind for a pause, since its meaning is a retry. The M1 checks now cover only the controllers a pause
   covers.
+- 2026-11-21: Whether the deferral still holds: the user kept the deferral and the UTERM-019 M6 hook, and accepted the
+  risk that the hook fires after focus moves and pages already reach the user's typing.
 - 2026-11-21: The critique loop converged in three passes. Its last pass routed two checks to M1: the UI test loads a
   page, and its synthesized-input half applies once UTERM-019 M6 has landed.
 
