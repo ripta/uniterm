@@ -1,3 +1,4 @@
+import ControllerPackage
 import Darwin
 import Foundation
 import PaneModel
@@ -32,6 +33,21 @@ final class FakeWindowAPI: ScriptWindowAPI {
 
   /// The caller the host named for each call, oldest first.
   private(set) var callers: [ScriptCaller] = []
+
+  /// The permissions the host said the caller held, for each command or layout, oldest first.
+  private(set) var heldPowers: [Set<ControllerPermission>] = []
+
+  /// The extra power a command needs, by command name, as an applet's schema would name it. A
+  /// layout whose text holds `"url"` needs browser navigation.
+  var commandPowers: [String: ControllerPermission] = [:]
+
+  func extraPower(for call: ScriptCall, caller: ScriptCaller) -> ControllerPermission? {
+    switch call {
+    case .sendCommand(_, _, _, let command, _): return commandPowers[command]
+    case .requestLayout(_, let layout): return layout.contains("\"url\"") ? .browserNavigation : nil
+    default: return nil
+    }
+  }
 
   /// False for a test that sends many large files and only needs to count them.
   var keepsContent = true
@@ -209,8 +225,10 @@ final class FakeWindowAPI: ScriptWindowAPI {
     to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
     command: String,
     arguments: String, caller: ScriptCaller, access: @escaping @MainActor () -> ReadAccess,
+    powers: @escaping @MainActor () -> Set<ControllerPermission>,
     stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
+    heldPowers.append(powers())
     calls.append(
       .sendCommand(
         pane: target, appletType: appletType, schemaVersion: schemaVersion, command: command,
@@ -219,7 +237,7 @@ final class FakeWindowAPI: ScriptWindowAPI {
 
     try check(Self.reference(target))
 
-    guard appletType == "fixture-slides" else {
+    guard appletType == "fixture-slides" || appletType == "browser" else {
       throw ScriptCallError.unsupported("the pane runs a fixture-slides applet, not \(appletType)")
     }
 
@@ -228,6 +246,11 @@ final class FakeWindowAPI: ScriptWindowAPI {
     }
 
     guard command != "explode" else { throw ScriptCallError.refused("the applet refused") }
+
+    if let needed = commandPowers[command], !powers().contains(needed) {
+      throw ScriptCallError.refused(
+        "the \(command) command needs the \(needed.kindName) permission")
+    }
 
     // A reply past the reply frame's bound, as an applet that answered with too much would make.
     if command == "huge-reply" {
@@ -245,8 +268,10 @@ final class FakeWindowAPI: ScriptWindowAPI {
   /// answers with the anchor and two new panes, so the reply proves references reach the script.
   func requestLayout(
     anchor: ScriptTarget, layout: String, caller: ScriptCaller,
+    powers: @escaping @MainActor () -> Set<ControllerPermission>,
     stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
+    heldPowers.append(powers())
     calls.append(.requestLayout(pane: anchor, layout: layout))
     callers.append(caller)
 

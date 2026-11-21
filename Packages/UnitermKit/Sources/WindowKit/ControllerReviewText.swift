@@ -30,6 +30,14 @@ enum ControllerReviewText {
       lines.append(readsNeedStanding)
     }
 
+    if review.requested.contains(where: { $0.kindName == "browser-navigation" }) {
+      lines.append(navigationIsNetworkAccess)
+    }
+
+    if review.requested.contains(where: { $0.kindName == "browser-read" }) {
+      lines.append(browserReadShowsAddresses)
+    }
+
     if review.waiting.count > 1 {
       lines.append(
         "\(review.waiting.count) runs wait. Allow Once and Allow for This Run start the "
@@ -66,6 +74,16 @@ enum ControllerReviewText {
 
     return lines
   }
+
+  /// What a review that asks for browser navigation says. The browser signs in as the user, and
+  /// the controller's own sandbox does not limit what a page it opens can reach.
+  static let navigationIsNetworkAccess =
+    "Browser navigation is network access signed in as you. It reaches whatever the browser can, "
+    + "whatever this controller's own sandbox allows."
+
+  /// What a review that asks for browser read says. An address can carry a token.
+  static let browserReadShowsAddresses =
+    "Browser read returns the addresses of tabs it opened. An address may carry a token."
 
   /// What a review that asks to read paths says about the choices. A run allowed once reads
   /// nothing, since each read would need its own question.

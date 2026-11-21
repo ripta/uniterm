@@ -783,12 +783,14 @@ enum ScriptLint {
 
       if dynamic.isEmpty {
         for kind in declared.sorted() where kind != "capability" {
-          // A path-read power is used by a command, whose arguments may name a path. The lint
-          // cannot see the schema, so a file that sends any command may use it.
+          // A path-read or browser power is used by a command, whose arguments may name a path or
+          // an address. A layout may carry a seed URL. The lint cannot see either schema, so a
+          // file that sends any command or layout may use them.
           let isUsed =
             switch kind {
             case "host-launch": usesLayout
-            case "path-read": usesCommand
+            case "path-read", "browser-read": usesCommand
+            case "browser-navigation": usesCommand || usesLayout
             default: used.contains(kind)
             }
 

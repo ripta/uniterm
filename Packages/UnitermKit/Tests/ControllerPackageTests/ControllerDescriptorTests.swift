@@ -268,7 +268,8 @@ final class ControllerDescriptorTests: XCTestCase {
     ]
     let known = Set(ControllerPermission.meanings.map(\.kind))
 
-    XCTAssertEqual(known.subtracting(olderKinds), ["path-read"])
+    XCTAssertEqual(
+      known.subtracting(olderKinds), ["path-read", "browser-navigation", "browser-read"])
     XCTAssertEqual(ControllerPermission.meaning(kind: "path-read", version: 1)?.format, 2)
 
     let files = #"{"main.janet": "sha256:\#(String(repeating: "a", count: 64))"}"#
@@ -282,5 +283,36 @@ final class ControllerDescriptorTests: XCTestCase {
       XCTAssertTrue(
         "\(error)".contains("is not one descriptor format 2 knows"), "\(error)")
     }
+  }
+
+  /// Catches a browser kind that joins format 2 as a format bump, or one a format 2 reader reads
+  /// without its version. Both kinds take no field, so each is listed once, whole.
+  func testBrowserKindsJoinFormatTwoAtVersionOne() throws {
+    XCTAssertEqual(ControllerDescriptor.format, 2)
+
+    for kind in ["browser-navigation", "browser-read"] {
+      let meaning = try XCTUnwrap(ControllerPermission.meaning(kind: kind, version: 1))
+
+      XCTAssertEqual(meaning.format, 2, kind)
+      XCTAssertEqual(meaning.covers, [1], kind)
+      XCTAssertNil(ControllerPermission.meaning(kind: kind, version: 2), kind)
+    }
+
+    let descriptor = try ControllerDescriptor.parse(
+      try ControllerFixtures.descriptor(ControllerFixtures.formatTwoBrowser))
+
+    XCTAssertEqual(descriptor.permissions, [.paneControl, .browserNavigation, .browserRead])
+  }
+
+  /// Catches a format 1 descriptor and a format 2 descriptor sharing one reader state: each loads
+  /// with its own kinds, and format 1 never reads a browser kind.
+  func testFormatOneAndTwoDescriptorsBothLoadEachWithItsOwnKinds() throws {
+    let one = try ControllerDescriptor.parse(
+      try ControllerFixtures.descriptor("format-one-pane-control"))
+    let two = try ControllerDescriptor.parse(
+      try ControllerFixtures.descriptor(ControllerFixtures.formatTwoBrowser))
+
+    XCTAssertEqual(one.permissions, [.paneControl])
+    XCTAssertEqual(two.permissions, [.paneControl, .browserNavigation, .browserRead])
   }
 }

@@ -22,6 +22,7 @@ final class ControllerConsentTests: XCTestCase {
   private var work: URL!
   private var trust: URL!
   private var host: ScriptHost!
+  private var windows: FakeWindowAPI!
   private var clipboard: MemoryClipboard!
   private var watch: ChangeObservers.Token?
 
@@ -49,9 +50,11 @@ final class ControllerConsentTests: XCTestCase {
 
     let center = StatusCenter()
 
+    windows = FakeWindowAPI()
+
     host = ScriptHost(
       listener: try ScriptListener.start(directory: directory),
-      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: FakeWindowAPI(),
+      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: windows,
       controllers: ControllerSettings(
         runsRoot: work.appendingPathComponent("runs"),
         helper: BundleHelperIdentity(helperURL: try HardenedHelper.url()), trustDirectory: trust),
@@ -109,6 +112,8 @@ final class ControllerConsentTests: XCTestCase {
   }
 
   private static let paneControl = #"{"kind": "pane-control", "version": 1}"#
+  private static let navigation = #"{"kind": "browser-navigation", "version": 1}"#
+  private static let browserRead = #"{"kind": "browser-read", "version": 1}"#
   private static let read = #"{"kind": "clipboard-read", "version": 1}"#
   private static let write = #"{"kind": "clipboard-write", "version": 1}"#
   private static let fsRead = #"{"kind": "capability", "name": "fs-read", "version": 1}"#
@@ -233,6 +238,151 @@ final class ControllerConsentTests: XCTestCase {
 
     let reviewed = try XCTUnwrap(reviewsSeen.values.first?.waiting.first?.pid)
     XCTAssertEqual(pids, [reviewed, reviewed])
+  }
+
+  // MARK: Browser powers
+
+  private static let browserCommand = """
+    (def pane {:window 1 :pane 1})
+    (print (get (protect (uniterm/send-command pane :fixture-slides 1 :status)) 0))
+    """
+
+  /// Catches a browser command that runs on pane control alone, one that asks about a power the
+  /// controller never declared, and a stored approval that grows to cover the new kinds. A power
+  /// the controller declared and the user allowed for the run asks nothing. A controller that
+  /// declared pane control alone reaches the window with no browser power, so the window's
+  /// dispatch gives it the structured refusal, and the user is never asked.
+  func testABrowserPowerIsHeldOnlyWhenDeclaredAndAllowedAndNeverAskedWhenUndeclared() async throws {
+    windows.commandPowers["status"] = .browserNavigation
+
+    let declared = try package(
+      Self.browserCommand, permissions: [Self.paneControl, Self.navigation])
+    let paneOnly = try package(Self.browserCommand, permissions: [Self.paneControl])
+
+    reviewAnswer = .allowForSession
+    operationAnswer = { _ in .deny }
+
+    let held = try await run(declared)
+
+    XCTAssertEqual(held.status, 0, held.standardError)
+    XCTAssertTrue(operationAnswers.isEmpty, "a power allowed for the run asked again")
+    XCTAssertEqual(windows.heldPowers.last, [.paneControl, .browserNavigation])
+
+    let undeclared = try await run(paneOnly)
+
+    XCTAssertEqual(undeclared.status, 0, undeclared.standardError)
+    XCTAssertTrue(operationAnswers.isEmpty, "an undeclared power was asked about")
+    XCTAssertEqual(windows.heldPowers.last, [.paneControl])
+  }
+
+  /// Catches a Janet controller whose browser commands reach the app under the wrong powers. With
+  /// both powers every command is answered. With navigation alone the read is refused, and with
+  /// pane control alone every call is. A refusal is a struct the script reads and goes on from.
+  func testAScriptSeesEachBrowserCommandAnsweredOrRefusedByItsPower() async throws {
+    windows.commandPowers = [
+      "open": .browserNavigation, "navigate": .browserNavigation,
+      "reload": .browserNavigation, "read": .browserRead,
+    ]
+
+    let source = try String(contentsOf: ScriptFixtures.script("browser-commands"), encoding: .utf8)
+
+    reviewAnswer = .allowForSession
+
+    for (permissions, expected) in [
+      (
+        [Self.paneControl, Self.navigation, Self.browserRead],
+        "open ok\nnavigate ok\nreload ok\nread ok\n"
+      ),
+      (
+        [Self.paneControl, Self.navigation],
+        "open ok\nnavigate ok\nreload ok\nread refused\n"
+      ),
+      (
+        [Self.paneControl],
+        "open refused\nnavigate refused\nreload refused\nread refused\n"
+      ),
+    ] {
+      let result = try await run(try package(source, permissions: permissions))
+
+      XCTAssertEqual(result.status, 0, result.standardError)
+      XCTAssertEqual(result.standardOutput, expected, "\(permissions)")
+    }
+
+    XCTAssertTrue(operationAnswers.isEmpty, "a standing or undeclared power asked")
+  }
+
+  /// Catches a run allowed once that cannot use a declared browser power at all, and one that asks
+  /// once and then treats the answer as standing. The call needs two powers, so it asks about each
+  /// in turn, and the window sees both held for that call alone.
+  func testAllowOnceAsksForPaneControlAndTheBrowserPowerEachTime() async throws {
+    windows.commandPowers["status"] = .browserNavigation
+
+    let twice = try package(
+      Self.browserCommand + "\n" + Self.browserCommand,
+      permissions: [Self.paneControl, Self.navigation])
+
+    reviewAnswer = .allowOnce
+    operationAnswer = { _ in .allowOnce }
+
+    let result = try await run(twice)
+
+    XCTAssertEqual(result.status, 0, result.standardError)
+    XCTAssertEqual(
+      operationAnswers.map(\.title).sorted(),
+      Array(repeating: ControllerPermission.paneControl.displayText, count: 2)
+        + Array(repeating: ControllerPermission.browserNavigation.displayText, count: 2))
+    XCTAssertEqual(windows.heldPowers.count, 2)
+    XCTAssertTrue(windows.heldPowers.allSatisfy { $0.contains(.browserNavigation) })
+  }
+
+  /// Catches a denied browser power that lets the call through.
+  func testADeniedBrowserPowerRunsNothingInTheWindow() async throws {
+    windows.commandPowers["status"] = .browserNavigation
+
+    let denied = try package(
+      Self.browserCommand, permissions: [Self.paneControl, Self.navigation])
+
+    reviewAnswer = .allowOnce
+    operationAnswer = { row in
+      row.title == ControllerPermission.browserNavigation.displayText ? .deny : .allowOnce
+    }
+
+    let result = try await run(denied)
+
+    XCTAssertEqual(result.status, 0, result.standardError)
+    XCTAssertTrue(windows.calls.isEmpty, "the window ran a call whose power was denied")
+  }
+
+  /// Catches a stored approval from before the browser kinds that covers a run now asking for
+  /// them. ADR-09 says a change in permission meaning cannot grow an approval, and the browser
+  /// kinds are new powers, so the review comes back and a refusal runs nothing.
+  func testAnApprovalFromBeforeTheBrowserKindsDoesNotCoverThem() async throws {
+    let before = try package("(print \"ran\")\n", permissions: [Self.paneControl])
+
+    reviewAnswer = .trustVersion
+
+    _ = try await run(before)
+
+    XCTAssertEqual(reviewCount, 1)
+
+    reviewAnswer = .deny
+
+    let again = try await run(before)
+
+    XCTAssertEqual(again.status, 0, again.standardError)
+    XCTAssertEqual(reviewCount, 1, "the approved run was reviewed again")
+
+    let wider = try package(
+      "(print \"ran\")\n", permissions: [Self.paneControl, Self.navigation, Self.browserRead])
+    let refused = try await run(wider)
+
+    XCTAssertNotEqual(refused.status, 0)
+    XCTAssertFalse(refused.standardOutput.contains("ran"), refused.standardOutput)
+    XCTAssertEqual(reviewCount, 2, "the browser kinds were covered by an older approval")
+
+    let asked = try XCTUnwrap(reviewsSeen.values.first { $0.requested.contains(.browserRead) })
+
+    XCTAssertTrue(asked.requested.contains(.browserNavigation))
   }
 
   /// Catches a plain script, which has no controller identity, reaching the clipboard without the

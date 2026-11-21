@@ -18,14 +18,24 @@ public struct ValidatedAppletCommand: Sendable, Equatable {
   /// puts anything from that file into a reply.
   public let access: ReadAccess
 
+  /// The grant the command acts under, or nil when the caller has none. An applet that remembers
+  /// what a caller made keys it by this value.
+  public let caller: AppletCaller?
+
+  /// The tab the caller named, or nil when it named none. The host resolves it, so it names a tab
+  /// the applet listed.
+  public let tab: AppletTabID?
+
   init(
     name: String, arguments: [String: JSONValue], opened: [String: OpenedPath] = [:],
-    access: ReadAccess = .none
+    access: ReadAccess = .none, caller: AppletCaller? = nil, tab: AppletTabID? = nil
   ) {
     self.name = name
     self.arguments = arguments
     self.opened = opened
     self.access = access
+    self.caller = caller
+    self.tab = tab
   }
 }
 

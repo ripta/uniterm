@@ -552,6 +552,7 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   reads as version 1, so a format 1 approval covers the same kind at version 1 in format 2. Skew: a build without a
   kind or version refuses the descriptor at load, and a newer build reads older formats and versions with their own
   meanings. An older build reading a newer policy file authorizes nothing. Amended 2026-11-12; see Decision Log.
+  Superseded in part by UTERM-005; see Decision Log.
 - The signature is `controller.sig`: an Ed25519 signature, through CryptoKit, over a fixed domain line and the
   descriptor's exact bytes. The version is the SHA-256 of those bytes, and the key's fingerprint is the SHA-256 of the
   public key. A signature file that does not verify refuses the package. It never falls back to an unsigned version.
@@ -1638,6 +1639,9 @@ Superseded in part by UTERM-036; see Decision Log.
 - 2026-11-20: Superseded in part by UTERM-036. A layout request's new panes behave as the user's splits, and the last
   new pane takes focus. A layout that makes no new pane moves no focus. This replaces M4's line that a published layout
   leaves focus where it was.
+- 2026-11-20: Superseded in part by UTERM-005. Format 2 adds `browser-navigation` and `browser-read` at version 1.
+  Navigation covers opening browser tabs and moving them, and read covers the addresses and titles of the tabs a
+  controller opened.
 
 ## References
 

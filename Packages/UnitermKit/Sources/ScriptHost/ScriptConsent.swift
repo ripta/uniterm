@@ -531,14 +531,14 @@ extension ScriptHost {
     }
   }
 
-  /// Checks a call's power against the live grant. `once` is the one power an Allow once answer
+  /// Checks a call's power against the live grant. `once` holds the powers an Allow once answer
   /// granted for this operation alone.
   ///
   /// A controller run may use only what it declared, and without asking only what stands. An
   /// ordinary script's pane calls follow the pane rules alone, and its clipboard calls need the
   /// user's answer each time, unless the user allowed them for the connection.
   func checkPower(
-    _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission? = nil
+    _ call: ScriptCall, on connection: ScriptConnection, once: Set<ControllerPermission> = []
   ) -> PowerCheck {
     if controllerAdmissions.contains(connection.id) || waitingAdmissions[connection.id] != nil
       || waitingUndeclared[connection.id] != nil
@@ -553,7 +553,7 @@ extension ScriptHost {
     guard let run = controllerRuns[connection.id] else {
       guard let power, power != .paneControl else { return .allowed }
 
-      if power == once || clipboardGrants[connection.id]?.contains(power) == true {
+      if once.contains(power) || clipboardGrants[connection.id]?.contains(power) == true {
         return .allowed
       }
 
@@ -579,9 +579,55 @@ extension ScriptHost {
             + "cannot \(power == .paneControl ? "act on panes" : Self.verb(for: power))."))
     }
 
-    if power == once || run.standing.contains(power) { return .allowed }
+    guard once.contains(power) || run.standing.contains(power) else { return .needsApproval(power) }
 
-    return .needsApproval(power)
+    return checkExtraPower(call, on: connection, run: run, once: once)
+  }
+
+  /// The power a command or layout needs beyond control of panes, such as a browser's. A power the
+  /// run declared and does not yet hold is asked about, as pane control is. A power it never
+  /// declared passes through, and the window refuses the call with a structured error, since the
+  /// run holds nothing that names the power.
+  private func checkExtraPower(
+    _ call: ScriptCall, on connection: ScriptConnection, run: ControllerRun,
+    once: Set<ControllerPermission>
+  ) -> PowerCheck {
+    guard let caller = caller(for: connection),
+      let extra = windows?.extraPower(for: call, caller: caller), run.scopes.contains(extra)
+    else { return .allowed }
+
+    return once.contains(extra) || run.standing.contains(extra) ? .allowed : .needsApproval(extra)
+  }
+
+  /// The permissions a live run holds for a command or layout now: the ones that stand, and the
+  /// ones the user allowed once for this call. A script that is not a controller run holds none.
+  func heldPowers(
+    for id: UInt64, once: Set<ControllerPermission>
+  ) -> Set<ControllerPermission> {
+    guard let run = liveRun(id) else { return [] }
+
+    return run.standing.union(once.intersection(run.scopes))
+  }
+
+  /// Checks a call's powers and runs it, asks the user, or refuses it. Each answer of Allow once
+  /// comes back here with the power added, so a call that needs two powers asks about each in
+  /// turn and runs only when every one holds.
+  func routeRequest(
+    _ call: ScriptCall, id: UInt32, on connection: ScriptConnection,
+    once: Set<ControllerPermission>
+  ) {
+    guard !connection.isClosed else { return }
+
+    switch checkPower(call, on: connection, once: once) {
+    case .allowed:
+      dispatch(call, id: id, on: connection, once: once)
+
+    case .refused(let result):
+      connection.reply(id: id, result: result)
+
+    case .needsApproval(let power):
+      askForOperation(call, id: id, on: connection, power: power, once: once)
+    }
   }
 
   private static func verb(for power: ControllerPermission) -> String {
@@ -592,7 +638,8 @@ extension ScriptHost {
   /// answered when the user answers: Allow once runs this call alone, Allow for This Run or Allow
   /// for This Connection also keeps the power for the run or the connection, and Deny refuses it.
   func askForOperation(
-    _ call: ScriptCall, id: UInt32, on connection: ScriptConnection, power: ControllerPermission
+    _ call: ScriptCall, id: UInt32, on connection: ScriptConnection, power: ControllerPermission,
+    once: Set<ControllerPermission> = []
   ) {
     let key = PermissionRequests.Key(requester: .connection(connection.id), power: power.kindName)
     let run = controllerRuns[connection.id]
@@ -632,11 +679,11 @@ extension ScriptHost {
               + "asked under."))
 
       case .allowOnce:
-        dispatch(call, id: id, on: connection, once: power)
+        routeRequest(call, id: id, on: connection, once: once.union([power]))
 
       case .allowForSession:
         grantStanding(power, to: connection.id)
-        dispatch(call, id: id, on: connection, once: nil)
+        routeRequest(call, id: id, on: connection, once: once)
       }
     }
 
@@ -695,7 +742,7 @@ extension ScriptHost {
   /// with nothing suspended before the clipboard is touched. A read waits off the main actor for
   /// the text, so the grant is checked again before any text goes to the program.
   func performClipboard(
-    _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission?
+    _ call: ScriptCall, on connection: ScriptConnection, once: Set<ControllerPermission>
   ) async -> ScriptResult {
     if let refusal = clipboardRefusal(call, on: connection, once: once) { return refusal }
 
@@ -734,7 +781,7 @@ extension ScriptHost {
 
   /// Why a clipboard call may not touch the clipboard now, or nil when it may.
   private func clipboardRefusal(
-    _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission?
+    _ call: ScriptCall, on connection: ScriptConnection, once: Set<ControllerPermission>
   ) -> ScriptResult? {
     if connection.isClosed { return .failure(.refused, "The program has gone.") }
 

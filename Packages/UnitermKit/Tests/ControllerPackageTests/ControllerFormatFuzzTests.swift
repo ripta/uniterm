@@ -31,6 +31,7 @@ final class ControllerFormatFuzzTests: XCTestCase {
       try Data(contentsOf: package.appendingPathComponent("controller.json")),
       try Data(contentsOf: package.appendingPathComponent("controller.sig")),
       try ControllerFixtures.descriptor(ControllerFixtures.formatTwo),
+      try ControllerFixtures.descriptor(ControllerFixtures.formatTwoBrowser),
     ] + (try ControllerFixtures.rejected.map { try ControllerFixtures.descriptor($0.name) })
   }
 

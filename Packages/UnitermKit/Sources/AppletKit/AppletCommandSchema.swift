@@ -75,13 +75,19 @@ public struct AppletMessageSchema: Sendable, Equatable {
   /// pending reply from any other command.
   public let mayWait: Bool
 
+  /// The power a caller must hold for this command, on top of its control of the pane. Shared
+  /// dispatch refuses the command without it, at submission and again at delivery. Nil needs
+  /// none.
+  public let permission: AppletCommandPermission?
+
   /// The minor version that added this command or event. An event newer than a driver's minor is
   /// never sent to that driver, since the driver could not know to ignore it.
   public let addedInMinor: Int
 
   public init(
     name: String, summary: String, arguments: AppletObjectSchema = .empty,
-    example: JSONValue = .object([:]), mayWait: Bool = false, since minor: Int = 0
+    example: JSONValue = .object([:]), mayWait: Bool = false,
+    requires permission: AppletCommandPermission? = nil, since minor: Int = 0
   ) {
     precondition(minor >= 0, "a message cannot be added before minor 0")
 
@@ -90,6 +96,7 @@ public struct AppletMessageSchema: Sendable, Equatable {
     self.arguments = arguments
     self.example = example
     self.mayWait = mayWait
+    self.permission = permission
     addedInMinor = minor
   }
 
@@ -189,6 +196,19 @@ public struct AppletCommandError: Error, Sendable, Equatable {
 
     /// The applet failed while it ran the command, and changed nothing.
     case failed
+
+    /// The caller does not hold the power the command needs.
+    case permissionMissing = "permission-missing"
+
+    /// The command names a tab the caller did not open.
+    case notOwned = "not-owned"
+
+    /// The target holds the keyboard, so the command would move it or change what the user is
+    /// using.
+    case keyFocused = "key-focused"
+
+    /// The target holds input the user has typed and not sent.
+    case unsentInput = "unsent-input"
   }
 
   public let code: Code

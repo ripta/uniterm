@@ -4,9 +4,12 @@ import BrowserModel
 
 extension BrowserApplet {
   /// The browser opens no file. `file:` never loads, and the text viewer owns local files, so the
-  /// router sends nothing here and the app declares no document type for it.
+  /// router sends nothing here and the app declares no document type for it. A controller may
+  /// drive it, and no exec driver may, since an exec driver's event stream would hand it the
+  /// user's later browsing.
   public nonisolated static let typeDeclaration = AppletTypeDeclaration(
-    typeID: BrowserDescription.typeID, displayName: "Browser", symbolName: "safari", opens: [])
+    typeID: BrowserDescription.typeID, displayName: "Browser", symbolName: "safari", opens: [],
+    controlSupport: [.disconnected, .remoteControlled])
 
   /// The browser's own commands. Back and Forward sit in the applet menu with no key, since Cmd-[
   /// and Cmd-] are uniterm's pane keys. The tab commands carry the terminal's titles, so a user's

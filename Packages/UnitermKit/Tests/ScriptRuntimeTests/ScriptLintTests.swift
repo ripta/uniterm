@@ -316,6 +316,31 @@ final class ScriptLintTests: XCTestCase {
     XCTAssertTrue(idle[0].message.contains("path-read"))
   }
 
+  // MARK: Browser powers
+
+  /// Catches a declared browser power reported unused in a file that uses it, and one that uses
+  /// neither going unreported. Navigation is used by a command or a layout, and read by a command.
+  func testBrowserPowersAreUsedByCommandsAndLayoutsAndUnusedOtherwise() {
+    let declared =
+      "(declare-permissions {:kind :pane-control :version 1}\n"
+      + "  {:kind :browser-navigation :version 1} {:kind :browser-read :version 1})\n"
+    let sends =
+      "(import uniterm)\n(uniterm/send-command p \"browser\" [1 0] \"open\" {})\n"
+    let lays = "(import uniterm)\n(uniterm/request-layout p {:open :browser})\n"
+
+    XCTAssertEqual(summary(findings(declared + sends)), [])
+
+    let layoutOnly = findings(declared + lays)
+
+    XCTAssertEqual(layoutOnly.map(\.kind), [.unusedPower], "read is not used by a layout")
+    XCTAssertTrue(layoutOnly[0].message.contains("browser-read"))
+
+    let idle = findings(declared + "(import uniterm)\n(uniterm/list-windows)\n")
+
+    XCTAssertEqual(idle.count, 2)
+    XCTAssertEqual(Set(idle.map(\.kind)), [.unusedPower])
+  }
+
   // MARK: Layout
 
   /// Catches a layout that launches a program without declaring it, and a declared host launch

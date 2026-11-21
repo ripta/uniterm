@@ -75,6 +75,8 @@ public final class ControlDispatcher {
     let command: ValidatedAppletCommand
     let opened: [String: Result<OpenedPath, ScopedOpenError>]
     let access: @MainActor () -> ReadAccess
+    let caller: @MainActor () -> CommandCaller
+    let tab: AppletTabID?
     let authority: Authority
     let reply: Reply
   }
@@ -133,11 +135,16 @@ public final class ControlDispatcher {
   ///
   /// A command that names a path needs `reads` to hold an open for each path. Without one the
   /// command is refused, so a caller that holds no path-reading power can never make an applet read.
+  ///
+  /// `caller` says which grant the command acts under and which powers it holds. A command that
+  /// needs a power the grant lacks is refused, here and again at delivery. `tab` is the tab the
+  /// caller named, already resolved by the host.
   public func submit(
     _ submission: AppletCommandSubmission, to applet: any Applet, authority: @escaping Authority,
-    reads: CommandReads = .none, reply: @escaping Reply
+    reads: CommandReads = .none, caller: @escaping @MainActor () -> CommandCaller = { .none },
+    tab: AppletTabID? = nil, reply: @escaping Reply
   ) {
-    switch check(submission, for: applet, authority: authority, reads: reads) {
+    switch check(submission, for: applet, authority: authority, reads: reads, caller: caller()) {
     case .failure(let error):
       reply(.failure(error))
 
@@ -153,7 +160,7 @@ public final class ControlDispatcher {
       queue.append(
         Entry(
           applet: handler, command: command, opened: reads.opened, access: reads.access,
-          authority: authority, reply: reply))
+          caller: caller, tab: tab, authority: authority, reply: reply))
       scheduleDrain()
     }
   }
@@ -180,7 +187,7 @@ public final class ControlDispatcher {
 
   private func check(
     _ submission: AppletCommandSubmission, for applet: any Applet, authority: Authority,
-    reads: CommandReads
+    reads: CommandReads, caller: CommandCaller
   ) -> Result<(any AppletCommandHandling, ValidatedAppletCommand), AppletCommandError> {
     if let refusal = authority() { return .failure(refusal) }
 
@@ -220,6 +227,10 @@ public final class ControlDispatcher {
           .unknownCommand,
           "the \(schema.appletType) applet has no command \"\(submission.name)\". Its commands "
             + "are \(names.isEmpty ? "none" : names)"))
+    }
+
+    if let refusal = Self.missingPermission(of: declared, held: caller.permissions) {
+      return .failure(refusal)
     }
 
     let fields: [String: JSONValue]
@@ -305,6 +316,15 @@ public final class ControlDispatcher {
       return
     }
 
+    let caller = entry.caller()
+
+    if let refusal = Self.missingPermission(
+      of: applet.commandSchema.command(named: entry.command.name), held: caller.permissions)
+    {
+      entry.reply(.failure(refusal))
+      return
+    }
+
     let access = entry.access()
     var opened: [String: OpenedPath] = [:]
 
@@ -326,7 +346,7 @@ public final class ControlDispatcher {
 
     let command = ValidatedAppletCommand(
       name: entry.command.name, arguments: entry.command.arguments, opened: opened,
-      access: access)
+      access: access, caller: caller.identity, tab: entry.tab)
     let outcome: AppletCommandReply
 
     do {
@@ -354,6 +374,21 @@ public final class ControlDispatcher {
 
       hold(reply, for: entry, applet: applet)
     }
+  }
+
+  // MARK: Powers
+
+  /// The refusal for a command whose power the caller does not hold, or nil. It names the power
+  /// and how a controller gets it, and never asks the user anything.
+  static func missingPermission(
+    of command: AppletMessageSchema?, held: Set<AppletCommandPermission>
+  ) -> AppletCommandError? {
+    guard let needed = command?.permission, !held.contains(needed) else { return nil }
+
+    return AppletCommandError(
+      .permissionMissing,
+      "the \(command?.name ?? "") command needs the \(needed.rawValue) permission. The "
+        + "controller must declare it, and the user must have approved it")
   }
 
   // MARK: Reads

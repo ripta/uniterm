@@ -82,6 +82,24 @@ final class DeclaredScriptTests: XCTestCase {
       declared.permissions, [.pathRead(try ReadScope(directories: ["/tmp/a", "/tmp/b"]))])
   }
 
+  /// Catches a browser declaration refused or changed on the way from Janet: both kinds are read at
+  /// version 1, and neither takes a field.
+  func testBrowserDeclarationsAreReadAtVersionOneAndTakeNoField() throws {
+    let declared = try declaration(
+      """
+      (declare-permissions {:kind :browser-navigation :version 1} {:kind :browser-read :version 1})
+      """)
+
+    XCTAssertEqual(declared.permissions, [.browserNavigation, .browserRead])
+
+    XCTAssertThrowsError(
+      try declaration(
+        "(declare-permissions {:kind :browser-read :version 2})"))
+    XCTAssertThrowsError(
+      try declaration(
+        "(declare-permissions {:kind :browser-navigation :version 1 :directories [\"/tmp\"]})"))
+  }
+
   /// Catches an empty declaration being treated as no declaration, and a file with only a header.
   func testAnEmptyDeclarationAndAHeaderOnlyDeclarationAreDeclarations() throws {
     XCTAssertTrue(try declaration("(declare-permissions)").permissions.isEmpty)

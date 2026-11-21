@@ -234,6 +234,14 @@ extension ControllerPermission {
         "Start \(scope.executable) as a driver, with any arguments, in \(scope.directory) or a "
         + "folder inside it, with environment keys \(keys) and any values"
 
+    case .browserNavigation:
+      text =
+        "Open and navigate browser tabs, with network access signed in as you, whatever its "
+        + "sandbox allows"
+
+    case .browserRead:
+      text = "Read the addresses and titles of the browser tabs it opened"
+
     case .pathRead(let scope):
       text =
         "Make applets read files and folders inside \(scope.directories.joined(separator: ", "))"

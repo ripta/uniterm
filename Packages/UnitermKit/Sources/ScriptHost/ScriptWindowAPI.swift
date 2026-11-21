@@ -1,3 +1,4 @@
+import ControllerPackage
 import Foundation
 import PaneModel
 import ScriptWire
@@ -117,10 +118,14 @@ public protocol ScriptWindowAPI: AnyObject {
   /// A command argument typed as a path is opened inside the scope `access` holds, off the main
   /// thread, before the command is queued. `access` is asked again as the command is delivered, so
   /// a grant that ended while the command waited leaves no read.
+  ///
+  /// `powers` says which controller permissions the caller holds right now, and is asked again as
+  /// the command is delivered. A command that needs a power outside it is refused before it runs.
   func sendCommand(
     to target: ScriptTarget, appletType: String, schemaVersion: ScriptSchemaVersion,
     command: String,
     arguments: String, caller: ScriptCaller, access: @escaping @MainActor () -> ReadAccess,
+    powers: @escaping @MainActor () -> Set<ControllerPermission>,
     stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue
 
@@ -129,6 +134,13 @@ public protocol ScriptWindowAPI: AnyObject {
   /// publishes nothing.
   func requestLayout(
     anchor: ScriptTarget, layout: String, caller: ScriptCaller,
+    powers: @escaping @MainActor () -> Set<ControllerPermission>,
     stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue
+
+  /// The power a call needs besides control of panes, or nil when it needs none or its target
+  /// cannot be found. The applet's schema names it for a command, and a layout that seeds a
+  /// browser page needs browser navigation. The host asks the user about a power the caller
+  /// declared and does not yet hold. The window refuses a power the caller never declared.
+  func extraPower(for call: ScriptCall, caller: ScriptCaller) -> ControllerPermission?
 }

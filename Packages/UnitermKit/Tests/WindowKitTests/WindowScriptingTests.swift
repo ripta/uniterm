@@ -34,6 +34,9 @@ final class ScriptingFixture {
   /// Makes the applet for the next request. A test replaces it to hand out a different stand-in.
   var make: @MainActor () -> FakeApplet = { FakeApplet() }
 
+  /// Makes the applet for a choice a test wants a real applet for. Nil leaves the choice to `make`.
+  var makeReal: @MainActor (AppletChoice) -> (any Applet)? = { _ in nil }
+
   /// Who the calls come from. `openWindow` sets it to the first window's first pane.
   var caller = ScriptCaller(connection: 1, window: 0, pane: NodeID(rawValue: 0))
 
@@ -56,7 +59,8 @@ final class ScriptingFixture {
 
   init(
     windowIDs: WindowIDSource = WindowIDSource(),
-    directoryExists: @escaping @Sendable (String) -> Bool = { _ in true }
+    directoryExists: @escaping @Sendable (String) -> Bool = { _ in true },
+    declarations: [AppletTypeDeclaration] = ScriptingFixture.declarations
   ) {
     let defaults = UserDefaults(suiteName: suite)!
     let store = SettingsStore(defaults: defaults)
@@ -72,7 +76,7 @@ final class ScriptingFixture {
       makeRestoredController: { identifier, restored in
         try MainWindowController(
           appearance: appearance, settings: store, identifier: identifier,
-          appletTypes: ScriptingFixture.declarations, restoring: restored,
+          appletTypes: declarations, restoring: restored,
           restoreApplet: { _ in FakeApplet() },
           makeApplet: { choice, directory in try factory(choice, directory) }
         ).detachFromRealScreen()
@@ -81,7 +85,7 @@ final class ScriptingFixture {
       makeController: { identifier, directory in
         try MainWindowController(
           appearance: appearance, settings: store, identifier: identifier, startingIn: directory,
-          appletTypes: ScriptingFixture.declarations,
+          appletTypes: declarations,
           makeApplet: { choice, directory in try factory(choice, directory) }
         ).detachFromRealScreen()
       })
@@ -91,6 +95,8 @@ final class ScriptingFixture {
     factory = { [unowned self] choice, directory in
       choices.append(choice)
       requested.append(directory)
+
+      if let real = makeReal(choice) { return real }
 
       let applet = make()
       made.append(applet)

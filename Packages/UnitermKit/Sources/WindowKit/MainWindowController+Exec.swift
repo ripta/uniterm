@@ -50,6 +50,9 @@ final class ExecAttachment {
   /// The clipboard powers the user allowed for this run. A new run starts with none.
   var clipboardGrants: Set<ControllerPermission> = []
 
+  /// The browser powers the user allowed for this run. A new run starts with none.
+  var browserGrants: Set<ControllerPermission> = []
+
   /// The pane the attachment drives.
   let pane: NodeID?
 
@@ -262,6 +265,7 @@ extension MainWindowController {
     attachment.owner = owner
     attachment.revoked = false
     attachment.clipboardGrants = []
+    attachment.browserGrants = []
     pushControl(paneControls.set(driver: .exec, for: pane), to: pane)
 
     let drives: @MainActor () -> Bool = { [weak self, weak attachment] in
@@ -361,6 +365,7 @@ extension MainWindowController {
   /// Ends a driver run's clipboard questions and powers. A revoke does this too.
   func endDriverClipboard(of attachment: ExecAttachment) {
     attachment.clipboardGrants = []
+    attachment.browserGrants = []
 
     guard let pane = attachment.pane else { return }
 
@@ -396,34 +401,40 @@ extension MainWindowController {
   ) {
     switch request {
     case .layout(let layout):
-      Task { @MainActor [weak self] in
-        guard let self else { return }
+      let parsed: LayoutRequest
 
-        do {
-          let parsed = try LayoutRequest.parse(
-            layout, window: scriptWindowID, declarations: appletTypes)
-
-          let panes = try await requestLayout(
-            parsed, anchor: pane, owner: owner,
-            authorize: { [self] in
-              if let refusal = beyond() ?? sourceRefusal(pane, doing: "lay out other panes") {
-                throw refusal
-              }
-
-              try checkPlacedPanes(of: parsed) { $0 == pane || owns($0, owner) }
-            },
-            directoryExists: directoryExists)
-
-          reply(
-            .success(
-              .object([
-                "window": .number(Double(scriptWindowID)),
-                "panes": .array(panes.map { .number(Double($0.rawValue)) }),
-              ])))
-        } catch {
-          reply(.failure(Self.driverFailure(error)))
-        }
+      do {
+        parsed = try LayoutRequest.parse(layout, window: scriptWindowID, declarations: appletTypes)
+      } catch {
+        return reply(.failure(Self.driverFailure(error)))
       }
+
+      let power = ControllerPermission.browserNavigation
+
+      guard parsed.needsBrowserNavigation, let attachment = execAttachments[pane],
+        !attachment.browserGrants.contains(power)
+      else {
+        return driverLayout(
+          parsed, from: pane, as: owner, beyond: beyond, once: false, reply: reply)
+      }
+
+      let run = attachment.run
+
+      askDriver(
+        power: power,
+        detail: "The driver \(attachment.program) asks to \(power.displayText.lowercased()).",
+        attachment: attachment, run: run, pane: pane,
+        drives: { [weak self, weak attachment] in
+          guard let self, let attachment else { return false }
+
+          return execAttachments[pane] === attachment && attachment.run == run
+            && attachment.owner == owner
+        },
+        grant: { $0.browserGrants.insert(power) },
+        proceed: { [weak self] once in
+          self?.driverLayout(
+            parsed, from: pane, as: owner, beyond: beyond, once: once, reply: reply)
+        }, reply: reply)
 
     case .clipboardRead, .clipboardWrite:
       reply(.failure(AppletCommandError(.failed, "the clipboard is answered elsewhere")))
@@ -457,22 +468,103 @@ extension MainWindowController {
       }
 
       let generation = control(of: member).generation
+      let grant = AppletCaller(grant: owner.description)
 
-      dispatcher.submit(
-        submission, to: applet,
-        authority: { [weak self, weak applet] in
-          if let refusal = authority() { return refusal }
+      let submit: @MainActor (_ once: Set<ControllerPermission>) -> Void = {
+        [weak self, weak applet] once in
+        guard let self, let applet else { return reply(.failure(Self.gone)) }
 
-          guard let self, let applet, paneArea.applet(for: member) === applet,
-            control(of: member).generation == generation
-          else {
-            return AppletCommandError(
-              .refused, "the pane's control changed after the command was sent")
-          }
+        dispatcher.submit(
+          submission, to: applet,
+          authority: { [weak self, weak applet] in
+            if let refusal = authority() { return refusal }
 
-          return nil
+            guard let self, let applet, paneArea.applet(for: member) === applet,
+              control(of: member).generation == generation
+            else {
+              return AppletCommandError(
+                .refused, "the pane's control changed after the command was sent")
+            }
+
+            return nil
+          },
+          caller: { [weak self] in
+            let held = self?.execAttachments[pane]?.browserGrants ?? []
+
+            return CommandCaller(
+              identity: grant,
+              permissions: WindowScripting.appletPermissions(held.union(once)))
+          },
+          reply: reply)
+      }
+
+      guard
+        let needed = (applet as? any AppletCommandHandling)?.commandSchema
+          .command(named: submission.name)?.permission,
+        let attachment = execAttachments[pane]
+      else { return submit([]) }
+
+      let power = WindowScripting.controllerPermission(for: needed)
+
+      guard !attachment.browserGrants.contains(power) else { return submit([]) }
+
+      let run = attachment.run
+
+      askDriver(
+        power: power,
+        detail: "The driver \(attachment.program) asks to \(power.displayText.lowercased()).",
+        attachment: attachment, run: run, pane: pane,
+        drives: { [weak self, weak attachment] in
+          guard let self, let attachment else { return false }
+
+          return execAttachments[pane] === attachment && attachment.run == run
+            && attachment.owner == owner
         },
-        reply: reply)
+        grant: { $0.browserGrants.insert(power) },
+        proceed: { once in submit(once ? [power] : []) }, reply: reply)
+    }
+  }
+
+  private static let gone = AppletCommandError(.notFound, "the pane closed")
+
+  /// Lays out a driver's request and answers with the panes it made. A layout that seeds a
+  /// browser page needs browser navigation: the run holds it, or the user allowed it once for
+  /// this request.
+  private func driverLayout(
+    _ parsed: LayoutRequest, from pane: NodeID, as owner: GroupOwner,
+    beyond: @escaping @MainActor () -> ScriptCallError?, once: Bool,
+    reply: @escaping ControlDispatcher.Reply
+  ) {
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+
+      do {
+        let panes = try await requestLayout(
+          parsed, anchor: pane, owner: owner,
+          authorize: { [self] in
+            if let refusal = beyond() ?? sourceRefusal(pane, doing: "lay out other panes") {
+              throw refusal
+            }
+
+            if parsed.needsBrowserNavigation, !once,
+              execAttachments[pane]?.browserGrants.contains(.browserNavigation) != true
+            {
+              throw ScriptCallError.refused(LayoutRequest.navigationRefusal)
+            }
+
+            try checkPlacedPanes(of: parsed) { $0 == pane || owns($0, owner) }
+          },
+          directoryExists: directoryExists)
+
+        reply(
+          .success(
+            .object([
+              "window": .number(Double(scriptWindowID)),
+              "panes": .array(panes.map { .number(Double($0.rawValue)) }),
+            ])))
+      } catch {
+        reply(.failure(Self.driverFailure(error)))
+      }
     }
   }
 
@@ -550,7 +642,23 @@ extension MainWindowController {
       detail += " It would write: \u{201C}\(StatusText.bounded(text, maximumBytes: 160))\u{201D}"
     }
 
-    detail += " Allow for This Run lets this run do it again without asking, until it ends."
+    askDriver(
+      power: power, detail: detail, attachment: attachment, run: run, pane: pane, drives: drives,
+      grant: { $0.clipboardGrants.insert(power) }, proceed: access, reply: reply)
+  }
+
+  /// Asks the user about one power a driver wants, in the Pending Requests panel. Allow once lets
+  /// `proceed` run for this request alone. Allow for This Run keeps the power through `grant`,
+  /// and `proceed` then runs. Any other answer fails the request.
+  private func askDriver(
+    power: ControllerPermission, detail: String, attachment: ExecAttachment, run: UInt64,
+    pane: NodeID, drives: @escaping @MainActor () -> Bool,
+    grant: @escaping @MainActor (ExecAttachment) -> Void,
+    proceed: @escaping @MainActor (_ once: Bool) -> Void,
+    reply: @escaping ControlDispatcher.Reply
+  ) {
+    let detail =
+      detail + " Allow for This Run lets this run do it again without asking, until it ends."
 
     let outcome = permissionRequests.ask(
       PermissionRequests.Key(
@@ -569,14 +677,12 @@ extension MainWindowController {
             AppletCommandError(.refused, "The request ended before you answered it.")))
 
       case .allowOnce:
-        access(true)
+        proceed(true)
 
       case .allowForSession:
-        if let attachment, drives(), !attachment.revoked {
-          attachment.clipboardGrants.insert(power)
-        }
+        if let attachment, drives(), !attachment.revoked { grant(attachment) }
 
-        access(false)
+        proceed(false)
       }
     }
 

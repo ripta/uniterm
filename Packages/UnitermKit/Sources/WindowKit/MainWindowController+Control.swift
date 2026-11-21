@@ -64,7 +64,7 @@ extension MainWindowController {
     }
 
     if let attachment = execAttachments[pane], let owner = attachment.owner, !attachment.revoked,
-      !attachment.clipboardGrants.isEmpty
+      !attachment.clipboardGrants.isEmpty || !attachment.browserGrants.isEmpty
     {
       found.insert(owner)
     }
@@ -153,6 +153,11 @@ extension MainWindowController {
   /// longer stands behind it.
   func ownerEnded(_ owner: GroupOwner) {
     let released = paneArea.releaseOwner(owner)
+    let grant = AppletCaller(grant: owner.description)
+
+    for pane in paneIDs {
+      (paneArea.applet(for: pane) as? any CallerOwning)?.grantDidEnd(grant)
+    }
 
     for pane in released where contains(pane: pane) {
       pushControl(paneControls.bump(pane), to: pane)

@@ -87,7 +87,7 @@ let package = Package(
       dependencies: [
         "Theme", "Preferences", "AppletKit", "StatusKit", "PaneModel", "LayoutKit", "FileRouting",
         "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ExecDriver", "ControllerPackage",
-        "ControllerTrust", "SourceAccess",
+        "ControllerTrust", "SourceAccess", "BrowserModel",
       ]),
     .target(name: "SettingsKit", dependencies: ["Preferences"]),
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
@@ -407,7 +407,7 @@ let package = Package(
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
         "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
         "ControllerTrust", "TestProcessGuard", "TextViewerApplet", "SourceAccess",
-        "MapViewerApplet",
+        "MapViewerApplet", "BrowserApplet", "BrowserModel", "BrowserTestSupport",
       ]),
   ],
   swiftLanguageModes: [.v6],

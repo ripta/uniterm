@@ -1,6 +1,7 @@
 import AppKit
 import AppletFixtures
 import AppletKit
+import BrowserApplet
 import ExecDriver
 import ExecTestSupport
 import LayoutKit
@@ -44,6 +45,7 @@ final class ExecPaneFixture {
         typeID: "fake", displayName: "Fake", symbolName: "questionmark", opens: [],
         controlSupport: [.remoteControlled]),
       TextViewerApplet.typeDeclaration, MapViewerApplet.typeDeclaration,
+      BrowserApplet.typeDeclaration,
     ]
 
   init() throws {
