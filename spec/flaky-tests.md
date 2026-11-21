@@ -164,6 +164,16 @@ fixed ones.
   The class then passed 9 of 9 alone on the same tree. That tree changed only which exec driver requests need a
   remote-controlled pane, which this script path does not reach. The partial fix above does not cover it. The typed
   shell line never ran, so no status file appeared.
+- Seen again: 2026-11-21, locally, in a run of `ControllerConsentUITests` alone on a tree that changes no app or UI
+  test code. `testThePanelTrustsAVersionThatThenRunsWithoutAsking` ran past its 1-minute allowance.
+  The trust, the close of Pending Requests, and the click on the terminal all passed. The test then typed its second
+  `sh` line at 20.7 s, and no UI step followed for the remaining 40 s. The other 8 tests of the class passed.
+- Seen again: 2026-11-21, locally, in the next run of `ControllerConsentUITests` alone.
+  `testAnUnsafeReviewOffersThreeChoicesAndNoTrust` failed at `ControllerConsentUITests.swift:414` with "the review
+  never reached the panel". The pending-permissions indicator showed at 3.7 s, so the script ran and asked. Pending
+  Requests then opened, and its first row never appeared in 30 s. The test passed 3 of 3 alone right after, on the
+  same tree. That run typed script paths through a `.zshrc` variable. This class keeps the fixture's `.zshrc`, so the
+  variable was set, as the indicator shows.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
