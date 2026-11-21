@@ -12,6 +12,9 @@ The run's base and the row's base are both the commit "8< --- snip ---" that fol
 UTERM-026's zoom follow a layout's focus". Step 0 fetched `upstream/main`. The branch already sat on it, so no rebase
 ran.
 
+The row is finished. UTERM-008 is `implemented`, the index says so, and the row moved from `queue.md` to the end of
+`history.md` in "Mark UTERM-008 implemented now that its program pins are in".
+
 The row's one dependency, UTERM-004 M3, is met. No milestone carries a `Live after` line. Nothing is held, blocked, or
 skipped, and no work is stashed.
 
