@@ -44,6 +44,7 @@
 | [UTERM-040](UTERM-040-program-map-pins-edit-the-map.md) | A program's map pins edit the map as the user's do | accepted |
 | [UTERM-041](UTERM-041-uniform-tab-marker-slot.md) | A uniform marker slot for every tab, with an authority marker first | accepted |
 | [UTERM-042](UTERM-042-actions-for-tabs-and-their-markers.md) | One action menu for a tab and its markers, with every action in the palette | draft |
+| [UTERM-043](UTERM-043-pause-controllers.md) | Pause controllers for a while without ending their grants | deferred |
 
 ## Dependency Graph
 
@@ -87,6 +88,7 @@ UTERM-039 ← UTERM-005, UTERM-037
 UTERM-040 ← UTERM-008, UTERM-015, UTERM-016
 UTERM-041 ← UTERM-004, UTERM-005, UTERM-037
 UTERM-042 ← UTERM-004, UTERM-019, UTERM-041
+UTERM-043 ← UTERM-004, UTERM-019
 ```
 
 ## Not Yet Filed
