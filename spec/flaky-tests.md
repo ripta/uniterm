@@ -298,15 +298,6 @@ fixed ones.
   closed. Not confirmed.
 - Status: unresolved.
 
-### `TerminalSessionIntegrationTests.testProcessStartedEventReportsTheDirectChildInProgramMode`
-
-- Seen: 2026-11-21, once, in the first CI `package` run of PR #79, which changes no terminal code.
-- Evidence: `TerminalSessionIntegrationTests.swift:1064` failed with "the direct child is not login". The child's
-  name read as `xctest`. The rerun passed.
-- Suspected cause: the test reads the child's name with `sysctl` as soon as `processStarted` arrives. A child that has
-  forked but not yet run `exec` on `login` still carries `xctest`'s name. Not confirmed.
-- Status: unresolved.
-
 ### `TerminalSessionIntegrationTests.testShellSeesTheNewSize`
 
 - Seen: 2026-11-06, twice in CI's `build` job, on PRs #21 and #29. Neither PR changes terminal code. Found later by
@@ -361,6 +352,21 @@ fixed ones.
 - Status: unresolved until CI runs show the change holds.
 
 ## Fixed
+
+### `TerminalSessionIntegrationTests.testProcessStartedEventReportsTheDirectChildInProgramMode`
+
+Fixed by: "Wait for the child's exec of login before reading its name"
+
+- Seen: 2026-11-21, once, in the first CI `package` run of PR #79, which changes no terminal code. Its shell-mode twin
+  `testProcessStartedEventReportsTheDirectChild` failed once on main's CI on 2026-11-18, found later in CI's logs.
+  Both read the name through the same helper.
+- Evidence: `TerminalSessionIntegrationTests.swift:1064` failed with "the direct child is not login". The child's
+  name read as `xctest`. The rerun passed.
+- Cause: the test read the child's name with `sysctl` as soon as `processStarted` arrived. A child that has forked but
+  not yet run `exec` on `login` still carries `xctest`'s name. The event was right to name that child.
+- Fix: the test reads the name until it turns to `login`, within 10 s, then asserts it. A child that is not `login`
+  never takes the name, so it still fails. The race did not reproduce locally, so the test pins the fix, not the
+  failure. Both `processStarted` tests passed after the change.
 
 ### `ExecDriverChannelTests.testAStalledStdinFailsWithoutBlockingTheEmitter`
 
