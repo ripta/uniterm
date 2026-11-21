@@ -6,7 +6,8 @@ set -euo pipefail
 # Ghostty check, since only main's runs save the Ghostty cache and the proof that PRs read.
 #
 # Any doubt builds. An unknown event, an unreadable answer from GitHub, no merged PR, more than one,
-# a different tree, or a ci check that did not pass all leave tested=false.
+# a different tree, a ci check that did not pass, or a head that lacks main's previous commit all
+# leave tested=false.
 
 tested=false
 pr=""
@@ -71,6 +72,16 @@ find_tested_pr() {
 
   if [[ "$conclusions" != success ]]; then
     report "PR #$pr's latest ci check reads '${conclusions//$'\n'/,}', not one success; running full CI."
+    return 1
+  fi
+
+  # A PR run tests GitHub's merge of the head into the base as it stood then, not the head alone.
+  # When the head already holds the commit main had before this push, every earlier base was in
+  # the head too, so that merge had the head's own tree. Otherwise main may have changed and
+  # changed back, and the run tested a tree that differs from both. A squash merge's head is not
+  # in this clone, so it always builds.
+  if ! git merge-base --is-ancestor "$head^1" "$pr_head" 2>/dev/null; then
+    report "PR #$pr's head does not contain main's previous commit, so its runs tested another merge; running full CI."
     return 1
   fi
 

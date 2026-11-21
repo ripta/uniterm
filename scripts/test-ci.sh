@@ -166,8 +166,23 @@ printf '%s' "$body" | jq -r "$4"
 FAKE
 chmod +x "$fake_gh"
 
-pr_head=1111111111111111111111111111111111111111
-merge_tree="$(git -C "$repo" rev-parse "$mixed^{tree}")"
+# A PR branch off main, and GitHub's merge commit for it. The head holds main's previous commit,
+# so the merge keeps the head's tree.
+git -C "$repo" checkout --quiet --detach "$odd_doc"
+printf 'PR\n' >"$repo/App/PR.swift"
+pr_head="$(commit_fixture App/PR.swift)"
+merged="$(git -C "$repo" commit-tree "$pr_head^{tree}" -p "$odd_doc" -p "$pr_head" -m Merge)"
+
+# Main gains a change and reverts it while the PR is open. The merge's tree still equals the head's,
+# but a PR run made between the two tested a merge that held the change.
+git -C "$repo" checkout --quiet --detach "$odd_doc"
+printf 'Gone\n' >"$repo/App/Gone.swift"
+commit_fixture App/Gone.swift >/dev/null
+git -C "$repo" rm --quiet App/Gone.swift
+reverted="$(commit_fixture App/Gone.swift)"
+remerged="$(git -C "$repo" commit-tree "$pr_head^{tree}" -p "$reverted" -p "$pr_head" -m Merge)"
+
+merge_tree="$(git -C "$repo" rev-parse "$pr_head^{tree}")"
 other_tree="$(git -C "$repo" rev-parse "$license^{tree}")"
 
 pulls_json() {
@@ -205,33 +220,37 @@ expect_tested() {
 same_tree="{\"sha\":\"$pr_head\",\"tree\":{\"sha\":\"$merge_tree\"}}"
 passed="$(checks_json success)"
 
-expect_tested "a merge of a passing PR's exact tree is tested" push "$mixed" \
-  "$(pulls_json "$mixed")" "$same_tree" "$passed" true
-expect_tested "a PR head with another tree is untested" push "$mixed" \
-  "$(pulls_json "$mixed")" "{\"tree\":{\"sha\":\"$other_tree\"}}" "$passed" false
-expect_tested "a failed ci check is untested" push "$mixed" \
-  "$(pulls_json "$mixed")" "$same_tree" "$(checks_json failure)" false
-expect_tested "a ci check still running is untested" push "$mixed" \
-  "$(pulls_json "$mixed")" "$same_tree" '{"total_count":1,"check_runs":[{"name":"ci","conclusion":null}]}' false
-expect_tested "no ci check is untested" push "$mixed" \
-  "$(pulls_json "$mixed")" "$same_tree" "$(checks_json "")" false
-expect_tested "two ci checks are untested" push "$mixed" \
-  "$(pulls_json "$mixed")" "$same_tree" "$(checks_json "success success")" false
-expect_tested "an unmerged PR is untested" push "$mixed" \
-  "$(pulls_json "$mixed" null | sed 's/"null"/null/')" "$same_tree" "$passed" false
-expect_tested "a PR that only contains the commit is untested" push "$mixed" \
+expect_tested "a merge of a passing PR's exact tree is tested" push "$merged" \
+  "$(pulls_json "$merged")" "$same_tree" "$passed" true
+expect_tested "a PR head with another tree is untested" push "$merged" \
+  "$(pulls_json "$merged")" "{\"tree\":{\"sha\":\"$other_tree\"}}" "$passed" false
+expect_tested "a failed ci check is untested" push "$merged" \
+  "$(pulls_json "$merged")" "$same_tree" "$(checks_json failure)" false
+expect_tested "a ci check still running is untested" push "$merged" \
+  "$(pulls_json "$merged")" "$same_tree" '{"total_count":1,"check_runs":[{"name":"ci","conclusion":null}]}' false
+expect_tested "no ci check is untested" push "$merged" \
+  "$(pulls_json "$merged")" "$same_tree" "$(checks_json "")" false
+expect_tested "two ci checks are untested" push "$merged" \
+  "$(pulls_json "$merged")" "$same_tree" "$(checks_json "success success")" false
+expect_tested "an unmerged PR is untested" push "$merged" \
+  "$(pulls_json "$merged" null | sed 's/"null"/null/')" "$same_tree" "$passed" false
+expect_tested "a PR that only contains the commit is untested" push "$merged" \
   "$(pulls_json "$license")" "$same_tree" "$passed" false
-expect_tested "two merged PRs naming the commit are untested" push "$mixed" \
-  "[$(pulls_json "$mixed" | tr -d '[]'),$(pulls_json "$mixed" | tr -d '[]')]" "$same_tree" "$passed" false
-expect_tested "an unreadable PR list is untested" push "$mixed" fail "$same_tree" "$passed" false
-expect_tested "an unreadable PR head is untested" push "$mixed" "$(pulls_json "$mixed")" fail "$passed" false
-expect_tested "an unreadable ci check is untested" push "$mixed" "$(pulls_json "$mixed")" "$same_tree" fail false
-expect_tested "a PR event is never tested" pull_request "$mixed" \
-  "$(pulls_json "$mixed")" "$same_tree" "$passed" false
-expect_tested "a manual run is never tested" workflow_dispatch "$mixed" \
-  "$(pulls_json "$mixed")" "$same_tree" "$passed" false
+expect_tested "two merged PRs naming the commit are untested" push "$merged" \
+  "[$(pulls_json "$merged" | tr -d '[]'),$(pulls_json "$merged" | tr -d '[]')]" "$same_tree" "$passed" false
+expect_tested "an unreadable PR list is untested" push "$merged" fail "$same_tree" "$passed" false
+expect_tested "an unreadable PR head is untested" push "$merged" "$(pulls_json "$merged")" fail "$passed" false
+expect_tested "an unreadable ci check is untested" push "$merged" "$(pulls_json "$merged")" "$same_tree" fail false
+expect_tested "a PR event is never tested" pull_request "$merged" \
+  "$(pulls_json "$merged")" "$same_tree" "$passed" false
+expect_tested "a manual run is never tested" workflow_dispatch "$merged" \
+  "$(pulls_json "$merged")" "$same_tree" "$passed" false
 expect_tested "a malformed head is untested" push "not-a-sha" \
-  "$(pulls_json "$mixed")" "$same_tree" "$passed" false
+  "$(pulls_json "$merged")" "$same_tree" "$passed" false
+expect_tested "a merge after main changed and changed back is untested" push "$remerged" \
+  "$(pulls_json "$remerged")" "$same_tree" "$passed" false
+expect_tested "a squash merge whose head is not in the clone is untested" push "$merged" \
+  "$(pulls_json "$merged" | sed "s/$pr_head/2222222222222222222222222222222222222222/")" "$same_tree" "$passed" false
 expect_tested "a head missing locally is untested" push aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   "$(pulls_json aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)" "$same_tree" "$passed" false
 
