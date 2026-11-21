@@ -306,6 +306,24 @@ fixed ones.
   test does not tell the two apart.
 - Status: unresolved.
 
+### `TerminalSessionIntegrationTests.testShellSeesTheNewSize`
+
+- Seen: 2026-11-06, twice in CI's `build` job, on PRs #21 and #29. Neither PR changes terminal code. Found later by
+  reading CI logs, not at the time.
+- Evidence: both runs failed with "timed out waiting for stty to report S:11x49" after about 20 s. The rerun of each
+  failed job passed on the same head.
+- Suspected cause: unknown. No CI run since 2026-11-06 has failed it.
+- Status: unresolved.
+
+### `BrowserUnsentInputTests.testEditsInASubframeMarkTheTabAndOnlyThatFrameClearsIt`
+
+- Seen: 2026-11-08, once in CI's `build` job, on PR #34, which changes only the palette. Found later by reading CI logs,
+  not at the time.
+- Evidence: it failed with "timed out waiting until the main frame reported its edit" after 16 s. The rerun of the
+  failed job passed on the same head.
+- Suspected cause: unknown. No CI run since 2026-11-08 has failed it.
+- Status: unresolved.
+
 ### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
 
 - Seen: 2026-11-15, 2026-11-18, and 2026-11-19, once each in CI on PRs that did not touch the launcher. On
