@@ -46,7 +46,7 @@ final class PaneTreeUITests: UnitermUITestCase {
     openPane(in: app, keys: "d", modifiers: .command)
     let one = window.groups["pane-1"]
     let two = window.groups["pane-2"]
-    XCTAssertTrue(two.waitForExistence(timeout: 20))
+    XCTAssertTrue(two.appears(timeout: 20))
     XCTAssertTrue(waitFor(two.textViews["terminal"], timeout: 40) { $0.contains("% ") })
     XCTAssertEqual(two.value as? String, "focused")
     XCTAssertEqual(one.value as? String, "unfocused")
@@ -82,7 +82,7 @@ final class PaneTreeUITests: UnitermUITestCase {
     openPane(in: app, keys: "d", modifiers: [.command, .shift])
     let one = window.groups["pane-1"]
     let two = window.groups["pane-2"]
-    XCTAssertTrue(two.waitForExistence(timeout: 20))
+    XCTAssertTrue(two.appears(timeout: 20))
     XCTAssertTrue(waitFor(two.textViews["terminal"], timeout: 40) { $0.contains("% ") })
     XCTAssertTrue(waitForValue("focused", of: two))
 
@@ -102,7 +102,7 @@ final class PaneTreeUITests: UnitermUITestCase {
 
     openPane(in: app, keys: "d", modifiers: .command)
     let one = window.groups["pane-1"]
-    XCTAssertTrue(window.groups["pane-2"].waitForExistence(timeout: 20))
+    XCTAssertTrue(window.groups["pane-2"].appears(timeout: 20))
     XCTAssertTrue(waitForValue("unfocused", of: one))
 
     one.textViews["terminal"].click()
@@ -118,10 +118,10 @@ final class PaneTreeUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     openPane(in: app, keys: "d", modifiers: .command)
-    XCTAssertTrue(window.groups["pane-2"].waitForExistence(timeout: 20))
+    XCTAssertTrue(window.groups["pane-2"].appears(timeout: 20))
 
     let divider = app.descendants(matching: .any)["divider-1-2"]
-    XCTAssertTrue(divider.waitForExistence(timeout: 5))
+    XCTAssertTrue(divider.appears(timeout: 5))
 
     let before1 = window.groups["pane-1"].frame.width
     let before2 = window.groups["pane-2"].frame.width
@@ -142,18 +142,14 @@ final class PaneTreeUITests: UnitermUITestCase {
     let whole = window.groups["pane-1"].frame.width
 
     openPane(in: app, keys: "d", modifiers: .command)
-    XCTAssertTrue(window.groups["pane-2"].waitForExistence(timeout: 20))
+    XCTAssertTrue(window.groups["pane-2"].appears(timeout: 20))
     XCTAssertLessThan(window.groups["pane-1"].frame.width, whole - 100)
     XCTAssertTrue(
       waitFor(window.groups["pane-2"].textViews["terminal"], timeout: 40) { $0.contains("% ") })
 
     app.typeKey("w", modifierFlags: .command)
 
-    let gone = NSPredicate(format: "exists == false")
-    XCTAssertEqual(
-      XCTWaiter().wait(
-        for: [XCTNSPredicateExpectation(predicate: gone, object: window.groups["pane-2"])],
-        timeout: 15), .completed)
+    XCTAssertTrue(window.groups["pane-2"].disappears(timeout: 15))
     XCTAssertTrue(window.exists)
     XCTAssertEqual(window.groups["pane-1"].frame.width, whole, accuracy: 2)
   }
@@ -168,7 +164,7 @@ final class PaneTreeUITests: UnitermUITestCase {
 
     openPane(in: app, keys: "d", modifiers: .command)
     XCTAssertTrue(
-      window.groups["pane-2"].waitForExistence(timeout: 20),
+      window.groups["pane-2"].appears(timeout: 20),
       "the split never opened a second pane. \(focusReport(app))")
     XCTAssertTrue(
       waitFor(window.groups["pane-2"].textViews["terminal"], timeout: 40) { $0.contains("% ") })
@@ -180,7 +176,7 @@ final class PaneTreeUITests: UnitermUITestCase {
     app.typeKey("t", modifierFlags: [.command, .shift])
 
     XCTAssertTrue(
-      window.groups["pane-4"].waitForExistence(timeout: 15), "Cmd-Shift-T never reopened it")
+      window.groups["pane-4"].appears(timeout: 15), "Cmd-Shift-T never reopened it")
     XCTAssertFalse(window.groups["pane-2"].exists, "the retired ID came back")
     XCTAssertTrue(waitForPaneCount(2, in: window))
     XCTAssertGreaterThan(window.groups["pane-4"].frame.minX, window.groups["pane-1"].frame.minX)
@@ -196,7 +192,7 @@ final class PaneTreeUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     openPane(in: app, keys: "d", modifiers: .command)
-    XCTAssertTrue(window.groups["pane-2"].waitForExistence(timeout: 20))
+    XCTAssertTrue(window.groups["pane-2"].appears(timeout: 20))
 
     app.typeKey("w", modifierFlags: .command)
     XCTAssertTrue(waitUntilGone(window.groups["pane-2"], timeout: 15))
@@ -204,12 +200,12 @@ final class PaneTreeUITests: UnitermUITestCase {
     app.typeKey("z", modifierFlags: .command)
 
     XCTAssertFalse(
-      window.groups["pane-4"].waitForExistence(timeout: 3), "Cmd-Z reopened the closed pane")
+      window.groups["pane-4"].appears(timeout: 3), "Cmd-Z reopened the closed pane")
     XCTAssertTrue(waitForPaneCount(1, in: window))
 
     app.typeKey("t", modifierFlags: [.command, .shift])
 
-    XCTAssertTrue(window.groups["pane-4"].waitForExistence(timeout: 15))
+    XCTAssertTrue(window.groups["pane-4"].appears(timeout: 15))
   }
 
   /// Catches a window that can shrink past its panes. With three panes in a row the minimum is
@@ -287,8 +283,6 @@ final class PaneTreeUITests: UnitermUITestCase {
   }
 
   private func waitForValue(_ expected: String, of element: XCUIElement) -> Bool {
-    let predicate = NSPredicate(format: "value == %@", expected)
-    let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
-    return XCTWaiter().wait(for: [expectation], timeout: 10) == .completed
+    pollUntil(timeout: 10) { (element.value as? String) == expected }
   }
 }

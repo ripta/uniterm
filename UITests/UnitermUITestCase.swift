@@ -115,7 +115,7 @@ class UnitermUITestCase: XCTestCase {
   /// their own number.
   func waitForTerminal(in app: XCUIApplication, window number: Int = 1) -> XCUIElement {
     let terminal = mainWindow(number, in: app).textViews["terminal"]
-    XCTAssertTrue(terminal.waitForExistence(timeout: 15))
+    XCTAssertTrue(terminal.appears(timeout: 15))
 
     // Keys typed before the shell reads its terminal can be lost. The fixture's zsh prompt ends in
     // "% ", so wait for it.
@@ -196,18 +196,18 @@ class UnitermUITestCase: XCTestCase {
 
     let panel = app.windows["pending-requests-window"]
 
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+    XCTAssertTrue(panel.appears(timeout: 5), "the Pending Requests panel never opened")
 
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     XCTAssertTrue(
       waitUntilHittable(row), "the review's row cannot take a click. \(focusReport(app))")
     row.click()
 
     let button = panel.buttons[identifier]
 
-    XCTAssertTrue(button.waitForExistence(timeout: 5), "the review offers no \(identifier)")
+    XCTAssertTrue(button.appears(timeout: 5), "the review offers no \(identifier)")
     button.click()
 
     let close = panel.buttons[XCUIIdentifierCloseWindow]
@@ -222,7 +222,7 @@ class UnitermUITestCase: XCTestCase {
     app.menuBars.menuItems["Enable Remote Control"].click()
 
     XCTAssertTrue(
-      mainWindow(number, in: app).buttons["pane-control-\(pane)"].waitForExistence(timeout: 10),
+      mainWindow(number, in: app).buttons["pane-control-\(pane)"].appears(timeout: 10),
       "the pane never showed its control badge")
   }
 
@@ -253,17 +253,11 @@ class UnitermUITestCase: XCTestCase {
   func waitFor(
     _ element: XCUIElement, timeout: TimeInterval, _ condition: @escaping (String) -> Bool
   ) -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
+    pollUntil(timeout: timeout) {
+      guard let value = element.value as? String else { return false }
 
-    while Date() < deadline {
-      if let value = element.value as? String, condition(value) {
-        return true
-      }
-
-      Thread.sleep(forTimeInterval: 0.25)
+      return condition(value)
     }
-
-    return false
   }
 
   func firstMatch(_ pattern: String, in text: String) -> String? {
@@ -276,10 +270,7 @@ class UnitermUITestCase: XCTestCase {
   }
 
   func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
-    let gone = NSPredicate(format: "exists == false")
-    return XCTWaiter().wait(
-      for: [XCTNSPredicateExpectation(predicate: gone, object: element)], timeout: timeout)
-      == .completed
+    element.disappears(timeout: timeout)
   }
 
   /// Opens Settings, picks a status bar position, and closes Settings so a main window is key
@@ -287,10 +278,10 @@ class UnitermUITestCase: XCTestCase {
   func chooseStatusBarPosition(_ title: String, in app: XCUIApplication) {
     app.typeKey(",", modifierFlags: .command)
     let settings = app.windows["settings-window"]
-    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+    XCTAssertTrue(settings.appears(timeout: 5))
 
     let control = settings.radioGroups["status-bar-position-control"]
-    XCTAssertTrue(control.waitForExistence(timeout: 5))
+    XCTAssertTrue(control.appears(timeout: 5))
     control.radioButtons[title].click()
 
     app.typeKey("w", modifierFlags: .command)
@@ -301,18 +292,11 @@ class UnitermUITestCase: XCTestCase {
   /// closed menu's items have no frame, and a list still settling after a scroll has not moved its
   /// rows into view yet.
   func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-    let hittable = NSPredicate(format: "hittable == true")
-    return XCTWaiter().wait(
-      for: [XCTNSPredicateExpectation(predicate: hittable, object: element)], timeout: timeout)
-      == .completed
+    pollUntil(timeout: timeout) { element.exists && element.isHittable }
   }
 
   func waitForNoSheet(in window: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-    let gone = NSPredicate(format: "exists == false")
-    let sheet = window.sheets.firstMatch
-    return XCTWaiter().wait(
-      for: [XCTNSPredicateExpectation(predicate: gone, object: sheet)], timeout: timeout)
-      == .completed
+    window.sheets.firstMatch.disappears(timeout: timeout)
   }
 
   // MARK: Diagnostics
@@ -362,7 +346,7 @@ class UnitermUITestCase: XCTestCase {
 
     app.typeKey(keys, modifierFlags: modifiers)
     XCTAssertTrue(
-      launcher(in: window).waitForExistence(timeout: 5),
+      launcher(in: window).appears(timeout: 5),
       "the launcher never opened. \(focusReport(app))")
 
     app.typeKey(.return, modifierFlags: [])
@@ -374,12 +358,12 @@ class UnitermUITestCase: XCTestCase {
   /// against sibling folders, which makes the entry slow and can change the path.
   func choose(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
     let panel = window.sheets.firstMatch
-    XCTAssertTrue(panel.waitForExistence(timeout: 10), "no open panel")
+    XCTAssertTrue(panel.appears(timeout: 10), "no open panel")
 
     app.typeKey("g", modifierFlags: [.command, .shift])
 
     let goTo = panel.sheets.firstMatch
-    XCTAssertTrue(goTo.waitForExistence(timeout: 5), "no go-to-folder sheet. \(focusReport(app))")
+    XCTAssertTrue(goTo.appears(timeout: 5), "no go-to-folder sheet. \(focusReport(app))")
 
     paste(file.path, in: app)
 

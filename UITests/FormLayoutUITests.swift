@@ -16,16 +16,16 @@ final class FormLayoutUITests: UnitermUITestCase {
   /// positions, and a control that touches the window edge.
   func testSettingsFormIsAlignedAndInsideItsWindowInLightAndDark() {
     let app = launchApp()
-    XCTAssertTrue(app.windows["main-window"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.windows["main-window"].appears(timeout: 10))
 
     app.typeKey(",", modifierFlags: .command)
     let settings = app.windows["settings-window"]
-    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+    XCTAssertTrue(settings.appears(timeout: 5))
 
     let appearance = settings.radioGroups["appearance-control"]
     let statusBar = settings.radioGroups["status-bar-position-control"]
     let scriptFiles = settings.radioGroups["script-file-mode-control"]
-    XCTAssertTrue(appearance.waitForExistence(timeout: 5))
+    XCTAssertTrue(appearance.appears(timeout: 5))
     XCTAssertTrue(statusBar.exists)
     XCTAssertTrue(scriptFiles.exists, "Settings has no Script files row")
     XCTAssertTrue(scriptFiles.radioButtons["Strict"].exists)

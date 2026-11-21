@@ -75,7 +75,7 @@ final class TerminalLinkUITests: UnitermUITestCase {
       moveOnto(point, from: emptyArea(of: terminal))
 
       XCTAssertTrue(
-        preview.waitForExistence(timeout: 10), "no overlay with Command held over the path")
+        preview.appears(timeout: 10), "no overlay with Command held over the path")
       XCTAssertEqual(preview.value as? String, folder.path)
 
       let shot = XCTAttachment(screenshot: window.screenshot())
@@ -88,7 +88,7 @@ final class TerminalLinkUITests: UnitermUITestCase {
     }
 
     XCTAssertTrue(
-      window.groups["pane-2"].textViews["terminal"].waitForExistence(timeout: 20),
+      window.groups["pane-2"].textViews["terminal"].appears(timeout: 20),
       "the click opened no pane beside the first")
     XCTAssertFalse(app.windows["main-window-2"].exists, "the folder opened in a new window")
   }
@@ -108,7 +108,7 @@ final class TerminalLinkUITests: UnitermUITestCase {
       moveOnto(point, from: emptyArea(of: terminal))
 
       XCTAssertFalse(
-        window.staticTexts["terminal-link-preview"].waitForExistence(timeout: 2),
+        window.staticTexts["terminal-link-preview"].appears(timeout: 2),
         "a relative path showed a target")
 
       point.click()
@@ -116,7 +116,7 @@ final class TerminalLinkUITests: UnitermUITestCase {
 
     let message = window.staticTexts["status-message"]
 
-    XCTAssertTrue(message.waitForExistence(timeout: 10), "the refusal never reached the status bar")
+    XCTAssertTrue(message.appears(timeout: 10), "the refusal never reached the status bar")
     XCTAssertTrue(
       waitFor(message, timeout: 5) { $0.contains("Not opened: a relative path") },
       "the message does not say why. It reads \(message.value as? String ?? "")")

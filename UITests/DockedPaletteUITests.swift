@@ -16,7 +16,7 @@ final class DockedPaletteUITests: UnitermUITestCase {
 
   private func activate(in app: XCUIApplication) {
     app.typeKey("k", modifierFlags: .command)
-    XCTAssertTrue(results(in: app).waitForExistence(timeout: 5), "the overlay never showed")
+    XCTAssertTrue(results(in: app).appears(timeout: 5), "the overlay never showed")
   }
 
   /// Catches a docked palette that grabs the keyboard before it is activated, a placeholder that
@@ -59,7 +59,7 @@ final class DockedPaletteUITests: UnitermUITestCase {
 
     field(in: app).click()
 
-    XCTAssertTrue(results(in: app).waitForExistence(timeout: 5), "the click did not activate")
+    XCTAssertTrue(results(in: app).appears(timeout: 5), "the click did not activate")
     app.typeText("split")
     XCTAssertTrue(waitFor(field(in: app), timeout: 5) { $0 == "split" })
     XCTAssertEqual(terminal.frame, before, "activation resized the terminal")
@@ -79,7 +79,7 @@ final class DockedPaletteUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(terminal, timeout: 20) { $0.contains("cat -v") })
 
     field(in: app).click()
-    XCTAssertTrue(results(in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(results(in: app).appears(timeout: 5))
 
     terminal.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).click()
 
@@ -114,7 +114,7 @@ final class DockedPaletteUITests: UnitermUITestCase {
       field(in: app).placeholderValue, "Search tabs and commands (\u{21E7}\u{2318}O)")
 
     app.typeKey("o", modifierFlags: [.command, .shift])
-    XCTAssertTrue(results(in: app).waitForExistence(timeout: 5), "the remapped key did not work")
+    XCTAssertTrue(results(in: app).appears(timeout: 5), "the remapped key did not work")
   }
 
   /// Catches a top-docked palette that sits below the title bar or covers the traffic lights, and
@@ -150,14 +150,14 @@ final class DockedPaletteUITests: UnitermUITestCase {
 
     app.typeKey(",", modifierFlags: .command)
     let settings = app.windows["settings-window"]
-    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+    XCTAssertTrue(settings.appears(timeout: 5))
 
     settings.radioGroups["palette-mode-control"].radioButtons["Docked"].click()
     settings.radioGroups["palette-dock-edge-control"].radioButtons["Bottom"].click()
     app.typeKey("w", modifierFlags: .command)
     XCTAssertTrue(waitUntilGone(settings, timeout: 5))
 
-    XCTAssertTrue(field(in: app).waitForExistence(timeout: 5), "the palette did not dock")
+    XCTAssertTrue(field(in: app).appears(timeout: 5), "the palette did not dock")
     XCTAssertGreaterThan(
       field(in: app).frame.minY, mainWindow(in: app).frame.midY, "the palette did not move down")
   }

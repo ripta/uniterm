@@ -342,6 +342,18 @@ fixed ones.
   is wrong.
 - Status: unresolved until CI runs show the change holds.
 
+### `WindowsUITests.testCommandNOpensASecondWindowWithItsOwnShell`
+
+- Seen: 2026-11-21, once, in a full local `make test-app` run of 176 tests, the run that moved UI test waits to
+  quarter-second polling. It was the only failure.
+- Evidence: `UnitermUITestCase.swift:118` failed when the second window's terminal never appeared. Synthesizing Cmd-N
+  took 20 s, from 0.51 s to 20.73 s, and no second window opened in the 15 s after. With the faster waits, Cmd-N went
+  out about half a second after launch, once the first prompt showed and the app was frontmost. `WindowsUITests` then
+  passed 30 of 30, each test 5 times, on the same tree.
+- Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
+  `ControllerRunUITests`, `ExecPaneUITests`, and `StatusBarUITests` entries above. Whether a key sent that soon after
+  launch makes it likelier is not known.
+
 ## Fixed
 
 ### `MarkdownViewTests.testATwentyMegabyteDocumentNeverStallsTheMainThread`

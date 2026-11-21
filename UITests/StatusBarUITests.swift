@@ -16,7 +16,7 @@ final class StatusBarUITests: UnitermUITestCase {
     let window = app.windows["main-window"]
     let terminal = waitForTerminal(in: app)
     let bar = window.groups["status-bar"]
-    XCTAssertTrue(bar.waitForExistence(timeout: 10))
+    XCTAssertTrue(bar.appears(timeout: 10))
     XCTAssertGreaterThanOrEqual(
       bar.frame.minY, terminal.frame.maxY - 1, "the bar starts at the bottom")
 
@@ -63,7 +63,7 @@ final class StatusBarUITests: UnitermUITestCase {
     bar.click()
 
     let rows = window.staticTexts.matching(identifier: "history-row")
-    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the history never opened")
+    XCTAssertTrue(rows.firstMatch.appears(timeout: 5), "the history never opened")
     XCTAssertGreaterThanOrEqual(rows.count, 1)
     XCTAssertEqual(
       rows.element(boundBy: 0).value as? String, "error  uniterm: \(Self.errorText)")
@@ -80,12 +80,12 @@ final class StatusBarUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     let indicator = element("status-unseen-error", in: window)
-    XCTAssertTrue(indicator.waitForExistence(timeout: 5), "no indicator after an error")
+    XCTAssertTrue(indicator.appears(timeout: 5), "no indicator after an error")
 
     app.typeKey("m", modifierFlags: [.command, .shift])
 
     let rows = window.staticTexts.matching(identifier: "history-row")
-    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+    XCTAssertTrue(rows.firstMatch.appears(timeout: 5))
     XCTAssertEqual(rows.firstMatch.value as? String, "error  uniterm: \(Self.errorText)")
     XCTAssertTrue(waitForGone(indicator), "opening the history left the indicator on")
   }
@@ -113,7 +113,7 @@ final class StatusBarUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(message, timeout: 5) { $0.contains(Self.errorText) })
 
     let dismiss = element("status-dismiss", in: window)
-    XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "an error has no dismiss control")
+    XCTAssertTrue(dismiss.appears(timeout: 5), "an error has no dismiss control")
     dismiss.click()
 
     XCTAssertTrue(waitForMessageToLeave(message), "the error stayed on the bar")
@@ -155,9 +155,6 @@ final class StatusBarUITests: UnitermUITestCase {
   }
 
   private func waitForGone(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-    let gone = NSPredicate(format: "exists == false")
-    return XCTWaiter().wait(
-      for: [XCTNSPredicateExpectation(predicate: gone, object: element)], timeout: timeout)
-      == .completed
+    element.disappears(timeout: timeout)
   }
 }

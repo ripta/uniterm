@@ -50,7 +50,7 @@ final class LayoutUITests: UnitermUITestCase {
 
     let relaunched = launchApp(arguments: closeWindowsOnQuit)
     let restored = mainWindow(in: relaunched)
-    XCTAssertTrue(restored.waitForExistence(timeout: 20))
+    XCTAssertTrue(restored.appears(timeout: 20))
     XCTAssertTrue(waitForPaneCount(3, in: restored))
 
     let after = panesInReadingOrder(in: restored).map { ($0.identifier, $0.frame) }
@@ -110,8 +110,8 @@ final class LayoutUITests: UnitermUITestCase {
     XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
 
     let relaunched = launchApp(arguments: closeWindowsOnQuit)
-    XCTAssertTrue(mainWindow(in: relaunched).waitForExistence(timeout: 20))
-    XCTAssertTrue(mainWindow(2, in: relaunched).waitForExistence(timeout: 20))
+    XCTAssertTrue(mainWindow(in: relaunched).appears(timeout: 20))
+    XCTAssertTrue(mainWindow(2, in: relaunched).appears(timeout: 20))
     XCTAssertTrue(waitForPaneCount(2, in: mainWindow(in: relaunched)))
     XCTAssertTrue(waitForPaneCount(1, in: mainWindow(2, in: relaunched)))
 
@@ -165,7 +165,7 @@ final class LayoutUITests: UnitermUITestCase {
 
     let placeholder = window.descendants(matching: .any).matching(identifier: "placeholder-pane")
       .firstMatch
-    XCTAssertTrue(placeholder.waitForExistence(timeout: 10), "no placeholder pane")
+    XCTAssertTrue(placeholder.appears(timeout: 10), "no placeholder pane")
 
     app.typeKey("n", modifierFlags: .command)
     _ = waitForTerminal(in: app, window: 2)
@@ -200,7 +200,7 @@ final class LayoutUITests: UnitermUITestCase {
     let prompt = mainWindow(in: app).descendants(matching: .any)
       .matching(identifier: "terminal-run-prompt").firstMatch
 
-    XCTAssertTrue(prompt.waitForExistence(timeout: 20), "the Run prompt never showed")
+    XCTAssertTrue(prompt.appears(timeout: 20), "the Run prompt never showed")
     XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "the command ran")
   }
 
@@ -215,7 +215,7 @@ final class LayoutUITests: UnitermUITestCase {
 
     let app = launchApp()
     let window = mainWindow(in: app)
-    XCTAssertTrue(window.waitForExistence(timeout: 20))
+    XCTAssertTrue(window.appears(timeout: 20))
 
     let screens = NSScreen.screens.map(\.frame)
     let right = screens.map(\.maxX).max() ?? 0

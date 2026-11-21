@@ -50,11 +50,11 @@ final class LaunchServicesOpenUITests: UnitermUITestCase {
 
     let panel = app.windows["pending-requests-window"]
 
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+    XCTAssertTrue(panel.appears(timeout: 5), "the Pending Requests panel never opened")
 
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the question never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the question never reached the panel")
     row.click()
 
     return panel
@@ -88,7 +88,7 @@ final class LaunchServicesOpenUITests: UnitermUITestCase {
 
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the question")
+    XCTAssertTrue(indicator.appears(timeout: 30), "the window never showed the question")
 
     let panel = openQuestion(in: app)
 
@@ -113,7 +113,7 @@ final class LaunchServicesOpenUITests: UnitermUITestCase {
     closePanel(panel)
 
     XCTAssertTrue(
-      window.groups["pane-2"].textViews["terminal"].waitForExistence(timeout: 20),
+      window.groups["pane-2"].textViews["terminal"].appears(timeout: 20),
       "no pane opened beside the first")
     XCTAssertFalse(app.windows["main-window-2"].exists, "the folder opened in a new window")
     XCTAssertTrue(

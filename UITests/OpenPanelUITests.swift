@@ -21,7 +21,7 @@ final class OpenPanelUITests: UnitermUITestCase {
     app.typeKey("o", modifierFlags: .command)
 
     let panel = window.sheets.firstMatch
-    XCTAssertTrue(panel.waitForExistence(timeout: 10), "Cmd-O never showed an open panel")
+    XCTAssertTrue(panel.appears(timeout: 10), "Cmd-O never showed an open panel")
 
     let shot = XCTAttachment(screenshot: panel.screenshot())
     shot.name = "open-panel"
@@ -31,7 +31,7 @@ final class OpenPanelUITests: UnitermUITestCase {
     app.typeKey("g", modifierFlags: [.command, .shift])
 
     let goTo = panel.sheets.firstMatch
-    XCTAssertTrue(goTo.waitForExistence(timeout: 5), "the go-to-folder sheet never appeared")
+    XCTAssertTrue(goTo.appears(timeout: 5), "the go-to-folder sheet never appeared")
 
     app.typeText(folder.resolvingSymlinksInPath().path)
     app.typeKey(.return, modifierFlags: [])
@@ -42,7 +42,7 @@ final class OpenPanelUITests: UnitermUITestCase {
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")
 
     let created = window.groups["pane-2"].textViews["terminal"]
-    XCTAssertTrue(created.waitForExistence(timeout: 15), "no pane opened beside the first")
+    XCTAssertTrue(created.appears(timeout: 15), "no pane opened beside the first")
     XCTAssertEqual(window.textViews.matching(identifier: "terminal").count, 2)
     XCTAssertFalse(app.windows["main-window-2"].exists, "the folder opened in a new window")
 

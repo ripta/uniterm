@@ -133,10 +133,9 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     terminal.click()
 
-    let focused = XCTNSPredicateExpectation(
-      predicate: NSPredicate(format: "hasKeyboardFocus == true"), object: terminal)
+    let focused = NSPredicate(format: "hasKeyboardFocus == true")
 
-    guard XCTWaiter().wait(for: [focused], timeout: 5) == .completed else {
+    guard pollUntil(timeout: 5, { focused.evaluate(with: terminal) }) else {
       XCTFail("the terminal did not take the keys, so typing would beep")
 
       throw TerminalNotFocused()
@@ -149,7 +148,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     let panel = app.windows["pending-requests-window"]
 
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+    XCTAssertTrue(panel.appears(timeout: 5), "the Pending Requests panel never opened")
 
     return panel
   }
@@ -160,7 +159,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     let window = app.windows["controllers-window"]
 
-    XCTAssertTrue(window.waitForExistence(timeout: 5), "Controllers & Permissions never opened")
+    XCTAssertTrue(window.appears(timeout: 5), "Controllers & Permissions never opened")
 
     return window
   }
@@ -182,19 +181,19 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     row.click()
 
     let trustVersion = panel.buttons["pending-requests-trust-version"]
 
     XCTAssertTrue(
-      trustVersion.waitForExistence(timeout: 5),
+      trustVersion.appears(timeout: 5),
       "the panel offers no version trust. \(panelReport(panel))")
     XCTAssertFalse(
       panel.buttons["pending-requests-trust-identity"].exists,
@@ -251,13 +250,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     row.click()
     panel.buttons["pending-requests-allow-once"].click()
 
@@ -268,13 +267,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let second = try startRun(package, named: "panel-deny", in: app)
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the second review never showed, or the run was remembered. \(runReport(second))")
 
     let open = openPendingRequests(in: app)
     let next = open.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(next.waitForExistence(timeout: 30), "the second review never reached the panel")
+    XCTAssertTrue(next.appears(timeout: 30), "the second review never reached the panel")
     next.click()
     open.buttons["Deny"].click()
 
@@ -297,14 +296,14 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(status))")
 
     let panel = openPendingRequests(in: app)
     let table = panel.tables["pending-requests-table"]
     let review = table.tableRows.firstMatch
 
-    XCTAssertTrue(review.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(review.appears(timeout: 30), "the review never reached the panel")
     review.click()
     panel.buttons["pending-requests-allow-once"].click()
 
@@ -312,7 +311,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
       NSPredicate(format: "value == %@", "Control panes it may address")
     ).firstMatch
 
-    XCTAssertTrue(question.waitForExistence(timeout: 30), "the pane call never asked")
+    XCTAssertTrue(question.appears(timeout: 30), "the pane call never asked")
 
     let pid = question.descendants(matching: .any).matching(
       NSPredicate(format: "value MATCHES %@", "^[0-9]+$")
@@ -323,7 +322,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     question.click()
     XCTAssertTrue(
-      panel.buttons["Allow for This Run"].waitForExistence(timeout: 5),
+      panel.buttons["Allow for This Run"].appears(timeout: 5),
       "the question does not name its per-run choice")
     attach(panel, named: "pane-call-question-selected")
     panel.buttons["pending-requests-allow-once"].click()
@@ -350,26 +349,26 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(status))")
 
     let panel = openPendingRequests(in: app)
     let review = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(review.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(review.appears(timeout: 30), "the review never reached the panel")
     review.click()
 
     let ask = panel.buttons["pending-requests-allow-once"]
 
-    XCTAssertTrue(ask.waitForExistence(timeout: 5), "the review offers no Allow and Ask Each Use")
+    XCTAssertTrue(ask.appears(timeout: 5), "the review offers no Allow and Ask Each Use")
     ask.click()
 
     let question = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(question.waitForExistence(timeout: 30), "the clipboard call never asked")
+    XCTAssertTrue(question.appears(timeout: 30), "the clipboard call never asked")
     question.click()
     XCTAssertTrue(
-      panel.buttons["Allow for This Run"].waitForExistence(timeout: 5),
+      panel.buttons["Allow for This Run"].appears(timeout: 5),
       "the plain script's question does not name its per-run choice")
     XCTAssertFalse(panel.buttons["Allow for This Connection"].exists)
 
@@ -405,13 +404,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(status))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     row.click()
 
     XCTAssertTrue(
@@ -422,7 +421,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
     XCTAssertFalse(
       FileManager.default.fileExists(atPath: marker), "the script ran before the answer")
 
-    XCTAssertTrue(panel.buttons["Reject"].waitForExistence(timeout: 5))
+    XCTAssertTrue(panel.buttons["Reject"].appears(timeout: 5))
     XCTAssertTrue(panel.buttons["Allow and Ask Each Use"].exists)
     XCTAssertTrue(panel.buttons["Allow Everything"].exists)
 
@@ -467,13 +466,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     row.click()
 
     XCTAssertTrue(
@@ -486,7 +485,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let trustVersion = panel.buttons["pending-requests-trust-version"]
 
     XCTAssertTrue(
-      trustVersion.waitForExistence(timeout: 5),
+      trustVersion.appears(timeout: 5),
       "the panel offers no version trust. \(panelReport(panel))")
     XCTAssertFalse(
       panel.buttons["pending-requests-trust-identity"].exists,
@@ -507,7 +506,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let controllers = openControllers(in: app)
     let approval = controllers.tables["controllers-table"].tableRows.firstMatch
 
-    XCTAssertTrue(approval.waitForExistence(timeout: 10), "the file approval is not listed")
+    XCTAssertTrue(approval.appears(timeout: 10), "the file approval is not listed")
     approval.click()
     XCTAssertTrue(
       waitFor(controllers.staticTexts["controllers-detail"], timeout: 5) {
@@ -546,13 +545,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(run))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     row.click()
 
     XCTAssertTrue(
@@ -610,13 +609,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
     XCTAssertTrue(
-      indicator.waitForExistence(timeout: 30),
+      indicator.appears(timeout: 30),
       "the window never showed the review. \(runReport(first))")
 
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     row.click()
 
     XCTAssertTrue(
@@ -627,7 +626,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     let trustIdentity = panel.buttons["pending-requests-trust-identity"]
 
-    XCTAssertTrue(trustIdentity.waitForExistence(timeout: 5), "a signed file was not offered it")
+    XCTAssertTrue(trustIdentity.appears(timeout: 5), "a signed file was not offered it")
     attach(panel, named: "signed-file-review")
     trustIdentity.click()
 
@@ -653,13 +652,13 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let panel = openPendingRequests(in: app)
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the review never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the review never reached the panel")
     row.click()
 
     let trustVersion = panel.buttons["pending-requests-trust-version"]
 
     XCTAssertTrue(
-      trustVersion.waitForExistence(timeout: 5),
+      trustVersion.appears(timeout: 5),
       "the panel offers no version trust. \(panelReport(panel))")
     trustVersion.click()
     XCTAssertEqual(waitForFile(first), "exit=0\n")
@@ -667,7 +666,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
     let controllers = openControllers(in: app)
     let approval = controllers.tables["controllers-table"].tableRows.firstMatch
 
-    XCTAssertTrue(approval.waitForExistence(timeout: 10), "the approval is not listed")
+    XCTAssertTrue(approval.appears(timeout: 10), "the approval is not listed")
     approval.click()
 
     let detail = controllers.staticTexts["controllers-detail"]
@@ -685,7 +684,7 @@ final class ControllerConsentUITests: UnitermUITestCase {
 
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "a revoked approval still covered a run")
+    XCTAssertTrue(indicator.appears(timeout: 30), "a revoked approval still covered a run")
   }
 }
 

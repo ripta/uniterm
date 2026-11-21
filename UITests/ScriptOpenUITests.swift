@@ -66,11 +66,11 @@ final class ScriptOpenUITests: UnitermUITestCase {
 
     let panel = app.windows["pending-requests-window"]
 
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+    XCTAssertTrue(panel.appears(timeout: 5), "the Pending Requests panel never opened")
 
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the question never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the question never reached the panel")
     row.click()
 
     return panel
@@ -106,7 +106,7 @@ final class ScriptOpenUITests: UnitermUITestCase {
 
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the question")
+    XCTAssertTrue(indicator.appears(timeout: 30), "the window never showed the question")
 
     Thread.sleep(forTimeInterval: 1)
 
@@ -140,7 +140,7 @@ final class ScriptOpenUITests: UnitermUITestCase {
 
     let created = window.groups["pane-2"].textViews["terminal"]
 
-    XCTAssertTrue(created.waitForExistence(timeout: 15), "no pane opened beside the first")
+    XCTAssertTrue(created.appears(timeout: 15), "no pane opened beside the first")
     XCTAssertFalse(app.windows["main-window-2"].exists, "the folder opened in a new window")
     XCTAssertTrue(
       waitFor(window.groups["pane-2"], timeout: 10) { $0 == "focused" },
@@ -189,7 +189,7 @@ final class ScriptOpenUITests: UnitermUITestCase {
 
     XCTAssertEqual(result, "exit=0\n")
     XCTAssertTrue(
-      window.groups["pane-2"].textViews["terminal"].waitForExistence(timeout: 15),
+      window.groups["pane-2"].textViews["terminal"].appears(timeout: 15),
       "no pane opened beside the focused pane")
     XCTAssertFalse(app.windows["main-window-2"].exists, "the folder opened in a new window")
   }

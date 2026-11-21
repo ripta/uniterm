@@ -61,7 +61,7 @@ final class ShortcutOwnershipUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     XCTAssertFalse(app.menuBars.menuBarItems["Terminal"].exists, "the terminal menu stayed")
   }
@@ -75,10 +75,10 @@ final class ShortcutOwnershipUITests: UnitermUITestCase {
 
     app.typeKey("d", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(window.groups["pane-2"].textViews["terminal"].waitForExistence(timeout: 20))
+    XCTAssertTrue(window.groups["pane-2"].textViews["terminal"].appears(timeout: 20))
 
     app.typeKey("t", modifierFlags: .command)
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10))
     XCTAssertTrue(
       waitFor(window.groups["pane-2"].textViews["terminal"], timeout: 40) { $0.contains("% ") })
 
@@ -99,7 +99,7 @@ final class ShortcutOwnershipUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("t", modifierFlags: .command)
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10))
     XCTAssertTrue(waitFor(window.textViews["terminal"], timeout: 40) { $0.contains("% ") })
 
     app.typeKey("w", modifierFlags: .command)
@@ -107,7 +107,7 @@ final class ShortcutOwnershipUITests: UnitermUITestCase {
 
     app.typeKey("t", modifierFlags: [.command, .shift])
 
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10), "the closed tab never came back")
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10), "the closed tab never came back")
     XCTAssertTrue(waitFor(window.textViews["terminal"], timeout: 40) { $0.contains("% ") })
   }
 
@@ -119,20 +119,20 @@ final class ShortcutOwnershipUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     let warning = message(in: app)
-    XCTAssertTrue(warning.waitForExistence(timeout: 10))
+    XCTAssertTrue(warning.appears(timeout: 10))
     let text = (warning.value as? String) ?? warning.label
     XCTAssertTrue(text.contains("Terminal"), text)
     XCTAssertTrue(text.contains("New Tab"), text)
     XCTAssertTrue(text.contains("\u{2318}T"), text)
 
     app.typeKey("t", modifierFlags: .command)
-    XCTAssertTrue(palette(in: app).waitForExistence(timeout: 5), "the remapped key did not win")
+    XCTAssertTrue(palette(in: app).appears(timeout: 5), "the remapped key did not win")
 
     app.typeKey(.escape, modifierFlags: [])
     XCTAssertTrue(waitUntilGone(palette(in: app)))
 
     app.typeKey("k", modifierFlags: .command)
-    XCTAssertFalse(palette(in: app).waitForExistence(timeout: 2), "the old default still works")
+    XCTAssertFalse(palette(in: app).appears(timeout: 2), "the old default still works")
   }
 
   /// Catches a remap of an applet item that loses to the default of a window command. Cmd-W is
@@ -158,10 +158,10 @@ final class ShortcutOwnershipUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     let field = window.textFields["launcher-filter"]
-    XCTAssertTrue(field.waitForExistence(timeout: 5))
+    XCTAssertTrue(field.appears(timeout: 5))
 
     app.typeText("zzq")
     app.typeKey("a", modifierFlags: .command)

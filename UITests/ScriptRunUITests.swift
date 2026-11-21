@@ -90,7 +90,7 @@ final class ScriptRunUITests: UnitermUITestCase {
       printed.split(separator: "\n").map(String.init),
       ["windows 1", "panes 1", "opened 2", "args one two"])
 
-    XCTAssertTrue(window.groups["pane-2"].waitForExistence(timeout: 10), "the pane never opened")
+    XCTAssertTrue(window.groups["pane-2"].appears(timeout: 10), "the pane never opened")
 
     let message = window.staticTexts["status-message"]
 

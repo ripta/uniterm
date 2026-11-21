@@ -12,7 +12,7 @@ final class ReplCapabilityUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5), "Cmd-D showed no launcher")
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5), "Cmd-D showed no launcher")
 
     app.typeText("repl")
     app.typeKey(.return, modifierFlags: [])
@@ -20,7 +20,7 @@ final class ReplCapabilityUITests: UnitermUITestCase {
 
     let terminal = window.groups["pane-2"].textViews["terminal"]
 
-    XCTAssertTrue(terminal.waitForExistence(timeout: 20), "the REPL pane never showed a terminal")
+    XCTAssertTrue(terminal.appears(timeout: 20), "the REPL pane never showed a terminal")
     XCTAssertTrue(
       waitFor(terminal, timeout: 40) { $0.contains("repl:1:> ") },
       "the REPL never showed its prompt")
@@ -61,7 +61,7 @@ final class ReplCapabilityUITests: UnitermUITestCase {
 
     let sheet = window.sheets.firstMatch
 
-    XCTAssertTrue(sheet.waitForExistence(timeout: 5), "the capability sheet never opened")
+    XCTAssertTrue(sheet.appears(timeout: 5), "the capability sheet never opened")
     XCTAssertTrue(
       sheet.staticTexts.matching(NSPredicate(format: "value CONTAINS 'definition'")).firstMatch
         .exists,
