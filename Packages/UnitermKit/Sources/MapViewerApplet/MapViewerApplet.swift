@@ -25,6 +25,9 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   public weak var host: (any AppletHost)?
   public let isRunningSomething = false
 
+  /// Where the pane's events go. An attached exec driver is the only sink.
+  public let events = AppletEventOutlet()
+
   public private(set) var title = MapViewerApplet.untitled
   public private(set) var segments: [AppletSegment] = []
   public private(set) var publishedTabs: AppletTabList
@@ -35,8 +38,16 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   let content = MapViewerView()
   let places: PlaceNamer
   private let services: PlaceServices
-  private var record: MapViewerDescription
-  private var closed = false
+  var record: MapViewerDescription
+  private(set) var closed = false
+
+  /// The pins programs placed, by layer. The description holds none of it but the count of layers
+  /// that held pins. See `MapViewerApplet+Remote`.
+  var commandLayers = CommandLayers()
+
+  /// True when the pane was rebuilt from a description that carried the command layers, as a
+  /// reopen does. A rebuild from the saved layout carries none.
+  private(set) var restoredCommandLayers = false
   private(set) var opening: Task<Void, Never>?
   private var openGeneration = 0
   private var restoreWaitsForStart = false
@@ -52,7 +63,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   private var posted = AppletNotices()
 
   /// Reaches the status bar for every alert, and holds them back while the pane is detached.
-  private var alerts = AppletAlerts()
+  var alerts = AppletAlerts()
 
   /// The origin of the load that produced the file notices shown now. Each load, and each edit
   /// that reads pins back, sets its own when it settles. A later user edit never inherits a
@@ -145,8 +156,14 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     unsavedFromUndo = Self.unsavedPins(in: description)
     publishedTabs = AppletTabList(first: AppletTab(id: .make(), title: Self.untitled))
 
+    if let layers = Self.commandLayers(in: description) {
+      commandLayers = layers
+      restoredCommandLayers = true
+    }
+
     wire()
     content.show(style: record.style)
+    showAllCommandLayers()
 
     if let region = record.region {
       content.show(region: region)
@@ -202,6 +219,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     content.onPlacePicked = { [weak self] region in self?.goTo(region) }
     content.onAddPin = { [weak self] coordinate in self?.addPin(at: coordinate) }
     content.onAddPinAtCenter = { [weak self] in self?.addPinAtCenter() }
+    content.onMapClicked = { [weak self] coordinate in self?.mapClicked(at: coordinate) }
+    content.onPinSelected = { [weak self] pin in self?.pinSelected(pin) }
     content.onUpdatePin = { [weak self] old, new in self?.update(old, to: new) }
     content.onRemovePin = { [weak self] pin in self?.remove(pin) }
     content.ownUndoManager = undoManager
@@ -546,6 +565,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   // MARK: Applet
 
   public func start(origin: StartOrigin) {
+    forgetEarlierRunLayersIfLost()
+
     guard restoreWaitsForStart, let path = record.path else { return }
 
     restoreWaitsForStart = false
@@ -554,6 +575,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    events.close()
     alerts.discard()
     opening?.cancel()
     opening = nil
@@ -565,6 +587,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     undoManager.removeAllActions()
     content.onRegionSettled = nil
     content.onTilesChanged = nil
+    content.onMapClicked = nil
+    content.onPinSelected = nil
     content.onDrop = nil
     content.onRegionShown = nil
     content.onPlacePicked = nil
@@ -595,11 +619,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     // The payload always encodes. The fields are plain values, so a failure is a programming error.
     // A release build falls back to an empty payload, which restores as a default map.
     if let description = try? record.appletDescription() {
-      guard isDirty, let document else { return description }
+      guard let undo = undoOnlyPart() else { return description }
 
       return AppletDescription(
         type: description.type, version: description.version, payload: description.payload,
-        undoState: Self.undoState(document: document, base: savedDocument, path: record.path))
+        undoState: undo)
     }
 
     assertionFailure("the map viewer description failed to encode")
@@ -611,7 +635,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   // MARK: Display
 
-  private func refresh() {
+  func refresh() {
     guard !closed else { return }
 
     var newSegments = [AppletSegment(symbolName: "map", text: Self.name(of: record.style))]
@@ -645,6 +669,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
       newSegments.append(
         AppletSegment(
           symbolName: "exclamationmark.triangle", text: "File not opened", style: .warning))
+    }
+
+    if commandLayers.holdsEarlierRunPins {
+      newSegments.append(
+        AppletSegment(symbolName: "clock.arrow.circlepath", text: Self.earlierRunNote))
     }
 
     if tileFailure != nil {
@@ -700,6 +729,8 @@ public final class MapViewerApplet: Applet, SourceReplacing {
     }
 
     if !filePins.isEmpty { text += " pins=\(filePins.count)" }
+
+    if commandLayers.totalPins > 0 { text += " program-pins=\(commandLayers.totalPins)" }
 
     if isDirty { text += " edited" }
 
@@ -1053,6 +1084,41 @@ extension MapViewerApplet {
     if let path { fields[unsavedPathKey] = .string(path) }
 
     return .object(fields)
+  }
+
+  static let commandLayersKey = "commandLayers"
+
+  /// The undo-only part of the description, or nil when there is nothing for undo to bring back.
+  /// It holds the unsaved pins of a dirty pane, and the command layers once any exist.
+  func undoOnlyPart() -> JSONValue? {
+    var fields: [String: JSONValue] = [:]
+
+    if isDirty, let document {
+      if case .object(let unsaved) = Self.undoState(
+        document: document, base: savedDocument, path: record.path)
+      {
+        fields = unsaved
+      }
+    }
+
+    if !commandLayers.isEmpty,
+      let layers = try? JSONValue(encoding: CommandLayersSnapshot(commandLayers))
+    {
+      fields[Self.commandLayersKey] = layers
+    }
+
+    return fields.isEmpty ? nil : .object(fields)
+  }
+
+  /// The command layers a description's undo-only part holds, or nil when it holds none that this
+  /// build can read.
+  static func commandLayers(in description: AppletDescription) -> CommandLayers? {
+    guard case .object(let fields)? = description.undoState,
+      let stored = fields[commandLayersKey],
+      let snapshot = try? stored.decoded(as: CommandLayersSnapshot.self)
+    else { return nil }
+
+    return CommandLayers(restoring: snapshot)
   }
 
   static let unsavedBaseKey = "unsavedBase"

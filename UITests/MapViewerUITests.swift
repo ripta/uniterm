@@ -317,4 +317,93 @@ final class MapViewerUITests: UnitermUITestCase {
     XCTAssertTrue(written.contains("LineString"), written)
     XCTAssertTrue(written.contains("Ferry Building"), written)
   }
+
+  // MARK: Pins from a program
+
+  private static var driverScript: String {
+    URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("Packages/UnitermKit/Tests/ExecTestSupport/Fixtures/driver.pl").path
+  }
+
+  private func plantExecMap(commands: [String]) throws {
+    let control: [String: Any] = [
+      "access": "disconnected", "driver": "exec",
+      "exec": [
+        "argv": ["/usr/bin/perl", Self.driverScript, "script", "map-viewer", "1.0"] + commands,
+        "environmentKeys": [String](),
+      ],
+    ]
+    let layout: [String: Any] = [
+      "version": 3,
+      "windows": [
+        [
+          "frame": ["x": 120, "y": 120, "width": 1000, "height": 640], "highWaterMark": 1,
+          "tree": [
+            "kind": "pane", "id": 1, "control": control,
+            "applet": ["type": "map-viewer", "version": 1, "payload": [String: Any]()],
+          ],
+        ]
+      ],
+    ]
+
+    let data = try JSONSerialization.data(withJSONObject: layout)
+    try plantLayout(String(decoding: data, as: UTF8.self))
+  }
+
+  /// Catches a driver whose set-layer never reaches a real map pane, and a restored exec map that
+  /// runs by itself. The layout plants a map that declares the fixture driver. Run asks for approval
+  /// in the Pending Requests panel, and the map's accessibility value then counts the program's
+  /// pins. The pins draw as MapKit draws them, which this test cannot judge.
+  func testADriverRunFromAnExecMapPlacesPins() throws {
+    let pins =
+      #"[{"id":"a","coordinate":{"latitude":37.77,"longitude":-122.42},"label":"A"},"#
+      + #"{"id":"b","coordinate":{"latitude":37.80,"longitude":-122.27},"label":"B"}]"#
+
+    try plantExecMap(commands: [
+      #"{"name":"set-layer","arguments":{"layer":"trucks","pins":\#(pins)}}"#,
+      #"{"name":"set-region","arguments":{"center":{"latitude":37.78,"longitude":-122.35},"span":{"latitude-delta":0.4,"longitude-delta":0.4}}}"#,
+    ])
+
+    let app = launchApp()
+    XCTAssertTrue(waitForForeground(app, activating: true))
+
+    let window = mainWindow(in: app)
+    let run = window.buttons["pane-exec-run-1"]
+
+    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+    XCTAssertFalse(
+      (map(in: window).value as? String)?.contains("program-pins") == true,
+      "the restored map ran its driver")
+
+    run.click()
+
+    let status = window.staticTexts["pane-exec-status-1"]
+    XCTAssertTrue(
+      waitFor(status, timeout: 10) { $0.contains("waits for approval") },
+      "the run did not wait for approval")
+
+    app.menuBars.menuBarItems["Window"].click()
+
+    let item = app.menuBars.menuItems["Pending Requests\u{2026}"]
+    XCTAssertTrue(item.waitForExistence(timeout: 5), "the Window menu has no Pending Requests item")
+    item.click()
+
+    let panel = app.windows["pending-requests-window"]
+    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+    XCTAssertTrue(row.waitForExistence(timeout: 10), "the launch never reached the panel")
+    row.click()
+    panel.buttons["pending-requests-allow-once"].click()
+    panel.buttons[XCUIIdentifierCloseWindow].click()
+
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 20) { $0.contains("program-pins=2") },
+      "the driver's pins never reached the map")
+
+    let capture = XCTAttachment(screenshot: window.screenshot())
+    capture.name = "driver-pins"
+    capture.lifetime = .keepAlways
+    add(capture)
+  }
 }

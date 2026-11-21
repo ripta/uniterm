@@ -309,7 +309,7 @@ let package = Package(
       dependencies: [
         "MapViewerApplet", "FileWatching", "GeoData", "AppletKit", "PlaceSearch", "SourceAccess",
         "StatusKit",
-        "Theme", "TableTestSupport", "AppletTestSupport",
+        "Theme", "TableTestSupport", "AppletTestSupport", "ExecDriver", "ScriptWire",
       ]),
     .testTarget(name: "BrowserModelTests", dependencies: ["BrowserModel"]),
     // Generates image files in code for the image tests, and finds the unsandboxed helper that
@@ -407,6 +407,7 @@ let package = Package(
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
         "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
         "ControllerTrust", "TestProcessGuard", "TextViewerApplet", "SourceAccess",
+        "MapViewerApplet",
       ]),
   ],
   swiftLanguageModes: [.v6],

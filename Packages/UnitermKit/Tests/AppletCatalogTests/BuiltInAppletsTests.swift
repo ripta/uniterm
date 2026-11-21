@@ -17,8 +17,8 @@ final class BuiltInAppletsTests: XCTestCase {
   /// Catches a declaration that changes without a deliberate edit here. The terminal opens folders
   /// as the owner, the data viewer opens CSV, JSON, and `.xlsx` as the owner, the map viewer
   /// opens GeoJSON as the owner, the text viewer opens PDF, RTF, and Word as the owner, and the
-  /// REPL opens nothing. The terminal, the REPL, and the text viewer declare remote control, and
-  /// the image viewer declares every combination.
+  /// REPL opens nothing. The terminal, the REPL, and the text viewer declare remote control. The
+  /// image viewer and the map viewer declare every combination.
   func testTheCatalogIsTheTerminalOpeningFoldersAndTheDataViewerOpeningTables() {
     XCTAssertEqual(
       BuiltInApplets.declarations,
@@ -36,7 +36,8 @@ final class BuiltInAppletsTests: XCTestCase {
           ]),
         AppletTypeDeclaration(
           typeID: "map-viewer", displayName: "Map Viewer", symbolName: "map",
-          opens: [OpenedType("public.geojson", rank: .owner)]),
+          opens: [OpenedType("public.geojson", rank: .owner)],
+          controlSupport: ControlCombination.all),
         AppletTypeDeclaration(
           typeID: "browser", displayName: "Browser", symbolName: "safari", opens: []),
         AppletTypeDeclaration(
@@ -69,7 +70,7 @@ final class BuiltInAppletsTests: XCTestCase {
 
     let expected: [String: Set<ControlCombination>] = [
       "terminal": remote, "repl": remote, "data-viewer": [.disconnected],
-      "map-viewer": [.disconnected], "browser": [.disconnected],
+      "map-viewer": ControlCombination.all, "browser": [.disconnected],
       "image-viewer": ControlCombination.all, "text-viewer": remote,
     ]
 
@@ -95,7 +96,7 @@ final class BuiltInAppletsTests: XCTestCase {
   func testOnlyTheViewersAdoptTheCommandHook() {
     let types: [(String, any Applet.Type, Bool)] = [
       ("terminal", TerminalApplet.self, false), ("repl", ReplApplet.self, false),
-      ("data-viewer", DataViewerApplet.self, false), ("map-viewer", MapViewerApplet.self, false),
+      ("data-viewer", DataViewerApplet.self, false), ("map-viewer", MapViewerApplet.self, true),
       ("browser", BrowserApplet.self, false), ("image-viewer", ImageViewerApplet.self, true),
       ("text-viewer", TextViewerApplet.self, true),
     ]

@@ -34,14 +34,22 @@ final class MapPinAnnotation: NSObject, MKAnnotation {
   /// The label. MapKit shows it in the callout when the pin is selected.
   var title: String? { pin.label }
 
+  /// A line under the label in the callout. A command layer's pins carry one while they are from
+  /// an earlier run.
+  let subtitle: String?
+
   /// True for a pin the user can change: one from the file, outside a geometry collection.
   let isEditable: Bool
 
-  init(pin: GeoPin, layer: MapLayer, layerAccent: ThemeToken, isEditable: Bool = false) {
+  init(
+    pin: GeoPin, layer: MapLayer, layerAccent: ThemeToken, isEditable: Bool = false,
+    subtitle: String? = nil
+  ) {
     self.pin = pin
     self.layer = layer
     self.layerAccent = layerAccent
     self.isEditable = isEditable
+    self.subtitle = subtitle
     coordinate = CLLocationCoordinate2D(
       latitude: pin.coordinate.latitude, longitude: pin.coordinate.longitude)
   }
