@@ -458,7 +458,7 @@ extension MapViewerApplet {
       AppletMessageSchema(
         name: "map-clicked",
         summary:
-          "The user pressed and released the primary button on the empty map, without dragging. A click on a pin, a cluster, or a file pin sends this event never.",
+          "The user pressed and released the primary button on the empty map, without dragging. A click on a pin, a cluster, or a file pin does not send this event.",
         arguments: AppletObjectSchema([
           "latitude": .init(.number(minimum: -90, maximum: 90)),
           "longitude": .init(.number(minimum: -180, maximum: 180)),

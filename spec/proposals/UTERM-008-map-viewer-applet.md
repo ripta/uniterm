@@ -98,7 +98,8 @@ pin belongs to a named layer.
   stated rule of the schema, not state a library carries.
 - A script's `uniterm/send-command` carries at most 32 KiB of arguments. A script therefore sends a layer only within
   that bound. A larger call is cut at the bound and fails before any effect. A full layer needs an exec driver.
-- The user can clear any layer from the map's own UI.
+- The user clears the file layer and all program layers from the map's own UI. A per-layer clear for program layers
+  comes with the pin list in UTERM-016 M4.
 - Events go only to the exec driver, since UTERM-004 defines no other event channel. `map clicked` carries the
   coordinate of a click on the map. `pin selected` names a command pin by its layer and ID. For a file pin it carries
   only a file-source marker, never the pin's ID or any other value from the file. A click on a file pin sends that
@@ -479,7 +480,8 @@ None.
   count to zero with one rewrite. The notice reads "3 program layers held pins last session. Restore does not run
   programs, so they are not shown."
 - The user clears program pins with Clear Program Pins in the File menu, which empties every command layer and keeps
-  their accents. The pin list has no per-layer clear, and UTERM-016 owns its changes.
+  their accents. File > Clear File Pins clears the file layer. The pin list has no per-layer clear. UTERM-016 M4's pin
+  list shows program layers read-only with their Clear action, which is where a per-layer clear arrives.
 - Closing a map with a live driver asks nothing. See the Decision Log entry of 2026-11-20.
 - The UI test is built and not run by the implementer. It plants an exec map, approves the run in the Pending Requests
   panel, and reads the pin count from the map's accessibility value. Left to the user: how the program's pins and the
@@ -635,6 +637,11 @@ None.
   layer default accents follow a fixed order and says nothing of where command layers start. The file layer already
   takes the first entry, so a first command layer in the same blue would make file pins and default-layer pins look
   alike. The text does not change.
+- 2026-11-20: Amended "Where pins come from" and M3 (work-queue best guess). The text said "The user can clear any layer
+  from the map's own UI", which promised a clear for each layer. M3 ships one File menu command, Clear Program Pins,
+  which empties every command layer at once and keeps their accents. File > Clear File Pins clears the file layer. A
+  per-layer clear for program layers arrives with the pin list in UTERM-016 M4, which shows program layers read-only
+  with their Clear action. The bullet now says that.
 
 ## References
 

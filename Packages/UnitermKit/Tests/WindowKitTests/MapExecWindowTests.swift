@@ -145,8 +145,8 @@ final class MapExecWindowTests: XCTestCase {
         return false
       }
 
-      try? await Task.sleep(for: .milliseconds(200))
-
+      // The channel refuses the hello and ends before it ever connects. It handles a command only
+      // while connected, and the end is final, so nothing after the end can reach the map.
       XCTAssertTrue(map.commandLayers.isEmpty, "\(mode) \(schema) placed a pin")
 
       if case .ended(let why)? = controller.execAttachments[pane]?.state {

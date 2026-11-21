@@ -146,3 +146,28 @@ applet's own decision.
 ### Bugs
 
 None found.
+
+## Row review
+
+The row review covered the range from the run's base to "Let programs place pins on a map pane". The reviewer found
+no correctness or security issue, and every M3 check traced to code and tests. The fixes landed as "Clear the map's
+program pins all at once until the pin list clears one layer".
+
+1. "Where pins come from" still promised that the user can clear any layer from the map's UI. M3 shipped one command
+   that clears every program layer. PLAUSIBLE, fixed by amendment as a work-queue best guess. The bullet now says the
+   user clears the file layer and all program layers. A per-layer clear comes with UTERM-016 M4's pin list, which
+   already plans a Clear action for each program layer. If wrong, M3 needs a per-layer control before UTERM-016 M4.
+2. A window test slept a real 200 ms three times. Fixed. A refused hello ends the driver's channel before it can
+   deliver any command, so the test's wait for that end already proves the absence. The class ran in 1.13 s alone
+   before and 0.50 s after.
+3. The published `map-clicked` summary read "sends this event never". Fixed to "does not send this event".
+
+Checks after the fixes: `make lint` passed, `make check` passed, and `caffeinate -dimsu make test-package` exited 0 in
+227 s. `proposals.py check` reported only the two row-finish findings. No UI test ran again, since the fixes touched no
+UI path.
+
+`adr-impact` found one PLAUSIBLE tension. ADR-05's Consequences say "a close that would end running work asks the user
+first." A map with a live exec driver now closes without asking, by the user's choice in this run's plan. The image
+viewer and data viewer already behave this way. The run left ADR-05 unchanged. The user may want it clarified.
+`adr-impact` also named two candidates below the ADR bar: applet schema versions accept only their own major, and the
+script wire cuts a call at 32 KiB. Neither was recorded.
