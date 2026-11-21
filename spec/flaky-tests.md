@@ -95,21 +95,6 @@ fixed ones.
 - Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 
-### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
-
-- Seen: 2026-11-15, once, in the first CI `app` run of PR #53, which does not touch the launcher.
-- Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list". The rerun passed.
-- Suspected cause: the test checks `isHittable` right after the scroll, with no wait for the list to settle. Not
-  confirmed.
-- Tried: "Wait for the launcher's last entry to come into view after a scroll". Both reads after a scroll now wait
-  until the entry can take a click. No forced slow scroll reproduced the failure first.
-- Seen again: 2026-11-18, in the CI `app` run of PR #69, with that wait in place. Line 199 failed with the same
-  message. The report ruled out another app holding the screen. uniterm was frontmost, and the launcher's filter box
-  held keyboard focus. The wheel event reached the app, and the list did not move.
-- Seen again: 2026-11-19, in the first CI `app` run of PR #74, which does not touch the launcher. Line 199 failed with
-  the same message, with uniterm frontmost and the filter box focused. The rerun passed.
-- Status: unresolved. The wait did not help, so a list still settling is not the cause. The cause is unknown.
-
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
 
 - Seen: 2026-11-15, in four local runs during the work-queue run that added strict and unsafe script modes. Each run
@@ -245,6 +230,22 @@ fixed ones.
 - Status: unresolved.
 
 ## Fixed
+
+### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
+
+Fixed by: "Scroll the short launcher either way the machine's wheel goes"
+
+- Seen: 2026-11-15, 2026-11-18, and 2026-11-19, once each in CI on PRs that did not touch the launcher. On
+  2026-11-21 it failed 5 of 10 CI `app` runs, 2 of them on main.
+- Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list", with uniterm frontmost
+  and the launcher's filter box focused. The failure screenshot showed the list still at its top. Waiting for the list
+  to settle did not help. Locally it passed 15 of 15, and 10 of 10 with legacy scrollers forced as CI shows them.
+- Cause: the test sent one wheel of -1000 to a list that starts at the top. Which way that moves the list follows the
+  machine's scroll direction setting, and CI runners differ in it. When the wheel went up, the list could not move.
+  Flipping the sign to +1000 on a local machine failed the first run with CI's message.
+- Fix: the wheel goes the other way when the first one leaves the last entry out of view. A list that scrolls neither
+  way still fails. The image viewer's scroll test already works the same way. After the fix, the launcher tests passed
+  7 of 7, and 3 of 3 with the two wheels swapped.
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
 
