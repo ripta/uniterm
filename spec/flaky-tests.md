@@ -71,8 +71,17 @@ fixed ones.
 - Known mechanism, not proven to be this one: libghostty drops a pointer move within 1 px of its stored position, so
   a hover that starts on the target sees no link. The test now moves across cells before it hovers. A real pointer
   moved by a person during the run would also break the synthesized hover.
-- Status: unresolved. If it fails again, run the tests with `log stream --level debug` on the `dev.uniterm.app`
-  subsystem, and read the `pointer`, `press`, `hover`, and `click outcome` lines of the failing iteration.
+- Seen again: 2026-11-21, locally, on `main` and on a branch that touches no terminal code. The relative-path test
+  failed 1 of 2 fresh launches on `main` and 3 of 3 on the branch. It then failed 5 of 5 on `main` with the debug log
+  on.
+- Evidence: each failing log has `flags mods=8` when the test sets Command, then `pointer` and `press` lines with
+  `mods=0`. The click reached libghostty without Command, so it was a plain click, and nothing refused a link. In one
+  run, 179 `pointer` lines arrived during the test's 2 s idle wait. They wandered up to 200 px on a curving path.
+  XCTest sent no events then.
+- Cause: a physical mouse or trackpad moved during the runs. Real input events carry the real modifier state, so
+  they drop the synthesized Command. They also move the pointer off the target. No CI run has failed this test.
+- Status: cause found. Neither the test nor the product is at fault. Keep the pointer and keyboard still during a
+  local UI run.
 
 ### `BrowserUITests.testCommandWClosesTheTabAndCommandShiftTReopensIt`
 
@@ -142,6 +151,16 @@ fixed ones.
 - Status: the earlier fix covered the foreground read. This symptom came back once. Cause unknown.
 - Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
+
+### `WindowsUITests.testClosingTheLastWindowKeepsTheAppRunningAndCommandNOpensAgain`
+
+- Seen: 2026-11-21, locally, on a branch that touches no window code. It failed in a full `make test-app` run and on
+  the first of three iterations alone. Both failures came in the same few minutes as the outside pointer input that
+  the `TerminalLinkUITests` entry above names.
+- Evidence: "the app left the foreground" at `WindowsUITests.swift:95`, about 10 s after Cmd-W closed the last
+  window. The test then passed 4 of 4 fresh launches, and `main` passed 5 of 5.
+- Suspected cause: the same outside input, such as a real click that moved focus to another app. Not confirmed.
+- Status: unresolved.
 
 ### `ExecPaneUITests.testWindowShortcutsWorkWhileTheDriverStalls`
 
