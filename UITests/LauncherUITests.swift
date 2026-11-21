@@ -195,7 +195,17 @@ final class LauncherUITests: UnitermUITestCase {
 
     XCTAssertFalse(last.isHittable, "the pane is tall enough to show every entry")
 
-    pane.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -1000)
+    // Which way a wheel moves the list follows the machine's scroll direction setting, and CI
+    // runners differ in it. The list starts at the top, so a wheel that goes up moves nothing.
+    // The wheel then goes the other way. A list that scrolls neither way still fails.
+    let list = pane.scrollViews.firstMatch
+
+    list.scroll(byDeltaX: 0, deltaY: -1000)
+
+    if !waitUntilHittable(last, timeout: 2) {
+      list.scroll(byDeltaX: 0, deltaY: 1000)
+    }
+
     XCTAssertTrue(
       waitUntilHittable(last), "the scroll wheel did not scroll the list. \(focusReport(app))")
     Thread.sleep(forTimeInterval: 0.5)

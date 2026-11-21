@@ -91,24 +91,13 @@ fixed ones.
   `DataViewerUITests.testCommandOOpensAWorkbookAndTheSheetPickerSwitchesSheets` on PR #53's first CI run, which does
   not touch the helper either. The rerun passed.
 - Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
+- Seen again: 2026-11-21, in the first CI `app` run of PR #80, which does not touch the open-panel helper.
+  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` failed at `UnitermUITestCase.swift:384` with "the
+  go-to-folder sheet never closed". uniterm was frontmost, and no element in it held keyboard focus. The rerun passed
+  this test.
 - Status: unresolved.
 - Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
-
-### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
-
-- Seen: 2026-11-15, once, in the first CI `app` run of PR #53, which does not touch the launcher.
-- Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list". The rerun passed.
-- Suspected cause: the test checks `isHittable` right after the scroll, with no wait for the list to settle. Not
-  confirmed.
-- Tried: "Wait for the launcher's last entry to come into view after a scroll". Both reads after a scroll now wait
-  until the entry can take a click. No forced slow scroll reproduced the failure first.
-- Seen again: 2026-11-18, in the CI `app` run of PR #69, with that wait in place. Line 199 failed with the same
-  message. The report ruled out another app holding the screen. uniterm was frontmost, and the launcher's filter box
-  held keyboard focus. The wheel event reached the app, and the list did not move.
-- Seen again: 2026-11-19, in the first CI `app` run of PR #74, which does not touch the launcher. Line 199 failed with
-  the same message, with uniterm frontmost and the filter box focused. The rerun passed.
-- Status: unresolved. The wait did not help, so a list still settling is not the cause. The cause is unknown.
 
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
 
@@ -192,6 +181,10 @@ fixed ones.
 - Evidence: the test ran past its 120 s limit. A sample showed `ScriptFixtures.finish` waiting, with the listener idle
   in its accept loop. The class then passed 5 of 5 alone at about 0.1 s per test, and the full rerun passed.
 - Suspected cause: unknown. PR #67 changed the listener, and whether that plays a part is not settled.
+- Seen again: 2026-11-21, in the CI `package` rerun of PR #81, which changes only a doc comment in the script host.
+  `ScriptHostAPITests.testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem` ran past its 120 s limit. The
+  sample showed `ScriptFixtures.finish` blocked in `waitUntilExit`, and no child of `xctest` was still alive. So the
+  helper had exited, and its exit was never seen. The first `package` run of the same head passed this test.
 - Status: unresolved.
 
 ### `ExecPaneUITests.testARestoredExecPaneRunsOnlyAfterValuesAndApprovalThenDrivesTheApplet`
@@ -244,7 +237,41 @@ fixed ones.
   closed. Not confirmed.
 - Status: unresolved.
 
+### `TerminalSessionIntegrationTests.testProcessStartedEventReportsTheDirectChildInProgramMode`
+
+- Seen: 2026-11-21, once, in the first CI `package` run of PR #79, which changes no terminal code.
+- Evidence: `TerminalSessionIntegrationTests.swift:1064` failed with "the direct child is not login". The child's
+  name read as `xctest`. The rerun passed.
+- Suspected cause: the test reads the child's name with `sysctl` as soon as `processStarted` arrives. A child that has
+  forked but not yet run `exec` on `login` still carries `xctest`'s name. Not confirmed.
+- Status: unresolved.
+
+### `ExecDriverChannelTests.testAStalledStdinFailsWithoutBlockingTheEmitter`
+
+- Seen: 2026-11-21, once, in the first CI `package` run of PR #81, which changes no exec driver code.
+- Evidence: `ExecDriverChannelTests.swift:349` failed with "emitting blocked the main thread". 40,000 emits took
+  5.15 s against the test's 5 s wall-clock bound. The rerun passed this test.
+- Suspected cause: a loaded runner slowing the emit loop, or a real stall while the queue fills. Not confirmed. The
+  test does not tell the two apart.
+- Status: unresolved.
+
 ## Fixed
+
+### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
+
+Fixed by: "Scroll the short launcher either way the machine's wheel goes"
+
+- Seen: 2026-11-15, 2026-11-18, and 2026-11-19, once each in CI on PRs that did not touch the launcher. On
+  2026-11-21 it failed 5 of 10 CI `app` runs, 2 of them on main.
+- Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list", with uniterm frontmost
+  and the launcher's filter box focused. The failure screenshot showed the list still at its top. Waiting for the list
+  to settle did not help. Locally it passed 15 of 15, and 10 of 10 with legacy scrollers forced as CI shows them.
+- Cause: the test sent one wheel of -1000 to a list that starts at the top. Which way that moves the list follows the
+  machine's scroll direction setting, and CI runners differ in it. When the wheel went up, the list could not move.
+  Flipping the sign to +1000 on a local machine failed the first run with CI's message.
+- Fix: the wheel goes the other way when the first one leaves the last entry out of view. A list that scrolls neither
+  way still fails. The image viewer's scroll test already works the same way. After the fix, the launcher tests passed
+  7 of 7, and 3 of 3 with the two wheels swapped.
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
 
