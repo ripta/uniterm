@@ -209,3 +209,18 @@ describing the earlier rationale, which `commit-style.md` forbids. The reword wi
 the permission check, so the message stands as written.
 
 The full UI suite ran once, with `caffeinate -dimsu make test-app`, during this review. See "Full UI suite".
+
+## Full UI suite
+
+`caffeinate -dimsu make test-app` ran once, after the milestone commit: 176 tests, 0 failures, in about 29 minutes. It
+includes `BrowserRemoteUITests`. The crash folder holds no uniterm report from the UI runs. It holds `ImageDecoderHelper`
+reports from 23:20 to 23:41, during the implementer's package runs, as earlier runs' reports record.
+
+## Run end
+
+The run is done. The state file is deleted. Its commits, in order:
+
+1. "Let a controller drive its own browser tabs"
+2. "State the browser's command skew and its contract additions plainly"
+3. "Mark UTERM-005 implemented now that a controller can drive the browser"
+4. "Close the UTERM-005 M8 work-queue report", which carries this report's last amendments
