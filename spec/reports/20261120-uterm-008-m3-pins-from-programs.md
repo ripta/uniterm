@@ -22,6 +22,14 @@ skipped, and no work is stashed.
 |---|---|---|
 | UTERM-008 M3: Pins from programs | DONE | See "Commits" under M3 |
 
+The run is done. Its commits, in order:
+
+1. "Let programs place pins on a map pane"
+2. "Clear the map's program pins all at once until the pin list clears one layer"
+3. "Mark UTERM-008 implemented now that its program pins are in"
+4. "Prove a click on the empty map reaches a map's driver"
+5. "Close the UTERM-008 M3 work-queue report"
+
 ## The user's choice in the plan
 
 M3 had a check that a map with a live exec driver reports `isRunningSomething`, so closing it asks first and names the
