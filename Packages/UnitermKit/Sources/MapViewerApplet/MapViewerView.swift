@@ -32,6 +32,12 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   /// Gets the Add Pin button of the pin list.
   var onAddPinAtCenter: (() -> Void)?
 
+  /// Gets the coordinate of a single primary click on the empty map.
+  var onMapClicked: ((GeoCoordinate) -> Void)?
+
+  /// Gets a single pin the user selected. A cluster is never reported.
+  var onPinSelected: ((MapPinAnnotation) -> Void)?
+
   /// The applet's undo stack. The window's Undo reaches it through the responder chain while the
   /// map has focus.
   weak var ownUndoManager: UndoManager?
@@ -67,6 +73,12 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   private var palette = ThemePalette.latte
   private var pendingRegion: GeoRegion?
   private var eventMonitor: Any?
+  private var click = MapClickTracker()
+
+  /// The pin a replaced layer selected again, so the selection it restores is not reported as the
+  /// user's. It is weak, so a removed pin is not held. A deselect of the pin clears it, so a later
+  /// selection by the user is always reported, even when MapKit never reported the restored one.
+  private weak var restoredSelection: MapPinAnnotation?
 
   /// True from the user's first gesture on the map until MapKit reports where it settled. Only a
   /// settle the user caused is reported. MapKit also reports a region after one is set, after a
@@ -217,6 +229,7 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
         if event.type == .rightMouseDown { return self.showContextMenu(for: event) }
 
         self.observe(event)
+        self.track(click: event)
         return false
       }
 
@@ -246,6 +259,84 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
 
       if event.type == .leftMouseDown { takeFocus(in: window) }
     }
+  }
+
+  // MARK: Clicks
+
+  /// Feeds a mouse event to the click tracker. A click is reported only when it is a single primary
+  /// press and release on the empty map, with no drag between.
+  func track(click event: NSEvent) {
+    guard let window, event.window === window else { return }
+
+    switch event.type {
+    case .leftMouseDown:
+      clickBegan(
+        atWindowPoint: event.locationInWindow,
+        hit: window.contentView?.hitTest(event.locationInWindow), clickCount: event.clickCount,
+        control: event.modifierFlags.contains(.control))
+
+    case .leftMouseDragged:
+      clickDragged(toWindowPoint: event.locationInWindow)
+
+    case .leftMouseUp:
+      clickEnded(atWindowPoint: event.locationInWindow)
+
+    default:
+      break
+    }
+  }
+
+  /// Moves the press to a point in the window. A move past a few points makes it a drag.
+  func clickDragged(toWindowPoint point: NSPoint) {
+    click.dragged(to: point)
+  }
+
+  /// Reports the click that just ended at a point in the window, when it was one.
+  func clickEnded(atWindowPoint point: NSPoint) {
+    guard click.ended(at: point) else { return }
+
+    let local = mapView.convert(point, from: nil)
+    let coordinate = mapView.convert(local, toCoordinateFrom: mapView)
+
+    onMapClicked?(GeoCoordinate(latitude: coordinate.latitude, longitude: coordinate.longitude))
+  }
+
+  /// Starts a press at a point in the window. It can become a click only when it is a first
+  /// press, made without Control, on the empty map under `hit`.
+  func clickBegan(
+    atWindowPoint point: NSPoint, hit: NSView?, clickCount: Int = 1, control: Bool = false
+  ) {
+    click.began(
+      at: point, eligible: clickCount == 1 && !control && isEmptyMap(hit: hit))
+  }
+
+  /// Fragments of the class names of MapKit's callout and its controls. MapKit does not publish the
+  /// classes, so the names are matched.
+  private static let mapKitChrome = [
+    "Callout", "Control", "Compass", "Scale", "Legal", "Attribution",
+  ]
+
+  /// True when `hit`, the view under a press, is the map's own surface. A pin or a cluster, a
+  /// callout, MapKit's own controls such as the zoom control, the compass, and the scale, the
+  /// legal link, the place search, and the pin list are not, and a press there is theirs.
+  func isEmptyMap(hit: NSView?) -> Bool {
+    guard let hit, hit.isDescendant(of: mapView) else { return false }
+
+    var view: NSView? = hit
+
+    while let current = view, current !== mapView {
+      if current is MapMarkerView || current is MKAnnotationView { return false }
+
+      if current is NSControl { return false }
+
+      let name = String(describing: type(of: current))
+
+      if Self.mapKitChrome.contains(where: name.contains) { return false }
+
+      view = current.superview
+    }
+
+    return true
   }
 
   /// MapKit's map does not take the first responder on a click, so the pane's focus mark, which
@@ -400,9 +491,48 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
 
   /// A pin selected on the map is selected in the list too, without moving the map.
   func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
-    guard let pin = view.annotation as? MapPinAnnotation, pin.isEditable else { return }
+    if let cluster = view.annotation as? MKClusterAnnotation {
+      expand(cluster)
+      return
+    }
 
-    pinList?.select(id: pin.pin.id)
+    guard let pin = view.annotation as? MapPinAnnotation else { return }
+
+    if pin.isEditable { pinList?.select(id: pin.pin.id) }
+
+    if pin === restoredSelection {
+      restoredSelection = nil
+      return
+    }
+
+    onPinSelected?(pin)
+  }
+
+  /// Marks `pin` as selected again by a redraw, so the selection MapKit reports for it is not the
+  /// user's.
+  func markSelectionRestored(_ pin: MapPinAnnotation) {
+    restoredSelection = pin
+  }
+
+  func mapView(_ mapView: MKMapView, didDeselect view: MKAnnotationView) {
+    if let pin = view.annotation as? MapPinAnnotation, pin === restoredSelection {
+      restoredSelection = nil
+    }
+  }
+
+  /// Zooms to the members of a cluster the user selected, so they show apart. Selecting a cluster
+  /// selects no pin.
+  func expand(_ cluster: MKClusterAnnotation) {
+    mapView.deselectAnnotation(cluster, animated: false)
+
+    let members = cluster.memberAnnotations.map {
+      GeoCoordinate(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude)
+    }
+
+    guard let region = GeoRegion.fitting(members) else { return }
+
+    show(region: region)
+    noteUserGesture()
   }
 
   /// Shows the editor for a file pin, over its marker when it is on screen.
@@ -592,7 +722,7 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
   /// `isEditable` says which of a file layer's pins the user may change. Every other layer's pins
   /// are read-only.
   func replacePins(
-    layer: MapLayer, pins: [GeoPin], defaultAccent: ThemeToken,
+    layer: MapLayer, pins: [GeoPin], defaultAccent: ThemeToken, subtitle: String? = nil,
     isEditable: (GeoPin) -> Bool = { _ in true }
   ) {
     let selected = (mapView.selectedAnnotations.first as? MapPinAnnotation).flatMap {
@@ -604,18 +734,53 @@ final class MapViewerView: NSView, MKMapViewDelegate, NSPopoverDelegate {
     let annotations = pins.map {
       MapPinAnnotation(
         pin: $0, layer: layer, layerAccent: defaultAccent,
-        isEditable: layer == .file && isEditable($0))
+        isEditable: layer == .file && isEditable($0), subtitle: subtitle)
     }
 
     mapView.addAnnotations(annotations)
 
+    restoredSelection = nil
+
     if let selected, let again = annotations.first(where: { $0.pin.id == selected }) {
+      markSelectionRestored(again)
       mapView.selectAnnotation(again, animated: false)
     }
 
     if layer == .file {
       filePinsInOrder = pins
       pinList?.show(pins: pins)
+    }
+  }
+
+  /// Puts one pin of `layer` on the map, in place of any pin with the same ID. The layer's other
+  /// pins stay as they are. A replaced pin that was selected is selected again.
+  func upsert(pin: GeoPin, layer: MapLayer, defaultAccent: ThemeToken, subtitle: String? = nil) {
+    let old = annotation(layer: layer, pinID: pin.id)
+    let selected = old.map { old in mapView.selectedAnnotations.contains { $0 === old } } ?? false
+
+    if let old { mapView.removeAnnotation(old) }
+
+    let annotation = MapPinAnnotation(
+      pin: pin, layer: layer, layerAccent: defaultAccent, subtitle: subtitle)
+
+    mapView.addAnnotation(annotation)
+
+    if selected {
+      markSelectionRestored(annotation)
+      mapView.selectAnnotation(annotation, animated: false)
+    }
+  }
+
+  /// Takes one pin of `layer` off the map.
+  func removePin(id: String, layer: MapLayer) {
+    guard let old = annotation(layer: layer, pinID: id) else { return }
+
+    mapView.removeAnnotation(old)
+  }
+
+  private func annotation(layer: MapLayer, pinID id: String) -> MapPinAnnotation? {
+    mapView.annotations.lazy.compactMap { $0 as? MapPinAnnotation }.first {
+      $0.layer == layer && $0.pin.id == id
     }
   }
 
@@ -735,5 +900,41 @@ final class ClosureMenuItem: NSMenuItem {
   /// Runs the item as a click would. A test calls it.
   func perform() {
     handler()
+  }
+}
+
+/// Tells a click from a drag. A press and release that stay within a few points of each other, with
+/// no drag past that between them, are a click.
+struct MapClickTracker {
+  static let slop = 4.0
+
+  private var start: NSPoint?
+  private var moved = false
+
+  mutating func began(at point: NSPoint, eligible: Bool) {
+    start = eligible ? point : nil
+    moved = false
+  }
+
+  mutating func dragged(to point: NSPoint) {
+    guard let start, Self.distance(start, point) > Self.slop else { return }
+
+    moved = true
+  }
+
+  /// Ends the press. Returns true when it was a click.
+  mutating func ended(at point: NSPoint) -> Bool {
+    defer {
+      start = nil
+      moved = false
+    }
+
+    guard let start, !moved else { return false }
+
+    return Self.distance(start, point) <= Self.slop
+  }
+
+  private static func distance(_ a: NSPoint, _ b: NSPoint) -> Double {
+    hypot(a.x - b.x, a.y - b.y)
   }
 }

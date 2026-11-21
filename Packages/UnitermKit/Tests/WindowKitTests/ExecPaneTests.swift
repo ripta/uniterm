@@ -4,6 +4,7 @@ import AppletKit
 import ExecDriver
 import ExecTestSupport
 import LayoutKit
+import MapViewerApplet
 import PaneModel
 import Preferences
 import ScriptHost
@@ -31,6 +32,7 @@ final class ExecPaneFixture {
   /// The kind of applet the next pane gets.
   var nextIsFake = false
   var nextIsNotes = false
+  var nextIsMap = false
 
   /// What the values sheet answers, and the keys it was asked for.
   var values: [String: String]? = [:]
@@ -41,7 +43,7 @@ final class ExecPaneFixture {
       AppletTypeDeclaration(
         typeID: "fake", displayName: "Fake", symbolName: "questionmark", opens: [],
         controlSupport: [.remoteControlled]),
-      TextViewerApplet.typeDeclaration,
+      TextViewerApplet.typeDeclaration, MapViewerApplet.typeDeclaration,
     ]
 
   init() throws {
@@ -85,6 +87,8 @@ final class ExecPaneFixture {
       if case .textViewer = choice { return TextViewerApplet(startDirectory: directory) }
 
       if nextIsNotes { return NotesFixture() }
+
+      if nextIsMap { return MapViewerApplet(startDirectory: directory) }
 
       return nextIsFake ? FakeApplet() as any Applet : SlidesFixture()
     }

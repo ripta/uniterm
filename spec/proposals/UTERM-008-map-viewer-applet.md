@@ -1,8 +1,8 @@
 # UTERM-008: Map Viewer Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-06
+**Updated:** 2026-11-20
 
 ## Dependencies
 
@@ -76,9 +76,12 @@ pin belongs to a named layer.
   Open... is the pane-local open it keeps. The map declares the system's `public.geojson` type, which conforms to
   `public.json`, at the owner rank. It binds no File > Open key.
 - Command source: the map publishes a command schema and an event schema, both at version 1, per UTERM-004 "Exec wire
-  format". The commands are `add`, `remove`, `clear`, `set-layer`, and setting the visible region. Exec drivers and
-  authorized remote callers both use them, through UTERM-004's shared validation and serialized dispatch.
-- Each command names its layer. An exec driver that names none uses a fixed default layer. Pin IDs are unique within a
+  format". The commands are `add`, `remove`, `clear`, `set-layer`, and `set-region`. The events are `map-clicked` and
+  `pin-selected`. Exec drivers and authorized remote callers both use them, through UTERM-004's shared validation and
+  serialized dispatch.
+- Each pin command names its layer. A command that names none uses a fixed default layer, whoever sends it. Each pin
+  command also takes an optional `source`, `command` or `file`, and `file` is refused with a structured error that
+  changes nothing. `set-region` names neither, since the region is not layer state. Pin IDs are unique within a
   layer. `add` requires an ID, and an existing pin with that ID is replaced whole: an omitted accent or glyph takes the
   default, never the earlier value. `set-layer` replaces a layer's whole contents in one command. `clear` and `remove`
   act on the named layer only.
@@ -87,12 +90,16 @@ pin belongs to a named layer.
 - The file layer is outside the command namespace. No layer name a command can send refers to it, so commands cannot
   add to, remove from, or clear the file's pins. Only file loading and the user's own edits change it. UTERM-016 adds
   a file-layer target for edit commands, gated by the path-reading power, with saving left to the user.
-- Layers are namespaces, not authority. Every command is authorized against the pane at dispatch, per ADR-09. Any
-  caller authorized for the pane may address any command layer. A layer name is never proof of who placed a pin.
+- Layers are namespaces, not authority. Every command is authorized against the pane at dispatch, per ADR-14, which
+  supersedes ADR-09's grants. Any caller authorized for the pane may address any command layer. A layer name is never
+  proof of who placed a pin.
 - A script run again, or a driver restarted, sends `set-layer` for the same layer and replaces its own earlier pins.
   A restarted exec driver therefore finds the previous driver's pins in the default layer until it does. This is a
   stated rule of the schema, not state a library carries.
-- The user can clear any layer from the map's own UI.
+- A script's `uniterm/send-command` carries at most 32 KiB of arguments. A script therefore sends a layer only within
+  that bound. A larger call is cut at the bound and fails before any effect. A full layer needs an exec driver.
+- The user clears the file layer and all program layers from the map's own UI. A per-layer clear for program layers
+  comes with the pin list in UTERM-016 M4.
 - Events go only to the exec driver, since UTERM-004 defines no other event channel. `map clicked` carries the
   coordinate of a click on the map. `pin selected` names a command pin by its layer and ID. For a file pin it carries
   only a file-source marker, never the pin's ID or any other value from the file. A click on a file pin sends that
@@ -101,7 +108,7 @@ pin belongs to a named layer.
   `uniterm/send-command`. Each remote command names the applet type and schema version it targets. UTERM-004 was
   amended in this review to name both, and its M3 builds them. Map M3 depends on both.
 
-Amended 2026-11-05; see Decision Log.
+Amended 2026-11-20; see Decision Log.
 - The map declares exec with disconnected or remote-controlled access, per UTERM-004 "Control modes and exec drivers".
 - A script sending a whole GeoJSON document through `uniterm/send` is deferred.
 
@@ -382,7 +389,7 @@ None.
 
 ### M3: Pins from programs
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - An exec driver adds, removes, clears, and replaces pins with `set-layer`, and sets the region, through the map's
   version 1 command schema
@@ -401,9 +408,14 @@ None.
 - A `set-layer` is staged and swapped in whole, so a partial layer is never drawn. The per-pane cap counts it after
   removing the old pins of the layer it replaces
 - A `set-layer` past the per-layer, per-pane, or layer cap is refused whole, with no effect
-- A map with a live exec driver reports `isRunningSomething`, and the close dialog names the driver
+- A map with a live exec driver reports `isRunningSomething` as false, as the image viewer does, so closing it asks
+  nothing. A close ends the driver. A reopen restores the command layers and offers Run. Amended 2026-11-20; see
+  Decision Log.
 - Pins per pane and per layer are capped, and an add past the cap returns a structured error
 - A driver or caller with an unsupported schema version is refused before any pin changes, in both directions
+- A script's `uniterm/send-command` call stops at 32 KiB of arguments. A larger call fails before any effect, as a bad
+  argument or as a protocol error on the connection, so a script sends a full layer only within that bound. Amended
+  2026-11-20; see Decision Log.
 - The published schema documents every command and event with examples, per UTERM-004
 - An unknown accent token returns a structured error and changes nothing. A missing SF Symbol shows the default glyph
 - A layer keeps its default accent after a clear and re-add
@@ -420,6 +432,60 @@ None.
   above zero
 - Layers per pane are capped, empty ones included, and layer names have a length cap. A new layer past the cap returns
   a structured error
+
+**As built:**
+
+- The map adopts the applet command hook at schema 1.0, and declares every control combination. The commands are
+  `add`, `remove`, `clear`, `set-layer`, and `set-region`. The events are `map-clicked` and `pin-selected`, in kebab
+  case like the commands. Every command replies at once with the layer's pin count. `remove` of an ID the layer lacks
+  replies `removed: false` and is not an error. `clear` of a layer that does not exist makes no layer. Only `add` and
+  `set-layer` make one, so `set-layer` with no pins makes an empty layer.
+- A pin is `id`, a `coordinate` object of `latitude` and `longitude`, and optional `label`, `accent`, and `glyph`. A
+  label takes the rule a file pin's does: control and invisible characters become spaces, and a label with no visible
+  text takes the pin's coordinate. A glyph that is neither one or two characters nor shaped like an SF Symbol name is a
+  bad argument. A well-formed name the system lacks is kept, and the marker draws the default glyph. `set-region`
+  takes a `center` and a `span` of `latitude-delta` and `longitude-delta`, runs `GeoRegion`'s checks, and is not saved
+  with the pane, since a program's move is not the user's.
+- The pure rules live in `GeoData`: the text caps, the sanitizer, the layer store, the undo-only snapshot, and the
+  sizing rule. All text caps count UTF-8 bytes: 64 for an ID, a layer name, and a glyph, and 128 for a label. A pane
+  holds at most 13 layers, empty ones included, and 2,500 pins. The file layer takes the first accent of the layer
+  order, so command layers start at the second and the 13 layers and the file use each of the 14 accents once.
+- The per-layer cap is 624 pins. It is the smallest of three counts: what fits one 1 MiB frame, what fits 65,536
+  decoded values, and what fits the 4 MiB retained bound. Its worst case escapes every text byte to six, uses the
+  longest request ID and layer name, and counts each number at 24 bytes. The frame binds, at 1,677 bytes a pin. A test
+  builds that worst-case layer byte by byte and reads it through the real frame reader and decoder, and shows one pin
+  more is refused. Another test pins each mirrored bound against the exec protocol's own constants. A driver that
+  writes longer numbers than 24 bytes fits fewer pins in a frame.
+- A script's call stops at 32 KiB, and the wire cuts an oversized call to that bound. The cut text is not JSON, so the
+  call fails before any effect. It is refused as a bad argument, or as a protocol error on the connection when the cut
+  falls inside a multibyte character. A call whose overflow is only trailing whitespace runs unchanged. Ordinary short
+  pins reach about 300 in that bound. Raising the bound would add scope, so it stays.
+- Version refusal is proved in both directions at the window: a driver whose hello names schema 2.0 or 1.1, and a
+  driver that refuses the app's hello, place nothing. A remote command at 2.0 or 1.1 is refused with no effect.
+- The click event comes from a press and release within four points on the empty map, with no drag between. A press on
+  a pin, a cluster, a callout, the place search, or the pin list is not a click, and neither is a Control-click. The
+  first click of a double click is a click, since telling it apart would delay every click by the double-click
+  interval. The callout is found by its class name, which MapKit does not publish.
+- Selecting a pin sends `pin-selected`. A selection the map restores after it redraws a layer sends nothing. Selecting
+  a cluster fits the map to its members with `GeoRegion`'s fitting rule and sends nothing. The pin list's selection of
+  a file pin sends the file marker too.
+- The undo-only part gains a `commandLayers` key beside the unsaved-pin keys. It holds each layer's name, accent, and
+  pins, and the counted names. A reopen reads it back through the same rules a command passes. A snapshot with a bad
+  value is unreadable as a whole and counts as absent. Pins restored from it show "From an earlier run" as a callout
+  subtitle, and a status segment says so while any such layer holds pins. A command that changes a layer clears its
+  mark.
+- The count rises, and the host is told, once when a name first holds pins. The host is told again when a command clears
+  an earlier-run mark, to refresh the status bar, and that does not change the saved description. A rebuild from the
+  layout alone with a count above zero posts one info notice to the history with the restore origin, then sets the
+  count to zero with one rewrite. The notice reads "3 program layers held pins last session. Restore does not run
+  programs, so they are not shown."
+- The user clears program pins with Clear Program Pins in the File menu, which empties every command layer and keeps
+  their accents. File > Clear File Pins clears the file layer. The pin list has no per-layer clear. UTERM-016 M4's pin
+  list shows program layers read-only with their Clear action, which is where a per-layer clear arrives.
+- Closing a map with a live driver asks nothing. See the Decision Log entry of 2026-11-20.
+- The UI test is built and not run by the implementer. It plants an exec map, approves the run in the Pending Requests
+  panel, and reads the pin count from the map's accessibility value. Left to the user: how the program's pins and the
+  "From an earlier run" callout look, and clustering across layers in a live map.
 
 ## Decision Log
 
@@ -550,6 +616,32 @@ None.
   history entry. The pane explains the failure only when no tiles and no command pins show. The relaunch notice for
   program layers came from the start of a restored pane and posted to the bar. It now follows the restore rule and
   enters the history only, without a message turn. UTERM-017 M1 shipped the failure change. M3 ships the restore rule.
+
+- 2026-11-20: Amended M3 (user's choice at the work-queue plan). The check said a map with a live exec driver reports
+  `isRunningSomething`, "and the close dialog names the driver". A close dialog would be a confirmation the user does not
+  want. The image viewer also supports exec drivers and closes without asking. The check now says the map reports
+  `isRunningSomething` as false and closing asks nothing. A close ends the driver, and a reopen restores the command
+  layers and offers Run.
+- 2026-11-20: Correction of fact in "Where pins come from". The text said "Every command is authorized against the pane
+  at dispatch, per ADR-09." ADR-14 supersedes ADR-09's grants, so the citation now names ADR-14.
+- 2026-11-20: Amended "Where pins come from" and M3 (work-queue best guess). The text said "An exec driver that names
+  none uses a fixed default layer", and was silent for a remote caller. A command that names no layer now uses the
+  default layer for every caller. Each pin command takes an optional `source`, and `file` is refused with a structured
+  error that changes nothing, which leaves room for UTERM-016's file-layer target. `set-region` takes no layer or
+  source, since the region is not layer state. The text before named the visible-region command only as "setting the
+  visible region" and the events as `map clicked` and `pin selected`. They are `set-region`, `map-clicked`, and
+  `pin-selected`. Added that a script's `uniterm/send-command` carries at most 32 KiB of arguments, so a script sends a
+  layer only within that bound. The text said the per-layer cap fits "one UTERM-004 frame". It does, and the bound
+  stays the script wire's. Raising it would add scope.
+- 2026-11-20: Command layers take layer-order accents from the second entry (work-queue best guess). "Pin styling" says
+  layer default accents follow a fixed order and says nothing of where command layers start. The file layer already
+  takes the first entry, so a first command layer in the same blue would make file pins and default-layer pins look
+  alike. The text does not change.
+- 2026-11-20: Amended "Where pins come from" and M3 (work-queue best guess). The text said "The user can clear any layer
+  from the map's own UI", which promised a clear for each layer. M3 ships one File menu command, Clear Program Pins,
+  which empties every command layer at once and keeps their accents. File > Clear File Pins clears the file layer. A
+  per-layer clear for program layers arrives with the pin list in UTERM-016 M4, which shows program layers read-only
+  with their Clear action. The bullet now says that.
 
 ## References
 

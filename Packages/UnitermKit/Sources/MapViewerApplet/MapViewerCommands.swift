@@ -7,7 +7,7 @@ extension MapViewerApplet {
   /// here, while a plain `.json` file still goes to the data viewer.
   public nonisolated static let typeDeclaration = AppletTypeDeclaration(
     typeID: MapViewerDescription.typeID, displayName: "Map Viewer", symbolName: "map",
-    opens: [OpenedType("public.geojson", rank: .owner)])
+    opens: [OpenedType("public.geojson", rank: .owner)], controlSupport: ControlCombination.all)
 
   /// The map viewer's own commands. Save and Save As take the usual document keys. Open has no key,
   /// since Cmd-O belongs to the window's File > Open, which routes by type.
@@ -45,6 +45,10 @@ extension MapViewerApplet {
         name: "clear-file", title: "Clear File Pins", home: .file, section: 1,
         isAvailable: { ($0 as? MapViewerApplet)?.canClearFile ?? false },
         run: { applet in (applet as? MapViewerApplet)?.clearFile() }),
+      AppletCommand(
+        name: "clear-program-pins", title: "Clear Program Pins", home: .file, section: 1,
+        isAvailable: { ($0 as? MapViewerApplet)?.canClearProgramPins ?? false },
+        run: { applet in (applet as? MapViewerApplet)?.clearProgramPins() }),
       .style(.standard, name: "style-standard", title: "Standard Map", key: KeyChord("1")),
       .style(.satellite, name: "style-satellite", title: "Satellite Map", key: KeyChord("2")),
       .style(.hybrid, name: "style-hybrid", title: "Hybrid Map", key: KeyChord("3")),

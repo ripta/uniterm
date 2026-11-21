@@ -317,4 +317,278 @@ final class MapViewerUITests: UnitermUITestCase {
     XCTAssertTrue(written.contains("LineString"), written)
     XCTAssertTrue(written.contains("Ferry Building"), written)
   }
+
+  // MARK: Pins from a program
+
+  private static var driverScript: String {
+    URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+      .appendingPathComponent("Packages/UnitermKit/Tests/ExecTestSupport/Fixtures/driver.pl").path
+  }
+
+  /// Plants an exec map as pane 1. With `beside`, a terminal pane 2 sits next to it, so closing the map
+  /// leaves a pane to reopen it beside.
+  private func plantExecMap(commands: [String], beside terminal: Bool = false) throws {
+    let control: [String: Any] = [
+      "access": "disconnected", "driver": "exec",
+      "exec": [
+        "argv": ["/usr/bin/perl", Self.driverScript, "script", "map-viewer", "1.0"] + commands,
+        "environmentKeys": [String](),
+      ],
+    ]
+    let mapPane: [String: Any] = [
+      "kind": "pane", "id": 1, "control": control,
+      "applet": ["type": "map-viewer", "version": 1, "payload": [String: Any]()],
+    ]
+    let tree: [String: Any] =
+      terminal
+      ? [
+        "kind": "split", "id": 3, "axis": "row",
+        "children": [
+          ["weight": 0.5, "node": mapPane],
+          [
+            "weight": 0.5,
+            "node": [
+              "kind": "pane", "id": 2,
+              "applet": [
+                "type": "terminal", "version": 1,
+                "payload": [
+                  "mode": "shell", "tabs": [["workingDirectory": NSNull()]], "selectedTab": 0,
+                ] as [String: Any],
+              ] as [String: Any],
+            ] as [String: Any],
+          ],
+        ],
+      ]
+      : mapPane
+    let layout: [String: Any] = [
+      "version": 3,
+      "windows": [
+        [
+          "frame": ["x": 120, "y": 120, "width": 1000, "height": 640],
+          "highWaterMark": terminal ? 3 : 1, "focusedPane": 1, "tree": tree,
+        ]
+      ],
+    ]
+
+    let data = try JSONSerialization.data(withJSONObject: layout)
+    try plantLayout(String(decoding: data, as: UTF8.self))
+  }
+
+  /// Clicks Run on a restored exec map and allows the launch once from the Pending Requests panel.
+  private func approveRun(of run: XCUIElement, in app: XCUIApplication, window: XCUIElement) {
+    run.click()
+
+    let status = window.staticTexts["pane-exec-status-1"]
+    XCTAssertTrue(
+      waitFor(status, timeout: 10) { $0.contains("waits for approval") },
+      "the run did not wait for approval")
+
+    app.menuBars.menuBarItems["Window"].click()
+
+    let item = app.menuBars.menuItems["Pending Requests\u{2026}"]
+    XCTAssertTrue(item.waitForExistence(timeout: 5), "the Window menu has no Pending Requests item")
+    item.click()
+
+    let panel = app.windows["pending-requests-window"]
+    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+    XCTAssertTrue(row.waitForExistence(timeout: 10), "the launch never reached the panel")
+    row.click()
+    panel.buttons["pending-requests-allow-once"].click()
+    panel.buttons[XCUIIdentifierCloseWindow].click()
+  }
+
+  /// Opens the history from the status bar and waits until a row's value satisfies `condition`.
+  /// Returns every row's value at the end, so a failure message can show them.
+  private func historyRows(
+    in window: XCUIElement, timeout: TimeInterval = 10,
+    until condition: @escaping ([String]) -> Bool
+  ) -> (matched: Bool, values: [String]) {
+    let rows = window.staticTexts.matching(identifier: "history-row")
+    var values: [String] = []
+
+    let predicate = NSPredicate { _, _ in
+      values = rows.allElementsBoundByIndex.map { ($0.value as? String) ?? "(no value)" }
+      return condition(values)
+    }
+    let result = XCTWaiter().wait(
+      for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: timeout)
+
+    return (result == .completed, values)
+  }
+
+  private func statusSegment(_ index: Int, in window: XCUIElement) -> XCUIElement {
+    window.descendants(matching: .any).matching(identifier: "status-applet-\(index)").firstMatch
+  }
+
+  /// Catches a driver whose set-layer never reaches a real map pane, and a restored exec map that
+  /// runs by itself. The layout plants a map that declares the fixture driver. Run asks for approval
+  /// in the Pending Requests panel, and the map's accessibility value then counts the program's
+  /// pins. The pins draw as MapKit draws them, which this test cannot judge.
+  func testADriverRunFromAnExecMapPlacesPins() throws {
+    let pins =
+      #"[{"id":"a","coordinate":{"latitude":37.77,"longitude":-122.42},"label":"A"},"#
+      + #"{"id":"b","coordinate":{"latitude":37.80,"longitude":-122.27},"label":"B"}]"#
+
+    try plantExecMap(commands: [
+      #"{"name":"set-layer","arguments":{"layer":"trucks","pins":\#(pins)}}"#,
+      #"{"name":"set-region","arguments":{"center":{"latitude":37.78,"longitude":-122.35},"span":{"latitude-delta":0.4,"longitude-delta":0.4}}}"#,
+    ])
+
+    let app = launchApp()
+    XCTAssertTrue(waitForForeground(app, activating: true))
+
+    let window = mainWindow(in: app)
+    let run = window.buttons["pane-exec-run-1"]
+
+    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+    XCTAssertFalse(
+      (map(in: window).value as? String)?.contains("program-pins") == true,
+      "the restored map ran its driver")
+
+    approveRun(of: run, in: app, window: window)
+
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 20) { $0.contains("program-pins=2") },
+      "the driver's pins never reached the map")
+
+    let capture = XCTAttachment(screenshot: window.screenshot())
+    capture.name = "driver-pins"
+    capture.lifetime = .keepAlways
+    add(capture)
+  }
+
+  /// Catches program pins that a reopen loses, a reopen that shows them as live, and a relaunch that
+  /// either shows them or drops the news. A driver places two pins. Closing the map and pressing
+  /// Cmd-Shift-T brings them back with the earlier-run segment. A quit and relaunch then shows no
+  /// pins, and the history holds the one notice that program layers held pins last session. The
+  /// pins draw as MapKit draws them, which this test cannot judge.
+  func testProgramPinsReturnOnReopenAndAreAnnouncedAfterARelaunch() throws {
+    let pins =
+      #"[{"id":"a","coordinate":{"latitude":37.77,"longitude":-122.42},"label":"A"},"#
+      + #"{"id":"b","coordinate":{"latitude":37.80,"longitude":-122.27},"label":"B"}]"#
+
+    try plantExecMap(
+      commands: [
+        #"{"name":"set-layer","arguments":{"layer":"trucks","pins":\#(pins)}}"#,
+        #"{"name":"set-region","arguments":{"center":{"latitude":37.78,"longitude":-122.35},"span":{"latitude-delta":0.4,"longitude-delta":0.4}}}"#,
+      ], beside: true)
+
+    let first = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
+    XCTAssertTrue(waitForForeground(first, activating: true))
+
+    let firstWindow = mainWindow(in: first)
+    let run = firstWindow.buttons["pane-exec-run-1"]
+
+    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+
+    approveRun(of: run, in: first, window: firstWindow)
+
+    XCTAssertTrue(
+      waitFor(map(in: firstWindow), timeout: 20) { $0.contains("program-pins=2") },
+      "the driver's pins never reached the map")
+    XCTAssertFalse(
+      statusSegment(1, in: firstWindow).exists, "a live run shows the earlier-run segment")
+
+    firstWindow.groups["pane-1"].click()
+    first.typeKey("w", modifierFlags: .command)
+    XCTAssertTrue(
+      waitUntilGone(map(in: firstWindow), timeout: 15), "Cmd-W did not close the map pane")
+
+    first.typeKey("t", modifierFlags: [.command, .shift])
+    XCTAssertTrue(map(in: firstWindow).waitForExistence(timeout: 15), "Cmd-Shift-T brought no map")
+    XCTAssertTrue(
+      waitFor(map(in: firstWindow), timeout: 20) { $0.contains("program-pins=2") },
+      "the reopened map lost the program pins")
+    XCTAssertTrue(
+      waitFor(statusSegment(1, in: firstWindow), timeout: 10) { $0 == "From an earlier run" },
+      "the reopened map does not say its pins are from an earlier run")
+
+    let reopened = XCTAttachment(screenshot: firstWindow.screenshot())
+    reopened.name = "reopened-earlier-run"
+    reopened.lifetime = .keepAlways
+    add(reopened)
+
+    first.typeKey("q", modifierFlags: .command)
+    XCTAssertTrue(first.wait(for: .notRunning, timeout: 15))
+
+    let second = launchApp()
+    let secondWindow = mainWindow(in: second)
+
+    XCTAssertTrue(map(in: secondWindow).waitForExistence(timeout: 20), "no map pane after relaunch")
+    XCTAssertTrue(
+      secondWindow.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane-exec-run-'"))
+        .firstMatch.waitForExistence(timeout: 20),
+      "the relaunched map shows no Run")
+    XCTAssertFalse(
+      (map(in: secondWindow).value as? String)?.contains("program-pins") == true,
+      "the relaunched map shows program pins")
+
+    secondWindow.groups["status-bar"].click()
+
+    let rows = secondWindow.staticTexts.matching(identifier: "history-row")
+    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the history never opened")
+
+    let notice = "held pins last session"
+    let history = historyRows(in: secondWindow) { $0.filter { $0.contains(notice) }.count >= 1 }
+
+    XCTAssertEqual(
+      history.values.filter { $0.contains(notice) }.count, 1,
+      "the history should hold one restore notice. The rows were: "
+        + history.values.joined(separator: " | "))
+
+    XCTAssertFalse(
+      history.values.contains { $0.contains("could not be restored") },
+      "a saved pane failed to restore. The rows were: " + history.values.joined(separator: " | "))
+
+    let relaunched = XCTAttachment(screenshot: secondWindow.screenshot())
+    relaunched.name = "relaunched-notice"
+    relaunched.lifetime = .keepAlways
+    add(relaunched)
+  }
+
+  /// Catches a click on the empty map that never reaches the driver as a map-clicked event, such
+  /// as a chrome match that rejects the map's own surface. The driver logs each event it gets to
+  /// stderr, and the history shows it. The click lands where no pin, control, or label is.
+  func testAClickOnTheEmptyMapReachesTheDriver() throws {
+    let pin =
+      #"[{"id":"a","coordinate":{"latitude":37.77,"longitude":-122.42},"label":"A"}]"#
+
+    try plantExecMap(commands: [
+      #"{"name":"set-layer","arguments":{"layer":"trucks","pins":\#(pin)}}"#,
+      #"{"name":"set-region","arguments":{"center":{"latitude":37.78,"longitude":-122.35},"span":{"latitude-delta":0.4,"longitude-delta":0.4}}}"#,
+    ])
+
+    let app = launchApp()
+    XCTAssertTrue(waitForForeground(app, activating: true))
+
+    let window = mainWindow(in: app)
+    let run = window.buttons["pane-exec-run-1"]
+
+    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+
+    approveRun(of: run, in: app, window: window)
+
+    // The map drops events until the driver's hello is accepted. A pin from its set-layer proves
+    // the driver is connected, so the click cannot land before it.
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 20) { $0.contains("program-pins=1") },
+      "the driver never connected")
+
+    map(in: window).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).click()
+
+    window.groups["status-bar"].click()
+
+    let rows = window.staticTexts.matching(identifier: "history-row")
+    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the history never opened")
+
+    let history = historyRows(in: window) { $0.contains { $0.contains("got event map-clicked") } }
+    let found = history.matched
+    let values = history.values
+
+    XCTAssertTrue(
+      found,
+      "the driver never got map-clicked. The rows were: " + values.joined(separator: " | "))
+  }
 }

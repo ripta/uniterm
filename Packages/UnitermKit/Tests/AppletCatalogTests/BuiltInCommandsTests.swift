@@ -134,22 +134,24 @@ final class BuiltInCommandsTests: XCTestCase {
       "pin-list": KeyChord("l", [.command, .shift]),
     ]
     let homes: [String: AppletMenuHome] = [
-      "open": .file, "save": .file, "save-as": .file, "clear-file": .file, "edit-pin": .applet,
-      "remove-pin": .applet,
+      "open": .file, "save": .file, "save-as": .file, "clear-file": .file,
+      "clear-program-pins": .file, "edit-pin": .applet, "remove-pin": .applet,
     ]
 
     XCTAssertEqual(
       map.commands.map(\.name),
       [
-        "open", "save", "save-as", "clear-file", "style-standard", "style-satellite",
+        "open", "save", "save-as", "clear-file", "clear-program-pins", "style-standard",
+        "style-satellite",
         "style-hybrid", "zoom-in", "zoom-out", "zoom-to-pins", "face-north", "go-to-place",
         "edit-pin", "remove-pin", "pin-list",
       ])
     XCTAssertEqual(
       map.commands.map(\.title),
       [
-        "Open\u{2026}", "Save", "Save As\u{2026}", "Clear File Pins", "Standard Map",
-        "Satellite Map", "Hybrid Map", "Zoom In", "Zoom Out", "Zoom to Fit Pins", "Face North",
+        "Open\u{2026}", "Save", "Save As\u{2026}", "Clear File Pins", "Clear Program Pins",
+        "Standard Map", "Satellite Map", "Hybrid Map", "Zoom In", "Zoom Out", "Zoom to Fit Pins",
+        "Face North",
         "Go to Place\u{2026}", "Edit Pin\u{2026}", "Remove Pin", "Show or Hide Pin List",
       ])
 

@@ -9,7 +9,7 @@
 | [UTERM-005](UTERM-005-browser-applet.md) | WebKit browser applet with tabs and a security indicator | accepted |
 | [UTERM-006](UTERM-006-image-viewer-applet.md) | Image viewer applet with folder slideshow | accepted |
 | [UTERM-007](UTERM-007-text-viewer-applet.md) | Viewer for Markdown, RTF, Word, and PDF | implemented |
-| [UTERM-008](UTERM-008-map-viewer-applet.md) | MapKit applet with custom pins | accepted |
+| [UTERM-008](UTERM-008-map-viewer-applet.md) | MapKit applet with custom pins | implemented |
 | [UTERM-009](UTERM-009-data-viewer-applet.md) | Table viewer for CSV, JSON, and spreadsheets | implemented |
 | [UTERM-010](UTERM-010-canvas-applet.md) | Canvas applet that programs draw on | draft |
 | [UTERM-011](UTERM-011-widget-bar.md) | Widget bar region with small widgets | deferred |
