@@ -138,6 +138,39 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertEqual((object?["features"] as? [Any])?.count, 1)
   }
 
+  /// Catches a Save As that puts back the bytes it captured before the write, which erases an edit
+  /// made while the write was in flight and leaves the map reading clean. The edit stays in the
+  /// document, and the map stays unsaved.
+  func testAnEditDuringSaveAsSurvivesAndStaysUnsaved() async throws {
+    let scratch = try GeoScratch(self)
+    let target = scratch.url.appendingPathComponent("new.geojson")
+    let applet = MapViewerApplet(startDirectory: scratch.url.path)
+    applet.chooseSaveLocation = { _, _, _ in target }
+
+    applet.addPin(at: GeoCoordinate(latitude: 1, longitude: 1))
+    await settle(applet)
+
+    applet.writeFile = { [applet] bytes, url in
+      await MainActor.run {
+        applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+      }
+      await applet.editing?.value
+
+      return await MapViewerApplet.atomicWrite(bytes, to: url)
+    }
+
+    let saved = await applet.saveAs()
+    await settle(applet)
+
+    XCTAssertTrue(saved)
+    XCTAssertEqual(applet.filePinsShown.count, 2)
+    XCTAssertTrue(applet.isDirty)
+
+    let onDisk = try Data(contentsOf: target)
+    XCTAssertNotEqual(applet.document, onDisk)
+    XCTAssertEqual(applet.savedDocument, onDisk)
+  }
+
   /// Catches a cancelled Save As that counts as saved, which would let a close drop the pins.
   func testACancelledSaveAsIsNotASave() async {
     let applet = MapViewerApplet(startDirectory: nil)

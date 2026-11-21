@@ -122,6 +122,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   var resolveConflict: @MainActor (String, NSWindow?) async -> SaveConflictChoice =
     MapViewerApplet.runConflictAlert
 
+  /// Writes a file's bytes to disk. Tests replace it to land an edit while a write is in flight.
+  var writeFile: @Sendable (Data, URL) async -> Result<Void, any Error> =
+    MapViewerApplet.atomicWrite
+
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
   ///
@@ -979,14 +983,18 @@ extension MapViewerApplet {
       return false
     }
 
-    let bytes = document ?? GeoJSONPatcher.emptyDocument
+    let captured = document
+    let bytes = captured ?? GeoJSONPatcher.emptyDocument
 
     guard await write(bytes, to: url) else { return false }
 
     record.path = url.path
     record.bookmark = nil
     record.startDirectory = url.deletingLastPathComponent().path
-    document = bytes
+
+    // An edit that landed during the write stays in the document, so the map stays unsaved.
+    if captured == nil, document == nil { document = bytes }
+
     savedDocument = bytes
     watch(url)
     refresh()
@@ -996,7 +1004,7 @@ extension MapViewerApplet {
   }
 
   private func write(_ bytes: Data, to url: URL) async -> Bool {
-    switch await Self.atomicWrite(bytes, to: url) {
+    switch await writeFile(bytes, url) {
     case .success:
       if url.path == record.path { savedDocument = bytes }
 
