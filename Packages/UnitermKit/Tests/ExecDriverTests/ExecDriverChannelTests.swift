@@ -332,30 +332,36 @@ final class ExecDriverChannelTests: XCTestCase {
     XCTAssertTrue(reason.contains("MiB"), reason)
   }
 
-  /// Emits the stall test's events to `channel` while it stays connected, and returns how long
-  /// that took on the main thread.
-  private func emitEvents(to channel: ExecDriverChannel) -> TimeInterval {
+  /// Emits up to `count` of the stall test's events to `channel` while it stays connected. Returns
+  /// the main thread's time per emit.
+  private func emitEvents(_ count: Int, to channel: ExecDriverChannel) -> TimeInterval {
     let started = Date()
     let title = String(repeating: "t", count: 200)
+    var emitted = 0
 
-    for _ in 0..<40_000 where channel.isConnected {
+    for _ in 0..<count where channel.isConnected {
       applet.events.emit("slide-shown", .object(["index": .number(1), "title": .string(title)]))
+      emitted += 1
     }
 
-    return Date().timeIntervalSince(started)
+    return Date().timeIntervalSince(started) / Double(max(emitted, 1))
   }
 
   /// Catches events to a driver that never reads stdin blocking or slowing the main thread, or
   /// piling up past the retained bound instead of failing.
   ///
-  /// The stalled emits are measured against the same emits to a driver that reads them, on the same
+  /// The stalled emits are measured per emit against emits to a driver that reads them, on the same
   /// machine in the same run. A loaded runner slows both, so only the stall itself can fail it.
+  ///
+  /// The baseline's 10,000 events come to about 2.6 MB, under the 4 MiB retained bound. A reader
+  /// that falls behind on a loaded runner therefore cannot get the healthy driver cut off. The
+  /// stall's 40,000 pass the bound, so the stalled channel fails partway.
   func testAStalledStdinFailsWithoutBlockingTheEmitter() async throws {
     let healthy = try start("drain")
 
     await waitUntil("the healthy driver's hellos finish") { healthy.isConnected }
 
-    let baseline = emitEvents(to: healthy)
+    let baseline = emitEvents(10_000, to: healthy)
 
     XCTAssertTrue(healthy.isConnected, "a driver that reads every event was cut off")
     healthy.close()
@@ -365,11 +371,11 @@ final class ExecDriverChannelTests: XCTestCase {
 
     await waitUntil("the hellos finish") { channel.isConnected }
 
-    let stalled = emitEvents(to: channel)
+    let stalled = emitEvents(40_000, to: channel)
 
     XCTAssertLessThan(
       stalled, 2 * baseline,
-      "emitting to a stalled driver took \(stalled) s, against \(baseline) s to a reading one")
+      "an emit to a stalled driver took \(stalled) s, against \(baseline) s to a reading one")
 
     func failure() -> String? {
       for end in ended {

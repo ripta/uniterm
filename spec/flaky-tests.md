@@ -377,10 +377,12 @@ Fixed by: "Measure stalled emits against the same emits to a reading driver"
   5.15 s against the test's 5 s wall-clock bound. The rerun passed this test. Locally the same emits take about 0.5 s.
 - Cause: the bound timed the emits themselves, which include encoding every event. A loaded runner slows that, so
   the bound tracked the runner's speed. The transport was right: its writes run on their own thread.
-- Fix: the test first times the same emits to a driver that reads them, then requires the stalled emits to cost less
-  than twice that. A send made to sleep 200 µs while more than 64 KiB waited fails it, at 5.17 s against 0.52 s.
-  The new `drain` driver mode reads and discards stdin. The stall's failure is found among the channel ends, so the
-  healthy channel's close cannot stand in for it.
+- Fix: the test first times 10,000 emits to a driver that reads them, then requires each stalled emit to cost less
+  than twice the healthy one. The baseline's 2.6 MB stays under the 4 MiB retained bound, so a reader that falls
+  behind cannot get the healthy driver cut off. A send made to sleep 200 µs while more than 64 KiB waited fails it,
+  at 109 µs per emit against 12.9 µs. The test then passed 30 of 30 with a busy loop on each of 14 cores. The new
+  `drain` driver mode reads and discards stdin. The stall's failure is found among the channel ends, so the healthy
+  channel's close cannot stand in for it.
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
 
