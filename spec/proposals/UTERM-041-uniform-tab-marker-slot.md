@@ -225,8 +225,10 @@ Leading choices from the user on 2026-11-21, not yet settled:
 - UTERM-019's run-end marker: the same filled gears, set apart by shape. The user dropped the outlined form, since
   filled and outlined gears are hard to tell apart alone at tab size. Under color-blindness simulations, a yellow or
   red recolor collapses into the live marker, and gray nearly matches it in grayscale. A slash through the gears, or a
-  warning triangle beside them, differs by shape and survives every simulation. No slashed gear exists as an SF Symbol,
-  so a slash is drawn over the symbol. Which of the two is open.
+  warning triangle beside them, differs by shape and survives every simulation. The user chose the slash: the marker
+  itself changes, rather than a second mark beside it that changes its meaning. No slashed gear exists as an SF
+  Symbol, so the slash is drawn over the filled gears, with a gap in the tab's background color so it stays legible at
+  12 points. Its accessibility label differs from the live marker's.
 - The controlling tab or pane, if "Marking the pane doing the controlling" is kept: `cpu`, with `arcade.stick` as the
   backup.
 
@@ -339,6 +341,8 @@ M1 is blocked on the open questions above.
 - 2026-11-21: The user dropped outlined gears for the run-end marker and asked for a variant of the filled gears that
   stays legible at tab size and visible with color blindness. Simulations rule out a recolor. A slash or a warning
   badge remains.
+- 2026-11-21: The user chose a slash drawn through the filled gears for UTERM-019's run-end marker, over a warning
+  badge, since a badge adds a second mark that changes another marker's meaning. Still to be confirmed in review.
 
 ## References
 
