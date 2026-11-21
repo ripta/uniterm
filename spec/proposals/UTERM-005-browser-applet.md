@@ -390,9 +390,9 @@ browser pauses media, per ADR-05.
 
 Decision: the browser needs no change to the applet's lifecycle, description, or restore. Its remote commands add three
 things to the shared command contract, in the last bullet below. Amended 2026-11-20; see Decision Log. The host gains
-what any new applet type needs: a launcher
-entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer. The
-factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
+what any new applet type needs: a
+launcher entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer.
+The factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
 hosts, and the opener for other apps. The host also passes each pane the browser's website data store, with no
 default. Restore is settled in "What restore loads".
 
@@ -414,7 +414,8 @@ default. Restore is settled in "What restore loads".
   the caller. A command carries the tab its target named, resolved by the host to a tab the applet listed. The browser
   keeps the tabs a token opened. A token's tabs end with its grant, and with any change of the pane's control.
 
-Rationale: the data viewer in UTERM-009 also needed no contract change, and the browser's needs fit the same contract.
+Rationale: the data viewer in UTERM-009 needed no contract change. The browser's lifecycle needs fit the same
+contract. Its three command-contract additions exist because remote control needs them.
 Holding alerts follows ADR-05's rule for what the user would notice but cannot see. Leaving media paused on reattach
 keeps a pane coming back into view from starting sound the user did not ask for.
 
@@ -1257,6 +1258,15 @@ Starts after UTERM-004 M6.
   refuses while the pane holds the keyboard. "Holds the keyboard" means the pane's view holds the window's first
   responder, whether or not the window is key. The cost: a window whose only pane is the browser cannot have its
   selected tab navigated, so a controller there works in tabs it opened behind it.
+- Skew: the four new error codes reach an exec driver as raw strings, on an error frame. Only two places throw them:
+  shared dispatch throws `permission-missing` for a command whose schema names a power, and the browser's remote
+  commands throw all four. No other applet's command names a power, so no existing command can return one. A driver
+  or script written before this build never targets the browser with success, because it had no schema. It sees an
+  unknown code on an error frame, and an error frame is a failure whatever its code. It sends no `tab` argument, so
+  its tab commands other than open are refused as a bad argument. A script reads the codes as `refused` or `busy`. On
+  a build without this milestone, the browser is not a command handler. A newer driver or script is refused with
+  `refused`, "this pane's applet takes no commands", and the authority check runs first. Nothing runs, the `tab`
+  argument is never read, and no deploy order is needed.
 - The controller's reload, back, and forward use their own methods, which set no resend intent, so a repeat of a post is
   refused with the existing notice and never asked. A controller's load of a failed address retries as not the user's.
   Measured on a real post result: the server's count stays one after a controller reload, and the tab's own reload on
