@@ -91,6 +91,30 @@ Rationale: the badge says the pane is under control, and the marker says its con
 two into one icon would give one icon two meanings. See "Whether the pane-level marker shows when it repeats the
 badge", which questions the second half of that rationale.
 
+### The markers' look
+
+Decision: each marker is an SF Symbol in peach, drawn in the marker slot at 12 points or larger. Chosen by the user on
+2026-11-21, after seeing every candidate rendered at real size and under color-blindness simulations in the mockup at
+https://claude.ai/artifact/MNi6hZgjP6eBsqDc3rFVaP. A review may not change it without the user's consent.
+
+- A tab a live grant can act on: two gears, filled (`gearshape.2.fill`).
+- UTERM-019's run-end marker: the same filled gears with a slash through them. The slash is drawn in code over the
+  symbol, since no slashed gear exists as an SF Symbol. Its accessibility label differs from the live marker's. The
+  risk "A drawn slash looks off" records what the user accepted with it.
+- The controlling tab or pane, if "Marking the pane doing the controlling" keeps that marker: the chip (`cpu`), with
+  the joystick (`arcade.stick`) as the backup.
+- The pane's control badge keeps its antenna.
+
+Rationale: two filled gears read as a mechanism at work and stay clear at tab size, and the chip reads as a program.
+The run-end marker changes the live marker's own shape rather than adding a second mark beside it, which would change
+another marker's meaning. A recolor, a dimmed form, or an outlined form either collapses into the live marker under
+color blindness, fades at 12 points, or differs only by stroke weight when seen alone. At 10 points the chip reads as
+a plain square, so the slot draws no marker smaller than 12 points.
+
+- Drafting detail, not the user's choice: tab titles are untrusted text, so the marker sits in a region the title
+  cannot reach. M1 checks that each symbol resolves on macOS 26.0, the app's minimum. The symbols were confirmed on
+  macOS 26.6.2.
+
 ## Design Decisions (Open)
 
 ### Access mode or live controller
@@ -194,50 +218,6 @@ marker, and which. This is an addition: it widens what the proposal marks. Candi
 Fact to check first: a script's grant binds to its source pane. Whether the app knows which tab of that pane runs the
 controller is unverified.
 
-### The authority marker's look
-
-The glyph, color, and size of the marker in a tab and beside the badge. A mockup shows candidates:
-https://claude.ai/artifact/MNi6hZgjP6eBsqDc3rFVaP. The user's leading choice, not yet settled, is a cursor with
-rays, the SF Symbol `cursorarrow.rays`, which reads as "a program can act here". The user also likes the robot, the
-game controller, and the steering wheel, and the robot reads well for a controlled tab if the controlling pane gets
-its own marker. Candidates:
-
-- A cursor with rays, small and tinted peach, in the marker slot. The leading choice.
-- A key, for "a grant reaches this tab".
-- A game controller, a joystick (`arcade.stick`), or a steering wheel, for "control". All are SF Symbols.
-- A vehicle or robot for "driven by a program": `car.top.radiowaves.rear` (a car under remote signal), `drone`, or
-  `robotic.vacuum`, the only robot SF Symbol. A plain robot head has no SF Symbol and would ship as a custom glyph.
-  Each was confirmed on macOS 26.6.2. The app's minimum is macOS 26.0, so M1 checks that the chosen symbol resolves
-  there.
-- The badge's own antenna glyph, small and tinted peach, leading the tab's title.
-- A small peach dot leading the tab's title.
-- A peach underline or edge on the tab.
-
-Constraint: tab titles are untrusted text. A page or program sets them. The marker must sit in a region the title
-cannot reach, or have a form that text cannot imitate. A glyph inside the title's own run fails that test.
-
-Two candidates have a pane-level problem. The antenna candidate puts two antennas side by side at pane level, the
-marker and the badge. The underline candidate has no pane-level form, since there is no tab to underline.
-
-Leading choices from the user on 2026-11-21, not yet settled:
-
-- Controlled tab, while a live grant can act on it: two gears, filled (`gearshape.2.fill`).
-- UTERM-019's run-end marker: the same filled gears, set apart by shape. The user dropped the outlined form, since
-  filled and outlined gears are hard to tell apart alone at tab size. Under color-blindness simulations, a yellow or
-  red recolor collapses into the live marker, and gray nearly matches it in grayscale. A slash through the gears, or a
-  warning triangle beside them, differs by shape and survives every simulation. The user chose the slash: the marker
-  itself changes, rather than a second mark beside it that changes its meaning. No slashed gear exists as an SF
-  Symbol, so the slash is drawn in code over the filled gears. The user chose drawing it over a custom symbol template.
-  Its accessibility label differs from the live marker's. The risk "A drawn slash looks off" records what the user
-  accepted.
-- The controlling tab or pane, if "Marking the pane doing the controlling" is kept: `cpu`, with `arcade.stick` as the
-  backup.
-
-Rendered at 10, 12, and 14 points beside tab text, all four stay recognizable from 12 points up. At 10 points the chip
-reads as a plain square. Filled and outlined gears are easy to tell apart side by side. Seen alone in a tab, the
-difference is a matter of stroke weight. The outlined form also reads as the quieter state, while the run-end marker
-warns that a controller's code may still run.
-
 ### One marker or several in a slot
 
 Whether a tab shows every marker it carries, side by side, or one at a time with an order between kinds. Two kinds are
@@ -284,7 +264,8 @@ tests change with it.
 - **UTERM-019 M3 inherits this slot** — likelihood: medium, impact: medium. If this proposal settles the slot without
   an action, UTERM-019's rebuild marker cannot use it. Mitigation: the "Interactive markers" question.
 - **A title imitates a marker** — likelihood: low, impact: medium. A page can set a title that looks like a marker,
-  and the user reads authority that is not there. Mitigation: the look constraint in "The authority marker's look".
+  and the user reads authority that is not there. Mitigation: the marker sits in a region the title cannot reach,
+  per "The markers' look".
 - **A drawn slash looks off** — likelihood: medium, impact: low. The slash is drawn in code over `gearshape.2.fill`.
   A gap painted in the tab's background color shows as a halo when the background differs, such as a selected tab or
   the other theme. A slash that does not match the thickness, gap, and top-left to bottom-right direction of Apple's
@@ -352,6 +333,10 @@ M1 is blocked on the open questions above.
   badge, since a badge adds a second mark that changes another marker's meaning. Still to be confirmed in review.
 - 2026-11-21: The user kept the slash drawn in code over a custom symbol template, and accepted its three risks:
   a halo on a mismatched background, a mismatch with Apple's slash style, and drift when macOS redraws the gears.
+- 2026-11-21: The markers' look moved from open to settled at the user's direction. The user chose it after seeing
+  each candidate rendered at real size and under color-blindness simulations: filled gears for a controlled tab, the
+  same gears slashed for UTERM-019's run-end marker, and the chip for a controlling tab. A review may not change it
+  without the user's consent.
 
 ## References
 
