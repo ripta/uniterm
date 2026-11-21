@@ -24,3 +24,4 @@
 | UTERM-036 M1 | None | Landed with the ADR-12 retraction, before the proposal was filed |
 | UTERM-008 M3 | UTERM-004 M3 | Split from M1-M2: waits on the exec driver and applet command hook from UTERM-004 M3 |
 | UTERM-005 M8 | UTERM-004 M6 | Split from M1-M7: waits on UTERM-004 M6, which builds descriptor format 2 for M8's browser permissions |
+| UTERM-037 M1 | None | Follows ADR-12's retraction through the browser's remote commands, which UTERM-005 M8 just built |

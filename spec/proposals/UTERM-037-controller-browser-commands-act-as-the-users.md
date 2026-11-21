@@ -1,6 +1,6 @@
 # UTERM-037: A Controller's Browser Commands Act as the User's
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-21
 **Updated:** 2026-11-21
 
