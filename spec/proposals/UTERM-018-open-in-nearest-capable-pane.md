@@ -647,6 +647,10 @@ and the path-reading power.
   opens its tab unselected, per UTERM-005. ADR-12 was retracted on 2026-11-20, and UTERM-037 applied that to the
   browser's remote commands. A script's URL open now lands as the user's open does, selected and taking focus. That
   matches "What a pane does with an open", which says a browser opens the tab selected. (work-queue best guess)
+- 2026-11-21: The user weighed "Scripts and controllers" after ADR-12's retraction and kept it. A script's open that
+  finds no capable pane fails with a structured not-found error. It never creates a pane and never hands off to macOS,
+  though the user's own open would. The user ruled that this is authority under ADR-14, since creating a pane or
+  launching another app is a separate power. No decision text changes.
 
 ## References
 

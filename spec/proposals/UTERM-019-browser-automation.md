@@ -169,6 +169,9 @@ by navigating there, which browser navigation allows.
 Decision: synthesized input behaves as the user's input does. Amended 2026-11-21; see Decision Log.
 
 - A synthesized click moves focus as the user's click does. Keys go to that tab.
+- A key press sent to one of the controller's tabs that does not hold focus first focuses that tab, as the user's
+  click would, and then goes to it. The user can type only into a focused tab, and a controller's keys follow the same
+  path. Amended 2026-11-21; see Decision Log.
 - uniterm builds AppKit events and delivers them to that tab's web view directly.
 - Synthesized keys go only to the web view. They never reach window keys or the app menu, per ADR-04. A menu command
   acts on the focused pane, outside the controller's tabs, so this is an authority rule under ADR-14.
@@ -502,27 +505,32 @@ input" guards on close and hang recovery. Raised by the review.
 
 Decision: at run end or revocation, uniterm rebuilds every tab whose documents the run scripted, per "Reach of the
 run-end cleanup". Amended 2026-11-11; see Decision Log. The one exception is a document
-holding input the user typed. Such a tab keeps a marker until its scripted history entry is gone. (autonomous)
+holding unsent input, whether the user or the controller typed it. Such a tab keeps a marker until its scripted history
+entry is gone. Amended 2026-11-21; see Decision Log. (autonomous)
 
 - A document counts as scripted when run-script touched it, or when it loaded while one of the run's injections was
   active. A tab that a scripted document opened during the run counts too.
 - The run's injections are removed before any rebuild, so the fresh document runs none of them.
-- uniterm tells the user's input from the controller's. It delivers the controller's synthesized events itself, and it
-  notes real key and mouse events that reach the web view during the run. Input only the controller typed does not
-  block a rebuild.
+- Unsent input counts the same from either source. The unsent-input tracker sees a field a controller's trusted input
+  filled as it sees the user's typing. A tab holding either is spared.
+- uniterm still tells the user's input from the controller's for one case. It delivers the controller's synthesized
+  events itself, and it notes real key and mouse events that reach the web view during the run. The post-result
+  exemption below depends on it.
 - A rebuild never resends a form and never asks. A post-result page is exempt only when the user's real input
   reached the tab, per "Reach of the run-end cleanup".
 - A tab that is not rebuilt shows a marker saying a controller's code may still run in it. The marker offers a rebuild,
   which goes through the existing unsent-input question. The marker follows the scripted history entry. A same-document
   navigation does not clear it, and going back to a cached scripted page shows it again.
-- If M3 cannot attribute input reliably, every tab with unsent input keeps the marker instead, and the decision reopens.
+- If M3 cannot attribute input reliably, every post-result tab keeps the marker instead, and the decision reopens.
 
 Rationale: a listener a run-script adds keeps running after the tab passes to the user. It can read what the user
 types and send it out, which breaks ADR-09's promise that revocation prevents new authorized effects. A reload ends
-it. Rebuilding over the user's typed text would discard it. The user's own reload never reads unsent input. The
+it. Rebuilding over unsent text would discard it, and the text is the same whoever typed it. The user's own
+reload never reads unsent input. The
 question in UTERM-005 "Unsent input" guards close, quit, and hang recovery, and a rebuild is a close of the old web
-view. Exempting every tab with unsent input would exempt the common automation path, since a controller's trusted
-input marks fields too. Closing tabs loses the page the automation produced. Disclosure alone leaves the code running
+view. Sparing every tab with unsent input leaves the common automation path unrebuilt, since a controller's trusted
+input fills forms too. The user accepted that cost: fewer tabs are rebuilt at run end, and they keep a marker
+instead. Closing tabs loses the page the automation produced. Disclosure alone leaves the code running
 where a reload is safe. Converged in 1 pass. Amended 2026-11-21; see Decision Log.
 
 ### Full-page snapshot
@@ -691,10 +699,11 @@ None.
   uniterm. Browser cookies with browser navigation reaches any site's cookies, HttpOnly ones included, since navigation
   can load any origin. Mitigation: browser cookies is its own permission, limited to the origins currently loaded in
   the controller's tabs, and its review text says that with navigation it reaches every site.
-- **WebKit may refuse key events delivered to a web view that is not first responder** — likelihood: medium, impact:
-  medium. A click now moves focus, but a key command may still reach a tab that never got one. If WebKit refuses, those
-  keys cannot work under "Trusted input". Mitigation: the input milestone's first check proves it before anything
-  builds on it. If it fails, keyboard input reopens as a design question. Amended 2026-11-21; see Decision Log.
+- **A key press may reach a web view that has not become first responder** — likelihood: low, impact: low. "Trusted
+  input" now focuses a tab before a key goes to it, so the web view holds first-responder status when the key arrives.
+  The earlier risk, that WebKit refuses keys delivered without it, no longer applies. What remains is a focus move that
+  fails, such as in a detached pane. Mitigation: M6 requires a structured error then. Amended 2026-11-21; see Decision
+  Log.
 - **Page data in replies is hostile input** — likelihood: high, impact: medium. A page controls what run-script
   returns. Mitigation: the app's serializer enforces a per-result byte cap and a nesting cap, Janet reads the text with
   core `parse` and never evaluates it, and drivers read JSON with their own parsers, per "Result encoding".
@@ -722,8 +731,8 @@ None.
   Mitigation: M3's and M4's first checks prove each one. A failure falls back to the main frame, or to rasterized PDF
   output, and is recorded.
 - **Input attribution may be unreliable** — likelihood: low, impact: medium. If uniterm cannot tell the user's input
-  from the controller's, the run-end cleanup cannot decide which tabs to rebuild. Mitigation: every tab with unsent
-  input keeps the marker instead, and the decision reopens.
+  from the controller's, the run-end cleanup cannot decide which post-result tabs to rebuild. Mitigation:
+  every post-result tab keeps the marker instead, and the decision reopens.
 - **Result chunks on the exec wire become a published contract** — likelihood: high, impact: low. External drivers will
   read the base64 field. Mitigation: it appears only in replies to commands this proposal adds, and it follows the
   browser command schema's append-only rule.
@@ -848,8 +857,9 @@ Starts after UTERM-005 M8.
   removing injections leaves it in place. Removing the unsent-input tracker's scripts leaves media capture, frame
   reporting, and controller injections in place
 - A web view rebuilt during a live run reinstalls the controller's injections. One rebuilt after run end does not
-- At run end or revocation, every scripted tab is rebuilt with no injections, unless it holds input the user typed.
-  Input only the controller typed does not stop the rebuild
+- At run end or revocation, every scripted tab is rebuilt with no injections, unless it holds unsent input. Input
+  the controller typed spares the tab as input the user typed does
+- A tab spared for unsent input keeps its marker until its scripted history entry is gone
 - A run-end rebuild never resends a form and never asks. A post-result page the user never touched is rebuilt and
   shows the "form not sent" notice
 - A scripted page in the back-forward cache is gone after the rebuild, so Back loads it anew
@@ -903,10 +913,11 @@ Starts after UTERM-005 M8.
 
 **Status:** NOT STARTED
 
-- A key event delivered to a controller tab's web view reaches the page as trusted input, or the result is recorded
-  and keyboard input goes back to design
+- A key event delivered to a controller tab's web view reaches the page as trusted input
 - Clicks, scrolls, and typing reach the page as trusted events
 - A synthesized click moves focus as the user's click does, and keys then go to that tab
+- A key press sent to an unfocused tab of the controller first focuses that tab, then reaches the page as trusted
+  input. If the focus move fails, the result is a structured error and no key is delivered
 - Input to an unselected tab or a tab in a detached pane either reaches the page or returns a structured error
 - Browser input's review text says trusted input lets a page open pop-ups, write the clipboard, enter fullscreen, and
   play sound
@@ -1044,6 +1055,21 @@ Starts after UTERM-005 M8.
   discard unsent input against UTERM-005. The user's reload never reads unsent input. Only close, quit, and hang
   recovery do. This overrides the 2026-11-11 entries that record "input that never takes focus" and a dialog that
   "never takes keyboard focus". Those stay as history. (work-queue best guess)
+
+- 2026-11-21: The user decided two more points, following ADR-12's retraction. A program's operation is the same
+  operation as the user's, and only authority, per ADR-14, stays separate.
+  First, "What a run leaves in its tabs" counted only text the user typed as a draft that spares a tab from the
+  run-end rebuild. Text only the controller typed did not block a rebuild. Now unsent input counts the same from either
+  source. A tab holding it is spared and keeps its marker until its scripted history entry is gone. The user accepted
+  the cost. Most automation fills forms, so fewer tabs are rebuilt at run end, and they keep a marker instead. The M3
+  rebuild checks match. The post-result exemption still depends on the user's real input, so input attribution stays
+  for that case, and its risk is narrowed to it.
+  Second, "Trusted input" said keys go to the tab a click focused, and the key-event risk said WebKit might refuse keys
+  to a web view that is not first responder. Now a key press sent to an unfocused tab of the controller first focuses
+  that tab, as the user's click would, and then goes to it. This matches the user's own path, since the user can type
+  only into a focused tab. The risk is resolved by that rule and narrowed to a focus move that fails. M6's first check,
+  which sent keyboard input back to design on failure, is dropped, and M6 gains the focus-first check. Synthesized keys
+  still never reach window keys or the app menu, which is authority.
 
 ## References
 
