@@ -1,6 +1,6 @@
 # UTERM-039: A Controller's Browser Tabs Are Not Capped
 
-**Status:** draft
+**Status:** accepted
 **Created:** 2026-11-21
 **Updated:** 2026-11-21
 
@@ -16,7 +16,8 @@
 - UTERM-037 — M1: the check that permissions, tab ownership, and the per-grant cap are unchanged. Superseded in part.
 - UTERM-005 — M8 As built: the note that a grant holds at most 16 open tabs and the 17th open is refused as busy.
   Superseded in part.
-- UTERM-005 — Decision Log, 2026-11-20: the entry that a grant holds at most 16 open tabs in a pane. Superseded.
+- UTERM-005 — Decision Log, 2026-11-20: the entry that a grant holds at most 16 open tabs in a pane. Superseded by a
+  new Decision Log entry. The old entry is not edited.
 
 ## Summary
 
@@ -48,8 +49,9 @@ make.
 
 - `controllerTabLimit` and its refusal are removed from `BrowserApplet+Remote.swift:83-104`.
 - The refusal was the one place the browser's remote commands replied `busy` for a tab count. The `busy` code stays in
-  the shared dispatcher for a full command queue (`ControlDispatcher.swift:156`, `:424`).
-- A page's own script-opened tabs keep their limit (`BrowserApplet.swift:1132`). That limit bounds a page, which no user
+  the shared dispatcher for a full command queue (`ControlDispatcher.swift:156`) and for too many replies waiting in
+  one window (`:424`).
+- A page's own script-opened tabs keep their limit (`BrowserApplet.swift:1102`). That limit bounds a page, which no user
   action matches, and it is not a controller's cap.
 - Ownership is unchanged. A controller still reaches only the tabs it opened, for its live grant.
 
@@ -62,6 +64,10 @@ needs the browser navigation permission, and the user may revoke it. Chosen by t
 Decision: authority is unchanged. Browser navigation gates `open`. A command reaches only a tab its caller opened, for
 the caller's live grant. The schemes that no source may load stay refused.
 
+- Browser navigation keeps its meaning and its version. Neither its permission line nor the review sheet names a bound,
+  so the power a user approved is the same before and after. A saved approval carries over with no new review. ADR-14
+  forbids a change in permission meaning from widening an approval, and this is no such change.
+
 Rationale: authority decides who may act, not how many times. This rests on ADR-15's authority carve-out and ADR-14.
 
 ## Design Decisions (Open)
@@ -70,9 +76,19 @@ None.
 
 ## Risks
 
-- **A runaway controller opens tabs without bound** — likelihood: low, impact: medium. Each tab is a web view and may
-  start a content process. Nothing bounds a controller's tabs until the user revokes it. Accepted: the user's own tabs
-  have no bound either, and the controller already holds browser navigation.
+- **A runaway controller opens tabs without bound** — likelihood: low, impact: medium. A loop of `open` makes tabs far
+  faster than hands can. Each tab is a web view in the app and may start a content process, so the whole app, terminals
+  included, feels the memory pressure. Each tab is also saved in the pane's description, so saved state grows with the
+  count. Restore stays bounded, since only the selected tab is built at relaunch. Mitigation: the dispatcher delivers a
+  bounded number of commands per main-thread turn, so a flood never holds the main thread, and Revoke Controller stays
+  reachable in the pane's frame and as a command. Commands still queued after a revoke are checked again at delivery
+  and take no effect. Page content runs out of process, per UTERM-005 "Web content failure", so a page's crash or memory
+  growth ends its own content process, not the app. After a revoke the tabs remain, and closing the pane removes them.
+  Accepted: the safety is authority and this recovery path, per ADR-15. A rate limit or a pane-wide cap would apply to
+  the user's New Tab too, and is out of scope.
+- **ADR-15 is still proposed** — likelihood: low, impact: low. The rationale cites its text, which may change before it
+  is accepted. Accepted: the decision also rests on the user's ruling of 2026-11-21, so only the rationale's wording is
+  exposed.
 
 ## Milestones
 
@@ -82,10 +98,14 @@ None.
 
 - `open` is never refused for the number of tabs the caller holds
 - `controllerTabLimit` and its refusal are gone
-- `testAGrantMayHoldOnlyAFixedNumberOfTabs` (`BrowserRemoteTests.swift:218-244`) is replaced by a test that an open past
-  the old limit succeeds and builds a tab
+- `testAGrantMayHoldOnlyAFixedNumberOfTabs` (`BrowserRemoteTests.swift:218-244`) is replaced by a test that opens at
+  least 17 tabs from one grant, using a literal count. The last open succeeds and adds a tab
+- The type's doc comment in `BrowserApplet+Remote.swift` no longer lists a tab cap among the checks before the user's
+  action
 - Another grant's opens, tab ownership, and the permission check are unchanged
-- UTERM-037 and UTERM-005 carry "Superseded in part by UTERM-039" markers on the replaced text
+- UTERM-005 and UTERM-037 each gain a dated "Superseded in part by UTERM-039" Decision Log entry that names the replaced
+  text. Markers go only on decisions and milestones: UTERM-037 "What stays" and M1, and UTERM-005 M8. No existing
+  Decision Log entry is edited, and `proposals.py freeze` passes
 
 Version skew: a removed `busy` reply. A newer app accepts every open an older one did. An older app refuses the 17th
 open from one grant with `busy`, a code the dispatcher also sends for a full queue, so a controller that handles it for
@@ -99,6 +119,16 @@ is needed.
   UTERM-005's and UTERM-037's frozen text keeps a record of the cap.
 - 2026-11-21: Returned to draft. It was filed as accepted without critique or proposal review. It goes through
   both before it is accepted.
+- 2026-11-21: Review start: 1 milestone, 2 settled decisions, 1 risk, no `**Live after:**` lines or row gates; no
+  out-of-scope statements; as of the commit "Return UTERM-039 to draft until it has been critiqued and reviewed". The
+  user asked for an autonomous critique and review before acceptance.
+- 2026-11-21: Coherence review fixes. "What stays" now says browser navigation keeps its meaning and version, so a
+  saved approval carries over under ADR-14. The runaway-controller risk now rests on authority and a traced recovery
+  path, not on the user's tabs being unbounded, and names the rate, the saved-state growth, and the out-of-process
+  bound ADR-07 asks for. A risk records that ADR-15 is still proposed. Two citations were corrected. (autonomous)
+- 2026-11-21: Routed to M1 checks: the replacement test uses a literal count of at least 17, the type's doc comment
+  drops the cap, and supersession goes through new Decision Log entries, not edits to frozen ones. (autonomous)
+- 2026-11-21: Review gate: kept all. No decision earns an ADR. The user accepted the proposal.
 
 ## References
 
