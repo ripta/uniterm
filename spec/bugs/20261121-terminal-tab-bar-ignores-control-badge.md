@@ -24,4 +24,5 @@ new-tab button.
 
 ## Fix
 
-Waits on UTERM-041's badge-clearance question, which asks whether that proposal takes the fix on.
+UTERM-041's review did not take the fix on, since the badge covers the new-tab button and not the marker slot. When
+this bug is fixed, the shared tab bar taking the reach is the fix that serves every applet with a bar.

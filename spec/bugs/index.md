@@ -19,3 +19,4 @@
 | [20261117-read-scope-compared-as-written-hides-real-paths](20261117-read-scope-compared-as-written-hides-real-paths.md) | A read scope written through a link hides every path from its own controller | fixed |
 | [20261121-edited-map-past-size-bound-saves-but-cannot-reopen](20261121-edited-map-past-size-bound-saves-but-cannot-reopen.md) | An edited map past 32 MiB saves, but cannot be reopened | open |
 | [20261121-terminal-tab-bar-ignores-control-badge](20261121-terminal-tab-bar-ignores-control-badge.md) | The terminal's tab bar ignores the control badge | open |
+| [20261121-tab-bar-overflow-hides-tabs](20261121-tab-bar-overflow-hides-tabs.md) | Tabs past the tab bar's trailing edge cannot be seen or clicked | open |
