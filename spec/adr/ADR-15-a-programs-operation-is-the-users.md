@@ -25,7 +25,9 @@ operation does. The only thing kept apart is authority: whether the program may 
 - Whether a program may act is decided before it acts, by authority. Once a program may act, its action is not
   weakened, delayed, or hidden.
 - A rule that applies to every source applies to programs because it applies to the user. That is not a special case.
-- uniterm's own work when a program's permission ends is not the program's operation, so this rule does not govern it.
+- uniterm's own work when a program's permission ends is not the program's operation, so this rule does not govern
+  how that work behaves. It still treats what the program left the way it treats what the user left.
+- An operation a program performs that has no user counterpart has no user behavior to match.
 
 ## Rationale
 
