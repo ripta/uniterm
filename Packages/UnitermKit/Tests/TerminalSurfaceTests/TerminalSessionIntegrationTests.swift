@@ -803,6 +803,46 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     try await waitUntil("an apostrophe at the prompt") { self.screen(session).contains("% '") }
   }
 
+  /// Catches a surface that drops or mangles a Command key that no menu item takes. Such a key is
+  /// terminal input. A program that turns on the kitty keyboard protocol reads Command-J as `j`
+  /// with the super bit, `CSI 106 ; 9 u`. A legacy program reads nothing for it.
+  ///
+  /// The surface's `performKeyEquivalent` declines the key, as it does for any Command key, so the
+  /// menu can take it first. This cannot prove that the window's menu takes no Command-J.
+  func testAnUnclaimedCommandKeyReachesAKittyProgramAndNotALegacyOne() async throws {
+    for (mode, enable, expected) in [("kitty", #"\033[>1u"#, "\u{1B}[106;9u"), ("legacy", "", "")] {
+      let output = sandbox.appending(path: "keys-\(mode)")
+      let session = try startProgram([
+        "/bin/sh", "-c",
+        #"printf '\#(enable)'; stty raw -echo min 0 time 30; printf 'R:ready'; "#
+          + #"dd bs=64 count=1 of="$1" 2>/dev/null"#,
+        "sh", output.path,
+      ])
+      let view = try XCTUnwrap(session.view as? GhosttySurfaceView)
+      var exited = false
+      session.onEvent = { event in
+        if case .exited = event { exited = true }
+      }
+
+      try await waitUntil("the \(mode) program to read") {
+        self.screen(session).contains("R:ready")
+      }
+
+      let commandJ = try XCTUnwrap(
+        NSEvent.keyEvent(
+          with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+          windowNumber: window.windowNumber, context: nil, characters: "j",
+          charactersIgnoringModifiers: "j", isARepeat: false, keyCode: 38))
+      XCTAssertFalse(view.performKeyEquivalent(with: commandJ), "the surface claimed Command-J")
+
+      try press(session, keyCode: 38, characters: "j", modifiers: .command)
+      try await waitUntil("the \(mode) program to end") { exited }
+
+      let read = try String(contentsOf: output, encoding: .utf8)
+      XCTAssertEqual(read, expected, "the \(mode) program read \(Array(read.unicodeScalars))")
+    }
+  }
+
   /// The menu reaches the terminal with a nil target, so AppKit finds `copy:` and the others on
   /// the first responder and asks `validateMenuItem` whether to enable them. This drives that path
   /// in-process.

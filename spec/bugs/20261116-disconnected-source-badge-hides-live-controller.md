@@ -1,6 +1,7 @@
 # A disconnected pane that a live controller acts from shows no control badge
 
-**Status:** open, reproduced at the mark level
+**Status:** fixed 2026-11-19
+**Fixed:** 2026-11-19
 **Estimate:** small, one file plus one test. One non-trivial decision: whether a disconnected pane with a live controller acting from it counts as the default state. The bug records that call as open.
 **Found:** 2026-11-16, by the design critic reviewing UTERM-025
 
@@ -50,3 +51,10 @@ Files the fix would touch: `Packages/UnitermKit/Sources/WindowKit/PaneFrameView.
 2026-11-18, second pass: re-read `isShown` and `controlMark(for:)` against the current tree. Neither changed, and the
 mark-level result above still holds. The estimate stands. The default-state call stays open in this file, so the bug
 needs a design answer before a fix.
+
+## Fix note
+
+2026-11-19: the default-state call was settled with the user. A disconnected pane with a live controller acting from it
+is not in the default state, so its badge shows and its menu offers Revoke Controller. `PaneControlMark.isShown` in
+`PaneFrameView.swift` now also reads `controllers`. `PaneFrameViewTests` pins it. The test failed on the unfixed code.
+The running app was not driven.

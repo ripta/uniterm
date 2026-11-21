@@ -37,10 +37,12 @@ struct PaneControlMark: Equatable {
   /// no such group, or no controller acts in the window.
   var adoptions: [Adoption] = []
 
-  /// The badge shows only on a pane that is not in the default state.
+  /// The badge shows only on a pane that is not in the default state. A controller acting from the
+  /// pane keeps it out of that state, so Revoke Controller stays in pane chrome after the user
+  /// disconnects the pane.
   var isShown: Bool {
     access != .disconnected || driver != .none || owner != nil || inUnownedGroup
-      || savedIntent != nil
+      || !controllers.isEmpty || savedIntent != nil
   }
 
   /// The lines the badge's menu and tooltip show: the mode, the owner, and the driver.

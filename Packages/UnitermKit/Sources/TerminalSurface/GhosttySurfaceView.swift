@@ -747,8 +747,9 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   /// stops the beep.
   ///
   /// Upstream also replays an unmatched Command-key event through the text input system, so that
-  /// Command-period reaches the terminal as Escape. uniterm leaves that out on purpose. A Command
-  /// key that no menu item takes is not terminal input.
+  /// Command-period reaches the terminal as Escape. uniterm leaves that replay out on purpose. The
+  /// plain key down still reaches the program, with the super modifier set. A program on the kitty
+  /// keyboard protocol reads it, and a legacy program reads nothing.
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     guard event.type == .keyDown, focused else { return false }
 

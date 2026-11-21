@@ -1,6 +1,6 @@
 # The app copies any path a command names into a script snapshot, with uniterm's privacy grants
 
-**Status:** open, not reproduced, traced only
+**Status:** proposed, see [UTERM-034](../proposals/UTERM-034-script-file-read-by-invoker.md). Not reproduced, traced only.
 **Validation:** not confirmed; nothing was run. The path below is traced through the code. Whether uniterm holds a
 grant for Documents, Desktop, or Downloads depends on the user's Mac.
 **Estimate:** large; two non-trivial design decisions. Who reads the script: the command (sends bytes over the wire,

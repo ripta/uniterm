@@ -35,6 +35,7 @@
 | [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | retracted |
 | [UTERM-032](UTERM-032-run-time-input-file.md) | A script takes its input file as an argument, and its folder is granted for slide images | accepted |
 | [UTERM-033](UTERM-033-reclaim-restored-group.md) | A controller that runs again after a relaunch adopts its restored group, with the user's approval | accepted |
+| [UTERM-034](UTERM-034-script-file-read-by-invoker.md) | Who reads a script file, so the app never opens a path the program chose | draft |
 
 ## Dependency Graph
 
@@ -70,6 +71,7 @@ UTERM-029 ← UTERM-007, UTERM-024, UTERM-025, UTERM-026, UTERM-030, UTERM-032
 UTERM-030 ← UTERM-004, UTERM-007, UTERM-015, UTERM-024, UTERM-032
 UTERM-032 ← UTERM-003, UTERM-004, UTERM-015, UTERM-021
 UTERM-033 ← UTERM-004, UTERM-021
+UTERM-034 ← UTERM-003, UTERM-015, UTERM-021, UTERM-032
 ```
 
 ## Not Yet Filed
