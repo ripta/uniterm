@@ -219,6 +219,18 @@ cannot reach, or have a form that text cannot imitate. A glyph inside the title'
 Two candidates have a pane-level problem. The antenna candidate puts two antennas side by side at pane level, the
 marker and the badge. The underline candidate has no pane-level form, since there is no tab to underline.
 
+Leading choices from the user on 2026-11-21, not yet settled:
+
+- Controlled tab, while a live grant can act on it: two gears, filled (`gearshape.2.fill`).
+- UTERM-019's run-end marker: two gears, outlined (`gearshape.2`).
+- The controlling tab or pane, if "Marking the pane doing the controlling" is kept: `cpu`, with `arcade.stick` as the
+  backup.
+
+Rendered at 10, 12, and 14 points beside tab text, all four stay recognizable from 12 points up. At 10 points the chip
+reads as a plain square. Filled and outlined gears are easy to tell apart side by side. Seen alone in a tab, the
+difference is a matter of stroke weight. The outlined form also reads as the quieter state, while the run-end marker
+warns that a controller's code may still run.
+
 ### One marker or several in a slot
 
 Whether a tab shows every marker it carries, side by side, or one at a time with an order between kinds. Two kinds are
@@ -318,6 +330,8 @@ M1 is blocked on the open questions above.
   questions for `/proposal-reviewer`. (autonomous)
 - 2026-11-21: Added "Marking the pane doing the controlling" at the user's question, labeled an addition. The user
   likes the robot, the game controller, and the steering wheel for the look.
+- 2026-11-21: The user's leading look: filled two gears for a controlled tab, outlined two gears for UTERM-019's
+  run-end marker, and the cpu chip for the controlling tab with the joystick as backup. Not yet settled.
 
 ## References
 
