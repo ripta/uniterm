@@ -227,15 +227,6 @@ fixed ones.
   from uniterm appeared in that window.
 - Next sighting: note what ran just before it, and whether the app was slow in earlier tests of that run.
 
-### `MarkdownViewTests.testATwentyMegabyteDocumentNeverStallsTheMainThread`
-
-- Seen: 2026-11-18, once, in the CI `package` rerun of PR #68. That PR changes only the CI cache step.
-- Evidence: the longest gap between main run loop turns was 0.54 s, against the test's 0.5 s bound. The first
-  `package` run of the same head passed this test.
-- Suspected cause: a loaded runner delaying the test's 20 ms sleeps, or a real main-thread stall during the 20 MB
-  render. Not confirmed. The test does not tell the two apart.
-- Status: unresolved.
-
 ### `ScriptHostAPITests.testOpenTabCarriesItsArgumentsToTheApp`
 
 - Seen: 2026-11-18, once, in a local `make ci-package` run for PR #67 while another test run loaded the machine.
@@ -352,6 +343,20 @@ fixed ones.
 - Status: unresolved until CI runs show the change holds.
 
 ## Fixed
+
+### `MarkdownViewTests.testATwentyMegabyteDocumentNeverStallsTheMainThread`
+
+Fixed by: "Prove the Markdown parse stays in the page by the bytes the host serves"
+
+- Seen: 2026-11-18, once, in the CI `package` rerun of PR #68. That PR changes only the CI cache step.
+- Evidence: the longest gap between main run loop turns was 0.54 s, against the test's 0.5 s bound. The first
+  `package` run of the same head passed this test. Locally the longest gap is about 25 ms.
+- Cause: a runner pause, most likely. The host hands the page the whole 20 MB in one `didReceive`, and that costs well
+  under the 25 ms local gap, so the handoff does not explain 540 ms. The test timed run loop turns, which a paused
+  runner stretches. It could not tell that from a parse on the main thread.
+- Fix: the test drives the scheme handler with a recording task and requires the exact document bytes. A host that
+  served anything it had parsed or changed fails it, as a handler made to append a comment did. The gap bound stays,
+  at 5 s, to catch a gross stall such as a host-side parse of the whole document.
 
 ### `TerminalSessionIntegrationTests.testProcessStartedEventReportsTheDirectChildInProgramMode`
 
