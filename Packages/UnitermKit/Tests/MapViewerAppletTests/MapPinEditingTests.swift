@@ -171,6 +171,80 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertEqual(applet.savedDocument, onDisk)
   }
 
+  /// Holds a read open until `open()`, then refuses or accepts its bytes.
+  private actor ReadGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+      if isOpen { return }
+      await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+      isOpen = true
+      continuation?.resume()
+      continuation = nil
+    }
+  }
+
+  /// Catches a Save that writes an edit's bytes while the read-back of them is still running. The
+  /// reader then refuses them, and the file on disk no longer opens. Save waits for the read, writes
+  /// nothing when it refuses, and leaves the revert to the read. It cannot prove the patcher itself
+  /// never makes such bytes.
+  func testSaveDuringAReadThatRefusesTheEditWritesNothing() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try mixedFile(scratch)
+    let original = try Data(contentsOf: file)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+    await load(applet, file)
+
+    let gate = ReadGate()
+    applet.readLayer = { _, path in
+      await gate.wait()
+      return .failure(.invalid(path: path, reason: "refused for the test."))
+    }
+
+    applet.addPin(at: GeoCoordinate(latitude: 5, longitude: 6))
+    XCTAssertNotNil(applet.editing)
+
+    let saving = Task { await applet.save() }
+    let opening = Task {
+      for _ in 0..<50 { await Task.yield() }
+      await gate.open()
+    }
+
+    let saved = await saving.value
+    await opening.value
+    await settle(applet)
+
+    XCTAssertFalse(saved)
+    XCTAssertEqual(try Data(contentsOf: file), original)
+    XCTAssertEqual(applet.document, original)
+  }
+
+  /// Catches a Save that waits on a read and then drops the write when the read accepts. The edit's
+  /// bytes are on disk after Save.
+  func testSaveDuringAReadThatAcceptsTheEditWrites() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try mixedFile(scratch)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+    await load(applet, file)
+
+    applet.addPin(at: GeoCoordinate(latitude: 5, longitude: 6))
+    XCTAssertNotNil(applet.editing)
+
+    let saved = await applet.save()
+
+    XCTAssertTrue(saved)
+    XCTAssertEqual(try Data(contentsOf: file), applet.document)
+    XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("[6.0, 5.0]"))
+  }
+
   /// Catches a cancelled Save As that counts as saved, which would let a close drop the pins.
   func testACancelledSaveAsIsNotASave() async {
     let applet = MapViewerApplet(startDirectory: nil)
