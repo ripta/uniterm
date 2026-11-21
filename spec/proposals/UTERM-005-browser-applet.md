@@ -1,8 +1,8 @@
 # UTERM-005: Browser Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-06
+**Updated:** 2026-11-20
 
 ## Dependencies
 

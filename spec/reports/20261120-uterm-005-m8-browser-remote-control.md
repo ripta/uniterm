@@ -18,6 +18,16 @@ and no work is stashed.
 |---|---|---|
 | UTERM-005 M8: Remote control | DONE | See "Commits" under M8 |
 
+The row is finished. UTERM-005 is `implemented`, the index says so, and the row moved from `queue.md` to the end of
+`history.md` in "Mark UTERM-005 implemented now that a controller can drive the browser".
+
+The run's commits, in order:
+
+1. "Let a controller drive its own browser tabs"
+2. "State the browser's command skew and its contract additions plainly"
+3. "Mark UTERM-005 implemented now that a controller can drive the browser", which also carries this report's
+   amendments
+
 ## Run-level best guesses
 
 These come from the approved plan.
@@ -175,3 +185,27 @@ None in the product. The first UI-test failure was a harness bug, fixed in the t
 - `proposals.py freeze` reports a UTERM-004 References hunk for ADR-14, origin `other`. Another session committed it
   after UTERM-004's freeze commit. This run left it alone.
 - VoiceOver on the new review lines is untested.
+
+## Row review and final review
+
+The row has one milestone, so the row review and the run's final review cover the same range: the run's base to the
+commit "Let a controller drive its own browser tabs". One reviewer pass did both, with the ADR review. The range adds
+and edits no ADR.
+
+Findings:
+
+1. The built focus rules differ from the retracted ADR-12's replacement principle. Disposition `user`. It is the
+   question already under "Left for the user" above.
+2. "The applet contract" Rationale still said the browser needed no contract change. Fixed.
+3. No skew statement covered the new exec-wire error codes and the `tab` argument (PLAUSIBLE). The trace found only
+   shared dispatch and the browser's new commands throw them. An older driver or script never reached a browser
+   command, and an older app refuses the browser's commands before any effect. No defect. M8's As built gained the
+   skew paragraph.
+4. The two ADR candidate entries are not ADR-ready. Dismissed: a logged candidate records the invariant and its
+   outcome, and the ADR is written only when the user asks.
+
+The fixes landed in "State the browser's command skew and its contract additions plainly". Its body opens by
+describing the earlier rationale, which `commit-style.md` forbids. The reword with `git commit --amend` was denied by
+the permission check, so the message stands as written.
+
+The full UI suite ran once, with `caffeinate -dimsu make test-app`, during this review. See "Full UI suite".
