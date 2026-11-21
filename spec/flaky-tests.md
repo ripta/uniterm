@@ -307,15 +307,6 @@ fixed ones.
   forked but not yet run `exec` on `login` still carries `xctest`'s name. Not confirmed.
 - Status: unresolved.
 
-### `ExecDriverChannelTests.testAStalledStdinFailsWithoutBlockingTheEmitter`
-
-- Seen: 2026-11-21, once, in the first CI `package` run of PR #81, which changes no exec driver code.
-- Evidence: `ExecDriverChannelTests.swift:349` failed with "emitting blocked the main thread". 40,000 emits took
-  5.15 s against the test's 5 s wall-clock bound. The rerun passed this test.
-- Suspected cause: a loaded runner slowing the emit loop, or a real stall while the queue fills. Not confirmed. The
-  test does not tell the two apart.
-- Status: unresolved.
-
 ### `TerminalSessionIntegrationTests.testShellSeesTheNewSize`
 
 - Seen: 2026-11-06, twice in CI's `build` job, on PRs #21 and #29. Neither PR changes terminal code. Found later by
@@ -370,6 +361,20 @@ fixed ones.
 - Status: unresolved until CI runs show the change holds.
 
 ## Fixed
+
+### `ExecDriverChannelTests.testAStalledStdinFailsWithoutBlockingTheEmitter`
+
+Fixed by: "Measure stalled emits against the same emits to a reading driver"
+
+- Seen: 2026-11-21, once, in the first CI `package` run of PR #81, which changes no exec driver code.
+- Evidence: `ExecDriverChannelTests.swift:349` failed with "emitting blocked the main thread". 40,000 emits took
+  5.15 s against the test's 5 s wall-clock bound. The rerun passed this test. Locally the same emits take about 0.5 s.
+- Cause: the bound timed the emits themselves, which include encoding every event. A loaded runner slows that, so
+  the bound tracked the runner's speed. The transport was right: its writes run on their own thread.
+- Fix: the test first times the same emits to a driver that reads them, then requires the stalled emits to cost less
+  than twice that. A send made to sleep 200 µs while more than 64 KiB waited fails it, at 5.17 s against 0.52 s.
+  The new `drain` driver mode reads and discards stdin. The stall's failure is found among the channel ends, so the
+  healthy channel's close cannot stand in for it.
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
 

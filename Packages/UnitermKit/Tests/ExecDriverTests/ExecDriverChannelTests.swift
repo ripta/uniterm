@@ -332,13 +332,9 @@ final class ExecDriverChannelTests: XCTestCase {
     XCTAssertTrue(reason.contains("MiB"), reason)
   }
 
-  /// Catches events to a driver that never reads stdin blocking the main thread, or piling up
-  /// past the retained bound instead of failing.
-  func testAStalledStdinFailsWithoutBlockingTheEmitter() async throws {
-    let channel = try start("stall")
-
-    await waitUntil("the hellos finish") { channel.isConnected }
-
+  /// Emits the stall test's events to `channel` while it stays connected, and returns how long
+  /// that took on the main thread.
+  private func emitEvents(to channel: ExecDriverChannel) -> TimeInterval {
     let started = Date()
     let title = String(repeating: "t", count: 200)
 
@@ -346,11 +342,46 @@ final class ExecDriverChannelTests: XCTestCase {
       applet.events.emit("slide-shown", .object(["index": .number(1), "title": .string(title)]))
     }
 
-    XCTAssertLessThan(Date().timeIntervalSince(started), 5, "emitting blocked the main thread")
+    return Date().timeIntervalSince(started)
+  }
 
-    await waitUntil("the stall fails") { !ended.isEmpty }
+  /// Catches events to a driver that never reads stdin blocking or slowing the main thread, or
+  /// piling up past the retained bound instead of failing.
+  ///
+  /// The stalled emits are measured against the same emits to a driver that reads them, on the same
+  /// machine in the same run. A loaded runner slows both, so only the stall itself can fail it.
+  func testAStalledStdinFailsWithoutBlockingTheEmitter() async throws {
+    let healthy = try start("drain")
 
-    guard case .failed(let reason)? = ended.first else { return XCTFail("ended as \(ended)") }
+    await waitUntil("the healthy driver's hellos finish") { healthy.isConnected }
+
+    let baseline = emitEvents(to: healthy)
+
+    XCTAssertTrue(healthy.isConnected, "a driver that reads every event was cut off")
+    healthy.close()
+    ended = []
+
+    let channel = try start("stall")
+
+    await waitUntil("the hellos finish") { channel.isConnected }
+
+    let stalled = emitEvents(to: channel)
+
+    XCTAssertLessThan(
+      stalled, 2 * baseline,
+      "emitting to a stalled driver took \(stalled) s, against \(baseline) s to a reading one")
+
+    func failure() -> String? {
+      for end in ended {
+        if case .failed(let reason) = end { return reason }
+      }
+
+      return nil
+    }
+
+    await waitUntil("the stall fails") { failure() != nil }
+
+    guard let reason = failure() else { return XCTFail("ended as \(ended)") }
 
     XCTAssertTrue(reason.contains("stopped reading its input"), reason)
   }
