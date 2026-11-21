@@ -28,6 +28,11 @@ Make every tab reachable in the bar. That needs a design call:
 - Add an overflow control at the trailing end that lists the tabs past the edge.
 - Shrink tabs below 80 points before either, down to a floor that keeps the marker slot whole.
 
+Whichever fix lands, it keeps the selected tab in view. It should not add a second list of tabs, such as an overflow
+menu, unless that list draws each tab's markers too. UTERM-041 shows markers only in the tab bar and at the pane
+level, so a marked tab past the edge shows its marker nowhere until this is fixed. A control at the bar's trailing end
+sits where the control badge does. See `20261121-terminal-tab-bar-ignores-control-badge.md`.
+
 ## Workarounds
 
 Switch tabs from the keyboard or the palette. The selected tab's content shows, though its tab stays out of view.
