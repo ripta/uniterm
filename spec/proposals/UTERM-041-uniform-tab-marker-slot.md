@@ -9,7 +9,6 @@
 - UTERM-005, for the browser's tab ownership by a controller's grant
 - UTERM-037, for the browser's remote commands as they now behave
 - UTERM-004, for pane control, grants, and the pane's control badge
-- UTERM-019, for the markers it designs for tabs a run leaves behind
 
 ## Impacts
 
@@ -17,7 +16,8 @@
   (about line 502) most likely refers to the pane badge. UTERM-004 CONTROL-1 and UTERM-005 "Control" define the
   "remote-control marker" as the pane badge. Separately, UTERM-019 designs a second, per-tab marker for tabs not
   rebuilt at run end (about lines 509, 522, and 888). That marker says a controller's code may still run in the tab,
-  offers a rebuild, and outlives the grant. This proposal's slot must hold it.
+  offers a rebuild, and outlives the grant. This proposal's slot must hold it, so UTERM-019 M3's marker waits on this
+  proposal's M1. UTERM-019 is updated once this proposal is decided.
 - The terminal and browser applets: the shared tab bar they use gains a marker slot.
 
 ## Summary
@@ -113,15 +113,25 @@ through `adoptFirstTab` and `grantDidEnd` in `TabOpening.swift`. Every other app
 viewer, image viewer, map, or REPL cannot know a live grant. Candidates:
 
 - The host computes the marker for every applet. `CallerOwning` applets expose their owned tab IDs. This matches the
-  badge, which `PaneFrameView.swift` builds from the window's own control table. It amends decision 1's "an applet
-  reports markers" for the authority marker, so the user would confirm it.
-- `PaneControl` gains live-controller state. This changes the contract for every applet.
+  badge, which `PaneFrameView.swift` builds from the window's own control table. Each applet draws its own tab bar
+  from its own state, and no host call hands tab data back down. So for the shared tab bar to draw a host-computed
+  marker, the host needs a new call that gives each applet its authority markers by tab ID, which the applet then
+  republishes. That is an `Applet` protocol change for every applet with tabs. If the host instead keeps the marker
+  outside the published tab, it changes decision 1's "a published tab carries a list of markers", and the user would
+  confirm that.
+- `PaneControl` gains live-controller state. This changes the contract for every applet. Like the first candidate,
+  it adds a channel from the host down to the applet. The two differ only in its shape.
 - The marker keys to the access mode. See "Access mode or live controller".
 
 ### Whether the pane-level marker shows when it repeats the badge
 
-In a single-tab pane whose grant covers the whole applet, the marker and the badge always appear together and say the
-same thing. Only a one-tab browser pane differs, where the controller may have opened none of the tab content.
+The badge shows when any of these holds (`PaneFrameView.swift`, about lines 43-45): the pane is not disconnected, an
+exec driver is attached, an owner or an unowned group is set, a controller is connected, or a control intent is saved.
+The authority marker follows a grant, per "Access mode or live controller", so the two do not always appear together.
+A disconnected terminal pane with an exec driver shows the badge and no authority marker. In a single-tab pane whose
+grant covers the whole applet, they agree whenever a grant is live. A one-tab browser pane can differ even then, when
+the user opened its tab. This question depends on "Access mode or live controller".
+
 Decision 3's rationale says the marker shows "its content is the controller's". Decision 2 says the marker "follows
 the grant, never the content". Those two conflict. Candidates:
 
@@ -160,18 +170,25 @@ The palette lists published tabs (`MainWindowController+Palette.swift`, about li
 
 ### How the host knows the tab bar is hidden
 
-Decision 3 needs the host to know when a pane's tab bar is hidden. Bar visibility is private to each applet. The
-terminal hides its bar at `tabs.count < 2`. The browser hides its bar at `count > 1`, with the opposite polarity.
-Candidates:
+Decision 3 needs the host to know when a pane's tab bar is hidden. Today every applet already follows one rule. The
+terminal hides its bar below two tabs (`TerminalApplet.swift`, about line 729), the browser does the same
+(`BrowserView.swift`, about lines 232-235), and every other applet publishes exactly one tab and has no bar. The
+question is whether to write that rule down. Candidates:
 
-- A contract that one published tab means no bar.
+- A contract that one published tab means no bar, which is today's behavior.
 - The applet reports bar visibility to the host.
 
 ### The authority marker's look
 
 The glyph, color, and size of the marker in a tab and beside the badge. A mockup shows candidates:
-https://claude.ai/artifact/MNi6hZgjP6eBsqDc3rFVaP. Candidates:
+https://claude.ai/artifact/MNi6hZgjP6eBsqDc3rFVaP. The user's leading choice, not yet settled, is a cursor with
+rays, the SF Symbol `cursorarrow.rays`, which reads as "a program can act here". Candidates:
 
+- A cursor with rays, small and tinted peach, in the marker slot. The leading choice.
+- A key, for "a grant reaches this tab".
+- A robot head, a game controller, a joystick, or a steering wheel, for "a program" or "control". The game
+  controller, joystick (`arcade.stick`), and steering wheel are SF Symbols. No robot symbol exists, so a robot head
+  would ship as a custom glyph.
 - The badge's own antenna glyph, small and tinted peach, leading the tab's title.
 - A small peach dot leading the tab's title.
 - A peach underline or edge on the tab.
@@ -243,8 +260,10 @@ M1 is blocked on the open questions above.
 - A browser tab the controller opened carries the authority marker while the grant lives, and loses it when the grant
   ends
 - A browser tab the user opened never carries it
-- Every tab of a remote-controlled terminal pane carries it, and none does once the pane is disconnected
-- A pane with no tab bar shows its one tab's markers beside the control badge, and clicking one opens the control menu
+- A terminal's tabs carry it or not by the rule "Access mode or live controller" settles. This check is rewritten
+  when that question settles
+- A pane with no tab bar shows its one tab's markers beside the control badge. What a click does waits on
+  "Interactive markers"
 - A marker change publishes the tabs and sends `appletTabsDidChange`. The browser's `refresh()` compares titles, IDs,
   and selection only (`BrowserApplet.swift`, about line 1457), so it must compare markers too
 - Every `tabOwners` change updates the marker on the same turn. That covers open, adopt, grant end, control change,
@@ -269,6 +288,14 @@ M1 is blocked on the open questions above.
   outside the tab bar, and how the host knows the tab bar is hidden. Extended the questions on one marker or several,
   the look, badge clearance, and VoiceOver. Added three risks and the M1 implementation checks. Filed a bug for the
   terminal's tab bar. No settled decision was reversed.
+- 2026-11-21: Re-check fixes. UTERM-019 moved out of Dependencies, since its run-end marker waits on this slot, not
+  the reverse. Corrected three facts in open questions: the badge's show conditions, today's shared rule that one
+  published tab means no bar, and what host-computed markers would change. The two M1 checks that drafting detail had
+  settled now wait on their open questions. The user named cursor with rays as the leading look, not yet settled.
+  (autonomous)
+- 2026-11-21: Final re-check fixes, not re-checked: the host-computed candidate now names the host-to-applet call it
+  needs, and the joystick is corrected to an SF Symbol. The critique loop ran three passes. What remains is open
+  questions for `/proposal-reviewer`. (autonomous)
 
 ## References
 
