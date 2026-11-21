@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-08
-**Updated:** 2026-11-09
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -554,7 +554,7 @@ and the path-reading power.
 - A script open of a type with several winning applets fails with the structured error and asks nothing
 - A script open whose source pane closes in flight fails, and never falls back to the focused pane
 - A script open never creates a pane
-- A URL opened by a script into a key-focused pane opens its tab unselected, per UTERM-005
+- A URL a script opens lands as the user's open does, selected and taking focus, per UTERM-037
 - The open request travels in a versioned schema under UTERM-004's admission, so an unsupported version is refused
   before any effect
 
@@ -643,6 +643,10 @@ and the path-reading power.
 - 2026-11-09: "Several capable panes" said "A better tie rule waits until the simple one proves wrong", which "The
   tie rule" overtook. It now points there. The settling entries for the tie rule, batches, and remote web URLs now
   carry their `addition` tags directly. (autonomous)
+- 2026-11-21: Amended M5's check on a URL a script opens. It said a URL opened by a script into a key-focused pane
+  opens its tab unselected, per UTERM-005. ADR-12 was retracted on 2026-11-20, and UTERM-037 applied that to the
+  browser's remote commands. A script's URL open now lands as the user's open does, selected and taking focus. That
+  matches "What a pane does with an open", which says a browser opens the tab selected. (work-queue best guess)
 
 ## References
 

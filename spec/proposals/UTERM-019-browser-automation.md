@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-11
-**Updated:** 2026-11-15
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -166,16 +166,17 @@ by navigating there, which browser navigation allows.
 
 ### Trusted input
 
-Decision: synthesized input never takes keyboard focus.
+Decision: synthesized input behaves as the user's input does. Amended 2026-11-21; see Decision Log.
 
-- Input goes only to a controller tab in a pane that does not hold key focus.
-- uniterm builds AppKit events and delivers them to that tab's web view directly. The first responder never changes.
-- Synthesized keys go only to the web view. They never reach window keys or the app menu, per ADR-04.
-- Aimed at a pane with key focus, an input command returns a structured error.
+- A synthesized click moves focus as the user's click does. Keys go to that tab.
+- uniterm builds AppKit events and delivers them to that tab's web view directly.
+- Synthesized keys go only to the web view. They never reach window keys or the app menu, per ADR-04. A menu command
+  acts on the focused pane, outside the controller's tabs, so this is an authority rule under ADR-14.
 - Trusted input carries user activation. A page can then open pop-ups, write the clipboard, enter fullscreen, and play
   sound, as if the user had clicked. Browser input's review text says so. Amended 2026-11-11; see Decision Log.
 
-Rationale: M8 keeps controllers from taking focus, to protect what the user is typing. Events from page JavaScript are
+Rationale: a program's input is the same operation as the user's, and it behaves the same way, per the retraction of
+ADR-12 and UTERM-037. A click that moves focus is what the user's click does. Events from page JavaScript are
 untrusted, and pages refuse them for pop-ups, clipboard writes, and many form controls. Events WebKit receives through
 AppKit count as real input.
 
@@ -449,13 +450,13 @@ What happens when a script does not answer a dialog.
 - Show it to the user at once, and let the script answer first if it can.
 
 Decision: a dialog in a controller tab shows to the user as it does today, and a script with browser script may answer
-first. The first answer wins. A dialog in a controller tab never moves keyboard focus. (autonomous)
+first. The first answer wins. A dialog in a controller tab takes focus as any tab's dialog does. (autonomous)
+Amended 2026-11-21; see Decision Log.
 
 - The dialog appears when its tab is selected and its pane attached, as today. When the script answers first, the
   user's view of it closes. When the user answers first, answer-dialog on it returns a structured error.
-- A dialog in a controller tab never makes itself first responder. Keyboard focus stays where it is until the user
-  clicks the dialog. Without this rule, a run-script's `prompt()` in the pane the user is typing in would take the
-  user's keystrokes, and the controller would read them as the prompt's value.
+- A dialog in a controller tab takes the first responder exactly as any tab's dialog does. The in-pane dialog takes it
+  when the pane held focus. A controller tab has no exception.
 - A detached pane holds back only the user's view, per ADR-05. A script may answer a dialog in a detached pane, so a
   controller's own `confirm()` never stalls its run. Amends "Dialogs in controller tabs".
 - At run end or revocation, an unanswered dialog simply stays with the user.
@@ -497,7 +498,7 @@ A run-script can add a listener or a timer to a controller tab's document, in ei
 or its grant is revoked, the tab passes to the user, and its remote-control marker goes away. The listener keeps running
 until the document unloads. It could read what the user types and send it out with `fetch`. ADR-09 says revocation
 prevents new authorized effects. Reloading the document ends the code, but loses unsent input, which UTERM-005 "Unsent
-input" protects. Raised by the review.
+input" guards on close and hang recovery. Raised by the review.
 
 Decision: at run end or revocation, uniterm rebuilds every tab whose documents the run scripted, per "Reach of the
 run-end cleanup". Amended 2026-11-11; see Decision Log. The one exception is a document
@@ -518,10 +519,11 @@ holding input the user typed. Such a tab keeps a marker until its scripted histo
 
 Rationale: a listener a run-script adds keeps running after the tab passes to the user. It can read what the user
 types and send it out, which breaks ADR-09's promise that revocation prevents new authorized effects. A reload ends
-it. Reloading over the user's typed text would discard it, against UTERM-005 "Unsent input". Exempting every tab with
-unsent input would exempt the common automation path, since a controller's trusted input marks fields too. Closing
-tabs loses the page the automation produced. Disclosure alone leaves the code running where a reload is safe.
-Converged in 1 pass.
+it. Rebuilding over the user's typed text would discard it. The user's own reload never reads unsent input. The
+question in UTERM-005 "Unsent input" guards close, quit, and hang recovery, and a rebuild is a close of the old web
+view. Exempting every tab with unsent input would exempt the common automation path, since a controller's trusted
+input marks fields too. Closing tabs loses the page the automation produced. Disclosure alone leaves the code running
+where a reload is safe. Converged in 1 pass. Amended 2026-11-21; see Decision Log.
 
 ### Full-page snapshot
 
@@ -689,9 +691,10 @@ None.
   uniterm. Browser cookies with browser navigation reaches any site's cookies, HttpOnly ones included, since navigation
   can load any origin. Mitigation: browser cookies is its own permission, limited to the origins currently loaded in
   the controller's tabs, and its review text says that with navigation it reaches every site.
-- **WebKit may refuse key events delivered without focus** — likelihood: medium, impact: medium. If so, keyboard input
-  cannot work under "Trusted input". Mitigation: the input milestone's first check proves it before anything builds on
-  it. If it fails, keyboard input reopens as a design question.
+- **WebKit may refuse key events delivered to a web view that is not first responder** — likelihood: medium, impact:
+  medium. A click now moves focus, but a key command may still reach a tab that never got one. If WebKit refuses, those
+  keys cannot work under "Trusted input". Mitigation: the input milestone's first check proves it before anything
+  builds on it. If it fails, keyboard input reopens as a design question. Amended 2026-11-21; see Decision Log.
 - **Page data in replies is hostile input** — likelihood: high, impact: medium. A page controls what run-script
   returns. Mitigation: the app's serializer enforces a per-result byte cap and a nesting cap, Janet reads the text with
   core `parse` and never evaluates it, and drivers read JSON with their own parsers, per "Result encoding".
@@ -834,8 +837,7 @@ Starts after UTERM-005 M8.
 - An alert, a confirm, and a prompt in a controller tab each appear as an event, and answer-dialog answers them
 - A dialog waiting for its answer never blocks the main thread
 - A detached pane holds the user's view of its dialog until reattach, and the script can answer it meanwhile
-- A dialog in a controller tab never takes keyboard focus. A run-script's `prompt()` in a key-focused pane gets none of
-  the user's keystrokes
+- A dialog in a controller tab takes the first responder as any tab's dialog does, when its pane held focus
 - A click or key press that began on one dialog never answers a dialog shown after it
 - A dialog dismissed at once, over the held limit or after "stop dialogs", reports as already answered, and
   answer-dialog on it returns a structured error
@@ -901,15 +903,15 @@ Starts after UTERM-005 M8.
 
 **Status:** NOT STARTED
 
-- A key event delivered to a controller tab's web view without changing the first responder reaches the page as
-  trusted input, or the result is recorded and keyboard input goes back to design
+- A key event delivered to a controller tab's web view reaches the page as trusted input, or the result is recorded
+  and keyboard input goes back to design
 - Clicks, scrolls, and typing reach the page as trusted events
-- An input command aimed at a pane with key focus returns a structured error
+- A synthesized click moves focus as the user's click does, and keys then go to that tab
 - Input to an unselected tab or a tab in a detached pane either reaches the page or returns a structured error
 - Browser input's review text says trusted input lets a page open pop-ups, write the clipboard, enter fullscreen, and
   play sound
-- A synthesized mouse-up never counts as a user click for uniterm's own gates on downloads, pop-ups, and links to
-  other apps
+- A synthesized click counts as the user's click for uniterm's own gates on downloads, pop-ups, and links to other
+  apps, as in any tab
 - A synthesized Cmd-W, Cmd-T, or other window key never reaches the window or the app menu
 
 ## Decision Log
@@ -1029,6 +1031,19 @@ Starts after UTERM-005 M8.
   bumps the minor, and a controller with the same major and a minor up to the applet's is accepted. ScriptWire is at
   version 12 and the exec protocol at 4, so this proposal's own bump starts from there and the exec protocol does not
   move. This changes nothing this proposal decided about the byte type or the helpers. (work-queue best guess)
+- 2026-11-21: Amended "Trusted input", "An unanswered dialog", "What a run leaves in its tabs", the key-event risk,
+  and the M3 and M6 checks. ADR-12 was retracted on 2026-11-20, and UTERM-037 applied that to the browser's remote
+  commands. A program's operation is the same operation as the user's, and it behaves the same way. "Trusted input"
+  said "synthesized input never takes keyboard focus", sent input only to a tab in a pane without key focus, and
+  returned a structured error for a key-focused pane. Synthesized input now behaves as the user's does. A click moves
+  focus as the user's click does, and keys go to that tab. Synthesized keys still never reach window keys or the app
+  menu, which is an authority rule under ADR-14. "An unanswered dialog" said a controller tab's dialog never moves
+  keyboard focus. It takes focus as any tab's dialog does. M6 said a synthesized mouse-up never counts as a user click
+  for uniterm's gates on downloads, pop-ups, and links to other apps. It counts, as UTERM-037 gives a controller's
+  tab the same download and handoff rules as any tab. The rationale for the run-end rebuild said a reload would
+  discard unsent input against UTERM-005. The user's reload never reads unsent input. Only close, quit, and hang
+  recovery do. This overrides the 2026-11-11 entries that record "input that never takes focus" and a dialog that
+  "never takes keyboard focus". Those stay as history. (work-queue best guess)
 
 ## References
 

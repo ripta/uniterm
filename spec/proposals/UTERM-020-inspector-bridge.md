@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-11
-**Updated:** 2026-11-11
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -292,7 +292,8 @@ effects. Raw parameters stay protocol-shaped; the adapter need not provide typed
 The router owns protocol request IDs and subscriptions. Nested Target and Worker messages are unwrapped and checked.
 Every referenced target must remain a live, owned descendant of the addressed tab. No page-created popup, other tab,
 global store administration, or unknown target is reachable. Enabling instrumentation or pausing on attachment also
-requires this check. Navigation, scheme, focus, and native-handoff safeguards still apply through raw commands.
+requires this check. Navigation, scheme, and native-handoff safeguards still apply through raw commands, as the rules
+every tab follows. Amended 2026-11-21; see Decision Log.
 
 Shared storage effects of ordinary page operations retain the browser's existing semantics. Tab ownership is not
 storage isolation. Raw permission cannot expand origin/storage authority beyond operations attributable to the tab.
@@ -472,7 +473,7 @@ whether to drop it. No drop is authorized by this review.
 - Device-scale overrides apply only to their tab; timezone passes "Timezone scope" or reports unavailable
 - Each has a smoke test
 - Timezone isolation passes every scenario in "Timezone scope", or the capability stays unavailable
-- User-gesture evaluation requires browser input and obeys the focused-pane restriction
+- User-gesture evaluation requires browser input
 
 ### M5: Console and exceptions
 
@@ -610,6 +611,12 @@ whether to drop it. No drop is authorized by this review.
 - 2026-11-11: Risks amended: the capability-name mitigation said the names follow `uniterm/api-version`. UTERM-019
   settled append-only names instead, with no schema bump. UTERM-019 "Result encoding" also settled the byte type that
   carries this proposal's 16 KiB body chunks, which a 4096-byte script string could not.
+- 2026-11-21: Amended "Effective target scope" and the M4 user-gesture check. ADR-12 was retracted on 2026-11-20, and
+  UTERM-037 applied that to the browser's remote commands. A program's operation is the same operation as the user's.
+  The text said "Navigation, scheme, focus, and native-handoff safeguards still apply through raw commands", and M4
+  said user-gesture evaluation "obeys the focused-pane restriction". UTERM-019 no longer restricts input to an unfocused
+  pane, so that clause is gone. The raw-command safeguards no longer name focus. They name the scheme and handoff
+  rules every tab follows. (work-queue best guess)
 ## References
 
 - [WebKit InspectorBackend](https://github.com/WebKit/WebKit/blob/main/Source/WebInspectorUI/UserInterface/Protocol/InspectorBackend.js):
