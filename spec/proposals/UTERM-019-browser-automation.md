@@ -507,22 +507,21 @@ input" guards on close and hang recovery. Raised by the review.
 Decision: at run end or revocation, uniterm rebuilds every tab whose documents the run scripted, per "Reach of the
 run-end cleanup". Amended 2026-11-11; see Decision Log. The one exception is a document
 holding unsent input, whether the user or the controller typed it. Such a tab keeps a marker until its scripted history
-entry is gone. Amended 2026-11-21; see Decision Log. (autonomous)
+entry is gone. Amended 2026-11-21; see Decision Log. A post-result page is spared the same way, whoever caused the
+post. Amended 2026-11-21; see Decision Log. (autonomous)
 
 - A document counts as scripted when run-script touched it, or when it loaded while one of the run's injections was
   active. A tab that a scripted document opened during the run counts too.
 - The run's injections are removed before any rebuild, so the fresh document runs none of them.
 - Unsent input counts the same from either source. The unsent-input tracker sees a field a controller's trusted input
   filled as it sees the user's typing. A tab holding either is spared.
-- uniterm still tells the user's input from the controller's for one case. It delivers the controller's synthesized
-  events itself, and it notes real key and mouse events that reach the web view during the run. The post-result
-  exemption below depends on it.
-- A rebuild never resends a form and never asks. A post-result page is exempt only when the user's real input
-  reached the tab, per "Reach of the run-end cleanup".
+- uniterm does not tell the user's input from the controller's. A form the controller fills and submits leaves a
+  result page that counts as if the user had done it, per ADR-15.
+- A rebuild never resends a form and never asks. A post-result page is spared, whoever caused the post, per "Reach of
+  the run-end cleanup".
 - A tab that is not rebuilt shows a marker saying a controller's code may still run in it. The marker offers a rebuild,
   which goes through the existing unsent-input question. The marker follows the scripted history entry. A same-document
   navigation does not clear it, and going back to a cached scripted page shows it again.
-- If M3 cannot attribute input reliably, every post-result tab keeps the marker instead, and the decision reopens.
 
 Rationale: a listener a run-script adds keeps running after the tab passes to the user. It can read what the user
 types and send it out, which breaks ADR-09's promise that revocation prevents new authorized effects. A reload ends
@@ -530,8 +529,8 @@ it. Rebuilding over unsent text would discard it, and the text is the same whoev
 reload never reads unsent input. The
 question in UTERM-005 "Unsent input" guards close, quit, and hang recovery, and a rebuild is a close of the old web
 view. Sparing every tab with unsent input leaves the common automation path unrebuilt, since a controller's trusted
-input fills forms too. The user accepted that cost: fewer tabs are rebuilt at run end, and they keep a marker
-instead. Closing tabs loses the page the automation produced. Disclosure alone leaves the code running
+input fills forms too. The same holds for a post-result page the controller submitted. The user accepted that cost:
+fewer tabs are rebuilt at run end, and they keep a marker instead. Closing tabs loses the page the automation produced. Disclosure alone leaves the code running
 where a reload is safe. Converged in 1 pass. Amended 2026-11-21; see Decision Log.
 
 ### Full-page snapshot
@@ -599,20 +598,23 @@ post is exempt, even when the controller submitted the form. A scripted document
 back from the back-forward cache with its listeners alive. A page-world run-script can register a service worker,
 which survives a reload and runs on the user's later visits. Raised by the coherence review.
 
-Decision: at run end or revocation, each scripted tab is rebuilt instead of reloaded. A post-result page is rebuilt
-unless the user's real input reached that tab during the run. Service worker registrations that are new since the run
-started, for scripted sites, are removed. (autonomous, addition)
+Decision: at run end or revocation, each scripted tab is rebuilt instead of reloaded. A post-result page is spared from
+the rebuild, whoever caused the post. Amended 2026-11-21; see Decision Log. Service worker registrations that are new
+since the run started, for scripted sites, are removed. (autonomous, addition)
 
 The rebuild is uniterm's own work when a run's permission ends. ADR-15 says such work is not the program's operation,
 so it follows its own rules rather than a user action's: it never resends a form and answers its questions no. It
-still treats unsent input the same from either source, as ADR-15 asks of anything the program left.
+still treats what the program left the way it treats what the user left, as ADR-15 asks. Unsent input and a
+post-result page count the same from either source.
 
 - A rebuild drops the web view and builds a fresh one that restores the tab's history and loads the current entry
   anew, as recovery from a content process loss already does. Every live and cached document the run scripted is
   gone, and no form is resent.
-- A post-result page is exempt only when the user's own key or mouse input reached the tab during the run. uniterm
-  cannot see which content world started a navigation, so who caused the post is not the test. A rebuilt post-result
-  page shows the existing "form not sent" notice instead of the page the automation produced.
+- A post-result page is spared from the rebuild, whoever caused the post. A form the controller filled and
+  submitted counts as if the user had done it. A spared page keeps its marker until its scripted history entry is
+  gone, as a tab spared for unsent input does. Nothing attributes input, so nothing can fail to.
+- The user accepted the cost. More tabs keep a page the controller scripted, behind the marker, instead of being
+  rebuilt. The page's code can run until the user takes the marker's rebuild offer or the history entry goes.
 - At run start uniterm records which scripted-site data records already hold a service worker registration. At run
   end it removes registrations from sites that had none. A record covers a whole site, so a registration added on
   one host of a site that already had one survives. A registration the user's own tab added during the run is
@@ -624,7 +626,9 @@ still treats unsent input the same from either source, as ADR-15 asks of anythin
 
 Rationale: a reload leaves the back-forward cache in place, so a scripted page can come back with its listeners alive.
 A fresh web view has no cache. Reloading a post result raises the resend refusal and leaves the scripted document
-running. Exempting posts by who caused them fails for a timer or an injection that submits a form. Removing every
+running. Telling who caused a post cannot work, since uniterm cannot see which content world started a navigation.
+It no longer matters. Under ADR-15 the controller's submit is the user's submit, and the page is spared either way.
+Removing every
 registration on a scripted site would delete the user's own workers and push subscriptions. Converged in 1 pass.
 
 ### Who builds descriptor format 2
@@ -735,9 +739,10 @@ None.
 - **WebKit may not target a held frame, or paint off-screen content** — likelihood: medium, impact: medium.
   Mitigation: M3's and M4's first checks prove each one. A failure falls back to the main frame, or to rasterized PDF
   output, and is recorded.
-- **Input attribution may be unreliable** — likelihood: low, impact: medium. If uniterm cannot tell the user's input
-  from the controller's, the run-end cleanup cannot decide which post-result tabs to rebuild. Mitigation:
-  every post-result tab keeps the marker instead, and the decision reopens.
+- **More scripted tabs keep a marker instead of a rebuild** — likelihood: high, impact: low. Unsent input and
+  post-result pages are spared from either source, so a form the controller submitted keeps its scripted page behind
+  the marker. Accepted by the user on 2026-11-21. The marker offers a rebuild. The earlier risk of unreliable input
+  attribution no longer applies, since nothing attributes input.
 - **Result chunks on the exec wire become a published contract** — likelihood: high, impact: low. External drivers will
   read the base64 field. Mitigation: it appears only in replies to commands this proposal adds, and it follows the
   browser command schema's append-only rule.
@@ -865,8 +870,8 @@ Starts after UTERM-005 M8.
 - At run end or revocation, every scripted tab is rebuilt with no injections, unless it holds unsent input. Input
   the controller typed spares the tab as input the user typed does
 - A tab spared for unsent input keeps its marker until its scripted history entry is gone
-- A run-end rebuild never resends a form and never asks. A post-result page the user never touched is rebuilt and
-  shows the "form not sent" notice
+- A run-end rebuild never resends a form and never asks. A post-result page is spared from the rebuild, whether the
+  user or the controller caused the post, and keeps its marker until its scripted history entry is gone
 - A scripted page in the back-forward cache is gone after the rebuild, so Back loads it anew
 - Service worker registrations new since run start on scripted sites are gone after run end. Registrations a site
   already had remain
@@ -1078,6 +1083,15 @@ Starts after UTERM-005 M8.
 - 2026-11-21: "Trusted input" and "Reach of the run-end cleanup" now cite ADR-15 for their carve-outs. Window keys
   stay out of reach as authority. The run-end rebuild is uniterm's own work when a permission ends. Neither rule
   changes meaning.
+- 2026-11-21: The user ruled on the post-result exemption. Amended "What a run leaves in its tabs", "Reach of the run-end
+  cleanup", the input-attribution risk, and the M3 checks. A form a controller fills and submits is treated as if the
+  user had done it. Under ADR-15, uniterm's own run-end work still treats what the program left the way it treats what
+  the user left. A post-result page is spared from the rebuild whoever caused the post, and keeps its marker until its
+  scripted history entry is gone. Before, only a post-result page the user's real input reached was spared, and
+  uniterm noted real key and mouse events to tell the two apart. That attribution is gone, and the "Input attribution
+  may be unreliable" risk with it. The same entry's earlier line that kept attribution for this case no longer holds.
+  The user accepted the cost. More tabs keep a page the controller scripted, behind the marker, instead of being
+  rebuilt.
 
 ## References
 
