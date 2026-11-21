@@ -40,6 +40,8 @@
 | [UTERM-036](UTERM-036-program-opens-take-focus.md) | A program's opens and layouts take focus as the user's do | implemented |
 | [UTERM-037](UTERM-037-controller-browser-commands-act-as-the-users.md) | A controller's browser commands act as the user's | implemented |
 | [UTERM-038](UTERM-038-program-map-moves-and-seeds-act-as-the-users.md) | A program's map move and browser seed act as the user's | implemented |
+| [UTERM-039](UTERM-039-controller-browser-tabs-are-not-capped.md) | A controller's browser tabs are not capped | accepted |
+| [UTERM-040](UTERM-040-program-map-pins-edit-the-map.md) | A program's map pins edit the map as the user's do | draft |
 
 ## Dependency Graph
 
@@ -79,6 +81,8 @@ UTERM-034 ← UTERM-003, UTERM-015, UTERM-021, UTERM-032
 UTERM-036 ← UTERM-004, UTERM-015
 UTERM-037 ← UTERM-005
 UTERM-038 ← UTERM-008, UTERM-037
+UTERM-039 ← UTERM-005, UTERM-037
+UTERM-040 ← UTERM-008, UTERM-015, UTERM-016
 ```
 
 ## Not Yet Filed
