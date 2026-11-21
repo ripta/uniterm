@@ -1,6 +1,6 @@
 # UTERM-038: A Program's Map Move and Browser Seed Act as the User's
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-21
 **Updated:** 2026-11-21
 
