@@ -690,6 +690,45 @@ final class ControllerConsentTests: XCTestCase {
     }
   }
 
+  /// Catches a scope approved through a link hiding the real paths inside it from its own run. The
+  /// panes hand `mayShow` real paths, and the scope as written holds none of them. A reply sent
+  /// before the links are resolved may still hide, so the check waits for the resolution.
+  func testAReadScopeWrittenThroughALinkShowsTheRealPathsInsideIt() async throws {
+    let real = work.appendingPathComponent("real-pics")
+    let link = work.appendingPathComponent("link-pics")
+
+    try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: real.path)
+    try Data([0]).write(to: real.appendingPathComponent("a.png"))
+
+    let pointer = try XCTUnwrap(realpath(real.appendingPathComponent("a.png").path, nil))
+    let target = String(cString: pointer)
+
+    free(pointer)
+
+    let reader = try package(
+      "(print \"started\")\n(flush)\n(os/sleep 30)\n",
+      permissions: [
+        Self.paneControl,
+        #"{"kind": "path-read", "version": 1, "directories": [""# + link.path + #""]}"#,
+      ])
+
+    reviewAnswer = .allowForSession
+
+    let running = Task { try await self.run(reader) }
+
+    expect(await waitUntil { !self.host.allControllerRuns().isEmpty }, "the run never started")
+
+    let admitted = try XCTUnwrap(host.allControllerRuns().first)
+
+    expect(
+      await waitUntil { self.host.readAccess(for: admitted.connection).mayShow(source: target) },
+      "the real path inside a scope written through a link stayed hidden")
+
+    kill(admitted.pid, SIGKILL)
+    _ = try await running.value
+  }
+
   /// Catches standing scopes that add up wrongly: none gives nothing, and two give both.
   func testStandingReadScopesAddUp() throws {
     XCTAssertNil(ScriptHost.readScope(of: [.paneControl]))

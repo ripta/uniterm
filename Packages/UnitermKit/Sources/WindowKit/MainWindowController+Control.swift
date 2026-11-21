@@ -45,7 +45,8 @@ extension MainWindowController {
 
   /// The controllers that have authority over the pane: the owners of the groups that hold it as
   /// a member or as their source, and the connections that act for it. An owner is a connection
-  /// or a running driver.
+  /// or a running driver. A driver running in the pane counts while its run holds a clipboard
+  /// grant, so a driver that owns no group can still be revoked from its own pane.
   func controllers(of pane: NodeID) -> Set<GroupOwner> {
     var found = Set<GroupOwner>()
 
@@ -60,6 +61,12 @@ extension MainWindowController {
       for id in controllerAuthority.controllers(actingFrom: scriptWindowID, pane: pane) {
         found.insert(GroupOwner(connection: id))
       }
+    }
+
+    if let attachment = execAttachments[pane], let owner = attachment.owner, !attachment.revoked,
+      !attachment.clipboardGrants.isEmpty
+    {
+      found.insert(owner)
     }
 
     return found

@@ -86,6 +86,45 @@ final class ConsentWindowTests: XCTestCase {
     XCTAssertTrue(fixture.windows.permissionRequests.denials.isEmpty, "a run's denial outlived it")
   }
 
+  /// Catches a driver that owns no group and keeps its Allow for This Run clipboard grant with no
+  /// way to take it back. Revoke Controller on the driver's own pane is offered once the run holds
+  /// a grant, and it ends the grant. It cannot prove the pane's chrome shows the item.
+  func testRevokeOnAGrouplessDriversPaneEndsItsClipboardGrant() async throws {
+    let fixture = try makeFixture()
+    let clipboard = MemoryClipboard(text: "synthetic clipboard")
+
+    fixture.windows.clipboard = clipboard
+
+    let controller = try fixture.openWindow()
+    let pane = controller.focusedPane
+    let message = #"{"type":"clipboard-write","text":"from the driver"}"#
+
+    try controller.declareExecDriver(fixture.declaration("script", [message]), for: pane)
+    controller.runExecDriver(pane)
+    fixture.windows.launchAuthority.decide(
+      try XCTUnwrap(fixture.windows.launchAuthority.requests.first?.id), .allowOnce)
+
+    let writeTitle = ControllerPermissionText.write
+
+    try await waitUntil("the write waits") { self.row(fixture, writeTitle) != nil }
+
+    XCTAssertFalse(
+      controller.canRevokeController(pane), "a question nobody answered offered a revoke")
+
+    fixture.windows.permissionRequests.decide(
+      try XCTUnwrap(row(fixture, writeTitle)?.id), .allowForSession)
+
+    XCTAssertEqual(controller.execAttachments[pane]?.clipboardGrants, [.clipboardWrite])
+    XCTAssertTrue(controller.paneArea.tree.groups.isEmpty, "the driver owns a group")
+    XCTAssertTrue(controller.canRevokeController(pane), "the driver's grant has no revoke")
+
+    controller.revokeController(pane)
+
+    XCTAssertEqual(controller.execAttachments[pane]?.clipboardGrants, [])
+    XCTAssertEqual(controller.execAttachments[pane]?.revoked, true)
+    XCTAssertFalse(controller.canRevokeController(pane), "a revoke is offered twice")
+  }
+
   /// Catches a row that keeps showing the first of two waiting writes after Allow once released
   /// it, so the next Allow once writes text the user never saw. The row always shows the oldest
   /// operation that waits, which is the one Allow once releases.

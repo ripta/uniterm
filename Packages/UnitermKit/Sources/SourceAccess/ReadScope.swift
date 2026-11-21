@@ -70,11 +70,15 @@ public struct ReadScope: Hashable, Sendable {
   }
 
   func contains(
-    names target: [String], using comparison: PathComparison, protected: ProtectedLocations
+    names target: [String], using comparison: PathComparison, protected: ProtectedLocations,
+    resolved: [String: String] = [:]
   )
     -> Bool
   {
-    names.contains { directory in
+    let real = directories.compactMap { resolved[$0] }.compactMap(
+      PathComparison.plainComponents(of:))
+
+    return (names + real).contains { directory in
       comparison.isInside(target, directory)
         && protected.place(holding: target, strictlyInside: directory) == nil
     }
@@ -102,6 +106,13 @@ public struct ReadScope: Hashable, Sendable {
   /// Each directory with every link in it resolved, by the directory as written. A directory that
   /// is not there is left out. This reads the disk, so it is not for the main thread.
   public func resolvedDirectories() -> [String: String] {
+    Self.resolve(directories)
+  }
+
+  /// Each of `directories` with every link in it resolved, by the directory as written. A
+  /// directory that is not there is left out. This reads the disk, so it is not for the main
+  /// thread.
+  public static func resolve(_ directories: some Sequence<String>) -> [String: String] {
     var resolved: [String: String] = [:]
 
     for directory in directories {
@@ -162,9 +173,18 @@ public struct ReadAccess: Equatable, Sendable {
   /// run once. The caller knows its own grant, so telling it so reveals nothing about any path.
   public let isDeclaredButNotGranted: Bool
 
+  /// The scope's directories with their links resolved, by the directory as written. The
+  /// comparison here reads no disk, and the panes hand it real paths. A scope written through a
+  /// link holds none of them unless the resolved spelling is checked too. The owner resolves off
+  /// the main thread and passes the result in. A directory missing from it has no other spelling
+  /// yet, which hides paths and never shows extra ones.
+  public let resolvedDirectories: [String: String]
+
   public init(
-    scope: ReadScope?, controllerSentRoot: String? = nil, isDeclaredButNotGranted: Bool = false
+    scope: ReadScope?, controllerSentRoot: String? = nil, isDeclaredButNotGranted: Bool = false,
+    resolvedDirectories: [String: String] = [:]
   ) {
+    self.resolvedDirectories = resolvedDirectories
     self.scope = scope
     self.controllerSentRoot = controllerSentRoot
     self.isDeclaredButNotGranted = isDeclaredButNotGranted
@@ -186,6 +206,7 @@ public struct ReadAccess: Equatable, Sendable {
       return true
     }
 
-    return scope?.contains(names: target, using: .exact, protected: protected) ?? false
+    return scope?.contains(
+      names: target, using: .exact, protected: protected, resolved: resolvedDirectories) ?? false
   }
 }

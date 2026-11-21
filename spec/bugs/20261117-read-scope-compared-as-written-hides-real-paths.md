@@ -1,6 +1,7 @@
 # A read scope written through a link hides every path from its own controller
 
-**Status:** open
+**Status:** fixed 2026-11-20
+**Fixed:** 2026-11-20
 **Found:** 2026-11-17, while building the image viewer's control commands
 **Estimate:** medium; one non-trivial design decision, when the scope's links are resolved. See "Triage 2026-11-18".
 
@@ -61,3 +62,17 @@ resolution that a later retarget of the link makes stale, and `readAccess(for:)`
 admission needs an async step. Resolving per `mayShow` reads the disk on the main thread, which the bug rules out. A
 related question is whether a resolved directory that lands in a protected place should hide what it shows, as
 `ScopedOpen` decides at open time.
+
+## Fix
+
+Fixed 2026-11-20 by resolving at run admission, the first option under "Fix".
+
+`ScriptHost` resolves the links in every read-scope directory a live run holds, off the main actor, each time the set of
+runs changes. It drops the resolutions no run needs. `readAccess(for:)` hands the result to `ReadAccess`, and `mayShow`
+compares the scope's resolved directories as well as the ones as written. Files changed:
+`SourceAccess/ReadScope.swift`, `ScriptHost/ScriptHost.swift`, `ScriptHost/ScriptConsent.swift`, and the regression test
+in `ScriptHostTests/ControllerConsentTests.swift`.
+
+A reply that arrives before the resolution finishes still hides the path. That is the safe direction. The resolution
+freezes while the run lives, so a link retargeted mid-run is not followed. `ScopedOpen` still decides protected places
+at open time.

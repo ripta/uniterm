@@ -1,6 +1,7 @@
 # A driver that owns no group keeps its clipboard grant until its run ends
 
-**Status:** open
+**Status:** fixed 2026-11-20
+**Fixed:** 2026-11-20
 **Estimate:** small to medium; one non-trivial design decision. Whether Revoke Controller on the driver's own pane
 covers a per-run clipboard grant, or the Pending Requests panel lists the driver's per-run grants with a Revoke of their
 own. The two differ in what the user sees, and both are equally correct. The fix would touch `MainWindowController+Control.swift`
@@ -42,3 +43,12 @@ With a test applet that declares exec support, attach a driver that sends `clipb
 Offer Revoke Controller on a driver's own pane whenever its run holds a per-run grant. UTERM-028 settles this for the
 command grant. The design call is whether the same rule covers clipboard grants, or whether the panel lists a driver's
 per-run grants with a Revoke of their own.
+
+## Fix note
+
+2026-11-20. `controllers(of:)` in `MainWindowController+Control.swift` now counts a driver running in the pane while
+its run holds a clipboard grant and has not been revoked. A group-less driver then shows Revoke Controller on its own
+pane. The revoke marks the run revoked and ends its clipboard grants, as it already did for a driver that owns a group.
+The Pending Requests panel is unchanged. The regression test is
+`ConsentWindowTests.testRevokeOnAGrouplessDriversPaneEndsItsClipboardGrant`. It failed before the fix on all three of
+its checks and passes after.
