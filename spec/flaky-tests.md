@@ -57,6 +57,24 @@ fixed ones.
 - Status: unresolved.
 - Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
+- Seen again: 2026-11-20, once, in a run of `MapViewerUITests` alone with 10 tests. The go-to field check at
+  `UnitermUITestCase.swift:379` failed. The field held another test's `uniterm-map-<UUID>/places.geojson`, not this
+  test's. The same class order then passed 10 of 10, and the test passed 3 of 3 alone.
+- Suspected cause of this sighting: the go-to field's autocomplete picked a sibling temp folder with the same
+  `uniterm-map-` prefix. A paste replaced typing in "Wait for the app to be frontmost before UI tests type, and paste
+  open-panel paths", so the field may still complete a pasted path. The class gained a test that plants another map
+  folder in that run, which adds siblings.
+
+### `MapViewerUITests.testLauncherOpensAMapAndTheViewMenuSwitchesItsStyle`
+
+- Seen: 2026-11-20, once, in a run of `MapViewerUITests` alone with 10 tests. The same run hit the go-to field
+  failure above.
+- Evidence: `MapViewerUITests.swift:51` failed when the launcher did not appear within 5 s after Cmd-D. The same class
+  order then passed 10 of 10, and the test passed 3 of 3 alone.
+- Suspected cause: Cmd-D sent before the app was frontmost, as in the fixed
+  `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile` entry. `waitForTerminal` should
+  prevent that, so the cause is unconfirmed.
+- Status: unresolved.
 
 ### `TerminalLinkUITests` (both tests)
 

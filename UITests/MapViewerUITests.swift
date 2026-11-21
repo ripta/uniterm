@@ -350,6 +350,31 @@ final class MapViewerUITests: UnitermUITestCase {
     try plantLayout(String(decoding: data, as: UTF8.self))
   }
 
+  /// Clicks Run on a restored exec map and allows the launch once from the Pending Requests panel.
+  private func approveRun(of run: XCUIElement, in app: XCUIApplication, window: XCUIElement) {
+    run.click()
+
+    let status = window.staticTexts["pane-exec-status-1"]
+    XCTAssertTrue(
+      waitFor(status, timeout: 10) { $0.contains("waits for approval") },
+      "the run did not wait for approval")
+
+    app.menuBars.menuBarItems["Window"].click()
+
+    let item = app.menuBars.menuItems["Pending Requests\u{2026}"]
+    XCTAssertTrue(item.waitForExistence(timeout: 5), "the Window menu has no Pending Requests item")
+    item.click()
+
+    let panel = app.windows["pending-requests-window"]
+    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+
+    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
+    XCTAssertTrue(row.waitForExistence(timeout: 10), "the launch never reached the panel")
+    row.click()
+    panel.buttons["pending-requests-allow-once"].click()
+    panel.buttons[XCUIIdentifierCloseWindow].click()
+  }
+
   /// Catches a driver whose set-layer never reaches a real map pane, and a restored exec map that
   /// runs by itself. The layout plants a map that declares the fixture driver. Run asks for approval
   /// in the Pending Requests panel, and the map's accessibility value then counts the program's
@@ -375,27 +400,7 @@ final class MapViewerUITests: UnitermUITestCase {
       (map(in: window).value as? String)?.contains("program-pins") == true,
       "the restored map ran its driver")
 
-    run.click()
-
-    let status = window.staticTexts["pane-exec-status-1"]
-    XCTAssertTrue(
-      waitFor(status, timeout: 10) { $0.contains("waits for approval") },
-      "the run did not wait for approval")
-
-    app.menuBars.menuBarItems["Window"].click()
-
-    let item = app.menuBars.menuItems["Pending Requests\u{2026}"]
-    XCTAssertTrue(item.waitForExistence(timeout: 5), "the Window menu has no Pending Requests item")
-    item.click()
-
-    let panel = app.windows["pending-requests-window"]
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
-
-    let row = panel.tables["pending-requests-table"].tableRows.firstMatch
-    XCTAssertTrue(row.waitForExistence(timeout: 10), "the launch never reached the panel")
-    row.click()
-    panel.buttons["pending-requests-allow-once"].click()
-    panel.buttons[XCUIIdentifierCloseWindow].click()
+    approveRun(of: run, in: app, window: window)
 
     XCTAssertTrue(
       waitFor(map(in: window), timeout: 20) { $0.contains("program-pins=2") },
@@ -405,5 +410,51 @@ final class MapViewerUITests: UnitermUITestCase {
     capture.name = "driver-pins"
     capture.lifetime = .keepAlways
     add(capture)
+  }
+
+  /// Catches a click on the empty map that never reaches the driver as a map-clicked event, such
+  /// as a chrome match that rejects the map's own surface. The driver logs each event it gets to
+  /// stderr, and the history shows it. The click lands where no pin, control, or label is.
+  func testAClickOnTheEmptyMapReachesTheDriver() throws {
+    try plantExecMap(commands: [
+      #"{"name":"set-region","arguments":{"center":{"latitude":37.78,"longitude":-122.35},"span":{"latitude-delta":0.4,"longitude-delta":0.4}}}"#
+    ])
+
+    let app = launchApp()
+    XCTAssertTrue(waitForForeground(app, activating: true))
+
+    let window = mainWindow(in: app)
+    let run = window.buttons["pane-exec-run-1"]
+
+    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+
+    approveRun(of: run, in: app, window: window)
+
+    let status = window.staticTexts["pane-exec-status-1"]
+    XCTAssertTrue(
+      waitFor(status, timeout: 20) { !$0.contains("waits for approval") },
+      "the run never left approval")
+
+    map(in: window).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).click()
+
+    window.groups["status-bar"].click()
+
+    let rows = window.staticTexts.matching(identifier: "history-row")
+    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the history never opened")
+
+    let deadline = Date().addingTimeInterval(10)
+    var values: [String] = []
+    var found = false
+
+    while Date() < deadline, !found {
+      values = rows.allElementsBoundByIndex.map { ($0.value as? String) ?? "(no value)" }
+      found = values.contains { $0.contains("got event map-clicked") }
+
+      if !found { Thread.sleep(forTimeInterval: 0.25) }
+    }
+
+    XCTAssertTrue(
+      found,
+      "the driver never got map-clicked. The rows were: " + values.joined(separator: " | "))
   }
 }

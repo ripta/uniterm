@@ -174,3 +174,48 @@ first." A map with a live exec driver now closes without asking, by the user's c
 viewer and data viewer already behave this way. The run left ADR-05 unchanged. The user may want it clarified.
 `adr-impact` also named two candidates below the ADR bar: applet schema versions accept only their own major, and the
 script wire cuts a call at 32 KiB. Neither was recorded.
+
+## Final review
+
+The final review covered the run's three commits, from the run's base through "Mark UTERM-008 implemented now that
+its program pins are in". It was also the run's ADR review. The range adds and edits no ADR. The freeze check found no
+UTERM-008 hunk. The reviewer found no blocking issue. Its two PLAUSIBLE findings were traced, and neither was
+confirmed. The tests from the traces landed as "Prove a click on the empty map reaches a map's driver".
+
+1. Matching MapKit's chrome by class name could reject the map's own surface, or let a chrome view through. Not
+   confirmed. A probe walked a real `MKMapView` with every control turned on. At the center and the four corners, the
+   hit is the map itself. The attribution label, compass, scale, zoom, and pitch control each match a rejected name.
+   The app turns none of those controls on. A new package test pins the names. It passes on the unchanged code by
+   design. A new UI test clicks the empty map in the real app and finds the driver's "got event map-clicked" line in
+   the history. It passed in the coordinator's run. The callout was not probed, since it needs a pin selected on
+   screen. A later macOS could rename these classes.
+2. A command landing before `start` could skip the relaunch notice. Not confirmed. Every path that inserts an applet
+   starts it in the same main-actor turn. A restored exec pane runs nothing until the user chooses Run.
+   `uniterm/send-command` resolves and submits within one main-actor turn.
+
+`adr-impact` found no conflict. It confirmed the ADR-05 tension as ADVISORY. The quoted line sits in ADR-05's
+Consequences, not its Decision.
+
+### ADR candidates
+
+`adr-impact` raised two cross-applet candidates. The first is that program output stays off the layout file. It is
+the near twin of the 2026-11-03 candidate, which the user declined, so it is not recorded again. The second passes the
+bar and is recorded here. UTERM-008 is `implemented` and frozen, and the freeze does not allow a new Decision Log
+entry.
+
+- ADR candidate (departs from the past): a close that ends a pane's live program does not ask first when reopen
+  restores what the pane showed. Undecided. Found in UTERM-008 M3. It departs from ADR-05's Consequences, which say "a
+  close that would end running work asks the user first." The map and the image viewer both rely on it. Unrecorded,
+  someone following ADR-05 could add a close dialog to an exec pane, against the user's choice.
+
+### Checks
+
+- The trace's own checks: `make lint` and `make check` passed, `caffeinate -dimsu make test-package` exited 0 in 237 s,
+  and `build-for-testing` succeeded. `proposals.py check` was clean.
+- The coordinator's UI run of `MapViewerUITests`, 10 tests, had 2 failures in tests this run did not change:
+  `testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins` and `testLauncherOpensAMapAndTheViewMenuSwitchesItsStyle`.
+  The same class order then passed 10 of 10. Each test then passed 3 of 3 alone. Both are logged as potential flakes in
+  `spec/flaky-tests.md`, with the evidence and the suspected causes. The first may be made more likely by the new test,
+  which plants another `uniterm-map-` temp folder. That stays unconfirmed. A passing rerun does not prove a fix.
+- The crash folder holds no uniterm report from the UI runs. A `DocumentDecoderHelper` report at 20:57 and
+  `ImageDecoderHelper` reports came during package runs, as they did before this run began.
