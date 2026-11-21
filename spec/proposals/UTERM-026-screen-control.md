@@ -281,18 +281,14 @@ while handling a controller command the user invoked. (autonomous)
   UTERM-024.
 - Placement keeps the key window and its first responder.
 - The user's close of a window is chosen, and macOS picks the next key window.
-- A window that closes because its last applet ended follows the rule for a pane that closes that way. UTERM-001 settles
-  that rule, and the bug `20261116-ended-applet-close-gives-neighbor-keyboard` holds the open call on an end the user
-  did not cause. Its fix covers a window's close as well as a pane's. This proposal does not change that rule. Amended
-  2026-11-16; see Decision Log.
+- A window that closes because its last applet ended closes like any window, and macOS picks the next key window.
+  Amended 2026-11-19; see Decision Log.
 
 Rationale: this is the only reading that meets every clause of ADR-12. The host cannot tell that a call answers a
 command, since events are read later by cursor. A window that lands after the invocation would take the keys the user
 typed in between. A key notes window would also leave no slide pane focused, so stepping would stop until a click. No
-current caller opens a window in response to a command, since the presenter opens its notes at start. Leaving macOS's
-key-window choice on every close would hand the keyboard to another window's pane when a popped-out window's applet
-ends without the user's doing. Whether a shell's `exit` is chosen belongs to UTERM-001 and the filed bug. Settling it
-here would change every pane's close. Converged in 1 pass.
+current caller opens a window in response to a command, since the presenter opens its notes at start. Every close
+takes one path, so a window's close needs no rule of its own. Converged in 1 pass.
 
 ### Names and version skew
 
@@ -372,9 +368,6 @@ None.
 - **A controller gets past the zoom's focus guard** — likelihood: medium, impact: medium. Today a script's `open-pane`
   gives the new pane focus, so in the key window a controller could open a member and zoom it at once, hiding the
   terminal the user types in. Mitigation: M1 has a check that needs the fix of the bug `20261116-script-opened-pane-takes-focus`.
-- **The ended-applet focus bug stays open** — likelihood: medium, impact: medium. Until
-  `20261116-ended-applet-close-gives-neighbor-keyboard` is fixed, a popped-out window whose shell ends without the
-  user's doing hands the keyboard to another window's pane. Mitigation: M4 has a check that needs the bug's fix.
 - **An accidental close of the notes window loses the notes for the talk** — likelihood: low, impact: medium. Accepted:
   a run that could reopen a window would override the user's close. The slides keep stepping, and a rerun brings the
   notes back.
@@ -491,8 +484,7 @@ None.
   running
 - No controller can request a Pop Out
 - The new window becomes key with the moved pane focused, and a popped-out member leaves its group
-- A popped-out window whose shell is ended by a background job hands the keyboard to no other window's pane, per the
-  fix of the bug `20261116-ended-applet-close-gives-neighbor-keyboard`
+- A popped-out window whose shell ends closes like any window
 
 ## Decision Log
 
@@ -625,6 +617,13 @@ None.
   "Names and version skew" against ADR-13, which lets ScriptWire keep its exact match.
 - 2026-11-17: Accepted. The user chose it after the review gate. ADR-14 is written and accepted, and ADR-09 is
   superseded.
+- 2026-11-19: ADR-12 no longer has a rule on closes. Every close hands the keyboard to the neighbor. Amended the "Focus"
+  bullet on a window whose last applet ended. It said before: "A window that closes because its last applet ended
+  follows the rule for a pane that closes that way. UTERM-001 settles that rule, and the bug
+  `20261116-ended-applet-close-gives-neighbor-keyboard` holds the open call on an end the user did not cause. Its fix
+  covers a window's close as well as a pane's. This proposal does not change that rule." Dropped the risk that the
+  ended-applet focus bug stays open. M4's check changed from "hands the keyboard to no other window's pane, per the fix
+  of the bug" to closing like any window.
 
 ## References
 

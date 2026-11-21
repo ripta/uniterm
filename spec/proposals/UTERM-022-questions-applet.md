@@ -341,9 +341,8 @@ Decision: a run, a terminal session, or a connection. (autonomous)
 - Every other connection is its own requester. That covers a connection the user granted a pane and a REPL helper. Its
   header names the program the transport established, never "Terminal session".
 - A resolved tab stays, showing its outcome, until the requester's next form reuses it, the requester ends, or the
-  user closes it. A terminal session ends when its shell ends. The Questions pane closes with its last tab, except
-  that a focused pane whose last tab closes without the user keeps its placeholder until the user moves focus or
-  closes it, per "Focus when a form arrives".
+  user closes it. A terminal session ends when its shell ends. The Questions pane closes with its last tab. Amended
+  2026-11-19; see Decision Log.
 
 Rationale: keying by terminal session lets a multi-step bash script reuse one tab, and keeps two terminal tabs in one
 pane from refusing each other as busy. Keying a granted connection by its pane would put it under "Terminal session in
@@ -432,8 +431,8 @@ Decision: never take focus. (autonomous)
 - A change the user did not choose never shows a different requester's form. When the selected tab closes because its
   requester ended or it was evicted, the pane selects no neighbor. It shows a placeholder that says what closed, and
   it holds no control, until the user picks a tab. A new requester's form that caused an eviction takes its tab
-  unselected. When the closed tab was the last one, the focused pane stays open on the placeholder, so the keyboard
-  never falls to a neighbor pane.
+  unselected. When the closed tab was the last one, the pane closes like any pane. Amended 2026-11-19; see Decision
+  Log.
 - A requester's next form may replace its own resolved tab while the pane has focus. When the user resolved the
   previous form in that tab, a click, Tab, or typed character in a field arms the new one. When the previous form
   ended without the user, the new one arms only on a click.
@@ -582,13 +581,12 @@ None.
   form there. After an ended form it arms only on a click. Return, Escape, and Space never arm a form, and a key held
   across the change, with its key-up, reaches no field. Key events queued in the same run-loop turn as the change
   count as before it
-- A focused pane whose last tab closes without the user stays open on the placeholder, and focus never moves to a
-  neighbor pane. A form that arrives during the placeholder takes its tab unselected. Picking a tab with the
-  tab-switch keys arms the picked form, and the check pins which field takes focus
+- A pane whose last tab closes, however it closes, closes like any pane
+- A form that arrives during the placeholder takes its tab unselected. Picking a tab with the tab-switch keys arms the
+  picked form, and the check pins which field takes focus
 - The placeholder state passes no selected tab to the tab bar, and VoiceOver reports no tab as selected
-- A placeholder pane stays focused when the user leaves the app or window and returns. When it closes after the user
-  moves focus, the pane the user chose keeps the keyboard. As the window's only pane it never closes the window
-  unless the user asks. The pane-close command works on it and returns no outcome
+- A placeholder pane stays focused when the user leaves the app or window and returns. The pane-close command works on
+  it and returns no outcome
 - A click that arms an inert form only arms it, and activates no button
 - When a requester's own next form replaces its resolved tab, the check pins which field takes keyboard focus
 - Arrival is announced to VoiceOver and posts a status line. Resolving a form leaves focus in its tab
@@ -760,6 +758,13 @@ None.
   arrival), M3 (REPL header, unbound callers, owned-group layouts, busy kind, wait rechecks, the question-only session,
   terminal-tab requesters, the REPL stop), and M4 (Janet keyword spelling, exit codes, Ctrl-C and reply matching).
 - 2026-11-14: Scheduled as UTERM-022 M1-M4 in queue.md.
+- 2026-11-19: ADR-12 no longer has a rule on closes. Every close hands the keyboard to the neighbor. The Questions pane
+  now closes with its last tab, however it closes. "What a requester is" said: "The Questions pane closes with its last
+  tab, except that a focused pane whose last tab closes without the user keeps its placeholder until the user moves
+  focus or closes it". "Focus when a form arrives" said: "When the closed tab was the last one, the focused pane stays
+  open on the placeholder, so the keyboard never falls to a neighbor pane." M2 lost the checks that kept that pane
+  open and that kept it from closing the window. The placeholder for a selected tab that closes while other tabs remain
+  is unchanged.
 
 ## References
 

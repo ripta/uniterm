@@ -163,7 +163,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   private(set) var pendingGuard: Task<Void, Never>?
 
   /// Applets that ended on their own and are still in the tree, such as a last pane left behind by
-  /// a cancelled window question. Closing one adds no undo entry.
+  /// a cancelled window question. Closing one asks nothing.
   private var exitedApplets = Set<ObjectIdentifier>()
 
   /// Runs once, when the window closes. The set of windows uses it to let go of the controller.
