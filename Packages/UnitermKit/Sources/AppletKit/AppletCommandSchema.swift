@@ -202,13 +202,6 @@ public struct AppletCommandError: Error, Sendable, Equatable {
 
     /// The command names a tab the caller did not open.
     case notOwned = "not-owned"
-
-    /// The target holds the keyboard, so the command would move it or change what the user is
-    /// using.
-    case keyFocused = "key-focused"
-
-    /// The target holds input the user has typed and not sent.
-    case unsentInput = "unsent-input"
   }
 
   public let code: Code

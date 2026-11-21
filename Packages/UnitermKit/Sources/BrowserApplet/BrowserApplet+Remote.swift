@@ -8,7 +8,10 @@ import BrowserModel
 ///
 /// A controller acts only on tabs it opened. `open` records the caller against the new tab. Every
 /// other command names its tab through the command's target, and the tab must belong to the same
-/// grant. Nothing here takes the keyboard, evaluates script in a page, or sends a form again.
+/// grant.
+///
+/// Each command runs the code of the user's matching action. Only the authority checks, the tab
+/// cap, and the schemes that no source may load come before it.
 extension BrowserApplet: AppletCommandHandling {
   public var commandSchema: AppletCommandSchema { Self.remoteSchema }
 
@@ -23,50 +26,33 @@ extension BrowserApplet: AppletCommandHandling {
 
     case "navigate":
       let owned = try ownedTab(of: command)
-      let (url, assumed) = try controllerAddress(command.arguments["url"])
+      let text = try typedText(command.arguments["url"])
 
-      try requireQuiet(owned)
-
-      if owned === tab { alerts.replaceLoad() }
-
-      owned.load(url, assumed: assumed, byUser: false)
+      guard commit(address: text, in: owned) else {
+        throw AppletCommandError(.failed, "the address loaded nothing")
+      }
 
       return .immediate(.object([:]))
 
     case "reload":
       let owned = try ownedTab(of: command)
 
-      try requireQuiet(owned)
-
-      return .immediate(try moved(owned.reloadForController(), unavailable: "nothing to reload"))
+      return .immediate(try moved(reload(in: owned), unavailable: "nothing to reload"))
 
     case "back":
       let owned = try ownedTab(of: command)
 
-      try requireQuiet(owned)
-
-      return .immediate(
-        try moved(owned.goBackForController(), unavailable: "there is no earlier page"))
+      return .immediate(try moved(goBack(in: owned), unavailable: "there is no earlier page"))
 
     case "forward":
       let owned = try ownedTab(of: command)
 
-      try requireQuiet(owned)
-
-      return .immediate(
-        try moved(owned.goForwardForController(), unavailable: "there is no later page"))
+      return .immediate(try moved(goForward(in: owned), unavailable: "there is no later page"))
 
     case "select":
       let owned = try ownedTab(of: command)
 
-      guard !hasFocus else {
-        throw AppletCommandError(
-          .keyFocused, "the pane holds the keyboard, so a program cannot change its tab")
-      }
-
-      if let index = tabs.firstIndex(where: { $0 === owned }) {
-        selectTab(at: index, takingKeyboard: false)
-      }
+      if let index = tabs.firstIndex(where: { $0 === owned }) { selectTab(at: index) }
 
       return .immediate(.object([:]))
 
@@ -108,7 +94,7 @@ extension BrowserApplet: AppletCommandHandling {
       throw AppletCommandError(.permissionMissing, "the open command needs a grant to act under")
     }
 
-    let (url, assumed) = try controllerAddress(command.arguments["url"])
+    let text = try typedText(command.arguments["url"])
 
     guard tabOwners.values.filter({ $0 == caller }).count < Self.controllerTabLimit else {
       throw AppletCommandError(
@@ -117,24 +103,17 @@ extension BrowserApplet: AppletCommandHandling {
           + "after one closes")
     }
 
-    let opened = BrowserTab(
-      id: .make(), record: BrowserDescription.Tab(url: url.absoluteString), dataStore: dataStore,
-      hsts: services.hsts, clock: services.clock, hang: services.hang)
+    guard let id = openTab(startingIn: nil), let opened = tabs.first(where: { $0.id == id }) else {
+      throw AppletCommandError(.notFound, "the pane is closed")
+    }
 
-    opened.delegate = self
-    opened.isControlled = true
-    opened.setMediaSuspended(alerts.isDetached)
+    tabOwners[id] = caller
 
-    let after = tabs.lastIndex { tabOwners[$0.id] == caller } ?? selectedIndex
-    let position = min(after + 1, tabs.count)
-    let keyFocused = hasFocus
+    // The text passed every check in `typedText`, so a false answer is not expected. The caller
+    // still gets the reference, since it owns the tab that now exists.
+    commit(address: text, in: opened)
 
-    tabOwners[opened.id] = caller
-    insert(opened, at: position, selecting: !keyFocused)
-
-    if started, !alerts.isDetached { opened.load(url, assumed: assumed, byUser: false) }
-
-    return .object(["tab": .string(opened.id.replyText)])
+    return .object(["tab": .string(id.replyText)])
   }
 
   // MARK: Checks
@@ -193,38 +172,29 @@ extension BrowserApplet: AppletCommandHandling {
     }
   }
 
-  /// A move is refused on the tab the user is typing into, and on one with input not yet sent.
-  private func requireQuiet(_ tab: BrowserTab) throws(AppletCommandError) {
-    if tab === self.tab, hasFocus {
-      throw AppletCommandError(
-        .keyFocused,
-        "the pane holds the keyboard and shows that tab. Retry when the user has moved on")
-    }
-
-    if tab.hasUnsentInput {
-      throw AppletCommandError(.unsentInput, "that tab holds input the user has not sent")
-    }
-  }
-
-  private func controllerAddress(_ value: JSONValue?) throws(AppletCommandError) -> (
-    URL, AssumedLoad?
-  ) {
+  /// The text of an address argument. Whatever the typed-address path would refuse is refused
+  /// here, before any tab opens or loads, as the address bar marks an invalid address.
+  private func typedText(_ value: JSONValue?) throws(AppletCommandError) -> String {
     guard case .string(let text)? = value else {
       throw AppletCommandError(.badArgument, "the url is missing")
     }
 
-    switch AddressPolicy.resolve(text, source: .controller) {
-    case .load(let url, let assumed):
-      return (url, assumed == .https ? AssumedLoad(url: url, typed: text) : nil)
-
+    switch AddressPolicy.resolve(text) {
     case .refused(let refusal):
       throw AppletCommandError(.badArgument, refusal.message(for: text))
 
     case .empty:
       throw AppletCommandError(.badArgument, "the url is empty")
 
-    case .search, .handoff:
-      throw AppletCommandError(.badArgument, SchemeRefusal.notAnAddress.message(for: text))
+    case .search(let query):
+      guard services.searchEngine().searchURL(for: query) != nil else {
+        throw AppletCommandError(.badArgument, SchemeRefusal.notAnAddress.message(for: text))
+      }
+
+      return text
+
+    case .load, .handoff:
+      return text
     }
   }
 
@@ -258,20 +228,14 @@ extension BrowserApplet: AppletCommandHandling {
     guard !closed else { return }
 
     tabOwners[tab.id] = caller
-    tab.isControlled = true
   }
 
   public func grantDidEnd(_ caller: AppletCaller) {
-    for (id, owner) in tabOwners where owner == caller {
-      tabOwners[id] = nil
-      tabs.first { $0.id == id }?.isControlled = false
-    }
+    for (id, owner) in tabOwners where owner == caller { tabOwners[id] = nil }
   }
 
   private func releaseOwnedTabs() {
     tabOwners.removeAll()
-
-    for tab in tabs { tab.isControlled = false }
   }
 
   public func hostBadgeReachDidChange(_ width: CGFloat) {
@@ -294,36 +258,36 @@ extension BrowserApplet: AppletCommandHandling {
       AppletMessageSchema(
         name: "open",
         summary:
-          "Opens a tab at an http or https address and loads it at once. The tab opens unselected when the pane holds the keyboard. Answers with the tab's reference.",
+          "Opens a tab as the New Tab command does, selects it, and loads the address as if it were typed into the address bar. Answers with the tab's reference.",
         arguments: urlArguments,
         example: .object(["url": .string("https://example.com/")]),
         requires: .browserNavigation),
       AppletMessageSchema(
         name: "navigate",
         summary:
-          "Loads an http or https address in a tab this controller opened. Refused on the selected tab of a pane that holds the keyboard, and on a tab with unsent input.",
+          "Loads an address in a tab this controller opened, as if it were typed into the address bar. Text that is not an address searches, and an address for another app asks first.",
         arguments: navigateArguments,
         example: .object(["url": .string("https://example.com/next")]),
         requires: .browserNavigation),
       AppletMessageSchema(
         name: "reload",
         summary:
-          "Reloads a tab this controller opened. A page that came from a form is refused, and the user is not asked. Refused on the selected tab of a pane that holds the keyboard.",
+          "Reloads a tab this controller opened, as the Reload button does. A page that came from a form asks the user first.",
         arguments: tabArguments, requires: .browserNavigation),
       AppletMessageSchema(
         name: "back",
         summary:
-          "Goes back one page in a tab this controller opened. A page that came from a form is refused, and the user is not asked.",
+          "Goes back one page in a tab this controller opened, as the Back button does. A page that came from a form asks the user first.",
         arguments: tabArguments, requires: .browserNavigation),
       AppletMessageSchema(
         name: "forward",
         summary:
-          "Goes forward one page in a tab this controller opened. A page that came from a form is refused, and the user is not asked.",
+          "Goes forward one page in a tab this controller opened, as the Forward button does. A page that came from a form asks the user first.",
         arguments: tabArguments, requires: .browserNavigation),
       AppletMessageSchema(
         name: "select",
         summary:
-          "Shows a tab this controller opened. Refused while the pane holds the keyboard, and never moves the keyboard.",
+          "Shows a tab this controller opened, as a click on its tab does.",
         arguments: tabArguments, requires: .browserNavigation),
       AppletMessageSchema(
         name: "read",

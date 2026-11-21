@@ -122,7 +122,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
   /// app-wide store by accident. The host passes the same store and the same `services` to every
   /// pane it builds, new or restored.
   ///
-  /// `seed` is an address that already passed the controller rule. The first tab loads it at
+  /// `seed` is an address that already passed the rule for a typed address. The first tab loads it at
   /// `start`. Without one the pane starts at `about:blank`.
   public convenience init(
     dataStore: WKWebsiteDataStore, services: BrowserServices, seed: URL? = nil
@@ -279,7 +279,6 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     for tab in tabs { tab.loadOrigin = origin.loadOrigin }
 
     loadIfNeverLoaded()
-    loadControlledTabs()
   }
 
   /// Begins a tab's first load from the address it stores, after the rule for a restored tab. A
@@ -349,7 +348,6 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     for tab in tabs { tab.setMediaSuspended(false) }
 
     loadIfNeverLoaded()
-    loadControlledTabs()
     syncDialog(restoringFocus: false)
   }
 
@@ -410,43 +408,64 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
   /// searches with the engine Settings names now. A refused address leaves the page visible, posts
   /// one warning, and marks the address as invalid.
   func submit(address: String) {
+    commit(address: address, in: tab)
+  }
+
+  /// Applies typed text to `target`. Only the tab on screen can have the address bar, so the bar
+  /// follows the tab on screen alone. Answers false when the text loaded nothing and started no
+  /// app handoff.
+  @discardableResult
+  func commit(address: String, in target: BrowserTab) -> Bool {
+    let onScreen = target === tab
+
     switch AddressPolicy.resolve(address) {
     case .empty:
-      return
+      return false
 
     case .load(let url, let assumed):
       let kept =
         assumed == .https ? AssumedLoad(url: url, typed: address) : nil
 
-      beginTypedLoad(url, assumed: kept)
+      beginTypedLoad(url, assumed: kept, in: target)
+      return true
 
     case .search(let query):
       guard let url = services.searchEngine().searchURL(for: query) else {
-        content.markAddress(invalid: true)
-        tab.loadOrigin = .user
-        post(.warning, SchemeRefusal.notAnAddress.message(for: address), from: tab)
-        return
+        if onScreen { content.markAddress(invalid: true) }
+
+        target.loadOrigin = .user
+        post(.warning, SchemeRefusal.notAnAddress.message(for: address), from: target)
+        return false
       }
 
-      beginTypedLoad(url, assumed: nil)
+      beginTypedLoad(url, assumed: nil, in: target)
+      return true
 
     case .handoff(let url):
-      tab.loadOrigin = .user
-      handOff(url, from: tab, typed: true)
+      target.loadOrigin = .user
+      handOff(url, from: target, typed: onScreen)
+      return true
 
     case .refused(let refusal):
-      content.markAddress(invalid: true)
-      tab.loadOrigin = .user
-      post(.warning, refusal.message(for: address), from: tab)
+      if onScreen { content.markAddress(invalid: true) }
+
+      target.loadOrigin = .user
+      post(.warning, refusal.message(for: address), from: target)
+      return false
     }
   }
 
-  private func beginTypedLoad(_ url: URL, assumed: AssumedLoad?) {
-    content.markAddress(invalid: false)
-    tab.loadOrigin = .user
-    alerts.replaceLoad()
-    tab.load(url, assumed: assumed, byUser: true)
-    content.window?.makeFirstResponder(tab.webView)
+  private func beginTypedLoad(_ url: URL, assumed: AssumedLoad?, in target: BrowserTab) {
+    target.loadOrigin = .user
+
+    if target === tab {
+      content.markAddress(invalid: false)
+      alerts.replaceLoad()
+    }
+
+    target.load(url, assumed: assumed, byUser: true)
+
+    if target === tab { content.window?.makeFirstResponder(target.webView) }
   }
 
   /// Load over HTTP, offered by the error page. It resolves what the user typed again with the
@@ -460,7 +479,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
       url.scheme?.lowercased() == "http"
     else { return }
 
-    beginTypedLoad(url, assumed: nil)
+    beginTypedLoad(url, assumed: nil, in: tab)
   }
 
   /// Opens another app for an address the user typed or a link the user clicked. The tab has
@@ -489,13 +508,13 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
       return
     }
 
-    guard !isQuestionUp || (AppHandoff.opensWithoutAsking(url) && !source.isControlled) else {
+    guard !isQuestionUp || AppHandoff.opensWithoutAsking(url) else {
       refuseHandOff(
         "Did not open \(address). Another question is already waiting.", from: source, typed: false)
       return
     }
 
-    if AppHandoff.opensWithoutAsking(url), !source.isControlled {
+    if AppHandoff.opensWithoutAsking(url) {
       finishHandOff(url, from: source, typed: typed)
       return
     }
@@ -551,21 +570,30 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     post(.warning, text, from: source)
   }
 
-  func goBack() {
-    tab.loadOrigin = .user
-    report(tab.goBack())
-  }
+  func goBack() { goBack(in: tab) }
 
-  func goForward() {
-    tab.loadOrigin = .user
-    report(tab.goForward())
-  }
+  func goForward() { goForward(in: tab) }
 
   /// A reload, back, or forward onto the result of a form post reaches the tab's gate, which asks
   /// the user before the form goes again.
-  func reload() {
-    tab.loadOrigin = .user
-    report(tab.reload())
+  func reload() { reload(in: tab) }
+
+  @discardableResult
+  func goBack(in target: BrowserTab) -> HistoryMove {
+    target.loadOrigin = .user
+    return report(target.goBack(), for: target)
+  }
+
+  @discardableResult
+  func goForward(in target: BrowserTab) -> HistoryMove {
+    target.loadOrigin = .user
+    return report(target.goForward(), for: target)
+  }
+
+  @discardableResult
+  func reload(in target: BrowserTab) -> HistoryMove {
+    target.loadOrigin = .user
+    return report(target.reload(), for: target)
   }
 
   var canGoBack: Bool { tab.canGoBack }
@@ -576,14 +604,12 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     content.focusAddress()
   }
 
-  private func report(_ move: HistoryMove) {
-    switch move {
-    case .moved, .unavailable:
-      return
-
-    case .refused(let refusal, let address):
-      post(.warning, refusal.message(for: address), from: tab)
+  private func report(_ move: HistoryMove, for target: BrowserTab) -> HistoryMove {
+    if case .refused(let refusal, let address) = move {
+      post(.warning, refusal.message(for: address), from: target)
     }
+
+    return move
   }
 
   // MARK: Tabs
@@ -612,6 +638,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
       id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore, hsts: services.hsts,
       clock: services.clock, hang: services.hang)
     opened.delegate = self
+    opened.setMediaSuspended(alerts.isDetached)
 
     let position = min(selectedIndex + 1, tabs.count)
     tabs.insert(opened, at: position)
@@ -624,31 +651,9 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     return opened.id
   }
 
-  /// Adds a tab a controller opened. A selected one is shown without taking the keyboard. One
-  /// that is not selected leaves the user's tab where it is.
-  func insert(_ opened: BrowserTab, at position: Int, selecting: Bool) {
-    tabs.insert(opened, at: position)
-
-    if selecting {
-      selectedIndex = position
-
-      showSelectedTab(replacingEdit: true)
-      syncDialog(restoringFocus: false)
-    } else if position <= selectedIndex {
-      selectedIndex += 1
-    }
-
-    refresh()
-  }
-
-  public func selectTab(at index: Int) {
-    selectTab(at: index, takingKeyboard: true)
-  }
-
   /// Selects a tab. The keyboard follows when the pane held it, and when the tab has nothing to
-  /// show, since then the address bar is the tab's only use. A controller's select never takes
-  /// the keyboard.
-  func selectTab(at index: Int, takingKeyboard: Bool) {
+  /// show, since then the address bar is the tab's only use.
+  public func selectTab(at index: Int) {
     guard !closed, tabs.indices.contains(index), index != selectedIndex else { return }
 
     let hadFocus = hasFocus
@@ -659,7 +664,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     syncDialog(restoringFocus: false)
     refresh()
 
-    if takingKeyboard, hadFocus || tab.hasLoadedNothing { focus() }
+    if hadFocus || tab.hasLoadedNothing { focus() }
   }
 
   public func selectTab(id: AppletTabID) -> Bool {
@@ -689,16 +694,6 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     }
 
     loadStored(tab)
-  }
-
-  /// A tab a controller opened loads whether or not anyone looked at it, as soon as the pane is
-  /// attached. A pane that was detached when the tab opened loads it here.
-  private func loadControlledTabs() {
-    guard started, !closed, !alerts.isDetached else { return }
-
-    for tab in tabs where tab.isControlled && !tab.hasBegunLoading && !tab.isStopped {
-      loadStored(tab)
-    }
   }
 
   public func closeCurrentTab() async -> TabCloseResult {
@@ -1173,12 +1168,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     let file = named.map { " It started with \u{201C}\($0)\u{201D}." } ?? ""
     let request = AppletConfirmation(
       title: "Let this page download more files?",
-      detail: page.isControlled
-        ? """
-        A program controls \u{201C}\(Self.title(of: page))\u{201D}, and it started a \
-        download.\(file) Allow it to download, and to start more until it loads again?
-        """
-        : """
+      detail: """
         \u{201C}\(Self.title(of: page))\u{201D} started downloads without a click.\(file) \
         Allow it to download, and to start more until it loads again?
         """,

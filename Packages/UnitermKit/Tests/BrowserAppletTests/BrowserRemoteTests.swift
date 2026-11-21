@@ -11,9 +11,9 @@ import XCTest
 /// A controller's commands against a real browser and a local server, through shared dispatch.
 ///
 /// The dispatcher is the same one a window uses, stepped by hand. These prove what the browser
-/// owns: which tabs a grant owns, which moves it refuses, and that a controller's tab asks before
-/// anything reaches another app or the disk. They cannot prove how a window finds the caller's
-/// powers. The window's and the script host's tests prove that.
+/// owns: which tabs a grant owns, which addresses it refuses, and that each command ends where the
+/// user's matching action does. They cannot prove how a window finds the caller's powers. The
+/// window's and the script host's tests prove that.
 @MainActor
 final class BrowserRemoteTests: XCTestCase {
   private nonisolated static let pages: FixtureServer.Handler = { request in
@@ -82,10 +82,12 @@ final class BrowserRemoteTests: XCTestCase {
   }
 
   /// Opens a tab and returns its reference and the tab.
-  private func open(_ harness: BrowserHarness, _ path: String, as caller: AppletCaller? = nil)
-    throws -> (reference: String, tab: BrowserTab)
-  {
-    let reply = try send(harness, "open", ["url": url(harness, path)], as: caller).get()
+  private func open(
+    _ harness: BrowserHarness, _ path: String, address: String? = nil,
+    as caller: AppletCaller? = nil
+  ) throws -> (reference: String, tab: BrowserTab) {
+    let argument = address.map { JSONValue.string($0) } ?? url(harness, path)
+    let reply = try send(harness, "open", ["url": argument], as: caller).get()
 
     guard case .object(let fields) = reply, case .string(let reference)? = fields["tab"],
       let id = AppletTabID(reply: reference),
@@ -106,9 +108,8 @@ final class BrowserRemoteTests: XCTestCase {
 
   // MARK: Opening
 
-  /// Catches an open that waits to be selected, or that does not load a tab nobody looks at. In a
-  /// pane without the keyboard the tab opens selected. Either way it loads at once and the reply
-  /// names it.
+  /// Catches an open that does not select its tab, or that loads late. The tab shows, loads at once,
+  /// and the reply names it.
   func testOpenLoadsTheTabAtOnceAndAnswersItsReference() async throws {
     let harness = try await make()
     defer { harness.stop() }
@@ -116,7 +117,7 @@ final class BrowserRemoteTests: XCTestCase {
     let (reference, opened) = try open(harness, "/a")
 
     XCTAssertEqual(harness.applet.tabs.count, 2)
-    XCTAssertEqual(harness.applet.tab, opened, "no keyboard in the pane, so the tab shows")
+    XCTAssertEqual(harness.applet.tab, opened, "the new tab is selected")
     XCTAssertEqual(opened.id.replyText, reference)
 
     await harness.host.until("the page loads") { opened.pageTitle == "A" }
@@ -124,36 +125,51 @@ final class BrowserRemoteTests: XCTestCase {
     XCTAssertEqual(harness.count("GET", "/a"), 1)
   }
 
-  /// Catches an open that moves the keyboard: in a key-focused pane the tab opens unselected,
-  /// the user's tab keeps the keyboard, and the new tab loads in the background.
-  func testOpenInAKeyFocusedPaneLeavesTheUsersTabSelectedAndLoadsInTheBackground() async throws {
+  /// Catches an open in a pane that holds the keyboard that leaves the new tab behind, or leaves
+  /// the keyboard on the user's tab. The user's New Tab with a typed address selects the tab and
+  /// puts the keyboard in its page.
+  func testOpenInAKeyFocusedPaneSelectsTheTabAndTheKeyboardFollows() async throws {
     let harness = try await make(hosting: .focusedWindow)
     defer { harness.stop() }
 
     let users = harness.applet.tab
     let (_, opened) = try open(harness, "/a")
 
-    XCTAssertTrue(harness.applet.tab === users)
-    XCTAssertNotEqual(harness.applet.tab, opened)
-    XCTAssertTrue(harness.applet.hasFocus, "the keyboard is still in the page")
+    XCTAssertTrue(harness.applet.tab === opened)
+    XCTAssertEqual(harness.applet.tabs.firstIndex { $0 === users }, 0)
+    XCTAssertEqual(harness.applet.tabs.firstIndex { $0 === opened }, 1, "after the selected tab")
+    XCTAssertTrue(harness.window?.firstResponder === opened.webView)
 
-    await harness.host.until("the background tab loads") { opened.pageTitle == "A" }
+    await harness.host.until("the tab loads") { opened.pageTitle == "A" }
   }
 
-  /// Catches an open that takes the keyboard to the address bar, as the user's New Tab does.
-  func testOpenNeverMovesTheKeyboardIntoTheAddressBar() async throws {
-    let harness = try await make()
-    defer { harness.stop() }
+  /// Catches an open that ends anywhere but where the user's New Tab with a typed address does:
+  /// the same place in the strip, the same selection, the keyboard in the same place, and the same
+  /// address. The expected state is read from the user's own path run in a second pane.
+  func testOpenEndsWhereTheUsersNewTabWithATypedAddressEnds() async throws {
+    let commanded = try await make(hosting: .focusedWindow)
+    defer { commanded.stop() }
 
-    let before = harness.window?.firstResponder
+    let typed = try await make(hosting: .focusedWindow)
+    defer { typed.stop() }
 
-    _ = try open(harness, "/a")
+    let (_, opened) = try open(commanded, "/a")
 
-    XCTAssertTrue(harness.window?.firstResponder === before)
+    typed.applet.openTab()
+    typed.applet.submit(address: typed.server.url("/a").absoluteString)
+
+    XCTAssertEqual(commanded.applet.tabs.count, typed.applet.tabs.count)
+    XCTAssertEqual(commanded.applet.selectedTabIndex, typed.applet.selectedTabIndex)
+    XCTAssertEqual(
+      commanded.window?.firstResponder === opened.webView,
+      typed.window?.firstResponder === typed.applet.tab.webView)
+    XCTAssertEqual(opened.record.url?.suffix(2), typed.applet.tab.record.url?.suffix(2))
+    XCTAssertEqual(opened.loadOrigin, typed.applet.tab.loadOrigin)
   }
 
-  /// Catches an address the rule refuses that opens a tab or loads: script, data, and local file
-  /// addresses in any letter case and with whitespace, on open and on navigate.
+  /// Catches an address that every source refuses opening a tab or loading from a command: script,
+  /// data, local file, blob, and about addresses in any letter case and with whitespace, on open
+  /// and on navigate. An address for another app is not among them, since typed input hands it off.
   func testScriptDataAndFileAddressesAreRefusedInAnyCaseWithWhitespace() async throws {
     let harness = try await make()
     defer { harness.stop() }
@@ -165,7 +181,8 @@ final class BrowserRemoteTests: XCTestCase {
       "javascript:alert(1)", " JaVaScRiPt:alert(1) ", "\tJAVASCRIPT:void(0)\n",
       "data:text/html,<b>x</b>", "  DaTa:text/html,x  ", "file:///etc/hosts",
       " FILE:///etc/hosts\n",
-      "\u{A0}file:///etc/hosts", "mailto:someone@example.com", "ftp://example.com/",
+      "\u{A0}file:///etc/hosts", "blob:https://example.com/1", " BLOB:https://example.com/1\n",
+      "about:config", "ABOUT:CONFIG",
     ] {
       let opened = send(harness, "open", ["url": .string(bad)])
       let moved = send(harness, "navigate", ["url": .string(bad)], on: reference)
@@ -177,23 +194,25 @@ final class BrowserRemoteTests: XCTestCase {
     XCTAssertEqual(harness.applet.tabs.count, count, "a refused address opened a tab")
   }
 
-  /// Catches a scheme-less address that loads over plain HTTP, or one that is refused.
+  /// Catches a scheme-less address that loads over plain HTTP, or one that is refused. Loopback
+  /// keeps HTTP, and the spy reads the HTTPS address without a request leaving the machine.
   func testASchemelessAddressGetsHTTPSAndLoopbackGetsHTTP() async throws {
     let harness = try await make()
     defer { harness.stop() }
 
-    let loopback = try open(harness, "/a")
+    let (reference, opened) = try open(harness, "/a", address: harness.server.address("/a"))
 
-    XCTAssertEqual(loopback.tab.record.url?.hasPrefix("http://127.0.0.1"), true)
+    await harness.host.until("the loopback page loads") { opened.pageTitle == "A" }
 
-    let reply = try send(harness, "open", ["url": .string("example.com/x")]).get()
+    XCTAssertEqual(opened.record.url?.hasPrefix("http://127.0.0.1"), true)
 
-    guard case .object(let fields) = reply, case .string(let text)? = fields["tab"],
-      let id = AppletTabID(reply: text),
-      let tab = harness.applet.tabs.first(where: { $0.id == id })
-    else { return XCTFail("open answered \(reply)") }
+    let spy = NavigationSpy()
 
-    XCTAssertEqual(tab.record.url, "https://example.com/x")
+    opened.webView.navigationDelegate = spy
+
+    XCTAssertNil(code(send(harness, "navigate", ["url": .string("example.com/x")], on: reference)))
+    await spy.until(count: 1)
+    XCTAssertEqual(spy.urls.map(\.absoluteString), ["https://example.com/x"])
   }
 
   /// Catches a loop of opens that builds a web view and a content process for each call. A grant
@@ -247,7 +266,8 @@ final class BrowserRemoteTests: XCTestCase {
   }
 
   /// Catches a tab that stops being the controller's once the user types in it. The controller
-  /// still reads it, and a move is refused for the input and not for ownership.
+  /// still reads it. A move is not refused for the input, since the user's own typed address on
+  /// that tab is not.
   func testATabStaysTheControllersAfterTheUserTypesInIt() async throws {
     let harness = try await make()
     defer { harness.stop() }
@@ -269,14 +289,11 @@ final class BrowserRemoteTests: XCTestCase {
 
     XCTAssertTrue(opened.hasUnsentInput)
 
-    harness.applet.selectTab(at: 0, takingKeyboard: false)
+    harness.applet.selectTab(at: 0)
 
     XCTAssertNil(code(send(harness, "read", on: reference)))
-    XCTAssertEqual(
-      code(send(harness, "navigate", ["url": url(harness, "/b")], on: reference)),
-      .unsentInput)
-    XCTAssertEqual(code(send(harness, "reload", on: reference)), .unsentInput)
-    XCTAssertEqual(harness.count("GET", "/b"), 0)
+    XCTAssertNil(code(send(harness, "navigate", ["url": url(harness, "/b")], on: reference)))
+    await harness.host.until("the tab moves on") { opened.pageTitle == "B" }
   }
 
   /// Catches a tab that is owned without the controller opening it: a tab a page opened from a
@@ -295,7 +312,6 @@ final class BrowserRemoteTests: XCTestCase {
     let popup = try XCTUnwrap(harness.applet.tabs.first { $0.isPopup })
 
     XCTAssertNil(harness.applet.tabOwners[popup.id], "a page-opened tab was owned")
-    XCTAssertFalse(popup.isControlled)
 
     let closing = harness.applet.tabs.firstIndex { $0 === opened }!
     _ = await harness.applet.closeTab(at: closing)
@@ -311,7 +327,6 @@ final class BrowserRemoteTests: XCTestCase {
       services: .testing())
 
     XCTAssertEqual(restored.tabOwners.count, 0)
-    XCTAssertTrue(restored.tabs.allSatisfy { !$0.isControlled })
     restored.close()
   }
 
@@ -328,7 +343,7 @@ final class BrowserRemoteTests: XCTestCase {
 
     XCTAssertEqual(code(send(harness, "read", on: first)), .notOwned)
 
-    let (second, secondTab) = try open(harness, "/c")
+    let (second, _) = try open(harness, "/c")
 
     harness.applet.controlDidChange(
       PaneControl(access: .remoteControlled, driver: .none, generation: 4))
@@ -342,7 +357,6 @@ final class BrowserRemoteTests: XCTestCase {
     harness.applet.grantDidEnd(grant)
 
     XCTAssertEqual(code(send(harness, "read", on: second)), .notOwned)
-    XCTAssertFalse(secondTab.isControlled)
 
     let (third, _) = try open(harness, "/b")
     let closing = try XCTUnwrap(harness.applet.tabs.firstIndex { $0.id.replyText == third })
@@ -437,58 +451,117 @@ final class BrowserRemoteTests: XCTestCase {
     XCTAssertEqual(code(send(harness, "forward", on: reference)), .failed)
   }
 
-  /// Catches a move on the tab the user is looking at in a pane that holds the keyboard, and a
-  /// select that takes the user's tab away. A background tab still moves.
-  func testAKeyFocusedPaneRefusesMovesOnItsShownTabAndRefusesSelect() async throws {
+  /// Catches a command refused because the pane holds the keyboard. Navigate on the tab shown, and
+  /// select of another tab, run as the user's typed address and click do.
+  func testAKeyFocusedPaneAcceptsMovesOnItsShownTabAndSelect() async throws {
     let harness = try await make(hosting: .focusedWindow)
     defer { harness.stop() }
 
     harness.applet.adoptFirstTab(for: grant)
 
-    let shown = harness.applet.tab.id.replyText
+    let shown = harness.applet.tab
     let (background, tab) = try open(harness, "/a")
 
-    for name in ["reload", "back", "forward"] {
-      XCTAssertEqual(code(send(harness, name, on: shown)), .keyFocused, name)
-    }
+    XCTAssertNil(code(send(harness, "select", on: shown.id.replyText)))
+    XCTAssertTrue(harness.applet.tab === shown)
 
+    XCTAssertNil(
+      code(send(harness, "navigate", ["url": url(harness, "/b")], on: shown.id.replyText)))
+    await harness.host.until("the shown tab moves") { shown.pageTitle == "B" }
+
+    XCTAssertNil(code(send(harness, "reload", on: shown.id.replyText)))
     XCTAssertEqual(
-      code(send(harness, "navigate", ["url": url(harness, "/b")], on: shown)), .keyFocused)
-    XCTAssertEqual(code(send(harness, "select", on: background)), .keyFocused)
-    XCTAssertEqual(harness.count("GET", "/b"), 0)
-    XCTAssertFalse(harness.applet.tab === tab)
+      code(send(harness, "forward", on: shown.id.replyText)), .failed, "nothing is later")
 
-    XCTAssertNil(code(send(harness, "navigate", ["url": url(harness, "/b")], on: background)))
-    await harness.host.until("the background tab moves") { tab.pageTitle == "B" }
+    XCTAssertNil(code(send(harness, "select", on: background)))
+    XCTAssertTrue(harness.applet.tab === tab)
   }
 
-  /// Catches a select that moves the keyboard, or one that refuses when nobody holds it.
-  func testSelectShowsTheTabWithoutMovingTheKeyboard() async throws {
-    let harness = try await make()
+  /// Catches a select that behaves unlike the user's click on the tab. The tab shows, and the
+  /// keyboard follows when the pane held it, as it does for the click.
+  func testSelectShowsTheTabAsAClickDoes() async throws {
+    let harness = try await make(hosting: .focusedWindow)
     defer { harness.stop() }
 
     let users = harness.applet.tab
     let (reference, opened) = try open(harness, "/a")
 
-    harness.applet.selectTab(at: 0, takingKeyboard: false)
-    XCTAssertTrue(harness.applet.tab === users)
+    await harness.host.until("the page loads") { opened.pageTitle == "A" }
 
-    let before = harness.window?.firstResponder
+    harness.applet.selectTab(at: 0)
+    XCTAssertTrue(harness.applet.tab === users)
 
     XCTAssertNil(code(send(harness, "select", on: reference)))
     XCTAssertTrue(harness.applet.tab === opened)
-    XCTAssertTrue(harness.window?.firstResponder === before)
+    XCTAssertTrue(harness.window?.firstResponder === opened.webView)
+  }
+
+  /// Catches a navigate that treats search text, or an address for another app, as a refusal. It
+  /// resolves as typed input does: text searches with the engine, `mailto:` opens at once, and any
+  /// other app asks first.
+  func testNavigateResolvesSearchAndAppAddressesAsTypedInputDoes() async throws {
+    let opener = FakeOpener()
+    let harness = try await make(services: .testing(opener: opener))
+    defer { harness.stop() }
+
+    let (reference, opened) = try open(harness, "/a")
+
+    await harness.host.until("the page loads") { opened.pageTitle == "A" }
+
+    let spy = NavigationSpy()
+
+    opened.webView.navigationDelegate = spy
+
+    XCTAssertNil(
+      code(send(harness, "navigate", ["url": .string("swift concurrency")], on: reference)))
+    await spy.until(count: 1)
+    XCTAssertEqual(
+      spy.urls.map(\.absoluteString), ["https://duckduckgo.com/?q=swift%20concurrency"])
+
+    let mail = URL(string: "mailto:someone@example.com")!
+
+    XCTAssertNil(
+      code(send(harness, "navigate", ["url": .string(mail.absoluteString)], on: reference)))
+    XCTAssertEqual(opener.opened, [mail], "mailto: opens without asking")
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
+
+    harness.host.recording.answer = true
+
+    let ssh = URL(string: "ssh://host.example")!
+
+    XCTAssertNil(
+      code(send(harness, "navigate", ["url": .string(ssh.absoluteString)], on: reference)))
+    await harness.host.until("the question is asked") {
+      harness.host.recording.confirmations.count == 1
+    }
+    await harness.eventually("the app opens on yes") { opener.opened == [mail, ssh] }
+  }
+
+  /// Catches an app handoff from a tab that is not on screen. The user's own rule lets only the
+  /// page on screen ask, so the controller's tab behind another one opens nothing.
+  func testAnAppAddressInATabBehindAnotherOpensNothing() async throws {
+    let opener = FakeOpener()
+    let harness = try await make(services: .testing(opener: opener))
+    defer { harness.stop() }
+
+    let (reference, _) = try open(harness, "/a")
+
+    harness.applet.selectTab(at: 0)
+
+    let mail = "mailto:someone@example.com"
+
+    XCTAssertNil(code(send(harness, "navigate", ["url": .string(mail)], on: reference)))
+    XCTAssertEqual(opener.opened, [])
+    XCTAssertTrue(harness.posts.last?.text.contains("Only the page you are looking at") ?? false)
   }
 
   // MARK: Forms
 
-  /// Catches a controller's reload, back, or forward that sends a form again, and one that asks
-  /// the user. The same move from the tab's own button asks, which is the contrast.
-  func testAControllersReloadNeverResendsAFormAndNeverAsks() async throws {
+  /// Catches a reload of a form's result that sends the form again without asking, or that never
+  /// asks. A command's reload asks the user as the tab's own reload does, and resends only on yes.
+  func testAControllersReloadOfAFormAsksAsTheUsersDoes() async throws {
     let harness = try await make()
     defer { harness.stop() }
-
-    harness.host.recording.answer = true
 
     let (reference, opened) = try open(harness, "/form")
 
@@ -500,24 +573,29 @@ final class BrowserRemoteTests: XCTestCase {
 
     XCTAssertEqual(harness.count("POST", "/result"), 1)
 
+    harness.host.recording.answer = false
+
     XCTAssertNil(code(send(harness, "reload", on: reference)))
-    await harness.host.until("the refusal is reported") { !harness.posts.isEmpty }
+    await harness.host.until("the reload asks") { harness.host.recording.confirmations.count == 1 }
 
-    XCTAssertTrue(harness.posts.last?.text.contains("send the form again") ?? false)
-    XCTAssertTrue(harness.host.recording.confirmations.isEmpty, "a controller's reload asked")
-    XCTAssertEqual(harness.count("POST", "/result"), 1)
+    XCTAssertEqual(harness.count("POST", "/result"), 1, "a no still resent the form")
 
-    XCTAssertEqual(opened.reload(), .moved)
-    await harness.host.until("the tab's own reload asks") {
-      harness.host.recording.confirmations.count == 1
+    harness.host.recording.answer = true
+
+    XCTAssertNil(code(send(harness, "reload", on: reference)))
+    await harness.host.until("the reload asks again") {
+      harness.host.recording.confirmations.count == 2
+    }
+    await harness.eventually("a yes sends the form again") {
+      harness.count("POST", "/result") == 2
     }
   }
 
   // MARK: Questions
 
-  /// Catches a link to another app in a controller tab that opens at once, `mailto:` included, and
-  /// a user's own tab that stopped opening it at once.
-  func testEveryAppHandoffFromAControllerTabAsksFirst() async throws {
+  /// Catches a controller's tab that follows another rule for an app handoff than any tab does.
+  /// `mailto:` opens a draft at once in the user's tab and in the controller's.
+  func testAppHandoffInAControllerTabFollowsTheRulesOfAnyTab() async throws {
     let opener = FakeOpener()
     let harness = try await make(services: .testing(opener: opener))
     defer { harness.stop() }
@@ -525,22 +603,18 @@ final class BrowserRemoteTests: XCTestCase {
     let mail = URL(string: "mailto:someone@example.com")!
 
     harness.applet.tab(harness.applet.tab, handOff: mail)
-    XCTAssertEqual(opener.opened, [mail], "the user's own tab opens a draft at once")
+    XCTAssertEqual(opener.opened, [mail])
 
     let (_, owned) = try open(harness, "/a")
 
-    harness.host.recording.answer = false
     harness.applet.tab(owned, handOff: mail)
-    await harness.host.until("the question is asked") {
-      harness.host.recording.confirmations.count == 1
-    }
-
-    XCTAssertEqual(opener.opened, [mail], "a controller's tab opened a draft without asking")
+    XCTAssertEqual(opener.opened, [mail, mail], "a controller's tab asked before a draft")
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
   }
 
-  /// Catches a download in a controller tab that starts without the user's yes, and one that
-  /// counts against the free three. The user's own tab starts the same download at once.
-  func testADownloadInAControllerTabWaitsForTheUsersAnswer() async throws {
+  /// Catches a download that a command starts being held for a question. A navigate is a typed
+  /// load, so its download starts at once, as the user's does.
+  func testADownloadFromANavigateStartsAsATypedLoadsDoes() async throws {
     let harness = try await BrowserHarness.make(handler: Self.pages)
     defer { harness.stop() }
 
@@ -548,22 +622,17 @@ final class BrowserRemoteTests: XCTestCase {
 
     await harness.host.until("a loads") { owned.pageTitle == "A" }
 
-    harness.host.recording.answer = false
-
     XCTAssertNil(code(send(harness, "navigate", ["url": url(harness, "/file")], on: reference)))
-    await harness.host.until("the question is asked") {
-      harness.host.recording.confirmations.count == 1
-    }
+    await harness.eventually("the file arrives") { harness.files() == ["got.txt"] }
 
-    XCTAssertEqual(harness.files(), [])
-    XCTAssertEqual(harness.applet.downloads.runningNames, [])
+    XCTAssertTrue(harness.host.recording.confirmations.isEmpty)
   }
 
   // MARK: Attachment
 
-  /// Catches a tab opened while the pane was detached that never loads, or one that loads in the
-  /// meantime.
-  func testATabOpenedWhileDetachedLoadsWhenThePaneComesBack() async throws {
+  /// Catches an open in a detached pane that leaves its tab unselected or its media playing. The
+  /// user's typed address loads at once, and a detached pane's media stays suspended.
+  func testATabOpenedWhileDetachedIsSelectedLoadsAndStaysSuspended() async throws {
     let harness = try await make()
     defer { harness.stop() }
 
@@ -571,12 +640,10 @@ final class BrowserRemoteTests: XCTestCase {
 
     let (_, opened) = try open(harness, "/a")
 
-    XCTAssertEqual(harness.count("GET", "/a"), 0, "a detached pane loaded a page")
+    XCTAssertTrue(harness.applet.tab === opened)
+    XCTAssertTrue(opened.isMediaSuspended)
 
-    harness.applet.reattach()
     await harness.host.until("the tab loads") { opened.pageTitle == "A" }
-
-    XCTAssertEqual(harness.count("GET", "/a"), 1)
   }
 
   // MARK: Seeds and programs

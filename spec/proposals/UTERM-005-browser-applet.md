@@ -339,15 +339,16 @@ permissions of their own, and act only on tabs the controller opened.
   reopened with Cmd-Shift-T, and a restored tab belong to no controller.
 - Commands never take keyboard focus. While the pane holds key focus, open creates its tab without selecting it, and
   select is refused with a structured error. A background tab a controller opens loads at once while the pane is
-  attached.
+  attached. Superseded in part by UTERM-037; see Decision Log.
 - Navigate, reload, back, and forward are refused with a structured error when the target is the selected tab of a pane
   that holds key focus, or a tab that holds unsent input per "Unsent input". The controller owns retrying.
+  Superseded in part by UTERM-037; see Decision Log.
 - The two permissions follow UTERM-004's versioned permission meanings and admission. An old controller on a new build,
   and a new controller on an old build, refuse unsupported semantics before any effect. The structured errors are new
   error codes in UTERM-004's existing error shape.
-- Controller reload, back, and forward never resubmit a form.
+- Controller reload, back, and forward never resubmit a form. Superseded in part by UTERM-037; see Decision Log.
 - In a controller tab, a download, or a navigation to a non-web scheme that would open another app, asks the user
-  first.
+  first. Superseded in part by UTERM-037; see Decision Log.
 - A browser pane created by a layout request starts at `about:blank`. A URL seeded through a layout request needs
   browser navigation and passes the same scheme check.
 
@@ -359,6 +360,7 @@ stale page, which the controller's retry or Cmd-R recovers. A development-reload
 saves from another pane and the browser pane does not hold key focus. Refusing control entirely would leave the
 motivation's main use undone. No current caller needs an exec driver, and its event stream would hand the user's later
 browsing to the driver. Exec support can be added later as a new combination.
+Superseded in part by UTERM-037; see Decision Log.
 
 UTERM-004 reaches only browser panes a program created, since a program addresses its source pane and the groups it
 owns. Telling the nearest browser pane to open a page therefore works for a program's own browser panes, not ones the
@@ -436,6 +438,7 @@ isolated-world script tracks it. A download in progress also counts, per "Downlo
   report never clears another's. Page scripts cannot reach the handler. Amended 2026-11-06; see Decision Log.
 - The mark clears when the tab's content process terminates, since the input is already gone.
 - It misses drafts a page keeps only in script. "Control" guards the focused tab for that reason.
+  Superseded in part by UTERM-037; see Decision Log.
 
 Rationale: closing a pane with a half-written comment loses it without asking unless something notices. Counting native
 keystrokes cannot tell typing from scrolling or j and k shortcuts, so nearly every close and quit would ask, and the
@@ -1216,10 +1219,12 @@ Starts after UTERM-004 M6.
 - Open never moves keyboard focus: in a key-focused pane its tab opens unselected and loads at once, and select is
   refused. Any background tab a controller opens loads at once. Navigate, reload, back, and forward on the selected tab
   of a key-focused pane, or on a tab with unsent input, return a structured error
+  Superseded in part by UTERM-037; see Decision Log.
 - Controller reload, back, and forward never resubmit a form. They use an intent-free path that sets no resend intent,
   so they never ask and never resend. The tab's own `reload`, `goBack`, and `goForward` keep setting the intent
+  Superseded in part by UTERM-037; see Decision Log.
 - A download, or a link to another app, `mailto:` included, in a controller tab asks the user first. Amended 2026-11-06;
-  see Decision Log.
+  see Decision Log. Superseded in part by UTERM-037; see Decision Log.
 - A browser pane created by a layout request starts at `about:blank`
 - Exec is refused before anything starts
 
@@ -1242,6 +1247,7 @@ Starts after UTERM-004 M6.
 - The four new error codes ride on two existing script failure kinds with no wire bump: permission-missing and
   not-owned read as refused, and key-focused and unsent-input read as busy, so a script retries only the two that a
   retry can fix. An exec driver gets the raw code string.
+  Superseded in part by UTERM-037; see Decision Log.
 - Ownership keys on the grant: the owner's description, which reads `connection N` for a script and `driver N` for a
   driver run. It is not the connection's pane control generation, so a controller that acts from the browser pane
   itself still loses its tabs when its run ends. The window tells the applet when an owner ends, and a new control
@@ -1683,6 +1689,10 @@ Starts after UTERM-004 M6.
   the power that command needs, before any applet sees it. Undecided. Found in UTERM-005 M8.
 - 2026-11-20: ADR candidate (cuts across the system): a controller controls the parts of a pane it opened, such as a
   tab, only for its live grant. Undecided. Found in UTERM-005 M8.
+- 2026-11-21: Superseded in part by UTERM-037. A controller's open, navigate, reload, back, forward, and select now
+  behave as the user's New Tab, typed address, toolbar buttons, and tab click do, so "Control" and M8 no longer keep the
+  keyboard from a command, refuse a move for focus or unsent input, skip the resend question, or ask for every download
+  and handoff.
 
 ## References
 

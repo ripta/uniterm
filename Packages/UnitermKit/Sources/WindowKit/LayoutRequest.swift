@@ -264,15 +264,16 @@ struct LayoutRequest: Equatable {
       return pane
     }
 
-    /// A browser pane's first page. It meets the same rule as a controller's open command: only
-    /// http and https load, a scheme-less host gets HTTPS, and loopback gets HTTP.
+    /// A browser pane's first page. It meets the rule for a typed address: only http and https
+    /// load, a scheme-less host gets HTTPS, and loopback gets HTTP. A seed is an address, not
+    /// typed text, so a search and an app handoff are refused.
     private func seed(_ value: JSONValue, at path: String) throws(ScriptCallError) -> URL {
       guard case .string(let text) = value, text.utf8.count <= LayoutRequest.maxURLBytes else {
         throw .badArgument(
           "\(path)'s url must be text of at most \(LayoutRequest.maxURLBytes) bytes")
       }
 
-      switch AddressPolicy.resolve(text, source: .controller) {
+      switch AddressPolicy.resolve(text) {
       case .load(let url, _):
         return url
 
