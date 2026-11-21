@@ -43,8 +43,8 @@ final class BrowserWindowTests: XCTestCase {
       case .browser:
         return BrowserApplet(dataStore: .nonPersistent(), services: Self.services)
 
-      case .browserPage(let url):
-        return BrowserApplet(dataStore: .nonPersistent(), services: Self.services, seed: url)
+      case .browserPage(let text):
+        return BrowserApplet(dataStore: .nonPersistent(), services: Self.services, seed: text)
 
       case .hosted(let typeID):
         return AppletFixtures.make(typeID: typeID)
@@ -375,7 +375,6 @@ final class BrowserWindowTests: XCTestCase {
 
     for bad in [
       "javascript:alert(1)", " JaVaScRiPt:alert(1) ", "data:text/html,x", "FILE:///etc/hosts",
-      "mailto:a@example.com",
     ] {
       let node = #"{"open":"browser","url":"\#(bad)"}"#
       let error = await failure {

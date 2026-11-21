@@ -47,7 +47,8 @@ Decision: `set-region` saves its region with the pane, through the same path Go 
 
 - The region passes `GeoRegion`'s checks, as it does now.
 - The gesture gate is unchanged. It filters MapKit's own reports after a resize, after a set, and for the empty-pane
-  default. Those reports come from no one's move, so they apply to every source.
+  default. Those reports come from no one's move, so the gate applies to every source. ADR-15 keeps such a rule for
+  programs too.
 - The saved region lands in the description's payload, where a user's region goes. A region carries no secret, unlike
   a program's pins, which stay in the undo-only part.
 
@@ -61,8 +62,8 @@ Decision: a browser pane's layout `url` seed runs the user's typed-address path 
 - Search text searches with the chosen engine, as typed text does.
 - An app address asks to hand off as a typed one does, through the same question and the same rule for which page may
   ask.
-- The schemes no source may load stay refused at parse time, before any pane is made. The seed still needs browser
-  navigation.
+- The schemes no source may load stay refused at parse time, before any pane is made. That is a rule for every source,
+  per ADR-15. The seed still needs browser navigation, which is ADR-15's authority carve-out.
 - Text that cannot resolve, such as a search with no engine, is refused at parse time, before any pane is made.
 
 Rationale: a program's operation behaves as the user's. Opening a browser pane and typing into it is the user's
@@ -84,7 +85,7 @@ None.
 
 ### M1: Program moves and seeds act as the user's
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - `set-region` saves its region with the pane, and a reopen or relaunch shows it
 - MapKit's own region reports after a set or a resize are still not saved
@@ -92,6 +93,27 @@ None.
 - A layout seed of search text searches, and an app address asks as a typed one does
 - A seed with a scheme no source loads, or text that cannot resolve, is refused before any pane is made
 - UTERM-008 and UTERM-037 carry "Superseded in part by UTERM-038" markers on the replaced text
+
+**As built:**
+
+- `set-region` shows the region and then saves it through `regionSettled`, the path Go to Place uses. That function is
+  no longer private. The gesture gate in the map view is unchanged, so MapKit's report after a set is dropped and saves
+  nothing. A refused region still saves nothing.
+- A layout's browser `url` rides to the pane as the typed text, as `AppletChoice.browserPage(String)`. The request
+  reader checks it with the typed-address rule. A scheme no source loads, empty text, and a search that no engine can
+  turn into an address are refused as bad arguments before any pane is made. Search text and app addresses pass.
+- `BrowserApplet(seed:)` takes the text and holds it until `start`. Then it runs `commit(address:in:)` on the first tab,
+  the path a typed address and a controller's navigate use. Search text searches with the engine chosen at that time.
+  An app address asks through the same question and the same rule for which page may ask. The first tab's owner for a
+  remote-controlled pane is adopted as before.
+- The reader checks a search against every engine, since the engine is a setting read at start. No engine can fail
+  today, so that refusal is not reachable from the wire.
+- A seeded tab's stored address is empty until it loads, where a resolved seed stored it at once. A pane that is
+  described before it starts has no first page.
+- Skew: the layout request wire accepts more seed text. An older app refuses search and app-address seeds at parse time
+  with a bad argument, before any pane is made, so a controller that sends one sees a refusal and never a wrong page.
+  A newer app accepts every seed an older one did. No deploy order is needed.
+- Nothing beyond the checks.
 
 ## Decision Log
 

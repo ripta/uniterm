@@ -270,8 +270,8 @@ final class MapRemoteTests: XCTestCase {
   }
 
   /// Catches a region the map cannot take reaching MapKit, which raises on it, and a program's
-  /// move that is saved with the pane.
-  func testSetRegionRunsGeoRegionsChecksAndIsNotSaved() {
+  /// move that is lost at a reopen where the user's identical move is kept.
+  func testSetRegionRunsGeoRegionsChecksAndIsSaved() throws {
     let (applet, _, _) = pane()
 
     func region(_ latitude: Double, _ delta: Double) -> [String: JSONValue] {
@@ -285,6 +285,29 @@ final class MapRemoteTests: XCTestCase {
     XCTAssertEqual(send("set-region", region(0, 0), to: applet).code, .badArgument)
     XCTAssertNil(send("set-region", region(48, 2), to: applet).code)
     XCTAssertEqual(applet.content.mapView.region.center.latitude, 48, accuracy: 0.5)
+    XCTAssertEqual(applet.record.region?.center.latitude ?? .nan, 48, accuracy: 0.0001)
+
+    let saved = applet.record.region
+
+    applet.content.mapView(applet.content.mapView, regionDidChangeAnimated: false)
+
+    XCTAssertEqual(applet.record.region, saved, "MapKit's report after the set was saved")
+
+    let reopened = try MapViewerApplet(restoring: applet.describe())
+
+    XCTAssertEqual(reopened.record.region, saved)
+  }
+
+  /// Catches a refused region that is saved anyway.
+  func testARefusedSetRegionIsNotSaved() {
+    let (applet, _, _) = pane()
+
+    let off: [String: JSONValue] = [
+      "center": .object(["latitude": .number(89), "longitude": .number(10)]),
+      "span": .object(["latitude-delta": .number(10), "longitude-delta": .number(10)]),
+    ]
+
+    XCTAssertEqual(send("set-region", off, to: applet).code, .badArgument)
     XCTAssertNil(applet.record.region)
   }
 

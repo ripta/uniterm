@@ -2,6 +2,7 @@ import AppletKit
 import BrowserModel
 import Foundation
 import PaneModel
+import Preferences
 import ScriptHost
 import ScriptWire
 
@@ -264,18 +265,18 @@ struct LayoutRequest: Equatable {
       return pane
     }
 
-    /// A browser pane's first page. It meets the rule for a typed address: only http and https
-    /// load, a scheme-less host gets HTTPS, and loopback gets HTTP. A seed is an address, not
-    /// typed text, so a search and an app handoff are refused.
-    private func seed(_ value: JSONValue, at path: String) throws(ScriptCallError) -> URL {
+    /// A browser pane's first page, as the user's typed address. Search text searches, and an app
+    /// address asks. The text rides on as typed, and the pane resolves it. What the typed-address
+    /// path would refuse is refused here, before any pane is made.
+    private func seed(_ value: JSONValue, at path: String) throws(ScriptCallError) -> String {
       guard case .string(let text) = value, text.utf8.count <= LayoutRequest.maxURLBytes else {
         throw .badArgument(
           "\(path)'s url must be text of at most \(LayoutRequest.maxURLBytes) bytes")
       }
 
       switch AddressPolicy.resolve(text) {
-      case .load(let url, _):
-        return url
+      case .load, .handoff:
+        return text
 
       case .refused(let refusal):
         throw .badArgument("\(path)'s url: \(refusal.message(for: text))")
@@ -283,8 +284,14 @@ struct LayoutRequest: Equatable {
       case .empty:
         throw .badArgument("\(path)'s url is empty")
 
-      case .search, .handoff:
-        throw .badArgument("\(path)'s url: \(SchemeRefusal.notAnAddress.message(for: text))")
+      case .search(let query):
+        // The engine is the user's setting at the time the pane starts. The text must search
+        // under every engine, so no setting can turn an accepted seed into a refusal.
+        guard SearchEngine.allCases.allSatisfy({ $0.searchURL(for: query) != nil }) else {
+          throw .badArgument("\(path)'s url: \(SchemeRefusal.notAnAddress.message(for: text))")
+        }
+
+        return text
       }
     }
 

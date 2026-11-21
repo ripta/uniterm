@@ -565,22 +565,18 @@ final class LayoutSeedParseTests: XCTestCase {
     try LayoutRequest.parse(node, window: 1, declarations: declarations)
   }
 
-  /// Catches a seed that is read with another rule than a controller's open command, so the two
-  /// disagree about what loads. A scheme-less host gets HTTPS and loopback gets HTTP.
-  func testASeedReadsUnderTheControllerRule() throws {
-    let cases: [(text: String, url: String)] = [
-      ("https://example.com/a", "https://example.com/a"),
-      ("  HTTP://Example.com/b  ", "HTTP://Example.com/b"),
-      ("example.com/c", "https://example.com/c"),
-      ("localhost:8080/d", "http://localhost:8080/d"),
-    ]
-
-    for (text, expected) in cases {
+  /// Catches a seed that is resolved at parse time, which would hand the pane a URL where the
+  /// user's typed-address path needs the text. The seed rides as typed, and the pane resolves it.
+  func testASeedCarriesTheTypedTextAsItIs() throws {
+    for text in [
+      "https://example.com/a", "  HTTP://Example.com/b  ", "example.com/c", "localhost:8080/d",
+      "swift concurrency", "ssh://host.example", "mailto:someone@example.com",
+    ] {
       let request = try parse(#"{"open":"browser","url":"\#(text)"}"#)
       let pane = try XCTUnwrap(request.panes.first)
 
       XCTAssertTrue(request.needsBrowserNavigation, text)
-      XCTAssertEqual(pane.choice, .browserPage(try XCTUnwrap(URL(string: expected))), text)
+      XCTAssertEqual(pane.choice, .browserPage(text), text)
     }
 
     let plain = try parse(#"{"open":"browser"}"#)
@@ -589,15 +585,15 @@ final class LayoutSeedParseTests: XCTestCase {
     XCTAssertEqual(plain.panes.first?.choice, .browser)
   }
 
-  /// Catches a seed that reads a refused address, text that is not an address, a url on another
-  /// kind of pane, or a url that is not text.
+  /// Catches a seed with a scheme no source may load, an empty seed, a url on another kind of
+  /// pane, or a url that is not text, any of which would make a pane before the refusal.
   func testASeedThatTheRuleRefusesIsABadArgument() {
     for node in [
       #"{"open":"browser","url":"javascript:alert(1)"}"#,
       #"{"open":"browser","url":" JAVASCRIPT:alert(1) "}"#, #"{"open":"browser","url":"data:x"}"#,
-      #"{"open":"browser","url":"file:///etc/hosts"}"#,
-      #"{"open":"browser","url":"two words"}"#, #"{"open":"browser","url":""}"#,
-      #"{"open":"browser","url":3}"#, #"{"open":"terminal","url":"https://example.com"}"#,
+      #"{"open":"browser","url":"file:///etc/hosts"}"#, #"{"open":"browser","url":""}"#,
+      #"{"open":"browser","url":"   "}"#, #"{"open":"browser","url":3}"#,
+      #"{"open":"terminal","url":"https://example.com"}"#,
     ] {
       XCTAssertThrowsError(try parse(node), node) { error in
         XCTAssertEqual((error as? ScriptCallError)?.kind, .badArgument, node)

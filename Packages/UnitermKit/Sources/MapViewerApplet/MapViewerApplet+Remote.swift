@@ -175,6 +175,7 @@ extension MapViewerApplet: AppletCommandHandling {
     }
 
     content.show(region: region)
+    regionSettled(region)
 
     return .object([:])
   }
