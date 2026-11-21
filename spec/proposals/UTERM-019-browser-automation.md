@@ -174,7 +174,8 @@ Decision: synthesized input behaves as the user's input does. Amended 2026-11-21
   path. Amended 2026-11-21; see Decision Log.
 - uniterm builds AppKit events and delivers them to that tab's web view directly.
 - Synthesized keys go only to the web view. They never reach window keys or the app menu, per ADR-04. A menu command
-  acts on the focused pane, outside the controller's tabs, so this is an authority rule under ADR-14.
+  acts on the focused pane, outside the controller's tabs. This is ADR-15's carve-out for authority: ADR-14 confines a
+  controller to what it opened, and a window key would reach past that.
 - Trusted input carries user activation. A page can then open pop-ups, write the clipboard, enter fullscreen, and play
   sound, as if the user had clicked. Browser input's review text says so. Amended 2026-11-11; see Decision Log.
 
@@ -601,6 +602,10 @@ which survives a reload and runs on the user's later visits. Raised by the coher
 Decision: at run end or revocation, each scripted tab is rebuilt instead of reloaded. A post-result page is rebuilt
 unless the user's real input reached that tab during the run. Service worker registrations that are new since the run
 started, for scripted sites, are removed. (autonomous, addition)
+
+The rebuild is uniterm's own work when a run's permission ends. ADR-15 says such work is not the program's operation,
+so it follows its own rules rather than a user action's: it never resends a form and answers its questions no. It
+still treats unsent input the same from either source, as ADR-15 asks of anything the program left.
 
 - A rebuild drops the web view and builds a fresh one that restores the tab's history and loads the current entry
   anew, as recovery from a content process loss already does. Every live and cached document the run scripted is
@@ -1070,6 +1075,9 @@ Starts after UTERM-005 M8.
   only into a focused tab. The risk is resolved by that rule and narrowed to a focus move that fails. M6's first check,
   which sent keyboard input back to design on failure, is dropped, and M6 gains the focus-first check. Synthesized keys
   still never reach window keys or the app menu, which is authority.
+- 2026-11-21: "Trusted input" and "Reach of the run-end cleanup" now cite ADR-15 for their carve-outs. Window keys
+  stay out of reach as authority. The run-end rebuild is uniterm's own work when a permission ends. Neither rule
+  changes meaning.
 
 ## References
 
@@ -1083,3 +1091,6 @@ Starts after UTERM-005 M8.
   own permission
 - [ADR-11](../adr/ADR-11-deferred-applet-replies-never-hide-effects.md): a deferred applet reply never hides an
   effect
+- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): a controller controls what it opened
+- [ADR-15](../adr/ADR-15-a-programs-operation-is-the-users.md): a program's operation is the user's; authority and
+  uniterm's own run-end work are its carve-outs
