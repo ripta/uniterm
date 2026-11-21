@@ -90,6 +90,11 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UNITERM_CONTROLLER_POLICY_DIR"] = scratch + "-controller-policy"
     app.launchEnvironment["SHELL"] = "/bin/zsh"
     app.launchEnvironment["ZDOTDIR"] = scratch + "-shell"
+
+    // XCUITest types one key at a time, so a typed scratch path of about 150 characters took 5 s on
+    // CI. The shell inherits this name for the scratch prefix, and `runInTerminal` types it instead.
+    // It rides in the environment, not `.zshrc`, because tests write their own `.zshrc`.
+    app.launchEnvironment["UT_SCRATCH"] = scratch
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""
     app.launchEnvironment["UNITERM_PLACE_NAMES"] = "off"
     app.launch()
@@ -148,9 +153,14 @@ class UnitermUITestCase: XCTestCase {
   /// The test instance's well-known socket, in the folder the app listens in.
   var testSocket: String { scriptDirectory + "/uniterm.sock" }
 
-  /// Types the path of a shell script into the terminal and runs it.
+  /// Types the path of a shell script into the terminal and runs it. A script under `scratch` is
+  /// typed through the shell's `UT_SCRATCH` name, which expands to the same full path.
   func runInTerminal(_ script: String, in app: XCUIApplication) {
-    app.typeText("sh \(script)\n")
+    if script.hasPrefix(scratch) {
+      app.typeText("sh ${UT_SCRATCH}\(script.dropFirst(scratch.count))\n")
+    } else {
+      app.typeText("sh \(script)\n")
+    }
   }
 
   func write(_ text: String, to path: String) throws {
