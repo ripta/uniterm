@@ -227,8 +227,9 @@ Leading choices from the user on 2026-11-21, not yet settled:
   red recolor collapses into the live marker, and gray nearly matches it in grayscale. A slash through the gears, or a
   warning triangle beside them, differs by shape and survives every simulation. The user chose the slash: the marker
   itself changes, rather than a second mark beside it that changes its meaning. No slashed gear exists as an SF
-  Symbol, so the slash is drawn over the filled gears, with a gap in the tab's background color so it stays legible at
-  12 points. Its accessibility label differs from the live marker's.
+  Symbol, so the slash is drawn in code over the filled gears. The user chose drawing it over a custom symbol template.
+  Its accessibility label differs from the live marker's. The risk "A drawn slash looks off" records what the user
+  accepted.
 - The controlling tab or pane, if "Marking the pane doing the controlling" is kept: `cpu`, with `arcade.stick` as the
   backup.
 
@@ -284,6 +285,12 @@ tests change with it.
   an action, UTERM-019's rebuild marker cannot use it. Mitigation: the "Interactive markers" question.
 - **A title imitates a marker** — likelihood: low, impact: medium. A page can set a title that looks like a marker,
   and the user reads authority that is not there. Mitigation: the look constraint in "The authority marker's look".
+- **A drawn slash looks off** — likelihood: medium, impact: low. The slash is drawn in code over `gearshape.2.fill`.
+  A gap painted in the tab's background color shows as a halo when the background differs, such as a selected tab or
+  the other theme. A slash that does not match the thickness, gap, and top-left to bottom-right direction of Apple's
+  own slashed symbols looks foreign beside them. A macOS release that redraws the gears can leave the slash out of
+  register. Accepted by the user on 2026-11-21. A custom symbol template made in the SF Symbols app avoids all three,
+  if the slash later needs it.
 
 ## Milestones
 
@@ -343,6 +350,8 @@ M1 is blocked on the open questions above.
   badge remains.
 - 2026-11-21: The user chose a slash drawn through the filled gears for UTERM-019's run-end marker, over a warning
   badge, since a badge adds a second mark that changes another marker's meaning. Still to be confirmed in review.
+- 2026-11-21: The user kept the slash drawn in code over a custom symbol template, and accepted its three risks:
+  a halo on a mismatched background, a mismatch with Apple's slash style, and drift when macOS redraws the gears.
 
 ## References
 
