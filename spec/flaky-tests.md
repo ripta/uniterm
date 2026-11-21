@@ -58,22 +58,31 @@ fixed ones.
 - Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
 - Seen again: 2026-11-20, once, in a run of `MapViewerUITests` alone with 10 tests. The go-to field check at
-  `UnitermUITestCase.swift:379` failed. The field held another test's `uniterm-map-<UUID>/places.geojson`, not this
-  test's. The same class order then passed 10 of 10, and the test passed 3 of 3 alone.
-- Suspected cause of this sighting: the go-to field's autocomplete picked a sibling temp folder with the same
-  `uniterm-map-` prefix. A paste replaced typing in "Wait for the app to be frontmost before UI tests type, and paste
-  open-panel paths", so the field may still complete a pasted path. The class gained a test that plants another map
-  folder in that run, which adds siblings.
+  `UnitermUITestCase.swift:379` failed. The field held the path of the test that ran just before,
+  `testARestoredFileLoadsAndClearingItSticksOverARelaunch`, not this test's. The go-to sheet remembers its last
+  path, so the paste never landed. The same class order then passed 10 of 10, and the test passed 3 of 3 alone.
+- Suspected cause of this sighting: the paste's Cmd-V went nowhere, as Cmd-D did in the next test. Both fit a key
+  sent while the app or the sheet did not hold key focus. Autocomplete is not the cause, since the field held a whole
+  earlier path.
 
 ### `MapViewerUITests.testLauncherOpensAMapAndTheViewMenuSwitchesItsStyle`
 
-- Seen: 2026-11-20, once, in a run of `MapViewerUITests` alone with 10 tests. The same run hit the go-to field
-  failure above.
+- Seen: 2026-11-20, once, in a run of `MapViewerUITests` alone with 10 tests. It ran right after the go-to field
+  failure above, whose paste also never landed.
 - Evidence: `MapViewerUITests.swift:51` failed when the launcher did not appear within 5 s after Cmd-D. The same class
   order then passed 10 of 10, and the test passed 3 of 3 alone.
 - Suspected cause: Cmd-D sent before the app was frontmost, as in the fixed
   `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile` entry. `waitForTerminal` should
   prevent that, so the cause is unconfirmed.
+- Status: unresolved.
+
+### `LayoutUITests.testQuitAndRelaunchRestoreTheSplitLayoutAndTheShellDirectory`
+
+- Seen: 2026-11-20, once, in a full `make test-app` run of 175 tests.
+- Evidence: `UnitermUITestCase.swift:249` failed after 30 s with "No matches found for Elements matching predicate
+  'identifier BEGINSWITH "pane-"'". No pane showed after the relaunch. No uniterm crash report was written.
+  `LayoutUITests` then passed 21 of 21 alone, with each of its 7 tests run 3 times.
+- Suspected cause: unknown. The run that saw it changed only the map applet and map tests.
 - Status: unresolved.
 
 ### `TerminalLinkUITests` (both tests)

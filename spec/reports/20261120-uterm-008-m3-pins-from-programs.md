@@ -29,6 +29,8 @@ The run is done. Its commits, in order:
 3. "Mark UTERM-008 implemented now that its program pins are in"
 4. "Prove a click on the empty map reaches a map's driver"
 5. "Close the UTERM-008 M3 work-queue report"
+6. "Drive a map's program pins through reopen and relaunch in the real app", which also carries this report's last
+   amendments
 
 ## The user's choice in the plan
 
@@ -129,8 +131,9 @@ The reviewer found no plan-conformance gap. `adr-impact` found no conflict and n
 ADR-05, ADR-06, ADR-07, ADR-08, ADR-11, ADR-13, and ADR-14.
 
 1. A press on MapKit's zoom control or compass counted as a click on the empty map. PLAUSIBLE, traced, fixed. The
-   implementer confirmed by reasoning that macOS shows both controls by default as subviews of the map. The click test
-   now rejects any `NSControl` and the MapKit control classes by name. The new test was not run against the unfixed
+   implementer reasoned that macOS shows both controls by default. The final review's probe found their defaults off,
+   and the app turns none on, so only the attribution label shows today. The fix still guards the controls if they are
+   turned on. The click test now rejects any `NSControl` and the MapKit control classes by name. The new test was not run against the unfixed
    code, so it pins the fix. The diagnosis stays unresolved. A live MapKit legal link was not hit-tested.
 2. A restored selection flag could go stale when MapKit sent no select event, and it held a removed pin. PLAUSIBLE,
    traced, fixed. The flag is now weak and cleared on deselect. The new test was not run against the unfixed code, so it
@@ -151,8 +154,9 @@ applet's own decision.
 
 - `proposals.py freeze` reports a hunk in `spec/proposals/UTERM-004-control-and-trust.md` near line 1646. It adds an
   ADR-14 reference line. Its origin is `other`, so this run did not make it, and the run left it alone.
-- Left to the user's eye: the "From an earlier run" callout subtitle and status segment, the pin callout, and cluster
-  expansion in a live map. The UI test cannot select a pin, since MapKit pins are not accessibility elements.
+- Left to the user's eye: the "From an earlier run" callout subtitle, the pin callout, and cluster expansion in a live
+  map. The UI test cannot select a pin, since MapKit pins are not accessibility elements. The status segment was
+  checked later in the run. See "Final review".
 
 ### Bugs
 
@@ -223,7 +227,22 @@ entry.
 - The coordinator's UI run of `MapViewerUITests`, 10 tests, had 2 failures in tests this run did not change:
   `testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins` and `testLauncherOpensAMapAndTheViewMenuSwitchesItsStyle`.
   The same class order then passed 10 of 10. Each test then passed 3 of 3 alone. Both are logged as potential flakes in
-  `spec/flaky-tests.md`, with the evidence and the suspected causes. The first may be made more likely by the new test,
-  which plants another `uniterm-map-` temp folder. That stays unconfirmed. A passing rerun does not prove a fix.
+  `spec/flaky-tests.md`, with the evidence and the suspected causes. In the first, the go-to field held the previous
+  test's path, which the sheet remembers, so the paste never landed. In the second, Cmd-D never landed. Both fit a
+  key sent without key focus. The new tests plant no map folder, so they add no sibling path. A passing rerun does not
+  prove a fix.
+- A last check drove reopen and relaunch in the real app. It landed as "Drive a map's program pins through reopen and
+  relaunch in the real app". `testProgramPinsReturnOnReopenAndAreAnnouncedAfterARelaunch` closes a map whose driver
+  placed two pins, then reopens it. The coordinator viewed its captures. After the reopen, the two pins show as one
+  cluster of 2, with a "From an earlier run" status segment and a Run button. After a relaunch, the map shows no
+  pins. The history holds one info row: "1 program layer held pins last session. Restore does not run programs, so it
+  is not shown." The first capture also showed the planted terminal beside the map as "could not be restored". Its
+  fixture payload was empty. The fixture now plants a real terminal, and the test asserts that no such row appears.
+- `testAClickOnTheEmptyMapReachesTheDriver` now waits for the driver's first pin before it clicks. The map drops events
+  until the driver's hello is accepted. Its polling loop with real sleeps became an expectation.
+- `MapViewerUITests` passed 11 of 11 with the new test. The full `make test-app` then ran 175 tests with 1 failure,
+  `LayoutUITests.testQuitAndRelaunchRestoreTheSplitLayoutAndTheShellDirectory`: no pane showed after a relaunch.
+  `LayoutUITests` then passed 21 of 21 alone. This run touched no layout code. The failure is logged as a potential
+  flake in `spec/flaky-tests.md`.
 - The crash folder holds no uniterm report from the UI runs. A `DocumentDecoderHelper` report at 20:57 and
   `ImageDecoderHelper` reports came during package runs, as they did before this run began.
