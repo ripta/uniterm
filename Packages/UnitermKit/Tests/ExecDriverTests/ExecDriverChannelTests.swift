@@ -333,18 +333,30 @@ final class ExecDriverChannelTests: XCTestCase {
   }
 
   /// Emits up to `count` of the stall test's events to `channel` while it stays connected. Returns
-  /// the main thread's time per emit.
+  /// the main thread's median time per emit across chunks of 1,000.
+  ///
+  /// A median keeps one runner pause from counting. A pause lands in a single chunk, while a stall
+  /// that slows every emit moves every chunk.
   private func emitEvents(_ count: Int, to channel: ExecDriverChannel) -> TimeInterval {
-    let started = Date()
     let title = String(repeating: "t", count: 200)
-    var emitted = 0
+    var costs: [TimeInterval] = []
 
-    for _ in 0..<count where channel.isConnected {
-      applet.events.emit("slide-shown", .object(["index": .number(1), "title": .string(title)]))
-      emitted += 1
+    for _ in stride(from: 0, to: count, by: 1_000) where channel.isConnected {
+      let started = Date()
+      var emitted = 0
+
+      for _ in 0..<1_000 where channel.isConnected {
+        applet.events.emit("slide-shown", .object(["index": .number(1), "title": .string(title)]))
+        emitted += 1
+      }
+
+      if emitted > 0 {
+        costs.append(Date().timeIntervalSince(started) / Double(emitted))
+      }
     }
 
-    return Date().timeIntervalSince(started) / Double(max(emitted, 1))
+    let sorted = costs.sorted()
+    return sorted.isEmpty ? 0 : sorted[sorted.count / 2]
   }
 
   /// Catches events to a driver that never reads stdin blocking or slowing the main thread, or
@@ -353,9 +365,11 @@ final class ExecDriverChannelTests: XCTestCase {
   /// The stalled emits are measured per emit against emits to a driver that reads them, on the same
   /// machine in the same run. A loaded runner slows both, so only the stall itself can fail it.
   ///
-  /// The baseline's 10,000 events come to about 2.6 MB, under the 4 MiB retained bound. A reader
+  /// Both measured runs send 10,000 events, about 2.6 MB, under the 4 MiB retained bound. A reader
   /// that falls behind on a loaded runner therefore cannot get the healthy driver cut off. The
-  /// stall's 40,000 pass the bound, so the stalled channel fails partway.
+  /// stalled run is measured while its writes back up but before it fails, since an emit after
+  /// the failure returns at once and would hide a slow path. More events then pass the bound,
+  /// unmeasured, so the stalled channel fails.
   func testAStalledStdinFailsWithoutBlockingTheEmitter() async throws {
     let healthy = try start("drain")
 
@@ -371,11 +385,14 @@ final class ExecDriverChannelTests: XCTestCase {
 
     await waitUntil("the hellos finish") { channel.isConnected }
 
-    let stalled = emitEvents(40_000, to: channel)
+    let stalled = emitEvents(10_000, to: channel)
 
+    XCTAssertTrue(channel.isConnected, "the stalled driver failed before its writes were measured")
     XCTAssertLessThan(
       stalled, 2 * baseline,
       "an emit to a stalled driver took \(stalled) s, against \(baseline) s to a reading one")
+
+    _ = emitEvents(30_000, to: channel)
 
     func failure() -> String? {
       for end in ended {
