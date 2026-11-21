@@ -204,9 +204,11 @@ its own marker. Candidates:
 
 - A cursor with rays, small and tinted peach, in the marker slot. The leading choice.
 - A key, for "a grant reaches this tab".
-- A robot head, a game controller, a joystick, or a steering wheel, for "a program" or "control". The game
-  controller, joystick (`arcade.stick`), and steering wheel are SF Symbols. No robot symbol exists, so a robot head
-  would ship as a custom glyph.
+- A game controller, a joystick (`arcade.stick`), or a steering wheel, for "control". All are SF Symbols.
+- A vehicle or robot for "driven by a program": `car.top.radiowaves.rear` (a car under remote signal), `drone`, or
+  `robotic.vacuum`, the only robot SF Symbol. A plain robot head has no SF Symbol and would ship as a custom glyph.
+  Each was confirmed on macOS 26.6.2. The app's minimum is macOS 26.0, so M1 checks that the chosen symbol resolves
+  there.
 - The badge's own antenna glyph, small and tinted peach, leading the tab's title.
 - A small peach dot leading the tab's title.
 - A peach underline or edge on the tab.
