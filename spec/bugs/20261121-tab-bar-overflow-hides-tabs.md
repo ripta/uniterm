@@ -22,7 +22,8 @@ tabs show, and the rest are cut off at the bar's edge.
 
 ## Fix
 
-Make every tab reachable in the bar. That needs a design call:
+UTERM-041 M1 takes this on: the shared tab bar scrolls by trackpad and shift-scroll, with no scroll control, and keeps
+the selected tab in view. The user chose that at UTERM-041's review gate on 2026-11-21. The options it weighed:
 
 - Scroll the bar, and scroll the selected tab into view.
 - Add an overflow control at the trailing end that lists the tabs past the edge.
