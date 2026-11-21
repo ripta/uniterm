@@ -1,6 +1,6 @@
 # UTERM-039: A Controller's Browser Tabs Are Not Capped
 
-**Status:** accepted
+**Status:** draft
 **Created:** 2026-11-21
 **Updated:** 2026-11-21
 
@@ -97,6 +97,8 @@ is needed.
 - 2026-11-21: Filed after the user ruled that a controller's browser tabs have no cap. The 16-tab cap came from a
   work-queue addition in UTERM-005 M8 that the user never ruled on. The user chose a superseding proposal so
   UTERM-005's and UTERM-037's frozen text keeps a record of the cap.
+- 2026-11-21: Returned to draft. It was filed as accepted without critique or proposal review. It goes through
+  both before it is accepted.
 
 ## References
 
