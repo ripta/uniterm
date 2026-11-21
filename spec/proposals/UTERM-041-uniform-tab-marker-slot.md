@@ -178,11 +178,29 @@ question is whether to write that rule down. Candidates:
 - A contract that one published tab means no bar, which is today's behavior.
 - The applet reports bar visibility to the host.
 
+### Marking the pane doing the controlling
+
+Today the pane a controller acts from, such as the terminal running `uniterm run`, shows the same antenna badge as a
+controlled pane. `PaneControlMark.controllers` holds "each controller with authority over the pane, the ones acting
+from it included" (`WindowKit/PaneFrameView.swift`). Only the tooltip and menu text differ, with a "Controller:" line.
+The icon does not say whether a pane drives others or is driven. The user asked whether the controlling pane gets a
+marker, and which. This is an addition: it widens what the proposal marks. Candidates:
+
+- No addition. The badge's text stays the only sign of a controlling pane.
+- A controlling marker in the same slot, on the tab the controller runs in. Two pairings from the user's preferred
+  glyphs: a steering wheel for the controlling pane and a robot for controlled tabs, or a game controller for the
+  controlling pane and a robot for controlled tabs.
+
+Fact to check first: a script's grant binds to its source pane. Whether the app knows which tab of that pane runs the
+controller is unverified.
+
 ### The authority marker's look
 
 The glyph, color, and size of the marker in a tab and beside the badge. A mockup shows candidates:
 https://claude.ai/artifact/MNi6hZgjP6eBsqDc3rFVaP. The user's leading choice, not yet settled, is a cursor with
-rays, the SF Symbol `cursorarrow.rays`, which reads as "a program can act here". Candidates:
+rays, the SF Symbol `cursorarrow.rays`, which reads as "a program can act here". The user also likes the robot, the
+game controller, and the steering wheel, and the robot reads well for a controlled tab if the controlling pane gets
+its own marker. Candidates:
 
 - A cursor with rays, small and tinted peach, in the marker slot. The leading choice.
 - A key, for "a grant reaches this tab".
@@ -296,6 +314,8 @@ M1 is blocked on the open questions above.
 - 2026-11-21: Final re-check fixes, not re-checked: the host-computed candidate now names the host-to-applet call it
   needs, and the joystick is corrected to an SF Symbol. The critique loop ran three passes. What remains is open
   questions for `/proposal-reviewer`. (autonomous)
+- 2026-11-21: Added "Marking the pane doing the controlling" at the user's question, labeled an addition. The user
+  likes the robot, the game controller, and the steering wheel for the look.
 
 ## References
 
