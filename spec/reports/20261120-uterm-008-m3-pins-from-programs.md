@@ -244,5 +244,10 @@ entry.
   `LayoutUITests.testQuitAndRelaunchRestoreTheSplitLayoutAndTheShellDirectory`: no pane showed after a relaunch.
   `LayoutUITests` then passed 21 of 21 alone. This run touched no layout code. The failure is logged as a potential
   flake in `spec/flaky-tests.md`.
+- After the run, at the user's request, the three failures were rerun in their original order:
+  - `MapViewerUITests` ran 5 more times as a whole class. All 5 passed, so neither map failure came back.
+  - `LaunchServicesOpenUITests`, `LauncherUITests`, and `LayoutUITests` ran together 5 times. The layout test passed
+    in all 5. One run failed `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`, a known flake
+    already in the log. Its sighting was added there.
 - The crash folder holds no uniterm report from the UI runs. A `DocumentDecoderHelper` report at 20:57 and
   `ImageDecoderHelper` reports came during package runs, as they did before this run began.
