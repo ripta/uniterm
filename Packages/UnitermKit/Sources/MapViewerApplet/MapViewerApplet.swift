@@ -31,6 +31,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   public private(set) var title = MapViewerApplet.untitled
   public private(set) var segments: [AppletSegment] = []
   public private(set) var publishedTabs: AppletTabList
+  public let openPicker: OpenPicker
 
   private static let untitled = "Map"
   private static let limits = GeoJSONLimits()
@@ -150,7 +151,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   ///
   /// `places` names the map's center for the palette and backs Go to Place. A pane given none asks
   /// no one, shows no name, and offers no search.
-  public init(startDirectory: String?, region: GeoRegion? = nil, places: PlaceServices = .none) {
+  public init(
+    startDirectory: String?, region: GeoRegion? = nil, places: PlaceServices = .none,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) {
+    openPicker = picker
     self.places = PlaceNamer(lookup: places.names)
     services = places
     record = MapViewerDescription(startDirectory: startDirectory)
@@ -168,7 +173,11 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   /// Restores a pane from its description. The region and style come back with no work on the
   /// disk or the network. A description this build cannot read is refused.
-  public init(restoring description: AppletDescription, places: PlaceServices = .none) throws {
+  public init(
+    restoring description: AppletDescription, places: PlaceServices = .none,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) throws {
+    openPicker = picker
     self.places = PlaceNamer(lookup: places.names)
     services = places
     record = try MapViewerDescription.decode(description)
@@ -200,9 +209,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
   /// opens `file`.
   public static func opening(
-    _ file: URL, startDirectory: String, places: PlaceServices = .none
+    _ file: URL, startDirectory: String, places: PlaceServices = .none,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
   ) -> MapViewerApplet {
-    let applet = MapViewerApplet(startDirectory: startDirectory, places: places)
+    let applet = MapViewerApplet(startDirectory: startDirectory, places: places, picker: picker)
     applet.replaceSource(with: file, startDirectory: startDirectory)
 
     return applet

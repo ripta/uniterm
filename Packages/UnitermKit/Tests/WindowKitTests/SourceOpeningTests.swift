@@ -10,6 +10,9 @@ extension FakeApplet: SourceReplacing {
 
     replacedSources.append((file, startDirectory))
   }
+
+  // The tests hand `SourceOpening.open` a scripted picker of their own.
+  var openPicker: OpenPicker { { _, _ in [] } }
 }
 
 private struct Unreadable: LocalizedError {

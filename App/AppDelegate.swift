@@ -121,6 +121,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return try TerminalConfigStore.defaultDirectory()
   }
 
+  /// The open panel that viewers and File > Open ask through.
+  ///
+  /// UI tests set `UNITERM_OPEN_PANEL_ANSWER` to a file that holds the answer, so a test that is
+  /// about what uniterm does with a chosen file never drives the system's panel. That panel runs in
+  /// another process, and each accessibility query of it takes seconds. Only debug builds honor it.
+  private func openPicker() -> OpenPicker {
+    #if DEBUG
+      if let path = debugEnvironment["UNITERM_OPEN_PANEL_ANSWER"] {
+        return OpenPanelTestHook(answerFile: URL(fileURLWithPath: path)).pick
+      }
+    #endif
+
+    return SystemOpenPanel.pick
+  }
+
   /// UI tests set `UNITERM_LAYOUT_DIR` so the saved layout stays out of the developer's Application
   /// Support folder. Only debug builds honor it, for the same reason as the terminal folder.
   private func layoutDirectory() throws -> URL {
@@ -388,6 +403,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       ProcessInfo.processInfo.environment["UNITERM_PLACE_NAMES"] == "off"
       ? PlaceServices(search: PlaceServices.apple.search) : PlaceServices.apple
 
+    // Every viewer pane and File > Open ask through this panel. A debug build lets a UI test answer
+    // it without showing the system's panel.
+    let picker = openPicker()
+
     // Every browser pane, new or restored, gets these. The engine is read at each search, so a
     // change in Settings applies to the next search in every open pane.
     let browserServices = BrowserServices.live(
@@ -419,17 +438,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try TerminalApplet(engine: engine, restoring: description)
 
       case DataViewerDescription.typeID:
-        return try DataViewerApplet(restoring: description)
+        return try DataViewerApplet(restoring: description, picker: picker)
 
       case MapViewerDescription.typeID:
         return try MapViewerApplet(
-          restoring: description, places: places)
+          restoring: description, places: places, picker: picker)
 
       case ImageViewerDescription.typeID:
-        return try ImageViewerApplet(restoring: description)
+        return try ImageViewerApplet(restoring: description, picker: picker)
 
       case TextViewerDescription.typeID:
-        return try TextViewerApplet(restoring: description)
+        return try TextViewerApplet(restoring: description, picker: picker)
 
       case BrowserApplet.descriptionTypeID:
         return try BrowserApplet(
@@ -458,11 +477,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return try TerminalApplet(engine: engine, program: command, workingDirectory: directory)
 
       case .dataViewer:
-        return DataViewerApplet(startDirectory: directory)
+        return DataViewerApplet(startDirectory: directory, picker: picker)
 
       case .mapViewer(let region):
         return MapViewerApplet(
-          startDirectory: directory, region: region, places: places)
+          startDirectory: directory, region: region, places: places, picker: picker)
 
       case .browser:
         return BrowserApplet(dataStore: websiteData.store, services: browserServices)
@@ -472,10 +491,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           dataStore: websiteData.store, services: browserServices, seed: text)
 
       case .imageViewer:
-        return ImageViewerApplet(startDirectory: directory)
+        return ImageViewerApplet(startDirectory: directory, picker: picker)
 
       case .textViewer:
-        return TextViewerApplet(startDirectory: directory)
+        return TextViewerApplet(startDirectory: directory, picker: picker)
 
       case .repl:
         return ReplApplet(engine: engine, services: replServices)
@@ -525,17 +544,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try makeApplet(.terminalShell, startDirectory)
       },
       DataViewerDescription.typeID: { file, startDirectory in
-        try DataViewerApplet.opening(file, startDirectory: startDirectory)
+        try DataViewerApplet.opening(file, startDirectory: startDirectory, picker: picker)
       },
       MapViewerDescription.typeID: { file, startDirectory in
         MapViewerApplet.opening(
-          file, startDirectory: startDirectory, places: places)
+          file, startDirectory: startDirectory, places: places, picker: picker)
       },
       ImageViewerDescription.typeID: { file, startDirectory in
-        try ImageViewerApplet.opening(file, startDirectory: startDirectory)
+        try ImageViewerApplet.opening(file, startDirectory: startDirectory, picker: picker)
       },
       TextViewerDescription.typeID: { file, startDirectory in
-        try TextViewerApplet.opening(file, startDirectory: startDirectory)
+        try TextViewerApplet.opening(file, startDirectory: startDirectory, picker: picker)
       },
     ]
 
@@ -545,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     if let routedOpener {
       windows.routedOpener = routedOpener
-      fileOpens = FileOpenCommands(opener: routedOpener)
+      fileOpens = FileOpenCommands(opener: routedOpener, picker: picker)
 
       let coordinator = LaunchOpenCoordinator(
         windows: windows, opener: routedOpener,

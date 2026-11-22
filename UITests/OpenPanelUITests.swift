@@ -14,7 +14,7 @@ final class OpenPanelUITests: UnitermUITestCase {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
 
-    let app = launchApp()
+    let app = launchApp(realOpenPanel: true)
     let window = mainWindow(in: app)
     _ = waitForTerminal(in: app)
 
