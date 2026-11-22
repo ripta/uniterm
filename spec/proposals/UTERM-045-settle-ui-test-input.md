@@ -114,8 +114,13 @@ known, and no logged flake shows it. Candidates: settle clicks too, or leave cli
 
 - The `spec/flaky-tests.md` Rule section states the closing rule above, in place of moving an entry to Fixed on a fix
   commit alone
-- The launcher change has run clean in CI `app` runs to the count the closing rule sets. A clean run is one in which
-  the launcher test did not fail. M2 does not start before that count
+- The launcher change has run clean in consecutive CI `app` runs, as built, to the count the closing rule sets. The rate
+  that sets the count is the launcher entry's latest, 5 of 10 runs on 2026-11-21, so 6 runs. A clean run is one in
+  which the launcher test did not fail. A wheel failure, or a change to the aim, restarts the count. M2 does not start
+  before the count is met
+- A launcher-test failure before the wheels, such as no launcher after Cmd-Shift-D, is logged in its own entry and
+  does not restart the count
+- The launcher entry stays under Potential until the count is met, whichever version of `spec/flaky-tests.md` lands
 - A CI failure with the pointer inside the list sends the proposal to the user to retarget or retract
 - A CI failure in which the settle's own wait timed out, or the pointer left the list after the settle, is recorded in
   the launcher entry and reopens the aiming question
@@ -129,7 +134,7 @@ known, and no logged flake shows it. Candidates: settle clicks too, or leave cli
 - The settle reads the target's frame on each poll
 - Every call site the scope question names uses it, and no raw wheel remains among them
 - A settle that times out fails with its own message, distinct from the test's own assertion
-- CI `app` runs, not local runs, prove the change, to the closing rule's count
+- CI `app` runs, not local runs, prove the change, to the launcher entry's count from M1
 
 ## Decision Log
 
