@@ -102,7 +102,8 @@ Candidates:
   gated.
 - Every controller in every window.
 - The controllers of one window, or of one pane.
-- One controller. UTERM-042's "What revoking one controller ends" asks a like question.
+- One controller. UTERM-042 "What revoking one controller ends" settled the like question for a revoke: it ends that
+  controller's whole grant, in every window, as the badge's pane-wide revoke does for each controller it ends.
 - A pause as an authority refusal, checked at the effect gates that already exist: `requireAuthority` and
   `stillAllowed` in ScriptHost, `driverRefusal`, and a driver's command authority. Queued commands meet it at the
   dispatcher's delivery re-check (`ControlDispatcher.swift`, about line 314). ADR-15 says whether a program may act is
@@ -250,6 +251,10 @@ from that. A pause that survives would be new stored state.
   risk that the hook fires after focus moves and pages already reach the user's typing.
 - 2026-11-21: The critique loop converged in three passes. Its last pass routed two checks to M1: the UI test loads a
   page, and its synthesized-input half applies once UTERM-019 M6 has landed.
+- 2026-11-21: "What a pause covers" now cites UTERM-042's settled answer on revoking one controller, which it had
+  called an open question. UTERM-042 also renames the pane-wide revoke "Revoke All Controllers" and adds one revoke
+  item per controller to the badge. This proposal's Motivation still names "Revoke Controller", since it describes
+  today's command.
 
 ## References
 

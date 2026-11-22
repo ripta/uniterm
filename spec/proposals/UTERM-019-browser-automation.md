@@ -519,8 +519,9 @@ post. Amended 2026-11-21; see Decision Log. (autonomous)
   result page that counts as if the user had done it, per ADR-15.
 - A rebuild never resends a form and never asks. A post-result page is spared, whoever caused the post, per "Reach of
   the run-end cleanup".
-- A tab that is not rebuilt shows a marker saying a controller's code may still run in it. The marker offers a rebuild,
-  which goes through the existing unsent-input question. The marker follows the scripted history entry. A same-document
+- A tab that is not rebuilt shows a marker saying a controller's code may still run in it. The tab's right-click menu
+  offers a rebuild under the marker's meaning, and so does the palette, per UTERM-042. A click on the marker itself
+  does nothing. The rebuild goes through the existing unsent-input question. Amended 2026-11-21; see Decision Log. The marker follows the scripted history entry. A same-document
   navigation does not clear it, and going back to a cached scripted page shows it again.
 
 Rationale: a listener a run-script adds keeps running after the tab passes to the user. It can read what the user
@@ -614,7 +615,7 @@ post-result page count the same from either source.
   submitted counts as if the user had done it. A spared page keeps its marker until its scripted history entry is
   gone, as a tab spared for unsent input does. Nothing attributes input, so nothing can fail to.
 - The user accepted the cost. More tabs keep a page the controller scripted, behind the marker, instead of being
-  rebuilt. The page's code can run until the user takes the marker's rebuild offer or the history entry goes.
+  rebuilt. The page's code can run until the user chooses the tab's "Rebuild Tab" or the history entry goes.
 - At run start uniterm records which scripted-site data records already hold a service worker registration. At run
   end it removes registrations from sites that had none. A record covers a whole site, so a registration added on
   one host of a site that already had one survives. A registration the user's own tab added during the run is
@@ -741,7 +742,7 @@ None.
   output, and is recorded.
 - **More scripted tabs keep a marker instead of a rebuild** — likelihood: high, impact: low. Unsent input and
   post-result pages are spared from either source, so a form the controller submitted keeps its scripted page behind
-  the marker. Accepted by the user on 2026-11-21. The marker offers a rebuild. The earlier risk of unreliable input
+  the marker. Accepted by the user on 2026-11-21. The tab's menu offers a rebuild. The earlier risk of unreliable input
   attribution no longer applies, since nothing attributes input.
 - **Result chunks on the exec wire become a published contract** — likelihood: high, impact: low. External drivers will
   read the base64 field. Mitigation: it appears only in replies to commands this proposal adds, and it follows the
@@ -885,7 +886,8 @@ Starts after UTERM-005 M8.
 - The fresh web view has no controller injections and default page settings, and takes key focus back when the old
   one held it
 - The run-start worker record finishes before the run's first script runs
-- A tab that is not rebuilt shows the marker with a rebuild offer. A same-document navigation does not clear it, and
+- A tab that is not rebuilt shows the marker, and its tab menu offers "Rebuild Tab". A same-document navigation does
+  not clear it, and
   going back to a cached scripted page shows it again
 - A pop-up opened by a scripted document during the run is rebuilt or marked like the others
 - A relaunch and an undo run none of the controller's injected scripts
@@ -1092,6 +1094,10 @@ Starts after UTERM-005 M8.
   may be unreliable" risk with it. The same entry's earlier line that kept attribution for this case no longer holds.
   The user accepted the cost. More tabs keep a page the controller scripted, behind the marker, instead of being
   rebuilt.
+- 2026-11-21: Amended "What a run leaves in its tabs", its risk "More scripted tabs keep a marker instead of a
+  rebuild", and its M3 check, from UTERM-042's review. The user chose one mouse path for a tab's actions, the tab's
+  right-click menu, so a click on the run-end marker does nothing. The text said "The marker offers a rebuild". The
+  rebuild is now offered in the tab's menu under the marker's meaning, and as a palette command.
 
 ## References
 

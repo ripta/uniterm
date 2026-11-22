@@ -27,6 +27,8 @@
   nothing.
 - UTERM-043 — it names "Revoke Controller" and plans pause items in this proposal's menu and palette. "Palette
   commands: wording and target" renames the pane-wide item "Revoke All Controllers".
+- UTERM-024, UTERM-025, UTERM-028, and UTERM-039 — each names the pane-wide revoke in its decisions, risks, or
+  checks. Each now says "Revoke All Controllers", per "Palette commands: wording and target".
 
 ## Summary
 
