@@ -20,13 +20,16 @@ The browser test `BrowserHungProcessTests.testClosingASpinningTabEndsItsProcessW
 Its assertion at line 294 found no signal sent: `[] is not equal to [12101]`. The test already runs the bound by hand
 through `ManualHangTimer`. What it does not control is the sample. Before firing, it waits 0.3 s of real time in
 `letTimePass` (`BrowserHungProcessTests.swift:183`). `ClosedProcessWatch` then signals only when the page used at least
-`busyShare`, half a core, over that window (`Sources/BrowserApplet/WebContentProcess.swift:149,169`). On a loaded
-runner a spinning page can get less than half a core. The watch then rightly sends nothing, and the test fails. Six more
+`busyShare`, half a core, over that window (`Sources/BrowserApplet/WebContentProcess.swift:149,169`). The suspected
+cause, not confirmed: on a loaded runner a spinning page can get less than half a core. The watch then rightly sends
+nothing, and the test fails. Six more
 places in the same class use `letTimePass` (lines 289 to 510), and one test asserts each side of `busyShare` against
 live samples (lines 330 and 331).
 
-`ScriptFixtures.finish` (`Tests/ScriptHostTests/Support.swift:214`) has hung twice, logged in `spec/flaky-tests.md`.
-Each time it blocked in `waitUntilExit` after its helper had exited, and the 120 s hang guard aborted the run. Its
+`ScriptFixtures.finish` (`Tests/ScriptHostTests/Support.swift:214`) has hung three times, logged in
+`spec/flaky-tests.md`, and each time the 120 s hang guard aborted the run. Two of the samples show it blocked in
+`waitUntilExit`, and one of those shows the helper had already exited. The first sighting shows only a wait, with the
+listener idle. Its
 watchdog sends SIGTERM at 60 s and SIGKILL at 70 s, but only while `isRunning` reads true, so it cannot rescue an exit
 Foundation missed.
 
@@ -63,7 +66,10 @@ product, not the test harness.
 - **Make the live window load-independent.** `letTimePass` stops spinning on the main thread, and the test fires only
   once its own sample reads busy. Every test keeps live samples. Leaves undone: a runner loaded by other processes can
   still starve the page.
-- **Both.** Closed-tab tests supply their sample, and the one live-sample test waits until it reads busy.
+- **Both.** Closed-tab tests supply their sample, and the one live-sample test waits until it reads busy. Leaves undone:
+  the live-sample test can still be starved by outside load, as in the option above.
+
+Whichever option wins, `testClosingAnIdlePopUpSignalsNothing` keeps an idle sample, live or supplied.
 
 ### How the test waits for the process to end
 
@@ -75,11 +81,18 @@ product, not the test harness.
 
 ### How the fixture waits for its helper
 
-- **A termination handler.** Set `terminationHandler` before `run()`, and resume when it fires, after reading both pipes.
-- **`waitpid` on the child.** The helper is the test's child, so `waitpid` sees its exit directly.
+- **The fixture reaps its own helper.** `start` spawns the helper with `posix_spawn`, and one thread per helper waits on
+  it with `waitpid`. Signals go only before that reap, and a process id cannot be reused until its parent reaps it, so
+  the watchdog can never signal another process. `HelperHost`'s `HelperProcess` and the exec driver's transport already
+  work this way. Callers that use `onExit` move to the fixture's own exit report.
+- **A termination handler.** `finish` resumes when Foundation's `terminationHandler` fires, after reading both pipes.
+  `start` already sets one for `onExit` callers, so `finish` must chain to it. It relies on Foundation's exit report,
+  which is the mechanism the second sighting suggests missed an exit.
+- **`waitpid` beside `Process`.** Foundation also reaps the children it launches. With two reapers on one process id,
+  only one gets the status: the other gets `ECHILD`, or leaves `Process` with an undefined state that the watchdog's
+  `isRunning` gate then reads.
 
-Both replace `waitUntilExit`. The watchdog's `isRunning` gate needs the same review, since it can signal a process id
-that another process now holds.
+Each replaces `waitUntilExit`.
 
 ### How far the audit goes
 
@@ -102,19 +115,25 @@ that another process now holds.
 
 **Status:** NOT STARTED
 
-- `BrowserHungProcessTests` passes on a runner whose cores are all busy with other work
-- The live-sample test still fails when the reader reports a spinning page as idle
-- `spec/flaky-tests.md` lists the closed-tab test under Potential, with this change, until CI runs show it holds
+- The closed-tab tests pass on a runner whose cores are all busy with other work
+- The live-sample test still fails when the reader reports a spinning page as idle, and its behavior under outside load
+  is stated by the option chosen
+- `testClosingAnIdlePopUpSignalsNothing` still sees an idle page and signals nothing
+- Under the exit-event option, a process that exited before the event source was armed is still seen as gone
+- The closed-tab test's entry in `spec/flaky-tests.md` records the change and stays under Potential until CI runs show
+  it holds
 - Production's `busyShare`, bound, and time sources are unchanged
 
 ### M2: The script fixture's helper exit
 
 **Status:** NOT STARTED
 
-- `ScriptFixtures.finish` returns once its helper exits, without `waitUntilExit`
+- `ScriptFixtures.finish` returns once its helper exits, without `waitUntilExit`, including for a helper that exited
+  before `finish` was called
+- Callers that observe a helper's exit, as `onExit` callers do today, still see it
 - The watchdog never signals a process that has already exited
-- The `ScriptFixtures.finish` entries in `spec/flaky-tests.md` record the change and stay under Potential until CI runs
-  show it holds
+- The `ScriptFixtures.finish` entry in `spec/flaky-tests.md` records the change, says which of its sightings it
+  explains, and stays under Potential until CI runs show it holds
 
 ## Decision Log
 
