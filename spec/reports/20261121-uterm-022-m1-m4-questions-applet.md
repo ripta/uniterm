@@ -1,6 +1,6 @@
 # UTERM-022 M1-M4: Questions applet work-queue run
 
-Started 2026-11-21. This report covers a `/work-queue` run with no arguments, which means `next 1`. The run takes one
+Started and finished 2026-11-21. This report covers a `/work-queue` run with no arguments, which means `next 1`. The run takes one
 row, `UTERM-022 M1-M4`, from `spec/proposals/UTERM-022-questions-applet.md`. UTERM-022 lets a bash script or a Janet
 program ask the user a form and wait for the answers, in a Questions pane with uniterm-drawn requester chrome. The
 specs live in the code repo, so every commit below is in this repo, on the `agent/petunia` branch.
@@ -421,3 +421,42 @@ The user decides whether ADR-14 gets an amendment, or the proposal gets a deviat
 
 Checks: `make fmt-check`, `make lint`, `make check`, `make build`, `make test-helper-sandbox`, and the UI test build
 pass. `caffeinate -dimsu make test-package` ran 3197 tests with 0 failures and 10 existing skips.
+
+## Final review
+
+Commit: "Name no pane when a nested group refuses a layout". It carries the fixes and this report's last amendment.
+
+The final reviewer and `adr-impact` read the run's seven commits. The run adds and edits no ADR file. The re-pointing
+from ADR-09 to ADR-14 is sound. The proposal's end state is consistent:
+
+- M1 to M4 are DONE with As built blocks.
+- M5 is NOT STARTED and unscheduled.
+- The proposal stays `accepted`.
+- The row sits at the end of `history.md`.
+
+Findings and dispositions:
+
+- An owned-group refusal could still name the Questions pane when a nested group was the real cause (PLAUSIBLE). The
+  trace found the case unreachable through the public edits. The code now guarantees it anyway: a group holding a
+  nested group names no pane. A new test failed before the fix and passes now.
+- The proposal's References lacked ADR-05 and ADR-15. Fixed.
+- The ADR-14 tension stays with the user, as the row review recorded.
+
+The full `caffeinate -dimsu make test-app` ran once, before these fixes: 203 tests, 1 failure.
+`testAnErrorShowsOnLeavingTheFieldAndClearsAtOnce` could not find a hit point on the form's scroll view in suite order.
+It had passed three times when its class ran alone. The test now leaves the field with Tab, a real leave path, and keeps
+all three of its assertions. Then the coordinator reran `QuestionsUITests` and `QuestionsWireUITests`, and all 27
+passed. No crash report came from the UI runs. `caffeinate -dimsu make test-package` ran 3198 tests with 0 failures and
+10 existing skips.
+
+## Left for the user
+
+- M5, "The user's checks": look at the Questions pane in light and dark, and run a bash script and a Janet script that
+  ask forms in the running app. M5 has no queue row.
+- The ADR candidate on which callers pass a power that controls no pane without a prompt. It is logged as `Undecided`
+  in the proposal, and `adr-impact` rates it as PLAUSIBLE tension with ADR-14.
+- Two best guesses worth a look. Every connection that is not a declared or package run may ask without a prompt. A
+  Questions pane beside an owned-group member blocks the owner's layout until the pane closes.
+- A freeze hunk with origin `other`: UTERM-004's References gained an ADR-14 line from another session.
+- A working-tree edit the run did not make: `.cg.yaml`, which holds three rules with absolute scratchpad paths.
+- An ignored, untracked `.build-swiftpm` directory, left by M4's mistaken scratch path.

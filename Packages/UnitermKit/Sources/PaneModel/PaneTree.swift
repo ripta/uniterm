@@ -506,7 +506,9 @@ public struct PaneTree: Sendable, Equatable {
       let own = group.members.union([anchor])
 
       guard group.content.groups.isEmpty, Set(content).isSubset(of: own) else {
-        throw PaneLayoutError.unownedContent(Set(content).subtracting(own))
+        let unowned = group.content.groups.isEmpty ? Set(content).subtracting(own) : []
+
+        throw PaneLayoutError.unownedContent(unowned)
       }
 
       guard Set(placed) == Set(content) else {

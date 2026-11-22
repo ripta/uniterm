@@ -1075,6 +1075,9 @@ user's own runs below confirm what those covered.
 - [ADR-02](../adr/ADR-02-pane-tree-nodes-have-stable-ids.md): the asking pane is named by its stable ID
 - [ADR-03](../adr/ADR-03-restored-state-never-runs-a-program.md): forms are never restored
 - [ADR-04](../adr/ADR-04-uniterm-owns-key-bindings-and-terminal-config.md): form keys stay inside the applet's view
+- [ADR-05](../adr/ADR-05-applet-lifecycle-events-and-applet-responses.md): closing an open form needs no confirmation
 - [ADR-07](../adr/ADR-07-failure-isolation.md) and [ADR-08](../adr/ADR-08-ui-responsiveness.md): bounded validation
 - [ADR-11](../adr/ADR-11-deferred-applet-replies-never-hide-effects.md): the handle and the deferred wait
 - [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): the ask power and truthful requester chrome
+- [ADR-15](../adr/ADR-15-a-programs-operation-is-the-users.md): proposed. A form that opens beside its asker behaves
+  as the user's own open

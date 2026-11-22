@@ -184,6 +184,26 @@ final class PaneLayoutRequestTests: XCTestCase {
     XCTAssertEqual(tree, before)
   }
 
+  /// Catches a refusal that names unowned panes for a group that also holds a nested group. A
+  /// caller that blames one named pane would send the owner to close it, and the nested group
+  /// would still refuse. The set is empty whenever the content holds a nested group.
+  func testANestedGroupRefusalNamesNoPane() throws {
+    var tree = PaneTree(metrics: flat)
+    let first = try tree.layOut(
+      presentation(source: id(1)), anchoredAt: id(1), for: owner, slots: 2, in: wide)
+    let nested = try tree.split(first.created[0], axis: .column, in: wide, for: other)
+
+    let plan = PaneLayoutPlan.split(
+      axis: .row,
+      children: [id(1), first.created[0], first.created[1], nested.pane].map {
+        .init(plan: .existing($0), weight: 1)
+      })
+
+    XCTAssertEqual(
+      refusal({ _ = try tree.layOut(plan, anchoredAt: id(1), for: owner, slots: 0, in: wide) }),
+      .unownedContent([]))
+  }
+
   /// Catches a nested layout that merges into its parent group, takes the parent's members, or
   /// gives the parent's owner the new panes. Another controller acting from a member lays out
   /// beside it, and the member stays the parent's.

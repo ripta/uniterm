@@ -585,7 +585,9 @@ final class QuestionsUITests: UnitermUITestCase {
   // MARK: Validation
 
   /// Catches an error that shows while the user types, one that never shows on leaving the field,
-  /// and one that stays after the fix. The button stays disabled until the form passes.
+  /// and one that stays after the fix. The button stays disabled until the form passes. The user
+  /// leaves the field with Tab, since the form's own container offers no point a click is sure to
+  /// reach.
   func testAnErrorShowsOnLeavingTheFieldAndClearsAtOnce() throws {
     let app = launchQuestions()
     let request = try ask(branch)
@@ -602,7 +604,7 @@ final class QuestionsUITests: UnitermUITestCase {
     XCTAssertFalse(error.exists, "an error showed while the user typed")
     XCTAssertFalse(ok.isEnabled)
 
-    element("questions-form-title", in: app).click()
+    app.typeKey(.tab, modifierFlags: [])
 
     XCTAssertTrue(error.appears(timeout: 5), "leaving the field showed no error")
     XCTAssertEqual(error.value as? String, "Does not match the required format.")
