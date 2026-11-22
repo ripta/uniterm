@@ -38,6 +38,14 @@ final class QuestionsUITests: UnitermUITestCase {
     mainWindow(in: app).descendants(matching: .any)[identifier]
   }
 
+  /// Waits until the element named `identifier` holds the keyboard.
+  private func waitForFocus(on identifier: String, in app: XCUIApplication) -> Bool {
+    let focused = app.descendants(matching: .any)
+      .matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
+
+    return pollUntil(timeout: 5) { focused.exists && focused.identifier == identifier }
+  }
+
   /// Asks a form as a requester. Returns the name of the request, which finds its outcome.
   @discardableResult
   private func ask(
@@ -248,6 +256,10 @@ final class QuestionsUITests: UnitermUITestCase {
       """)
 
     XCTAssertTrue(element("question-name", in: app).appears(timeout: 10))
+
+    // The form takes the keyboard a moment after its fields appear. This test is about the answers,
+    // and `testANewFormTakesKeysAtOnce` owns how soon keys arrive.
+    XCTAssertTrue(waitForFocus(on: "question-name", in: app), "the form never took the keyboard")
 
     app.typeText("Ada")
     element("question-bio", in: app).click()
