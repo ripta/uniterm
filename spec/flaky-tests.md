@@ -327,8 +327,19 @@ fixed ones.
   touches the launcher. #83's rerun passed. So the scroll direction is not the whole cause.
 - Evidence: #83's CI step log shows both wheels sent to the launcher's only scroll view, 80 pt tall. Its screenshot
   before the wheels shows the list at its top, as expected. No screenshot was kept after them.
-- Status: unresolved. The failure now reports the scroller's value, the list's frame, and the last entry's frame before
-  the wheels and after each one. It also attaches a screenshot after each wheel that left the last entry out of view.
+- Seen again: 2026-11-22, in the first CI `app` run of #90, with the new report. The focused list's scroller read 0
+  before and after both wheels, and its frames never changed. The screenshot after the first wheel shows the middle
+  pane's launcher scrolled to its last entry, and the one before the wheels shows it at its top. The first wheel went
+  to the middle pane's list. In #83, two of seven snapshots show the focused list moved 84 pt, so a wheel can also
+  land partly on the right list.
+- Suspected cause: a wheel goes to whatever is under the pointer when it is delivered, and the pointer had not yet
+  reached the focused list. A wrong-pane lookup does not fit, since the same lookup gave the focused list's frame just
+  before and after the first wheel. A local run that left the pointer over the middle pane first still passed, so the
+  race does not show on this machine.
+- Tried: the pointer now goes to the focused list's center, and the test waits until it is inside the list before any
+  wheel. The report also gives the pointer's position. If it fails again with the pointer inside the list, this cause
+  is wrong.
+- Status: unresolved until CI runs show the change holds.
 
 ## Fixed
 

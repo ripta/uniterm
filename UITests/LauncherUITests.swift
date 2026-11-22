@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 /// Drives the in-pane launcher in the launched app. Each test proves a contract that only real key
@@ -201,6 +202,16 @@ final class LauncherUITests: UnitermUITestCase {
     let list = pane.scrollViews.firstMatch
     var wheels = ["before: \(scrollReport(list, last: last))"]
 
+    // A wheel goes to whatever is under the pointer when it is delivered. On CI the first wheel
+    // once scrolled the middle pane's list while the pointer was still on its way here. So the
+    // pointer settles on this list before any wheel. The scroll view itself has no hit point, so
+    // the pointer goes to its center.
+    list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).hover()
+
+    XCTAssertTrue(
+      waitForPointer(in: list),
+      "the pointer never reached the list. \(scrollReport(list, last: last))")
+
     list.scroll(byDeltaX: 0, deltaY: -1000)
 
     if !waitUntilHittable(last, timeout: 2) {
@@ -237,12 +248,35 @@ final class LauncherUITests: UnitermUITestCase {
 
   /// Where the list stands, for a wheel that seemed to move nothing. The scroller's value says
   /// whether the list moved at all, and the last entry's frame against the list's says whether it
-  /// moved without the entry turning hittable.
+  /// moved without the entry turning hittable. The pointer says which list a wheel went to.
   private func scrollReport(_ list: XCUIElement, last: XCUIElement) -> String {
     let scroller = list.scrollBars.firstMatch
     let position = scroller.exists ? "\(scroller.value ?? "none")" : "no scroller"
 
-    return "scroller \(position), list \(list.frame), last entry \(last.frame)"
+    return "scroller \(position), list \(list.frame), last entry \(last.frame), "
+      + "pointer \(pointerLocation())"
+  }
+
+  /// The pointer in the top-left screen coordinates that XCUI frames use. AppKit measures it from
+  /// the bottom left of the primary screen.
+  private func pointerLocation() -> CGPoint {
+    let location = NSEvent.mouseLocation
+    let height = NSScreen.screens.first?.frame.height ?? 0
+
+    return CGPoint(x: location.x, y: height - location.y)
+  }
+
+  private func waitForPointer(in element: XCUIElement, timeout: TimeInterval = 2) -> Bool {
+    let frame = element.frame
+    let deadline = Date().addingTimeInterval(timeout)
+
+    while Date() < deadline {
+      if frame.contains(pointerLocation()) { return true }
+
+      Thread.sleep(forTimeInterval: 0.05)
+    }
+
+    return false
   }
 
   private func attach(_ element: XCUIElement, named name: String) {
