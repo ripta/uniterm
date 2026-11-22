@@ -79,13 +79,17 @@ The checks need their own plain Xcode build and a SwiftPM build. Whichever job r
 
 The counts below assume the helper checks ride in an existing job. Their own job adds one slot.
 
-- **Two.** A run starts 4 macOS jobs and holds 3 once `ghostty-offline` ends. UI tests take about 17 minutes per shard
-  at today's size, plus each shard's build.
-- **Three.** A run starts 5 macOS jobs and holds 4 once `ghostty-offline` ends, so a second run at the same time often
-  queues. UI tests take about 11 minutes per shard, plus each shard's build. That is under the `package` floor, so a
-  third shard shortens a full run little, and mostly shortens a rerun.
+At #90's rate of about 10.4 s per test, the 203-test suite takes about 35 minutes on one runner. Each shard also pays its
+runner setup and its own test build, a few minutes.
 
-A fix PR next to a batch PR, as on 2026-11-21, is the common case for two runs at once. Pushes to `main` add a third.
+- **Two.** A run starts 4 macOS jobs and holds 3 once `ghostty-offline` ends. A shard runs about 17.6 minutes of tests,
+  so its job takes about 21 to 23 minutes. A one-shard rerun takes the same.
+- **Three.** A run starts 5 macOS jobs and holds 4 once `ghostty-offline` ends, so a second run at the same time often
+  queues. A shard runs about 11.7 minutes of tests, so its job takes about 15 to 17 minutes, at or just above the
+  15-minute `package` floor. That is about 6 minutes shorter than two shards, for a full run and for a rerun.
+
+A fix PR next to a batch PR, as on 2026-11-21, is the common case for two runs at once. A push to `main` adds a third,
+unless the tested-tree skip applies to it, which it does only when the merged PR's head held `main`'s previous commit.
 
 ### How CI selects a shard, and how a shard runs locally
 
@@ -157,6 +161,9 @@ A class that no shard runs would silently stop running in CI.
 - A failing shard leaves the other shards running to completion, and rerunning failed jobs reruns only the failed shard
 - Each failing shard uploads its results under its own name
 - A documentation-only change skips every shard, and so does an already-tested tree once that skip is on `main`
+- When the helper sandbox checks run in their own job, both skips cover that job, and `ci` requires its result
+- Under a run-time split, every shard lists the classes in the same order, a `make test-ci` case proves the split
+  covers every class once, and each shard logs its selection so a local rerun can copy it
 - The measured length of a full CI run, and of a one-shard rerun, are recorded in the As built block
 
 ## Decision Log
