@@ -354,6 +354,7 @@ None.
 - 2026-11-22: Review gate: kept all. The split by contiguous ranges of sorted class names, the matrix job, the helper
   sandbox checks in `package`, three shards, and the flaky-log fields for first-in-shard and selection all stand. No
   decision gets an ADR. Status set to accepted.
+- 2026-11-22: Scheduled as UTERM-044 M1 in queue.md.
 
 ## References
 

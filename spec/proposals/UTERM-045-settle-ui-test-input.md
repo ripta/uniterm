@@ -375,6 +375,7 @@ None.
   The carve-out for failures logged under another entry, the coordinate aim, and the additions stand. "Test code only"
   now reads "no product code changes", and the settle never waits on the outcome of the event it comes before. No
   decision gets an ADR. Status set to accepted.
+- 2026-11-22: Scheduled as UTERM-045 M1 and UTERM-045 M2 in queue.md.
 
 ## References
 

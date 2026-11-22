@@ -277,6 +277,7 @@ None.
   section, the rule UTERM-045 sets for every entry, instead of an unstated count of CI runs. (autonomous)
 - 2026-11-22: Review gate: kept all. Derived samples plus a units bracket stand, and the Summary keeps its reworded
   claim. No decision gets an ADR. Status set to accepted.
+- 2026-11-22: Scheduled as UTERM-046 M1-M2 in queue.md.
 
 ## References
 
