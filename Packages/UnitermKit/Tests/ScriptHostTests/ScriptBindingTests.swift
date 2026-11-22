@@ -243,6 +243,34 @@ final class ScriptBindingTests: XCTestCase {
     XCTAssertEqual(windows.calls.count, answered, "a call ran after the exec")
   }
 
+  /// Catches a revoked connection, bound by ancestry and still open, that the pane's badge keeps
+  /// listing. A grant ends with the revoke, but an ancestry binding lasts until the connection
+  /// closes, so only the revoked set can leave it out. What this cannot prove is the badge's own
+  /// redraw, which reads this same list.
+  func testARevokedAncestryBoundConnectionIsNotListedForItsPane() async throws {
+    let relay = try SocketRelay(path: host.instanceAddress)
+
+    defer { relay.stop() }
+
+    _ = try await relay.connected()
+
+    try await relay.send(ScriptHelperMessage.hello(version: ScriptProtocol.version).frame())
+    _ = try await relay.read()
+    try await relay.send(ScriptHelperMessage.begin(name: "relay").frame())
+    try await relay.send(ScriptHelperMessage.request(id: 1, call: .listWindows).frame())
+
+    guard case .reply(1, .ok) = try await relay.read() else {
+      return XCTFail("the bound relay's first call was not answered")
+    }
+
+    let pane = NodeID(rawValue: 1)
+    let id = try XCTUnwrap(host.controllers(actingFrom: 1, pane: pane).first)
+
+    host.revokeControllers([id])
+
+    XCTAssertTrue(host.controllers(actingFrom: 1, pane: pane).isEmpty)
+  }
+
   /// Catches a socket handed to a forked child while the process that connected still runs. The
   /// child's call, written on the inherited socket, is refused, and the connection's authority
   /// ends.

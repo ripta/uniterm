@@ -811,9 +811,11 @@ public final class ScriptHost {
   // MARK: Controllers
 
   /// The connections that act for a pane now: those whose grant names it, and those whose
-  /// ancestry leads to one of its session roots.
+  /// ancestry leads to one of its session roots. The ones the user revoked are left out, since
+  /// their calls are refused. An ancestry binding outlasts the revoke, so only the revoked set
+  /// tells the two apart.
   public func controllers(actingFrom window: UInt64, pane: NodeID) -> Set<UInt64> {
-    controllers { $0.window == window && $0.pane == pane }
+    controllers { $0.window == window && $0.pane == pane }.subtracting(revokedControllers)
   }
 
   /// The connections that act for any pane of a window now, leaving out the ones the user

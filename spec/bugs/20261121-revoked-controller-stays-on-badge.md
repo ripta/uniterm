@@ -1,7 +1,10 @@
 # A revoked controller that keeps its connection open stays listed on the badge
 
-**Status:** open
-**Validation:** not confirmed; found by reading the code during the UTERM-041 review, not reproduced in the app.
+**Status:** fixed 2026-11-22
+**Fixed:** 2026-11-22
+**Estimate:** small; no open design decisions. One file changes, `ScriptHost.swift`. The fix follows the neighbor
+`controllers(actingIn:)`. Its callers need no revoked connection: the badge, Revoke Controller, and
+`removeSessionRoot`, whose revoked connections already had their authority ended.
 **Found:** 2026-11-21, during the UTERM-041 review
 
 ## Observed
@@ -33,3 +36,13 @@ lists "Controller:" with the script's name.
 Subtract `revokedControllers` in `controllers(actingFrom:)`, as `controllers(actingIn:)` does. Check first whether any
 caller relies on seeing revoked connections there. UTERM-041 M2's chip follows the same check, so its "revoking removes
 the chip" check exercises this path.
+
+## Fix note
+
+Triage on 2026-11-22 confirmed the bug. `ScriptBindingTests.testARevokedAncestryBoundConnectionIsNotListedForItsPane`
+binds a relay by ancestry, keeps it open, and revokes it. On the unfixed code the pane still listed the connection.
+
+`controllers(actingFrom:pane:)` in `Packages/UnitermKit/Sources/ScriptHost/ScriptHost.swift` now subtracts the revoked
+set, as `controllers(actingIn:)` does. The badge and Revoke Controller both read that list through
+`MainWindowController.controllers(of:)`, so a revoked connection no longer counts for either. The redraw itself was not
+checked in the running app. The full package suite passes.
