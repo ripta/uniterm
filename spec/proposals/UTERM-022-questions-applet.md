@@ -1,6 +1,6 @@
 # UTERM-022: Questions Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-14
 **Updated:** 2026-11-21
 
@@ -828,7 +828,7 @@ Amended 2026-11-21; see Decision Log.
 
 ### M5: The user's checks
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 Amended 2026-11-21; see Decision Log.
 
@@ -839,6 +839,16 @@ user's own runs below confirm what those covered.
 - The user looks at the pane in light and dark mode and confirms the layout and the chrome's contrast with permission
   prompts
 - The user runs a bash script and a Janet script that ask forms in the running app and confirms the flow
+
+**As built:**
+
+- On 2026-11-21 the user ran both checks in the running app and confirmed them.
+  - The bash script used `uniterm ask` to ask a confirm, a text question with a pattern, a multiple choice, and a
+    cancelled text question.
+  - The Janet script was a declared file with `ask-user`. It used the helpers and the full spec, with a notice, a
+    choice with `other`, an integer, a multiline text, and the Deploy, Skip, and Cancel buttons.
+- The user looked at the pane in light and dark mode and confirmed the layout and the chrome's contrast with permission
+  prompts.
 
 ## Decision Log
 
@@ -1054,6 +1064,8 @@ user's own runs below confirm what those covered.
   passes without a prompt. `ask-user` passes for every connection that is not a declared or package run. Later powers
   would copy that tier. ADR-14 requires explicit grants for separate powers, but it does not say what a user's own
   session may do without one. Undecided.
+- 2026-11-21: The user ran M5's checks in the running app and confirmed them. M5 had no queue row, so its history row
+  records it after the fact. The proposal is implemented.
 - 2026-11-21 (autonomous, work-queue best guess): The row review moved the two checks that only the user can run out
   of M2 and M4 and into a new milestone, M5, since a check that only the user can run blocks `DONE`. M2 and M4 stay
   `DONE`, and M5 is `NOT STARTED`. M2's last check said "The user looks at the pane in light and dark mode and confirms

@@ -30,7 +30,7 @@ uncommitted.
 | UTERM-022 M2: Questions applet UI | DONE | "Show script-asked forms in a Questions pane" |
 | UTERM-022 M3: The ask power and the form calls | DONE | "Let scripts ask the user a form and wait for the answer" |
 | UTERM-022 M4: `uniterm ask` and Janet helpers | DONE | "Ask forms from bash with uniterm ask, and from Janet" |
-| UTERM-022 M5: The user's checks | NOT STARTED, not scheduled | split out by the row review |
+| UTERM-022 M5: The user's checks | DONE | "Close UTERM-022 now that the user ran its checks" |
 
 ## Commands that leave the sandbox
 
@@ -503,3 +503,13 @@ shows its badge, and both tabs and the header render.
 
 UI nit for the user: the arrival status line repeats the requester. It reads, for example, "Terminal session in Pane 2:
 Terminal session in Pane 2 is asking you a question."
+
+## M5: the user's checks
+
+On 2026-11-21 the user ran both checks in the running app and confirmed them:
+
+- a bash script with `uniterm ask` confirm, text with a pattern, multiple choice, and a cancel
+- a declared Janet script with the helpers and the full spec
+- the pane in light and dark mode
+
+M5 is DONE. It had no queue row, so `history.md` records it after the fact. UTERM-022 is `implemented`.
