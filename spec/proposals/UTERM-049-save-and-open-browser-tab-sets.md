@@ -193,8 +193,8 @@ an https page to a `blob:` page still saves the https page. The empty cases are 
 pop-up that opened straight on `blob:` or `data:`, a tab whose only page was over 32 KiB, and a tab an opened file
 filled with a refused URL.
 
-- **Skip the tab.** The file lists only tabs whose record has a storable URL. When the selected tab is skipped, the nearest kept tab before it
-  is selected, or the first.
+- **Skip the tab.** The file lists only tabs whose record has a storable URL. When the selected tab is skipped, the
+  nearest kept tab before it is selected, or the first.
 - **Write an empty entry.** The tab-set file keeps the tab count and position, and opening it back makes a blank tab.
   `text/uri-list` and bookmark HTML cannot carry an empty entry, so they skip it either way.
 
@@ -246,8 +246,11 @@ can already make Safari load a URL through macOS `open`. What is new is uniterm'
   This open does less than the user's, so it needs an ADR Deviations entry or an ADR-15 amendment.
 - **A program cannot open a tab file through these paths.** Browser navigation is a controller power. A `uniterm open`
   approval and a Launch Services sender hold no controller grant, so no caller on either path can hold it. The open is
-  refused with a message that names the missing power. A program that needs it uses the controller call in "The
-  program call".
+  refused with a message that names the missing power. Leaves undone: uniterm cannot tell the user's own shell from a
+  script in an approved session, so this also refuses the user's `uniterm open tabs.uris`. It refuses `/usr/bin/open`,
+  which is not on the list of openers that count as the user's act, and opens from apps such as a mail client's
+  attachment. File > Open and a drop still work. A program reaches a tab file only if "The program call" settles on a
+  call that opens one.
 - **The `uniterm open` approval also grants browser navigation for the open.** Its review then says the open may load
   a page signed in as the user. This adds scope: a new power on UTERM-015's approval. Launch Services still has no
   grant to carry it.
@@ -394,9 +397,12 @@ Original question: how does a script or controller save or open a tab file?
 - 2026-11-22 (autonomous): The re-check found four misstatements in the new open questions. The "loads no tab" option
   conflicts with ADR-15 rather than fitting it. "Needs browser navigation" had two readings, now two options, one of
   them an addition. The "no new open call" candidate loads eagerly and is capped, so it gained a leaves-undone line.
-  "Tabs with nothing storable" repeated a settled choice as a candidate, so its two skip options merged. These fixes
-  were not re-checked, since the loop's passes were limited to what the draft needed. Its concurrency, parsing, and
-  `.uris` type edge cases were routed to M1 and M2 checks.
+  "Tabs with nothing storable" repeated a settled choice as a candidate, so its two skip options merged. The first
+  "How the tag wins on open" option no longer offers Open With as a way back. Its concurrency, parsing, and `.uris`
+  type edge cases were routed to M1 and M2 checks.
+- 2026-11-22 (autonomous): The third pass confirmed those fixes. It found that "A program cannot open a tab file
+  through these paths" also refuses the user's own shell and `/usr/bin/open`, so that option gained a leaves-undone
+  line. This fix was not re-checked, since the critique loop's three passes were spent.
 
 ## References
 
