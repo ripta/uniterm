@@ -346,7 +346,7 @@ Amended 2026-11-20; see Decision Log.
 - Revoke ends the presenter without an error, since it treats a read that fails as ended as the end
 - The example reads commands with a timeout of at most one second, so one Ctrl-C in its terminal ends it within that
   time while it waits
-- With the starting terminal disconnected and the slide pane closed, Revoke Controller from the palette, with the
+- With the starting terminal disconnected and the slide pane closed, Revoke All Controllers from the palette, with the
   terminal focused, ends the presenter
 - When the source shell exits or its pane closes, or the presenter gets SIGTERM, its commands and keys leave and the
   slide pane keeps the last slide
@@ -496,6 +496,9 @@ Amended 2026-11-20; see Decision Log.
     terminal while the start message says to click the slide. It now says they step as soon as the first slide shows,
     and again after a click back from another pane. Another check said the starting terminal keeps focus. It now says
     the slide pane takes focus.
+- 2026-11-21: Renamed the pane-wide revoke in an M1 check from "Revoke Controller" to "Revoke All Controllers", per
+  UTERM-042 "Palette commands: wording and target". It is the same command, with the same ID. The title changes once
+  UTERM-042 M1 lands.
 
 ## References
 

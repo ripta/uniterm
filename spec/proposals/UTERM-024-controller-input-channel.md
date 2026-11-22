@@ -340,7 +340,7 @@ Original question: the slide pane is projected, so a list of the controller's ke
 mark lives in the pane chrome, in the status bar while the pane has focus, or both.
 
 Decision: the pane's existing control badge takes a distinct look while the controller's keys are live in that pane.
-Its tooltip and menu list the keys, and the menu keeps Revoke Controller. (autonomous)
+Its tooltip and menu list the keys, and the menu keeps Revoke All Controllers. (autonomous)
 
 - The listed commands carry the "Controller" kind word, and the list is bounded with a count of the rest.
 - The badge's accessibility value says the controller is taking keys.
@@ -703,6 +703,9 @@ Amended 2026-11-20; see Decision Log.
   key reaches a controller only where nothing is typed, any key may be bound without the controller learning typed
   text." The second said "The opt-in rule, not a key list, keeps typed text from a controller". Both now say plainly
   that typed keys reach the controller after such a swap, whoever made it. No mechanism was added.
+- 2026-11-21: Renamed the pane-wide revoke in "How the badge shows live keys" from "Revoke Controller" to "Revoke All
+  Controllers", per UTERM-042 "Palette commands: wording and target". It is the same command, with the same ID. The
+  title changes once UTERM-042 M1 lands.
 
 ## References
 

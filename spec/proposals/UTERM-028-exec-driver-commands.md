@@ -143,7 +143,7 @@ the command power everywhere, the anchor included, for the rest of the run. (aut
   driver's own anchor only, UTERM-024's rule that a pane the user disconnects keeps all its keys. The attached channel
   is the user's explicit choice, and disconnecting never severs it, per UTERM-004. ADR-09 limits remembered
   permission, and this grant is per run.
-- Revoke Controller is offered on the anchor of any driver that holds the command grant, whether or not it owns a
+- Revoke All Controllers is offered on the anchor of any driver that holds the command grant, whether or not it owns a
   group. It is the user's stop where disconnecting no longer is one.
 - Revocation ends the command power as it ends a driver's clipboard powers today. Rows and keys leave at once,
   pushing stops, and an unanswered declaration leaves the Pending Requests panel. The driver keeps its own channel,
@@ -170,7 +170,7 @@ anchor. (autonomous, addition)
 
 - This holds at every protocol version. It is authority policy, not wire meaning, so a version-4 driver's member
   command that was refused now succeeds. Two authority rules for one kind of program would be worse.
-- Revoke Controller at the anchor still ends the driver's member commands and its own command power.
+- Revoke All Controllers at the anchor still ends the driver's member commands and its own command power.
 - The refusal for a layout from a disconnected anchor keeps saying to enable remote control. A member command no longer
   gets it.
 
@@ -202,7 +202,7 @@ driver alone. (autonomous) Amended 2026-11-20; see Decision Log.
   the grant, so no pane has two controllers' keys.
 - The driver's keys are live there as soon as the user allows its declaration. When the driver's grant ends, the group
   owner's keys come back at once. Neither waits for a focus change or a click.
-- Revoke Controller there ends both controllers, as it ends every controller of a pane today. The badge menu names both,
+- Revoke All Controllers there ends both controllers, as it ends every controller of a pane today. The badge menu names both,
   and the key indicator names the controller taking keys.
 
 Rationale: rows never collide, since each names its controller, so removing either set gains no safety. Keeping the
@@ -257,7 +257,7 @@ None.
   later versions.
 - **Disconnecting a driver's pane no longer stops its commands** — likelihood: medium, impact: low. A user who learned
   that disconnecting takes a pane's keys back finds the driver's rows and keys still live at its anchor and members.
-  Mitigation: Revoke Controller on the anchor of any driver holding the grant, and the key indicator on each pane where
+  Mitigation: Revoke All Controllers on the anchor of any driver holding the grant, and the key indicator on each pane where
   its keys are live.
 - **A version-4 driver's member command that was refused now succeeds** — likelihood: low, impact: low. This reverses
   UTERM-004's 2026-11-11 rule for drivers. Accepted: the members are still remote-controlled, Revoke still stops the
@@ -293,7 +293,7 @@ Amended 2026-11-20; see Decision Log.
 - A driver's keys go live in an opted-in body of a member of its group
 - Authority is checked again at each push. Run end and revocation stop pushing, and drop invocation frames the app has
   not yet written
-- A disconnected anchor whose driver's keys are live there shows that, and its menu offers Revoke Controller
+- A disconnected anchor whose driver's keys are live there shows that, and its menu offers Revoke All Controllers
 - A driver whose anchor is disconnected commands a remote-controlled member it owns, and its keys stay live there. A
   layout from that anchor is still refused
 - A pane that is a controller's member and a driver's anchor lists both controllers' rows, and its keys reach the
@@ -309,10 +309,10 @@ Amended 2026-11-20; see Decision Log.
   `commands` frame
 - A waiting declaration counts toward the driver's bound on waiting requests
 - A version-4 driver with a disconnected anchor commands its remote-controlled members
-- At a pane that is both a member and an anchor, Revoke Controller ends both controllers, the badge menu names both,
+- At a pane that is both a member and an anchor, Revoke All Controllers ends both controllers, the badge menu names both,
   the key indicator names the driver, and the group owner's rows advertise no key that is not live there. When the
   driver's grant ends, the group owner's keys reach it there at once
-- A driver with no layout lists its rows at its anchor, disconnected or not, and the anchor offers Revoke Controller
+- A driver with no layout lists its rows at its anchor, disconnected or not, and the anchor offers Revoke All Controllers
 - Revoking ends the driver's rows and keys at once, withdraws an unanswered declaration from Pending Requests, and
   leaves its own applet commands and events working. The refusal text covers its anchor commands
 - The declaration's panel row offers Allow for This Run and Deny, and no Allow Once
@@ -373,6 +373,9 @@ Amended 2026-11-20; see Decision Log.
     that the group owner's keys stay off after the grant ends until one. It now checks that both take keys at once.
   - The last risk named UTERM-024's "liveness latch". It now names its liveness rule.
   - References listed ADR-12.
+- 2026-11-21: Renamed the pane-wide revoke from "Revoke Controller" to "Revoke All Controllers" in the settled
+  decisions, the risk, and M1, per UTERM-042 "Palette commands: wording and target". It is the same command, with the
+  same ID. The title changes once UTERM-042 M1 lands. The Impacts line on UTERM-004 keeps the shipped name.
 
 ## References
 

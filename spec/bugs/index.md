@@ -19,3 +19,7 @@
 | [20261117-read-scope-compared-as-written-hides-real-paths](20261117-read-scope-compared-as-written-hides-real-paths.md) | A read scope written through a link hides every path from its own controller | fixed |
 | [20261121-edited-map-past-size-bound-saves-but-cannot-reopen](20261121-edited-map-past-size-bound-saves-but-cannot-reopen.md) | An edited map past 32 MiB saves, but cannot be reopened | open |
 | [20261121-terminal-tab-bar-ignores-control-badge](20261121-terminal-tab-bar-ignores-control-badge.md) | The terminal's tab bar ignores the control badge | open |
+| [20261121-tab-bar-overflow-hides-tabs](20261121-tab-bar-overflow-hides-tabs.md) | Tabs past the tab bar's trailing edge cannot be seen or clicked | open |
+| [20261121-revoked-controller-stays-on-badge](20261121-revoked-controller-stays-on-badge.md) | A revoked controller that keeps its connection open stays listed on the badge | open |
+| [20261121-owner-end-withdraws-other-owners-launches](20261121-owner-end-withdraws-other-owners-launches.md) | An owner's end withdraws every launch waiting in its panes, whoever staged it | open |
+| [20261121-ui-test-paste-replaces-the-real-clipboard](20261121-ui-test-paste-replaces-the-real-clipboard.md) | The UI tests' open-panel paste replaces the real clipboard and restores only its text | open |

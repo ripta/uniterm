@@ -80,7 +80,7 @@ None.
   faster than hands can. Each tab is a web view in the app and may start a content process, so the whole app, terminals
   included, feels the memory pressure. Each tab is also saved in the pane's description, so saved state grows with the
   count. Restore stays bounded, since only the selected tab is built at relaunch. Mitigation: the dispatcher delivers a
-  bounded number of commands per main-thread turn, so a flood never holds the main thread, and Revoke Controller stays
+  bounded number of commands per main-thread turn, so a flood never holds the main thread, and Revoke All Controllers stays
   reachable in the pane's frame and as a command. Commands still queued after a revoke are checked again at delivery
   and take no effect. Page content runs out of process, per UTERM-005 "Web content failure", so a page's crash or memory
   growth ends its own content process, not the app. After a revoke the tabs remain, and closing the pane removes them.
@@ -129,6 +129,9 @@ is needed.
 - 2026-11-21: Routed to M1 checks: the replacement test uses a literal count of at least 17, the type's doc comment
   drops the cap, and supersession goes through new Decision Log entries, not edits to frozen ones. (autonomous)
 - 2026-11-21: Review gate: kept all. No decision earns an ADR. The user accepted the proposal.
+- 2026-11-21: Renamed the pane-wide revoke in the runaway-controller risk from "Revoke Controller" to "Revoke All
+  Controllers", per UTERM-042 "Palette commands: wording and target". It is the same command, with the same ID. The
+  title changes once UTERM-042 M1 lands.
 
 ## References
 
