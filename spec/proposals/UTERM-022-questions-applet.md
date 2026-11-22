@@ -1063,7 +1063,7 @@ user's own runs below confirm what those covered.
 - 2026-11-21: ADR candidate (cuts across the system, hard to reverse): which callers a power that controls no pane
   passes without a prompt. `ask-user` passes for every connection that is not a declared or package run. Later powers
   would copy that tier. ADR-14 requires explicit grants for separate powers, but it does not say what a user's own
-  session may do without one. Undecided.
+  session may do without one. Written as ADR-14 P15 and C1 on 2026-11-21.
 - 2026-11-21: The user ran M5's checks in the running app and confirmed them. M5 had no queue row, so its history row
   records it after the fact. The proposal is implemented.
 - 2026-11-21 (autonomous, work-queue best guess): The row review moved the two checks that only the user can run out

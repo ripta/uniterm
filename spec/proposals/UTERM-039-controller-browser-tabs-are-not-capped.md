@@ -19,6 +19,12 @@
 - UTERM-005 — Decision Log, 2026-11-20: the entry that a grant holds at most 16 open tabs in a pane. Superseded by a
   new Decision Log entry. The old entry is not edited.
 
+## ADR Deviations
+
+- ADR-14 P15, no carve-out: a controller's tab opens carry no bound on how often they act. The tabs live only in panes
+  the controller opened, and revoking it stops further opens. The user accepted the remaining risk of a runaway loop on
+  2026-11-21, and deferred a rate bound, per "Defer a rate bound on a controller's opens".
+
 ## Summary
 
 A controller may open as many browser tabs as the user may. The 16-tab cap per grant per pane is dropped. A controller's
@@ -70,6 +76,15 @@ the caller's live grant. The schemes that no source may load stay refused.
 
 Rationale: authority decides who may act, not how many times. This rests on ADR-15's authority carve-out and ADR-14.
 
+### Defer a rate bound on a controller's opens
+
+Decision: no bound on how many tabs a controller may open in a period of time. A cap on the total count is the wrong
+bound, since the user's New Tab has none. A rate bound on one controller's opens would leave the user's own tabs
+unbounded, and it is deferred, not rejected. Amended 2026-11-21; see Decision Log.
+
+**Revisit:** when a controller is seen opening tabs in a loop, or when the browser gains unloading of background tabs;
+file a follow-up proposal for a per-controller rate on opens.
+
 ## Design Decisions (Open)
 
 None.
@@ -84,8 +99,9 @@ None.
   reachable in the pane's frame and as a command. Commands still queued after a revoke are checked again at delivery
   and take no effect. Page content runs out of process, per UTERM-005 "Web content failure", so a page's crash or memory
   growth ends its own content process, not the app. After a revoke the tabs remain, and closing the pane removes them.
-  Accepted: the safety is authority and this recovery path, per ADR-15. A rate limit or a pane-wide cap would apply to
-  the user's New Tab too, and is out of scope.
+  Accepted: the safety is authority and this recovery path, per ADR-15. A pane-wide cap would apply to the user's New
+  Tab too. A rate bound on one controller's opens would not, and it is deferred, per "Defer a rate bound on a
+  controller's opens". This is a deviation from ADR-14 P15. Amended 2026-11-21; see Decision Log.
 - **ADR-15 is still proposed** — likelihood: low, impact: low. The rationale cites its text, which may change before it
   is accepted. Accepted: the decision also rests on the user's ruling of 2026-11-21, so only the rationale's wording is
   exposed.
@@ -132,6 +148,10 @@ is needed.
 - 2026-11-21: Renamed the pane-wide revoke in the runaway-controller risk from "Revoke Controller" to "Revoke All
   Controllers", per UTERM-042 "Palette commands: wording and target". It is the same command, with the same ID. The
   title changes once UTERM-042 M1 lands.
+- 2026-11-21: ADR-14 gained P15, that a program's reach is always bounded. A controller's opens have no bound on how
+  often they act, so this proposal deviates from P15. The user accepted the risk and deferred a per-controller rate on
+  opens, with a revisit hook. The runaway-controller risk said "A rate limit or a pane-wide cap would apply to the
+  user's New Tab too, and is out of scope." A rate on one controller's opens would not apply to the user's New Tab.
 
 ## References
 
