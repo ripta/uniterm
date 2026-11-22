@@ -84,7 +84,7 @@ final class AddressPolicyTests: XCTestCase {
   /// Catches a refused scheme that loads, in any letter case and with surrounding space. The same
   /// rule serves a restored address, so the source is a parameter.
   func testRefusedSchemesNeverResolveToALoad() {
-    for source in [NavigationSource.typed, .restored, .controller] {
+    for source in [NavigationSource.typed, .restored] {
       XCTAssertEqual(AddressPolicy.resolve("file:///etc/hosts", source: source), .refused(.file))
       XCTAssertEqual(
         AddressPolicy.resolve(" \tJAVASCRIPT:alert(1)\n", source: source), .refused(.javascript))
@@ -100,13 +100,15 @@ final class AddressPolicyTests: XCTestCase {
   }
 
   /// Catches a typed address for another app that is refused outright, which would leave the user
-  /// no way to open `mailto:`, and a non-typed source that hands off, which would let a stored or
-  /// commanded address reach an app. `about:other` and `blob:` are not apps' to take.
+  /// no way to open `mailto:`, and a non-typed source that hands off, which would let a stored
+  /// address reach an app. `about:other` and `blob:` are not apps' to take.
   func testOnlyTypedTextHandsOffToAnApp() {
     XCTAssertEqual(
       AddressPolicy.resolve("mailto:a@example.com"), .handoff(url("mailto:a@example.com")))
     XCTAssertEqual(
       AddressPolicy.resolve("ssh://host.example"), .handoff(url("ssh://host.example")))
+    XCTAssertEqual(
+      AddressPolicy.resolve("ftp://example.com/"), .handoff(url("ftp://example.com/")))
     XCTAssertEqual(AddressPolicy.resolve("tel:+15551234"), .handoff(url("tel:+15551234")))
     XCTAssertEqual(
       AddressPolicy.resolve("tel:5551234"), .load(url("https://tel:5551234"), assumed: .https),
@@ -118,7 +120,7 @@ final class AddressPolicyTests: XCTestCase {
       AddressPolicy.resolve("blob:https://example.com/1"),
       .refused(.unsupported(scheme: "blob")))
 
-    for source in [NavigationSource.restored, .controller, .page] {
+    for source in [NavigationSource.restored, .page] {
       XCTAssertEqual(
         AddressPolicy.resolve("ssh://host.example", source: source),
         .refused(.unsupported(scheme: "ssh")), "\(source)")
@@ -149,7 +151,7 @@ final class AddressPolicyTests: XCTestCase {
     XCTAssertEqual(AddressPolicy.resolve("example.com/a b"), .search("example.com/a b"))
     XCTAssertEqual(AddressPolicy.resolve("devbox"), .search("devbox"))
 
-    for source in [NavigationSource.restored, .controller, .page] {
+    for source in [NavigationSource.restored, .page] {
       XCTAssertEqual(
         AddressPolicy.resolve("two words", source: source), .refused(.notAnAddress), "\(source)")
       XCTAssertEqual(

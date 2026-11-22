@@ -189,11 +189,6 @@ final class BrowserTab: NSObject {
   /// The configuration WebKit gave a pop-up, used once to build its web view.
   private var adopted: WKWebViewConfiguration?
 
-  /// True while a controller owns the tab. A download in such a tab always waits for the user's
-  /// answer, and so does a link to another app, since neither came from the user's own click on a
-  /// page they chose.
-  var isControlled = false
-
   /// What began the tab's current load. A notice from the tab takes its delivery from it, so a
   /// background tab restored at launch stays as quiet as a restore is. The restore origin ends at
   /// the user's first decision in the tab, such as a click on a link, since what follows is theirs.
@@ -540,18 +535,8 @@ final class BrowserTab: NSObject {
   }
 
   func reload() -> HistoryMove {
-    reload(byUser: true)
-  }
-
-  /// A reload a controller asked for. It sets no resend intent, so a page that came from a form
-  /// is refused and the user is never asked.
-  func reloadForController() -> HistoryMove {
-    reload(byUser: false)
-  }
-
-  private func reload(byUser: Bool) -> HistoryMove {
     if errorPage != nil, let failed = failedLoad {
-      load(failed.url, assumed: failed.assumed, byUser: byUser)
+      load(failed.url, assumed: failed.assumed, byUser: true)
       return .moved
     }
 
@@ -559,7 +544,7 @@ final class BrowserTab: NSObject {
 
     leaveStop()
 
-    if byUser { gate.intent = .reload }
+    gate.intent = .reload
 
     webView.reload()
     hangRecovery.arm(.restore)
@@ -600,17 +585,9 @@ final class BrowserTab: NSObject {
   }
 
   func goBack() -> HistoryMove {
-    goBack(byUser: true)
-  }
-
-  func goBackForController() -> HistoryMove {
-    goBack(byUser: false)
-  }
-
-  private func goBack(byUser: Bool) -> HistoryMove {
     guard isMaterialized, webView.backForwardList.backItem != nil else { return .unavailable }
 
-    if byUser { gate.intent = .history }
+    gate.intent = .history
 
     _ = webView.goBack()
     hangRecovery.arm(.restore)
@@ -618,17 +595,9 @@ final class BrowserTab: NSObject {
   }
 
   func goForward() -> HistoryMove {
-    goForward(byUser: true)
-  }
-
-  func goForwardForController() -> HistoryMove {
-    goForward(byUser: false)
-  }
-
-  private func goForward(byUser: Bool) -> HistoryMove {
     guard isMaterialized, webView.backForwardList.forwardItem != nil else { return .unavailable }
 
-    if byUser { gate.intent = .history }
+    gate.intent = .history
 
     _ = webView.goForward()
     hangRecovery.arm(.restore)
@@ -1096,7 +1065,7 @@ extension BrowserTab: WKNavigationDelegate {
       resolve(allowed)
     }
 
-    if byUser, !isControlled {
+    if byUser {
       answer(true)
       return
     }
@@ -1112,7 +1081,7 @@ extension BrowserTab: WKNavigationDelegate {
       holdDownload(DownloadHold.Held(name: name, resolve: answer))
 
     case .counting:
-      guard isControlled || !downloadHold.countStart() else {
+      guard !downloadHold.countStart() else {
         answer(true)
         return
       }

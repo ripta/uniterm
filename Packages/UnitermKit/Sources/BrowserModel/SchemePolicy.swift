@@ -8,9 +8,6 @@ public enum NavigationSource: Sendable, Equatable {
   /// A tab's stored address, loaded when its pane restores.
   case restored
 
-  /// A command from a controlling program.
-  case controller
-
   /// A link, a redirect, a script, or history. The page chose it.
   case page
 }
@@ -62,10 +59,10 @@ public enum SchemeRefusal: Sendable, Equatable {
 
 /// The one place that says which URL schemes the browser loads.
 ///
-/// A typed address, a restored tab, and a controller's command load only `http`, `https`, and
-/// `about:blank`. A page's own navigation also loads a `blob:` URL, which WebKit limits to the
-/// origin that made it. A page may load `data:` and `about:srcdoc` into a subframe, never as a
-/// top-level page. `file:` and `javascript:` never load.
+/// A typed address and a restored tab load only `http`, `https`, and `about:blank`. A page's own
+/// navigation also loads a `blob:` URL, which WebKit limits to the origin that made it. A page may
+/// load `data:` and `about:srcdoc` into a subframe, never as a top-level page. `file:` and
+/// `javascript:` never load.
 public enum SchemePolicy {
   public static func decide(
     _ url: URL, source: NavigationSource, isMainFrame: Bool = true
@@ -118,7 +115,7 @@ public enum SchemePolicy {
     }
   }
 
-  /// True for an address a typed, restored, or controller load may use. A stored address that
+  /// True for an address a typed or restored load may use. A stored address that
   /// fails this is not worth keeping, since no restore would load it.
   public static func isLoadable(_ url: URL) -> Bool {
     decide(url, source: .typed) == .allow

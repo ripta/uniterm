@@ -224,9 +224,9 @@ final class BrowserWindowTests: XCTestCase {
     XCTAssertEqual(server.requests.count, 0)
   }
 
-  /// Catches an error code with no script meaning: a key-focused or unsent-input refusal must read
-  /// as busy, which the script retries, and a missing power or an unowned tab as refused. Each
-  /// message reaches the script with the applet's reason.
+  /// Catches an error code with no script meaning: a busy refusal must read as busy, which the
+  /// script retries, and a missing power or an unowned tab as refused. Each message reaches the
+  /// script with the applet's reason.
   func testTheNewCodesReachAScriptAsRefusedOrBusyWithTheirReason() async throws {
     let fixture = makeFixture()
     let (controller, first) = try fixture.openWindow()
@@ -239,7 +239,7 @@ final class BrowserWindowTests: XCTestCase {
 
     for (code, kind) in [
       ("permission-missing", ScriptFailureKind.refused), ("not-owned", .refused),
-      ("key-focused", .busy), ("unsent-input", .busy),
+      ("busy", .busy),
     ] {
       let error = await failure {
         try await fixture.scripting.sendCommand(

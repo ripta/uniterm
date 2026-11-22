@@ -11,11 +11,11 @@ final class SchemePolicyTests: XCTestCase {
     SchemePolicy.decide(try XCTUnwrap(URL(string: text)), source: source, isMainFrame: isMainFrame)
   }
 
-  /// Catches a typed, restored, or controller source that loads more than the web: a `blob:` URL a
-  /// controller could name, or a `data:` page a payload could carry. Each of the three sources
-  /// takes the same strict rule, so a stored tab cannot reach what the address bar cannot.
-  func testTypedRestoredAndControllerLoadsTakeOnlyTheWeb() throws {
-    for source in [NavigationSource.typed, .restored, .controller] {
+  /// Catches a typed or restored source that loads more than the web: a `blob:` URL a program could
+  /// name, or a `data:` page a payload could carry. Both sources take the same strict rule, so a
+  /// stored tab cannot reach what the address bar cannot.
+  func testTypedAndRestoredLoadsTakeOnlyTheWeb() throws {
+    for source in [NavigationSource.typed, .restored] {
       for allowed in [
         "http://example.com", "https://example.com/a?b=c", "HTTPS://EXAMPLE.COM", "about:blank",
         "ABOUT:BLANK",

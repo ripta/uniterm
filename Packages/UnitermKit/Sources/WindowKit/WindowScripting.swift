@@ -480,7 +480,7 @@ public final class WindowScripting: ScriptWindowAPI {
     case .unsupportedApplet, .unsupportedVersion: return .unsupported
     case .unknownCommand, .badArgument: return .badArgument
     case .refused, .permissionMissing, .notOwned: return .refused
-    case .busy, .keyFocused, .unsentInput: return .busy
+    case .busy: return .busy
     case .notFound: return .notFound
     case .failed: return .failed
     }

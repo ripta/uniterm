@@ -1,17 +1,17 @@
 import XCTest
 
 /// A Janet controller drives a browser pane in the real app: a layout seeds the pane with a
-/// loopback page, the controller opens a second tab and reads it back. Both pages come from a
-/// small server on the loopback interface, so nothing leaves the machine.
+/// loopback page, the controller opens a second tab, which is selected as the user's New Tab
+/// would be, and reads it back. Both pages come from a small server on the loopback interface, so
+/// nothing leaves the machine.
 ///
-/// The server runs from the terminal's shell, not from the test. The UI test runner is
-/// sandboxed with the network client entitlement alone, so a listener in the runner accepts no
-/// connection from the app.
+/// The server runs from the terminal's shell, not from the test. The UI test runner is sandboxed
+/// with the network client entitlement alone, so a listener in the runner accepts no connection
+/// from the app.
 ///
 /// What only the real app shows is the pane's control badge standing clear of the browser's
-/// profile button, and a page loading in a tab nobody selected. The package tests prove the
-/// permission rules, ownership, and the refusals one by one. The capture holds synthetic pages
-/// only.
+/// profile button, and the opened tab loading in the pane. The package tests prove the permission
+/// rules, ownership, and the refusals one by one. The capture holds synthetic pages only.
 @MainActor
 final class BrowserRemoteUITests: UnitermUITestCase {
   /// Answers every request with a page titled by its path, and appends each path to a log. It
