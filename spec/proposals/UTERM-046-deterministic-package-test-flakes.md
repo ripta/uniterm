@@ -84,7 +84,8 @@ Whichever option wins, `testClosingAnIdlePopUpSignalsNothing` keeps an idle samp
 - **The fixture reaps its own helper.** `start` spawns the helper with `posix_spawn`, and one thread per helper waits on
   it with `waitpid`. Signals go only before that reap, and a process id cannot be reused until its parent reaps it, so
   the watchdog can never signal another process. `HelperHost`'s `HelperProcess` and the exec driver's transport already
-  work this way. Callers that use `onExit` move to the fixture's own exit report.
+  work this way. `start` then returns the fixture's own handle instead of a `Process`, so every caller moves to it,
+  including the callers that read `isRunning`, `terminationReason`, or the process id today.
 - **A termination handler.** `finish` resumes when Foundation's `terminationHandler` fires, after reading both pipes.
   `start` already sets one for `onExit` callers, so `finish` must chain to it. It relies on Foundation's exit report,
   which is the mechanism the second sighting suggests missed an exit.
@@ -118,7 +119,8 @@ Each replaces `waitUntilExit`.
 - The closed-tab tests pass on a runner whose cores are all busy with other work
 - The live-sample test still fails when the reader reports a spinning page as idle, and its behavior under outside load
   is stated by the option chosen
-- `testClosingAnIdlePopUpSignalsNothing` still sees an idle page and signals nothing
+- `testClosingAnIdlePopUpSignalsNothing` still sees an idle page and signals nothing, and its wait ends on a bound,
+  never on a busy reading
 - Under the exit-event option, a process that exited before the event source was armed is still seen as gone
 - The closed-tab test's entry in `spec/flaky-tests.md` records the change and stays under Potential until CI runs show
   it holds
@@ -131,6 +133,9 @@ Each replaces `waitUntilExit`.
 - `ScriptFixtures.finish` returns once its helper exits, without `waitUntilExit`, including for a helper that exited
   before `finish` was called
 - Callers that observe a helper's exit, as `onExit` callers do today, still see it
+- Every caller of `finish` runs its helper through the fixture's exit path, including `DeclaredFileRunTests`, which
+  builds its own `Process` today
+- A test can still tell a helper's exit from its death by a signal
 - The watchdog never signals a process that has already exited
 - The `ScriptFixtures.finish` entry in `spec/flaky-tests.md` records the change, says which of its sightings it
   explains, and stays under Potential until CI runs show it holds
