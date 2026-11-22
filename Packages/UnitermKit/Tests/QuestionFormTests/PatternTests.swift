@@ -154,20 +154,28 @@ final class PatternTests: XCTestCase {
 
   /// Catches a catastrophic pattern that holds a thread, and one that keeps using CPU after its
   /// check reports. The test sleeps in real time, since the CPU of the stopped match is the claim.
+  ///
+  /// The suite shares one process, and an earlier test's work can still run in it. So the check
+  /// is per thread, against a window of the same length before the search. A match left running
+  /// pins one thread near a whole core. Work from earlier tests shows in both windows.
   func testACatastrophicPatternStopsAtItsLimitAndStopsUsingCPU() throws {
     let program = try PatternProgram(source: #"^(a+)+$"#)
     let input = String(repeating: "a", count: 4000) + "b"
+    let window = 0.5
+    let baseline = threadCPUSeconds(over: window)
+
     let started = Date()
     let outcome = program.search(input, limit: 0.2)
 
     XCTAssertEqual(outcome, .timedOut)
     XCTAssertLessThan(Date().timeIntervalSince(started), 3)
 
-    let before = processCPUSeconds()
+    let after = threadCPUSeconds(over: window)
 
-    Thread.sleep(forTimeInterval: 0.5)
-
-    XCTAssertLessThan(processCPUSeconds() - before, 0.15)
+    for (thread, seconds) in after {
+      let extra = seconds - (baseline[thread] ?? 0)
+      XCTAssertLessThan(extra, window / 2, "thread \(thread) kept using CPU after the check")
+    }
   }
 
   func testAnOverlongInputCouldNotBeChecked() throws {
@@ -262,14 +270,72 @@ final class PatternTests: XCTestCase {
       FormChecker.check(spec, answers: ["q": .text("abc")]).messages["q"], FormChecker.notMatching)
   }
 
-  private func processCPUSeconds() -> Double {
-    var usage = rusage()
+  /// The CPU each thread of the process used while the calling thread slept for `interval`,
+  /// keyed by the thread's system-wide ID. A thread that started in the window counts from zero.
+  private func threadCPUSeconds(over interval: TimeInterval) -> [UInt64: Double] {
+    let start = threadCPUTimes()
 
-    getrusage(RUSAGE_SELF, &usage)
+    Thread.sleep(forTimeInterval: interval)
 
-    func seconds(_ value: timeval) -> Double { Double(value.tv_sec) + Double(value.tv_usec) / 1e6 }
+    let end = threadCPUTimes()
 
-    return seconds(usage.ru_utime) + seconds(usage.ru_stime)
+    return Dictionary(uniqueKeysWithValues: end.map { ($0.key, $0.value - (start[$0.key] ?? 0)) })
+  }
+
+  private func threadCPUTimes() -> [UInt64: Double] {
+    var list: thread_act_array_t?
+    var count: mach_msg_type_number_t = 0
+
+    guard task_threads(mach_task_self_, &list, &count) == KERN_SUCCESS, let list else { return [:] }
+
+    defer {
+      for index in 0..<Int(count) { mach_port_deallocate(mach_task_self_, list[index]) }
+      vm_deallocate(
+        mach_task_self_, vm_address_t(UInt(bitPattern: list)),
+        vm_size_t(Int(count) * MemoryLayout<thread_act_t>.stride))
+    }
+
+    var times: [UInt64: Double] = [:]
+
+    for index in 0..<Int(count) {
+      guard let id = threadID(list[index]), let seconds = cpuSeconds(list[index]) else { continue }
+
+      times[id] = seconds
+    }
+
+    return times
+  }
+
+  private func threadID(_ thread: thread_act_t) -> UInt64? {
+    var info = thread_identifier_info_data_t()
+    var size = mach_msg_type_number_t(
+      MemoryLayout<thread_identifier_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+        thread_info(thread, thread_flavor_t(THREAD_IDENTIFIER_INFO), $0, &size)
+      }
+    }
+
+    return result == KERN_SUCCESS ? info.thread_id : nil
+  }
+
+  private func cpuSeconds(_ thread: thread_act_t) -> Double? {
+    var info = thread_basic_info_data_t()
+    var size = mach_msg_type_number_t(
+      MemoryLayout<thread_basic_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
+        thread_info(thread, thread_flavor_t(THREAD_BASIC_INFO), $0, &size)
+      }
+    }
+
+    guard result == KERN_SUCCESS else { return nil }
+
+    func seconds(_ value: time_value_t) -> Double {
+      Double(value.seconds) + Double(value.microseconds) / 1e6
+    }
+
+    return seconds(info.user_time) + seconds(info.system_time)
   }
 }
 
