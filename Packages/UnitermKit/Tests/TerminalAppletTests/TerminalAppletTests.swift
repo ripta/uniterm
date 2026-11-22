@@ -669,6 +669,30 @@ final class TerminalAppletTests: XCTestCase {
     try XCTUnwrap(applet.view.subviews.compactMap { $0 as? AppletTabBar }.first)
   }
 
+  /// Catches a tab bar that runs under the host's control badge. The badge covers the bar's
+  /// trailing 24 points here, so the new-tab button must end before that edge.
+  func testTheNewTabButtonStaysClearOfTheControlBadge() throws {
+    let (applet, _, _, _) = makeApplet()
+    applet.view.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    applet.openTab()
+
+    applet.hostBadgeReachDidChange(24)
+    applet.view.layoutSubtreeIfNeeded()
+
+    let bar = try tabBar(of: applet)
+    bar.layoutSubtreeIfNeeded()
+
+    let button = try XCTUnwrap(bar.subviews.first { $0.accessibilityIdentifier() == "new-tab" })
+    let end = bar.convert(button.frame, to: applet.view).maxX
+
+    XCTAssertLessThanOrEqual(end, applet.view.bounds.width - 24)
+
+    applet.hostBadgeReachDidChange(0)
+    bar.layoutSubtreeIfNeeded()
+
+    XCTAssertGreaterThan(bar.convert(button.frame, to: applet.view).maxX, end)
+  }
+
   /// Catches a tab bar that shows for a single tab, or that stays after the second tab closes.
   func testTheTabBarShowsOnlyWhileThereIsMoreThanOneTab() async throws {
     let (applet, _, _, _) = makeApplet()

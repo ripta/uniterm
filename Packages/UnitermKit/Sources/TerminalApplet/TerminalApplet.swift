@@ -415,6 +415,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     linkPreview.apply(palette)
   }
 
+  public func hostBadgeReachDidChange(_ width: CGFloat) {
+    tabBar.trailingReserve = width
+  }
+
   /// Every running tab takes the new clipboard policy before this returns, so a tab in the
   /// background is covered as soon as the pane is.
   public func controlDidChange(_ control: PaneControl) {

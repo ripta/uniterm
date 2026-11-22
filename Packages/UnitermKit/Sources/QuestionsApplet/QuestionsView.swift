@@ -13,13 +13,12 @@ final class QuestionsView: NSView {
     wrappingLabelWithString:
       "When a program asks you a question, it appears here, in a tab of its own.")
   private let emptyState = NSStackView()
-  private var tabBarTrailing: NSLayoutConstraint?
   private var panel: NSView?
   private var palette = ThemePalette.latte
 
   /// How far in from the trailing edge the host's control badge reaches. The tab bar stays clear.
   var badgeReach: CGFloat = 0 {
-    didSet { tabBarTrailing?.constant = -badgeReach }
+    didSet { tabBar.trailingReserve = badgeReach }
   }
 
   override var acceptsFirstResponder: Bool { true }
@@ -47,14 +46,10 @@ final class QuestionsView: NSView {
     emptyState.translatesAutoresizingMaskIntoConstraints = false
     addSubview(emptyState)
 
-    let trailing = tabBar.trailingAnchor.constraint(equalTo: trailingAnchor)
-
-    tabBarTrailing = trailing
-
     NSLayoutConstraint.activate([
       tabBar.topAnchor.constraint(equalTo: topAnchor),
       tabBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-      trailing,
+      tabBar.trailingAnchor.constraint(equalTo: trailingAnchor),
       tabBar.heightAnchor.constraint(equalToConstant: AppletTabBar.height),
       emptyState.centerXAnchor.constraint(equalTo: centerXAnchor),
       emptyState.centerYAnchor.constraint(equalTo: centerYAnchor),
