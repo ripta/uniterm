@@ -23,8 +23,8 @@
 - UTERM-003 — "Where scripts run": a declared script reaches the app as bytes from the command, not as a path.
 - UTERM-032 — "How the text reaches the script": this proposal applies the same rule to the script file itself.
 - UTERM-032 — "Which argument is the input file" and "How the text reaches the script": both speak of the snapshot's
-  declaration. They are amended to the declaration the command reads, and the folder rides with the declaration that now
-  follows the bytes, when this proposal is accepted.
+  declaration. UTERM-032 is queued first and builds against the snapshot. M1 here amends both sections to the
+  declaration the command reads, with the folder riding on the declaration that follows the bytes.
 - UTERM-032 — "Version skew": both proposals bump ScriptWire's version. Whichever lands second bumps again.
 
 ## Summary
@@ -136,8 +136,8 @@ Decision: the file begin changes, and chunk messages are new, so ScriptWire's ve
 (autonomous); see Decision Log.
 
 - The command and the app ship in one bundle. ADR-13 lets ScriptWire refuse every version but its own. Each side refuses
-  any other version at the hello, so a newer command and an older app, and the reverse, refuse each other before any
-  file is read or sent. The message tells the user to relaunch uniterm, which heals it.
+  any other version at the hello, so a newer command and an older app, and the reverse, refuse each other before the
+  script's bytes are sent. The message tells the user to relaunch uniterm, which heals it.
 - No deploy order is needed. A revert and a redeploy undo the change.
 - UTERM-032 and UTERM-029 also bump ScriptWire's version, and neither is built. Whichever lands later bumps again.
 - No stored data changes. The trust store keys a file's approvals by its version, which stays the SHA-256 of the whole
@@ -151,16 +151,15 @@ None.
 
 - **A slow or hostile file blocks the read** — likelihood: low, impact: low. A file on a network mount or a local
   file-system server can stall a read. Mitigation: the read runs in the command, which the invoker started and can
-  stop. The app only waits on a connection, and a deadline bounds the transfer as the declaration timeout bounds the
-  declaration.
+  stop. The app only waits on a connection, and one deadline bounds the exchange from the begin to the declaration.
 - **A large file begin makes the app hold memory before it trusts the peer** — likelihood: low, impact: low. Any
   same-user process can connect. Mitigation: the app reads chunks only after authenticating the peer, each within the
   control-frame cap, and refuses a byte count over the cap from the begin alone.
 - **UTERM-032, UTERM-029, and this proposal bump the same wire version** — likelihood: medium, impact: low. Two changes
   could take the same number. Mitigation: whichever lands later bumps again, and the hello refuses any mismatch, so a
   clash fails closed.
-- **macOS charges the command's read to uniterm instead of to the program that started it** — likelihood: low, impact:
-  high. The fix assumes the bundled command's reads are checked against the privacy grants of the process that launched
+- **macOS charges the command's read to uniterm instead of to the program that started it** — likelihood: medium,
+  impact: high. The evidence does not settle the likelihood, so it takes the higher rating. The fix assumes the bundled command's reads are checked against the privacy grants of the process that launched
   it, not of the app bundle it sits in. If not, the command's own read borrows uniterm's grants with no race at all.
   UTERM-032 rests on the same assumption. No code test can show it. Mitigation: M1 carries a manual check on a Mac where
   uniterm holds a Documents grant and the launching program does not.
@@ -195,6 +194,8 @@ The app never opens a path for a declared script file or its signature.
 - The user runs a declared file in Documents from a program started outside uniterm, on a Mac where uniterm holds a
   Documents grant and that program does not. It passes when the read is refused, or when a privacy prompt names the
   launching program. It fails when the prompt names uniterm, or when the read succeeds with no prompt
+- When UTERM-032 has landed, its input-file mark and folder come from the bytes the command read, and its sections
+  "Which argument is the input file" and "How the text reaches the script" and its snapshot check are amended to match
 - The bug `spec/bugs/20261116-script-snapshot-reads-program-chosen-path.md` is closed by this milestone's commit
 
 ## Decision Log
@@ -242,8 +243,11 @@ The app never opens a path for a declared script file or its signature.
 - 2026-11-22: ADR candidate (cuts across the system): uniterm never reads a file for a program with its own macOS
   privacy grants, so a program's reads carry at most the invoker's access. Declined: UTERM-015 "The path-reading power"
   and UTERM-032 state it, and this proposal cites them.
-- 2026-11-22: Accepted. UTERM-021 gains "Superseded in part by UTERM-034" markers, and UTERM-032's input-file sections
-  are amended to the declaration the command reads.
+- 2026-11-22: Accepted. UTERM-021 gains "Superseded in part by UTERM-034" markers. UTERM-032 is queued first and keeps
+  its text, and gains an Impacts note. M1 here amends UTERM-032's input-file sections when it builds the change.
+- 2026-11-22: The privacy-attribution risk is re-rated from low to medium likelihood. Nothing was run, and the critic
+  could not rule the other attribution out, so it takes the higher rating. It is not high on both, so it does not block
+  acceptance. The M1 manual check can run before M1 is built. (autonomous)
 
 ## References
 

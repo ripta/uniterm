@@ -27,8 +27,9 @@
   Janet capabilities. See "Approval lifetimes".
 - UTERM-021 — "The declaration's data shape": a declared file gains the `input-file` permission kind, and each
   permission meaning names where its kind may appear.
-- UTERM-034 — "Who reads the script": the command reads the script's bytes and sends the declaration after them. This
-  proposal's declaration checks and folder ride on that exchange, not on a snapshot.
+- UTERM-034 — "Who reads the script": once it lands, the command reads a declared script's bytes and sends the
+  declaration after them, with no snapshot. This proposal's "the snapshot's declaration" then means the declaration in
+  those bytes, and its folder rides with that declaration. UTERM-034 M1 amends the text when it builds the change.
 - UTERM-021 — "Trust records for files": supersedes it in part. A file policy that holds a remembered folder lives in a
   third store, for the same reason files left the controller store. UTERM-021 is implemented, so it gains a "Superseded
   in part by UTERM-032" marker when this proposal is accepted.
@@ -132,9 +133,8 @@ Decision: the input file is always the first argument after the script's file. T
 file takes one. Options and other arguments come after it, and remain the script's to parse:
 `uniterm run presenter.janet deck.md --start 3`.
 
-- The declaration in the bytes the command read decides whether a run has an input file, per UTERM-034 "Who reads the
-  script". The command checks the argument after it parses those bytes, and before it sends the declaration. Amended
-  2026-11-22; see Decision Log.
+- The snapshot's declaration decides whether a run has an input file, per UTERM-021 "Where the declaration is read".
+  The command checks the argument after it parses the snapshot, and before it sends the declaration.
 - A missing first argument refuses the run there, with a usage message that names the input file. Nothing reaches the
   sheet.
 - A script that declares an input file cannot run without one, so it cannot print its own help without a file.
@@ -153,20 +153,20 @@ Original question: whether the command opens the file onto the script's stdin, o
 Decision: the command opens the file once, with the invoker's own access, and hands its text to the script through a
 named binding in the uniterm module. The script's stdin stays the invoker's.
 
-- The command opens the file after the declaration in the bytes it read marks an input file, and before it sends the
+- The command opens the file after the snapshot's declaration marks an input file, and before it sends the
   declaration. A missing file, a non-regular file, a FIFO, a device, or a path under `/dev` is refused there, before
   anything blocks and before any sheet names it. The open never blocks and never makes a terminal the controlling
   terminal.
 - The text, the canonical path, and the folder all come from that one open. The folder is the parent of the file's
   canonical path. The open descriptor must be the file that canonical path names, or the run is refused.
-- The command sends the folder to the app with the declaration that follows the script's bytes, per UTERM-034 "Who
-  reads the script", in the same ScriptWire version bump as "Version skew". The app refuses a declaration that marks an input file and arrives with no folder, and a folder that
+- The command sends the folder to the app beside the declaration report, in the same ScriptWire version bump as
+  "Version skew". The app refuses a declaration that marks an input file and arrives with no folder, and a folder that
   arrives with no mark.
 - The read runs in the command's process, so it borrows none of uniterm's macOS privacy grants.
 - Under `input-file` version 2, a PDF or a folder may be the input, per UTERM-029 "Input kinds and host functions". A
   folder is not refused as non-regular there. The command passes a PDF's open descriptor to the app instead of reading
   it, and lists a folder through its descriptor. The UTF-8 check and the size cap apply to text input only. Amended
-  2026-11-22; see Decision Log.
+  2026-11-17; see Decision Log.
 
 Rationale: a read in the invoker's process gives the script exactly what the invoker could read. A host call would
 have the app read a path a program chose, with uniterm's grants. With a remembered folder, any program could then run
@@ -347,7 +347,8 @@ None.
 - The approval sheet names the file's folder and any protected location it lies in, and the run starts only after
   approval
 - A missing, non-regular, FIFO, or `/dev/fd` input is refused before anything blocks
-- The input-file mark is read from the same bytes the command sends and runs, so no later read can add or drop it
+- A file that gains the input-file mark between the command's first read and the snapshot is checked and opened by the
+  snapshot's declaration
 - An argument in the input position that starts with `-` is refused with a message that the input file comes first
 - Opening a tty node as the input file never makes it the controlling terminal
 - A deck reached through a hard link or a symlink grants the folder of its canonical path, and a descriptor that does
@@ -504,12 +505,9 @@ None.
   /Users/me/talks/demo or a folder inside it, in panes it controls". `input-name` now returns the base name, and the
   sheet line names PDF pages. The stored folder kind keeps its version, so an older build still reads the store.
 - 2026-11-21: Scheduled as UTERM-032 M1-M2 in queue.md.
-- 2026-11-22: Amended for UTERM-034, which removes the declared-file snapshot. "Which argument is the input file" said
-  "The snapshot's declaration decides whether a run has an input file" and that the command checks the argument "after
-  it parses the snapshot". "How the text reaches the script" said the command opens the file "after the snapshot's
-  declaration marks an input file" and sends the folder "beside the declaration report". They now name the declaration
-  in the bytes the command read, and the declaration message that follows those bytes. M1's check on a file that gains
-  the mark "between the command's first read and the snapshot" is replaced, since there is one read.
+- 2026-11-22: UTERM-034 was accepted. It removes the declared-file snapshot that "Which argument is the input file" and
+  "How the text reaches the script" name. This proposal is queued first, so its text stays as written. UTERM-034 M1
+  amends both sections and the M1 check on a file that gains the mark before the snapshot, when it lands.
 
 ## References
 
