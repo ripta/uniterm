@@ -80,6 +80,8 @@ place cannot hide behind code that runs first.
 
 ### Authority comes from the read, not the run
 
+Superseded in part by UTERM-034; see Decision Log.
+
 Decision: uniterm reads the declaration with Janet's own parser, from the snapshot's bytes, before any of the file
 runs. The value the form has at run time grants nothing. "Where the declaration is read" says which process runs the
 parser.
@@ -88,6 +90,8 @@ Rationale: a separate hand-written reader could read a crafted file differently 
 with the parser that will run the file closes that gap.
 
 ### The file is snapshotted and hashed
+
+Superseded in part by UTERM-034; see Decision Log.
 
 Decision: the app reads the file, copies it to a private read-only snapshot, and the command runs that copy. The
 version is the SHA-256 of the whole file, declaration included.
@@ -175,6 +179,8 @@ cannot be opened. Amended 2026-11-15; see Decision Log.
 Rationale: enforcement makes a missed call safe. It is refused at run time. A lint moves that error to before the run.
 
 ### Where the declaration is read
+
+Superseded in part by UTERM-034; see Decision Log.
 
 Original question: the app does not link Janet, and ADR-07 keeps Janet out of it. Which process parses the
 declaration: a new sandboxed parse helper, the authenticated command, or a Swift reader in the app?
@@ -386,6 +392,8 @@ As built.
 
 **Status:** DONE
 
+Superseded in part by UTERM-034; see Decision Log.
+
 - A file with a valid declaration shows a review listing its powers before any of its code runs
 - A second declaration, a declaration after another form, a non-literal value, an unknown kind or version, and a
   repeated kind each refuse the file with a message naming the problem
@@ -487,6 +495,8 @@ and an oversize file is proved against raw peers and the snapshot itself.
 ### M3: Signed files
 
 **Status:** DONE
+
+Superseded in part by UTERM-034; see Decision Log.
 
 - `uniterm controller sign` signs a file and writes `file.janet.sig`
 - A signed file offers Trust This Identity, and a new version under a trusted identity that asks for nothing new runs
@@ -763,6 +773,11 @@ a socket that belongs to another user never reached the app, so it keeps 69.
 - 2026-11-16: Superseded in part by UTERM-032. A file policy that holds a remembered input folder lives in a third
   store beside the two policy files, so an older build's file trust keeps working beside a newer build. A declared file
   also gains the `input-file` permission kind.
+- 2026-11-22: Superseded in part by UTERM-034. The command reads a declared file once with the invoker's access, and
+  sends its bytes and its `.sig` to the app. The app hashes the bytes it receives and verifies the signature, and
+  writes no snapshot. This replaces the app's read and snapshot in "The file is snapshotted and hashed", "Where the
+  declaration is read", and "Authority comes from the read, not the run", M2's snapshot checks, and M3's note that the
+  app reads the `.sig`.
 
 ## References
 
