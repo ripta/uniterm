@@ -6,9 +6,13 @@
 
 ## Dependencies
 
-- UTERM-041, for the marker slot, the controlling chip, the kind table, and the call that performs a marker's action
-- UTERM-004, for pane control, the control badge, and Revoke Controller
-- UTERM-019, for the run-end marker and its "Rebuild Tab" action
+- UTERM-041 M1, for M2: the marker slot, the published markers, the kind table, and the call that performs a marker's
+  action
+- UTERM-041 M2, for M3: the controlling chip and each session root's tab
+- UTERM-004, for pane control, the control badge, and Revoke Controller. It is implemented, so M1 can start now
+
+UTERM-019's run-end marker is not a dependency. M2 tests "Rebuild Tab" with a test-published marker, and UTERM-019
+M3 builds on M2. Amended 2026-11-21; see Decision Log.
 
 ## Impacts
 
@@ -367,7 +371,7 @@ None.
   downloading, still asks, and the platform's own Close Other Tabs does
   the same.
 - **The design rests on unbuilt UTERM-041 work** — likelihood: medium, impact: medium. M2 needs UTERM-041 M1's tab
-  bar, and M3 needs its markers, its kind table, the marker action call, and M2's chip. None is built. A later change
+  bar, its markers, its kind table, and the marker action call, and M3 needs UTERM-041 M2's chip. None is built. A later change
   to UTERM-041's marker payload would change this design. Mitigation: M1 needs none of it and ships first. The one
   payload change this proposal needs is recorded in UTERM-041 once this review ends, per Impacts.
 - **An action on a target that is gone** — likelihood: medium, impact: low. A tab or pane can close while the menu is
@@ -400,11 +404,12 @@ Builds only on control code that exists today.
 - The palette lists one "Revoke <name>" entry per controller the badge's menu names. An entry whose owner is gone when
   chosen changes nothing and posts a notice
 
-### M2: The tab menu and closing tabs
+### M2: The tab menu, marker actions, and closing tabs
 
 **Status:** NOT STARTED
 
-Builds on UTERM-041 M1, which rewrites the shared tab bar.
+Builds on UTERM-041 M1, which rewrites the shared tab bar and publishes markers. UTERM-019 M3 builds on this
+milestone, so the run-end marker never ships without a way to rebuild its tab.
 
 - A right-click or Control-click on a tab item opens its menu. A right-click on a background tab acts on that tab and
   does not select it
@@ -419,12 +424,21 @@ Builds on UTERM-041 M1, which rewrites the shared tab bar.
 - An action whose target closed while the menu was open changes nothing, and a notice in the menu's window says the
   tab has closed
 - Building the menu never waits on an applet or a script
+- A tab carrying the run-end marker offers "Rebuild Tab" in its menu, and the palette's "Rebuild Tab" is available only
+  when the selected tab offers it. Both go through UTERM-019's unsent-input question. A test-published run-end marker
+  covers this until UTERM-019 M3 publishes the real one
+- A left-click on any marker, the run-end marker included, selects the tab and opens no menu. A right-click or
+  Control-click on a marker in a tab item opens the tab's menu
+- A right-click or Control-click anywhere on a one-tab pane's marker cluster, gaps included, opens the tab's menu, with
+  Close Other Tabs and Close Tabs to the Right disabled. A left-click there opens nothing and does not reach the applet.
+  VO-Shift-M on a pane-level marker opens the menu
+- Close Tab in a one-tab pane's menu does what Close Tab or Pane does, and asks the same way
 
-### M3: The marker's actions in the menu
+### M3: Controllers in the menu
 
 **Status:** NOT STARTED
 
-Builds on UTERM-041 M1 and M2, for the published markers and the chip.
+Builds on M2 and on UTERM-041 M2, for the chip.
 
 - A published authority marker carries the owners it stands for, and the applet passes them through unchanged
 - In a browser pane with two granted owners, each tab's menu names only the owner that opened it, and each owner's
@@ -439,15 +453,6 @@ Builds on UTERM-041 M1 and M2, for the published markers and the chip.
   sits under its window's header. The list leaves out the tab the menu was opened on
 - A go-to whose target is gone changes nothing, and a notice in the menu's window says so. It never raises the other
   window first
-- A tab carrying the run-end marker offers "Rebuild Tab" in its menu, and the palette's "Rebuild Tab" is available only
-  when the selected tab offers it. Both go through UTERM-019's unsent-input question. A test-published run-end marker
-  covers this until UTERM-019 M3 publishes the real one
-- A left-click on any marker, the run-end marker included, selects the tab and opens no menu. A right-click or
-  Control-click on a marker in a tab item opens the tab's menu
-- A right-click or Control-click anywhere on a one-tab pane's marker cluster, gaps included, opens the tab's menu, with
-  Close Other Tabs and Close Tabs to the Right disabled. A left-click there opens nothing and does not reach the applet.
-  VO-Shift-M on a pane-level marker opens the menu
-- Close Tab in a one-tab pane's menu does what Close Tab or Pane does, and asks the same way
 - The palette lists the go-to entries "Palette commands: wording and target" settles, same-window targets included.
   Typing a controller's name finds every go-to entry for that controller
 - A UI test opens the menu on a controlled browser tab and on a controller's terminal tab, and runs go-to both ways
@@ -518,6 +523,12 @@ Builds on UTERM-041 M1 and M2, for the published markers and the chip.
 - 2026-11-21: Amended UTERM-041 "Interactive markers", "VoiceOver", "One marker or several", its Impacts, and its M1
   run-end check: every marker is inert on a click, and the authority marker carries its owners.
 - 2026-11-21: Accepted by the user.
+- 2026-11-21: Moved four checks from M3 to M2: "Rebuild Tab" in the tab menu and the palette, a left-click on any
+  marker opening nothing, the right-click on a one-tab pane's markers, and Close Tab in a one-tab pane. They need only
+  UTERM-041 M1, not its chip. UTERM-019 M3 now builds on M2, so its run-end marker never ships without a way to
+  rebuild the tab. Dependencies dropped UTERM-019, which would have made the two proposals depend on each other, and
+  now names which UTERM-041 milestone each of M2 and M3 needs. M2 is now "The tab menu, marker actions, and closing
+  tabs", and M3 is "Controllers in the menu".
 
 ## References
 

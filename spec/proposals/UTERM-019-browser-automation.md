@@ -10,6 +10,9 @@
   permissions
 - UTERM-004 M6, through UTERM-005 M8, for the permission framework the new permissions join
 - UTERM-003, for the `uniterm` Janet module and its API version
+- UTERM-041 M1, for M3: the marker slot that holds the run-end marker, its kind, and the call that performs its action
+- UTERM-042 M2, for M3: "Rebuild Tab" in the tab's right-click menu and the palette, so the run-end marker never ships
+  without a way to rebuild its tab
 
 ## Impacts
 
@@ -1098,6 +1101,9 @@ Starts after UTERM-005 M8.
   rebuild", and its M3 check, from UTERM-042's review. The user chose one mouse path for a tab's actions, the tab's
   right-click menu, so a click on the run-end marker does nothing. The text said "The marker offers a rebuild". The
   rebuild is now offered in the tab's menu under the marker's meaning, and as a palette command.
+- 2026-11-21: Added UTERM-041 M1 and UTERM-042 M2 to Dependencies, for M3. UTERM-041's Impacts already said M3 waits
+  on UTERM-041 M1, but this list left it out. UTERM-042 M2 builds the only way to choose "Rebuild Tab". Without it, M3
+  would ship the run-end marker with no way to rebuild the tab.
 
 ## References
 
