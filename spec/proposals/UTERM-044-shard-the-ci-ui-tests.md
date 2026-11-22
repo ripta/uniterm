@@ -86,7 +86,8 @@ runner setup and its own test build, a few minutes.
   so its job takes about 21 to 23 minutes. A one-shard rerun takes the same.
 - **Three.** A run starts 5 macOS jobs and holds 4 once `ghostty-offline` ends, so a second run at the same time often
   queues. A shard runs about 11.7 minutes of tests, so its job takes about 15 to 17 minutes, at or just above the
-  15-minute `package` floor. That is about 6 minutes shorter than two shards, for a full run and for a rerun.
+  15-minute `package` floor. That is about 6 minutes shorter than two shards, for a full run and for a rerun. The full-run
+  gain assumes `package` keeps its 15-minute floor. With the helper checks moved into `package`, it is closer to 4.
 
 A fix PR next to a batch PR, as on 2026-11-21, is the common case for two runs at once. A push to `main` adds a third,
 unless the tested-tree skip applies to it, which it does only when the merged PR's head held `main`'s previous commit.
@@ -164,6 +165,7 @@ A class that no shard runs would silently stop running in CI.
 - When the helper sandbox checks run in their own job, both skips cover that job, and `ci` requires its result
 - Under a run-time split, every shard lists the classes in the same order, a `make test-ci` case proves the split
   covers every class once, and each shard logs its selection so a local rerun can copy it
+- Under a run-time split, each shard's class list comes from the built test bundle, and a class missing from it fails CI
 - The measured length of a full CI run, and of a one-shard rerun, are recorded in the As built block
 
 ## Decision Log

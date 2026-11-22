@@ -12,8 +12,8 @@
 
 UI tests send synthesized wheels, clicks, and keys. When an event arrives before its target can take it, the test fails
 with no change to the code. This proposal gives the UI test base class one way to aim and send a wheel that settles the
-pointer first. It moves every wheel onto it once CI shows the launcher change holds, and states when a flaky entry may
-close.
+pointer first, once CI shows the launcher change holds. Which call sites move onto it is open. It also states when a
+flaky entry may close.
 
 ## Motivation
 
@@ -63,8 +63,10 @@ runs say little about a flake seen once in twenty.
 
 - **Every synthesized wheel.** Every wheel goes through one base-class entry point that aims and settles, so a new
   wheel test gets the settle by default. Takes in the image viewer's wheels, which have no flaky entry. An addition.
-- **Wheels and keys.** As above, plus a keyboard-focus settle before keys. Keys already wait for the app to be frontmost
-  (`UnitermUITestCase.swift:233`). A focus settle would wait for the app's first responder, which is the app's response
+  Leaves undone: keys, and the `QuestionsUITests` Escape retry.
+- **Wheels and keys.** As above, plus a keyboard-focus settle before keys. Today a test waits once for the app to be
+  frontmost, in `waitForTerminal` (`UnitermUITestCase.swift:127`), not before each key. A focus settle would wait for
+  the app's first responder, which is the app's response
   to the last action, against the decision above. It also cannot see the open panel, which runs in another process.
   `QuestionsUITests` resends Escape up to three times for a panel not yet ready, a retry this option would have to
   replace. An addition.
@@ -89,13 +91,14 @@ known, and no logged flake shows it. Candidates: settle clicks too, or leave cli
 
 - **No detection.** Document that a local UI run needs the pointer and keyboard left alone.
 - **Check pointer drift.** Before each event, compare the pointer with where the settle put it, and fail when a person
-  moved it. Leaves undone: a person's modifier keys still change synthesized input, which was the TerminalLink cause.
+  moved it. An addition. Leaves undone: a person's modifier keys still change synthesized input, which was the
+  TerminalLink cause.
 
 ## Risks
 
 - **The launcher hypothesis is wrong** — likelihood: medium, impact: medium.
-  Mitigation: M1 waits for CI evidence. A CI failure with the pointer inside the list sends this proposal back to its
-  scope question before anything is built on the cause.
+  Mitigation: M2 starts only after M1's clean count. A CI failure with the pointer inside the list disproves the cause,
+  and the proposal is then retargeted or retracted, before anything is built on it.
 - **A settle never actually waits** — likelihood: medium, impact: low.
   Mitigation: if `hover()` returns only after the pointer moved, the wait proves the precondition but guards nothing.
   The aiming question above decides what the settle actually guards, and its comment says so.
@@ -109,9 +112,13 @@ known, and no logged flake shows it. Candidates: settle clicks too, or leave cli
 
 **Status:** NOT STARTED
 
-- The launcher change has run clean in CI `app` runs to the count the closing rule sets, or a failure's report is
-  recorded in the launcher entry
-- When a failure shows the pointer inside the list, the open scope question is reopened before M2 starts
+- The `spec/flaky-tests.md` Rule section states the closing rule above, in place of moving an entry to Fixed on a fix
+  commit alone
+- The launcher change has run clean in CI `app` runs to the count the closing rule sets. A clean run is one in which
+  the launcher test did not fail. M2 does not start before that count
+- A CI failure with the pointer inside the list sends the proposal to the user to retarget or retract
+- A CI failure in which the settle's own wait timed out, or the pointer left the list after the settle, is recorded in
+  the launcher entry and reopens the aiming question
 
 ### M2: One way to send a wheel
 
@@ -121,7 +128,8 @@ known, and no logged flake shows it. Candidates: settle clicks too, or leave cli
   precondition never holds
 - The settle reads the target's frame on each poll
 - Every call site the scope question names uses it, and no raw wheel remains among them
-- CI `app` runs, not local runs, prove the change
+- A settle that times out fails with its own message, distinct from the test's own assertion
+- CI `app` runs, not local runs, prove the change, to the closing rule's count
 
 ## Decision Log
 
