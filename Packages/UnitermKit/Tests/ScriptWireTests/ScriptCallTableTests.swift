@@ -19,6 +19,9 @@ final class ScriptCallTableTests: XCTestCase {
       8: ("request-layout", .paneControl),
       9: ("read-clipboard", .clipboardRead),
       10: ("write-clipboard", .clipboardWrite),
+      11: ("open-form", .askUser),
+      12: ("wait-form", .askUser),
+      13: ("discard-form", .askUser),
     ]
     let samples = ScriptCodecTests.calls + [.postStatus(level: .info, text: "")]
     var seen: Set<UInt16> = []

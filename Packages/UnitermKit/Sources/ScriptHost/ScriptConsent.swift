@@ -528,6 +528,7 @@ extension ScriptHost {
     case .clipboardRead: return .clipboardRead
     case .clipboardWrite: return .clipboardWrite
     case .paneControl: return .paneControl
+    case .askUser: return .askUser
     }
   }
 
@@ -551,7 +552,7 @@ extension ScriptHost {
     let power = Self.power(for: call)
 
     guard let run = controllerRuns[connection.id] else {
-      guard let power, power != .paneControl else { return .allowed }
+      guard let power, power != .paneControl, power != .askUser else { return .allowed }
 
       if once.contains(power) || clipboardGrants[connection.id]?.contains(power) == true {
         return .allowed
@@ -576,7 +577,7 @@ extension ScriptHost {
         .failure(
           .refused,
           "This \(subject) did not declare \(power.kindName) in \(place), so it "
-            + "cannot \(power == .paneControl ? "act on panes" : Self.verb(for: power))."))
+            + "cannot \(Self.verb(for: power))."))
     }
 
     guard once.contains(power) || run.standing.contains(power) else { return .needsApproval(power) }
@@ -631,7 +632,12 @@ extension ScriptHost {
   }
 
   private static func verb(for power: ControllerPermission) -> String {
-    power == .clipboardRead ? "read the clipboard" : "replace the clipboard"
+    switch power.kind {
+    case .paneControl: return "act on panes"
+    case .askUser: return "ask you questions"
+    case .clipboardRead: return "read the clipboard"
+    default: return "replace the clipboard"
+    }
   }
 
   /// Puts an operation that needs the user's answer in the Pending Requests panel. The call is

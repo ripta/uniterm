@@ -220,7 +220,10 @@ public final class ScriptReplChannel {
   /// Asks the helper to stop the form it is running. It is the same request Ctrl-C makes through
   /// the pty, and it reaches the helper whether or not the pty's signal does.
   public func requestStop() {
-    connection?.send(.stop)
+    guard let connection else { return }
+
+    host?.replStopRequested(on: connection.id)
+    connection.send(.stop)
   }
 
   /// One Ctrl-C press in the pane. The first while a form runs asks the helper to stop it. A

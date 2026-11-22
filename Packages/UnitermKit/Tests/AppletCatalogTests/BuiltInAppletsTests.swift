@@ -6,6 +6,7 @@ import DataViewerApplet
 import FileRouting
 import ImageViewerApplet
 import MapViewerApplet
+import QuestionsApplet
 import ReplApplet
 import TerminalApplet
 import TextViewerApplet
@@ -17,8 +18,9 @@ final class BuiltInAppletsTests: XCTestCase {
   /// Catches a declaration that changes without a deliberate edit here. The terminal opens folders
   /// as the owner, the data viewer opens CSV, JSON, and `.xlsx` as the owner, the map viewer
   /// opens GeoJSON as the owner, the text viewer opens PDF, RTF, and Word as the owner, and the
-  /// REPL opens nothing. The terminal, the REPL, the text viewer, and the browser declare remote
-  /// control. The image viewer and the map viewer declare every combination.
+  /// REPL opens nothing, and neither does the Questions pane, which a program opens and takes no
+  /// control. The terminal, the REPL, the text viewer, and the browser declare remote control. The
+  /// image viewer and the map viewer declare every combination.
   func testTheCatalogIsTheTerminalOpeningFoldersAndTheDataViewerOpeningTables() {
     XCTAssertEqual(
       BuiltInApplets.declarations,
@@ -60,6 +62,9 @@ final class BuiltInAppletsTests: XCTestCase {
         AppletTypeDeclaration(
           typeID: "repl", displayName: "REPL", symbolName: "curlybraces", opens: [],
           controlSupport: [.disconnected, .remoteControlled]),
+        AppletTypeDeclaration(
+          typeID: "questions", displayName: "Questions", symbolName: "questionmark.bubble",
+          opens: []),
       ])
   }
 
@@ -72,7 +77,7 @@ final class BuiltInAppletsTests: XCTestCase {
     let expected: [String: Set<ControlCombination>] = [
       "terminal": remote, "repl": remote, "data-viewer": [.disconnected],
       "map-viewer": ControlCombination.all, "browser": remote,
-      "image-viewer": ControlCombination.all, "text-viewer": remote,
+      "image-viewer": ControlCombination.all, "text-viewer": remote, "questions": [.disconnected],
     ]
 
     XCTAssertEqual(Set(BuiltInApplets.declarations.map(\.typeID)), Set(expected.keys))
@@ -99,7 +104,7 @@ final class BuiltInAppletsTests: XCTestCase {
       ("terminal", TerminalApplet.self, false), ("repl", ReplApplet.self, false),
       ("data-viewer", DataViewerApplet.self, false), ("map-viewer", MapViewerApplet.self, true),
       ("browser", BrowserApplet.self, true), ("image-viewer", ImageViewerApplet.self, true),
-      ("text-viewer", TextViewerApplet.self, true),
+      ("text-viewer", TextViewerApplet.self, true), ("questions", QuestionsApplet.self, false),
     ]
 
     for (name, type, adopts) in types {

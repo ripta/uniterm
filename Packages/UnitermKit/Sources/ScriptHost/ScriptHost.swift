@@ -51,6 +51,10 @@ public final class ScriptHost {
     /// A `uniterm open` command.
     case openCommand
 
+    /// The bundled command running a question-only session. It runs no script code, and it may
+    /// make only the form calls.
+    case questionOnly
+
     var lastsOneRun: Bool { self == .bundledRun || self == .controllerRun || self == .fileRun }
   }
 
@@ -91,7 +95,7 @@ public final class ScriptHost {
     var size: Int
   }
 
-  private struct PaneKey: Hashable {
+  struct PaneKey: Hashable {
     var window: UInt64
     var pane: UInt64
   }
@@ -113,10 +117,10 @@ public final class ScriptHost {
 
   /// The session roots running in each pane, oldest first. A terminal pane holds one per tab. Only
   /// this table says which pane a root belongs to, so a grant names a pane and gets its root here.
-  private var paneRoots: [PaneKey: [ProcessIdentity]] = [:]
+  var paneRoots: [PaneKey: [ProcessIdentity]] = [:]
 
   /// The grants the user made, by connection. A grant binds one connection to one pane's session.
-  private var grants: [UInt64: ExplicitGrant] = [:]
+  var grants: [UInt64: ExplicitGrant] = [:]
 
   /// REPL helpers that presented a valid token before their pane's session root arrived, by
   /// connection. The attach completes or is refused once the root is known.
@@ -191,6 +195,9 @@ public final class ScriptHost {
   /// The reviews of undeclared script files that wait, oldest first, and the runs behind them.
   public internal(set) var undeclaredReviews: [UndeclaredReview] = []
   var waitingUndeclared: [UInt64: WaitingUndeclared] = [:]
+
+  /// The forms every connection opened, by handle.
+  var forms = FormSlots()
 
   /// The calls of connections whose begin waits for the full check of the command, in order. They
   /// run, or are refused, once the check decides what the connection is.
@@ -336,6 +343,8 @@ public final class ScriptHost {
   }
 
   public func stop() {
+    for connection in forms.connections { endForms(of: connection) }
+
     listener.stop()
     task?.cancel()
     task = nil
@@ -356,6 +365,7 @@ public final class ScriptHost {
     undeclaredRuns = [:]
     heldRequests = [:]
     lateClaims = []
+    forms.removeAll()
 
     for watch in peerWatches.values { watch.cancel() }
 
@@ -415,6 +425,9 @@ public final class ScriptHost {
 
     case .openBegun(let connection, let request):
       beginOpen(connection, request)
+
+    case .questionBegun(let connection):
+      beginQuestionOnly(connection)
 
     case .attached(let connection, let token):
       sessions[connection.id, default: Session()].kind = .repl
@@ -510,6 +523,9 @@ public final class ScriptHost {
         connection.reply(id: id, result: result)
       }
 
+    case .openForm, .waitForm, .discardForm:
+      runFormCall(call, id: id, on: connection)
+
     default:
       connection.reply(id: id, result: run(call, on: connection, once: once))
     }
@@ -553,7 +569,8 @@ public final class ScriptHost {
           access: readAccess(for: connection.id))
       }
 
-    case .openPane, .openTab, .sendCommand, .requestLayout, .readClipboard, .writeClipboard:
+    case .openPane, .openTab, .sendCommand, .requestLayout, .readClipboard, .writeClipboard,
+      .openForm, .waitForm, .discardForm:
       return .failure(.failed, "the call has its own path, and was run as if it did not")
 
     case .send(let target, let name, let content):
@@ -778,6 +795,7 @@ public final class ScriptHost {
   /// A connection's authority ended. Its clipboard grants and the operations it has waiting go
   /// with it, so no queued request outlives the authority it asked under.
   func authorityEnded(_ id: UInt64) {
+    endForms(of: id)
     clipboardGrants[id] = nil
     permissionRequests.end(.connection(id))
     permissionRequests.end(.unboundOpen(id))
@@ -934,7 +952,7 @@ public final class ScriptHost {
   /// A reply the frame cannot hold becomes a failure the script sees. For an applet command,
   /// which has already run by then, the failure says so, so the script never takes the command
   /// for one that was refused.
-  private static func result(of value: ScriptValue, commandRan: Bool = false) -> ScriptResult {
+  static func result(of value: ScriptValue, commandRan: Bool = false) -> ScriptResult {
     let kind: ScriptFailureKind = commandRan ? .replyLost : .failed
     let lead = commandRan ? "the command ran, but its reply" : "the answer"
 
@@ -951,7 +969,7 @@ public final class ScriptHost {
     }
   }
 
-  private static func failure(_ error: any Error) -> ScriptResult {
+  static func failure(_ error: any Error) -> ScriptResult {
     guard let error = error as? ScriptCallError else {
       return .failure(.failed, "the call failed: \(error)")
     }
@@ -1006,6 +1024,8 @@ public final class ScriptHost {
       findConnection($0)?.binding?.root == identity && grants[$0] == nil
     }
 
+    let generation = sessionRoots.sessionGeneration(for: identity)
+
     sessionRoots.remove(identity)
 
     let key = PaneKey(window: window, pane: pane.rawValue)
@@ -1017,6 +1037,7 @@ public final class ScriptHost {
     endGrants { $0.root == identity }
     endOpenGrants { $0.root == identity }
     acting.forEach(authorityEnded)
+    endForms(ofSession: identity, generation: generation, window: window)
   }
 
   /// Forgets every session root in a closed window, and ends every grant to one of its panes. The

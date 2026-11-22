@@ -136,13 +136,14 @@ enum ScriptFixtures {
   static func makeFileHost(
     directory: URL, work: URL, helper: (any ControllerHelperIdentity)?,
     onRefusal: @escaping @MainActor (ScriptRefusal) -> Void = { _ in },
-    clipboard: (any ScriptClipboard)? = nil, settings: SettingsStore? = nil
+    clipboard: (any ScriptClipboard)? = nil, settings: SettingsStore? = nil,
+    windows: any ScriptWindowAPI = FakeWindowAPI()
   ) throws -> ScriptHost {
     let center = StatusCenter()
 
     let host = ScriptHost(
       listener: try ScriptListener.start(directory: directory),
-      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: FakeWindowAPI(),
+      issueProducer: { center.issueProducer(kind: .script, name: $0) }, windows: windows,
       onRefusal: onRefusal,
       controllers: ControllerSettings(
         runsRoot: work.appendingPathComponent("runs"),

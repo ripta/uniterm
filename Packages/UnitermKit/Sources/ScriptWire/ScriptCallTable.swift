@@ -6,6 +6,7 @@ public enum ScriptCallPower: String, CaseIterable, Sendable {
   case paneControl = "pane-control"
   case clipboardRead = "clipboard-read"
   case clipboardWrite = "clipboard-write"
+  case askUser = "ask-user"
 }
 
 /// One host call a script makes, apart from its arguments.
@@ -24,6 +25,9 @@ public enum ScriptCallKind: CaseIterable, Sendable {
   case requestLayout
   case readClipboard
   case writeClipboard
+  case openForm
+  case waitForm
+  case discardForm
 
   /// The name of the function in the `uniterm` module, without a prefix.
   public var janetName: String {
@@ -38,6 +42,9 @@ public enum ScriptCallKind: CaseIterable, Sendable {
     case .requestLayout: return "request-layout"
     case .readClipboard: return "read-clipboard"
     case .writeClipboard: return "write-clipboard"
+    case .openForm: return "open-form"
+    case .waitForm: return "wait-form"
+    case .discardForm: return "discard-form"
     }
   }
 
@@ -47,6 +54,7 @@ public enum ScriptCallKind: CaseIterable, Sendable {
     case .postStatus: return nil
     case .readClipboard: return .clipboardRead
     case .writeClipboard: return .clipboardWrite
+    case .openForm, .waitForm, .discardForm: return .askUser
     case .listWindows, .listPanes, .openPane, .openTab, .send, .sendCommand, .requestLayout:
       return .paneControl
     }
@@ -71,6 +79,29 @@ extension ScriptCall {
     case .requestLayout: return .requestLayout
     case .readClipboard: return .readClipboard
     case .writeClipboard: return .writeClipboard
+    case .openForm: return .openForm
+    case .waitForm: return .waitForm
+    case .discardForm: return .discardForm
     }
   }
+}
+
+/// The `uniterm` module's functions that are not wire calls of their own. Each one makes the wire
+/// calls of the power named here, so the script lint counts a use of it as a use of that power.
+///
+/// They are written in Janet over the typed calls above. A form's helpers open the form, wait for
+/// it, and discard it, so each needs `ask-user` and nothing else.
+public enum ScriptHelperFunctions {
+  /// The function names, without a prefix, and the power each needs.
+  public static let powers: [String: ScriptCallPower] = [
+    "ask": .askUser,
+    "ask-confirm": .askUser,
+    "ask-text": .askUser,
+    "ask-choose": .askUser,
+    "ask-number": .askUser,
+    "ask-color": .askUser,
+    "ask-file": .askUser,
+  ]
+
+  public static func power(of janetName: String) -> ScriptCallPower? { powers[janetName] }
 }

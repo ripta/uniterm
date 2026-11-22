@@ -141,9 +141,10 @@ public indirect enum ScriptValue: Equatable, Sendable {
     return bytes
   }
 
-  /// Reads a value from a reply's bytes. Only tests call it. It follows the format the shim reads,
-  /// and the shim's own reader is proven separately against crafted replies.
-  static func decode(_ data: Data) throws -> ScriptValue {
+  /// Reads a value from a reply's bytes. The helper's own commands read a form's result with it,
+  /// and tests read every reply with it. It follows the format the shim reads, and the shim's own
+  /// reader is proven separately against crafted replies.
+  public static func decode(_ data: Data) throws -> ScriptValue {
     var reader = ByteReader(data)
     let value = try decode(from: &reader, depth: 0)
 

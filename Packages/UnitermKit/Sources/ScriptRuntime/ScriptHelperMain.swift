@@ -14,6 +14,8 @@ import ScriptWire
 /// The `repl` mode is `repl --socket PATH`, which only the app starts. See `ScriptReplMain`.
 ///
 /// The `open` mode asks the app to open files in panes. See `ScriptOpenCommand`.
+///
+/// The `ask` mode shows the user a form and prints the answer. See `ScriptAskCommand`.
 public enum ScriptHelperMain {
   /// Exit statuses follow sysexits.h where one fits.
   public enum Exit {
@@ -23,6 +25,15 @@ public enum ScriptHelperMain {
     public static let dataError: Int32 = 65
     public static let noInput: Int32 = 66
     public static let unavailable: Int32 = 69
+
+    /// `uniterm ask`: the user cancelled the form or closed it.
+    public static let cancelled: Int32 = 3
+
+    /// `uniterm ask`: the form ended before the user answered it.
+    public static let formEnded: Int32 = 4
+
+    /// `uniterm ask`: uniterm holds as many forms from this program as it may.
+    public static let busy: Int32 = 75
 
     /// The app was reached and refused the run: strict mode, a rejected review, a denial, or a
     /// power the file did not declare. A caller that retries on `unavailable` must not retry this.
@@ -65,6 +76,7 @@ public enum ScriptHelperMain {
              uniterm run [--allow CAPABILITY]... [--socket PATH] package [argument...]
              uniterm lint file.janet
              uniterm open [--socket PATH] [--] path...
+             uniterm ask --help
              uniterm controller --help
 
       Runs a Janet script against the running uniterm. Given a controller package's folder, it
@@ -114,6 +126,11 @@ public enum ScriptHelperMain {
 
     if arguments.dropFirst().first == "open" {
       return ScriptOpenCommand.run(
+        arguments: Array(arguments.dropFirst(2)), environment: environment)
+    }
+
+    if arguments.dropFirst().first == "ask" {
+      return ScriptAskCommand.run(
         arguments: Array(arguments.dropFirst(2)), environment: environment)
     }
 
@@ -295,9 +312,32 @@ public enum ScriptHelperMain {
   }
 
   static func fail(_ message: String, status: Int32) -> Int32 {
-    FileHandle.standardError.write(Data((message + "\n").utf8))
+    _ = writeAll(Data((message + "\n").utf8), to: STDERR_FILENO)
 
     return status
+  }
+
+  /// Writes every byte to `descriptor` with POSIX `write`, which reports a closed pipe as an error
+  /// code. `FileHandle.write` raises an Objective-C exception for it, and that ends the process
+  /// with an abort when SIGPIPE is ignored. Returns the error code, or nil when all was written.
+  static func writeAll(_ data: Data, to descriptor: Int32) -> Int32? {
+    var offset = 0
+
+    while offset < data.count {
+      let written = data.withUnsafeBytes { buffer in
+        write(descriptor, buffer.baseAddress! + offset, data.count - offset)
+      }
+
+      if written < 0 {
+        if errno == EINTR { continue }
+
+        return errno
+      }
+
+      offset += written
+    }
+
+    return nil
   }
 
   /// Where the command connects.

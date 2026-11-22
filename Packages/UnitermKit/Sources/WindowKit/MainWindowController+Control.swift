@@ -216,6 +216,7 @@ extension MainWindowController {
   func refreshControlMarks() {
     for pane in paneArea.tree.paneIDs {
       paneArea.paneView(for: pane)?.controlMark = controlMark(for: pane)
+      paneArea.paneView(for: pane)?.askingMark = askingMark(for: pane)
     }
   }
 

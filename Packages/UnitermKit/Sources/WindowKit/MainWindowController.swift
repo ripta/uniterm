@@ -47,7 +47,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   private(set) var historyVisible = false
 
   /// The ID scripts name this window by. The set that opened the window assigns it.
-  var scriptWindowID: UInt64 = 0
+  public internal(set) var scriptWindowID: UInt64 = 0
 
   /// The numbers scripts name this window's tabs by.
   var scriptTabNumbers = ScriptTabNumbers()
@@ -83,6 +83,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   /// Each pane's exec driver declaration and where it stands, keyed by pane.
   var execAttachments: [NodeID: ExecAttachment] = [:]
+
+  /// The pane each open form was asked from, keyed by the requester. A pane in it shows the asking
+  /// badge until the requester's form resolves.
+  var askers: [String: NodeID] = [:]
 
   /// The last owner ID given to a driver run in this window. Each run that starts takes the next.
   var lastDriverOwner: UInt64 = 0
@@ -529,7 +533,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   // MARK: Panes
 
   /// The panes in reading order. Tests and the UI read it.
-  var paneIDs: [NodeID] { paneArea.tree.paneIDs }
+  public var paneIDs: [NodeID] { paneArea.tree.paneIDs }
 
   var focusedPane: NodeID { paneArea.focusedPane }
 
@@ -803,7 +807,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         request.plan, anchoredAt: anchor, for: owner, slots: request.panes.count,
         in: paneArea.bounds.size)
     } catch {
-      throw Self.layoutFailure(error)
+      throw questionsPaneBlocks(error) ?? Self.layoutFailure(error)
     }
 
     let staged = StagedLayout(request: request, anchor: anchor, owner: owner)
@@ -863,7 +867,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         request.plan, anchoredAt: staged.anchor, for: staged.owner, adding: staged.applets)
     } catch {
       staged.discard()
-      throw Self.layoutFailure(error)
+      throw questionsPaneBlocks(error) ?? Self.layoutFailure(error)
     }
 
     staged.published = true
@@ -896,6 +900,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   private static func layoutFailure(_ error: any Error) -> ScriptCallError {
     switch error {
     case PaneLayoutError.refused(let reason): return .refused(reason)
+    case PaneLayoutError.unownedContent: return .refused(String(describing: error))
     case PaneLayoutError.noRoom: return .refused("the layout does not fit in the window")
     case PaneTreeError.unknownPane: return .notFound("the pane is not open in that window")
     default: return .failed("the layout failed: \(error)")
@@ -1089,6 +1094,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
     execPaneClosed(pane)
+    askerPaneClosed(pane)
     applet.close()
     paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)
@@ -1108,6 +1114,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     started.remove(ObjectIdentifier(applet))
     exitedApplets.remove(ObjectIdentifier(applet))
     execPaneClosed(pane)
+    askerPaneClosed(pane)
     applet.close()
     paneControls.forget(pane)
     statusCenter.paneClosed(id: pane.rawValue)

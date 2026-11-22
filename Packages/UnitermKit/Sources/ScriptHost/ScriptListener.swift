@@ -324,6 +324,9 @@ public final class ScriptListener: @unchecked Sendable {
     /// A `uniterm open`. It sends its begin and then only listens, so every other message from it
     /// is a violation.
     case open
+
+    /// A question-only session. It makes form calls and nothing else.
+    case questionOnly
   }
 
   /// Reads until the connection ends. The declaration is due by `deadline`, and a peer that has
@@ -381,6 +384,13 @@ public final class ScriptListener: @unchecked Sendable {
           setReadTimeout(0, on: descriptor)
           continuation.yield(.openBegun(connection, begin))
 
+        case .questionBegin:
+          guard role == .undeclared else { throw WireError.badValue("a second begin") }
+
+          role = .questionOnly
+          setReadTimeout(0, on: descriptor)
+          continuation.yield(.questionBegun(connection))
+
         case .fileDeclaration(let json):
           guard fileBegun, !fileDeclared else {
             throw WireError.badValue("a declaration from a connection that began no file, or twice")
@@ -427,8 +437,12 @@ public final class ScriptListener: @unchecked Sendable {
           continuation.yield(.replMemoryLimit(connection))
 
         case .request(let id, let call):
-          guard role == .script || role == .repl else {
+          guard role == .script || role == .repl || role == .questionOnly else {
             throw WireError.badValue("a call from a connection that has not begun, or an open")
+          }
+
+          guard role != .questionOnly || call.kind.power == .askUser else {
+            throw WireError.badValue("a call other than a form call on a question-only session")
           }
 
           connection.slots.wait()

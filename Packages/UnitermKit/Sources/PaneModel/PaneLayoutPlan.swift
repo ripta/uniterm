@@ -87,12 +87,19 @@ public enum PaneLayoutError: Error, Equatable, CustomStringConvertible {
   /// The plan places panes the rules do not allow, or misses one it must place.
   case refused(String)
 
+  /// The group's content holds panes its owner does not own, so its layout cannot change. The set
+  /// names each such pane. It is empty when the content holds a nested group instead.
+  case unownedContent(Set<NodeID>)
+
   /// A pane would end up below the minimum size, or the whole tree would not fit.
   case noRoom
 
   public var description: String {
     switch self {
     case .refused(let reason): return reason
+    case .unownedContent:
+      return "the group holds a pane this program does not own, such as one the user split off, "
+        + "so its layout cannot change"
     case .noRoom: return "the layout does not fit in the window"
     }
   }

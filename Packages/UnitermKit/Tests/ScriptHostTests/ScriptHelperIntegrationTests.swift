@@ -292,6 +292,9 @@ final class ScriptHelperIntegrationTests: XCTestCase {
       case .openBegun:
         XCTFail("a script helper asked to open files")
 
+      case .questionBegun:
+        XCTFail("a script helper asked for a question-only session")
+
       case .pong:
         break
 

@@ -9,6 +9,7 @@ import MapViewerApplet
 import OSLog
 import PlaceSearch
 import Preferences
+import QuestionsApplet
 import ReplApplet
 import ScriptHost
 import SettingsKit
@@ -35,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var routedOpener: RoutedOpener?
   private var launchOpens: LaunchOpenCoordinator?
   private var fileOpens: FileOpenCommands?
+
+  #if DEBUG
+    private var questionsTestHook: QuestionsTestHook?
+  #endif
 
   /// Opens that arrived before the coordinator existed. Launch Services can deliver the event of a
   /// cold launch ahead of the end of launching. The sender is identified when the event arrives,
@@ -457,6 +462,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       case ReplDescription.typeID:
         return try ReplApplet(engine: engine, services: replServices, restoring: description)
 
+      case QuestionsApplet.descriptionTypeID:
+        return try QuestionsApplet(restoring: description)
+
       default:
         #if DEBUG
           if testApplets, AppletFixtures.typeIDs.contains(description.type) {
@@ -633,6 +641,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if let controller = windows.activeController {
       postDebugError(to: controller)
     }
+
+    startQuestionsTestHook(windows: windows)
+  }
+
+  /// UI tests set `UNITERM_TEST_QUESTIONS_DIR` to open forms in the Questions pane from files, so a
+  /// test opens a form without running a script. Only debug builds honor it.
+  private func startQuestionsTestHook(windows: WindowSet) {
+    #if DEBUG
+      guard let path = debugEnvironment["UNITERM_TEST_QUESTIONS_DIR"] else { return }
+
+      let hook = QuestionsTestHook(directory: URL(fileURLWithPath: path), windows: windows)
+
+      questionsTestHook = hook
+      hook.start()
+    #endif
   }
 
   /// Tells the user what failed at launch, then quits. Without a window there is nowhere else to

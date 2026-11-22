@@ -8,9 +8,10 @@ import Foundation
 /// version can therefore always read the other's hello, and the refusal names the version.
 ///
 /// Version 12 writes an applet command's schema version as a major and a minor. Version 13 adds the
-/// begin of a `uniterm open` command and the reply to it.
+/// begin of a `uniterm open` command and the reply to it. Version 14 adds the three form calls, the
+/// begin of a question-only session and the reply to it, and the `ended` failure kind.
 public enum ScriptProtocol {
-  public static let version: UInt16 = 13
+  public static let version: UInt16 = 14
 
   /// What the user is told when the two sides disagree. The app and its command are two binaries
   /// in one bundle, so replacing the bundle under a running app pairs an old app with a new one.
@@ -61,6 +62,10 @@ public enum ScriptProtocol {
 
   /// The largest major or minor of a command schema version a script may name.
   public static let maxSchemaVersion: UInt32 = 1 << 31 - 1
+
+  /// The most bytes of JSON one form spec may hold. It leaves room in the control frame for the
+  /// rest of the call, and it is the spec reader's own cap.
+  public static let maxFormBytes = 32 * 1024
 
   /// The longest directory a script may name, in UTF-8 bytes. It matches the system's path limit.
   public static let maxDirectoryBytes = 1024
@@ -324,6 +329,17 @@ public enum ScriptCall: Equatable, Sendable {
   /// Replaces the clipboard with plain text. It is a power of its own, apart from reads.
   case writeClipboard(text: String)
 
+  /// Shows a form to the user, as JSON text that the app reads strictly. The reply is the form's
+  /// handle at once. The answers wait under the handle for `waitForm`.
+  case openForm(spec: String)
+
+  /// Waits for a form's result. It only reads, so its reply may come later. Reading does not
+  /// consume the result.
+  case waitForm(form: UInt64)
+
+  /// Frees a form's handle. A form still open closes as ended.
+  case discardForm(form: UInt64)
+
   var code: UInt16 {
     switch self {
     case .postStatus: return 1
@@ -336,6 +352,9 @@ public enum ScriptCall: Equatable, Sendable {
     case .requestLayout: return 8
     case .readClipboard: return 9
     case .writeClipboard: return 10
+    case .openForm: return 11
+    case .waitForm: return 12
+    case .discardForm: return 13
     }
   }
 
@@ -396,6 +415,15 @@ public enum ScriptCall: Equatable, Sendable {
 
     case .writeClipboard(let text):
       body.put(string: text, limit: ScriptProtocol.maxClipboardBytes)
+
+    case .openForm(let spec):
+      let bytes = Data(spec.utf8.prefix(ScriptProtocol.maxFormBytes))
+
+      body.put(UInt32(bytes.count))
+      body.put(raw: bytes)
+
+    case .waitForm(let form), .discardForm(let form):
+      body.put(id: form)
     }
   }
 
@@ -483,6 +511,16 @@ public enum ScriptCall: Equatable, Sendable {
     case 10:
       return .writeClipboard(text: try reader.string(limit: ScriptProtocol.maxClipboardBytes))
 
+    case 11:
+      return .openForm(
+        spec: try reader.json(limit: ScriptProtocol.maxFormBytes, what: "the form spec is"))
+
+    case 12:
+      return .waitForm(form: try reader.id())
+
+    case 13:
+      return .discardForm(form: try reader.id())
+
     default:
       throw WireError.badValue("an unknown host function")
     }
@@ -490,7 +528,7 @@ public enum ScriptCall: Equatable, Sendable {
 }
 
 /// Why a call did not succeed. The kind lets a script tell its own mistake from a refusal.
-public enum ScriptFailureKind: UInt8, Sendable, Equatable {
+public enum ScriptFailureKind: UInt8, Sendable, Equatable, CaseIterable {
   /// The call's arguments are not acceptable.
   case badArgument = 1
 
@@ -515,6 +553,10 @@ public enum ScriptFailureKind: UInt8, Sendable, Equatable {
   /// The app is still working on another call of the same kind from this caller, such as a layout
   /// it is preparing. Nothing ran, and the call may be sent again once the other one is answered.
   case busy = 7
+
+  /// The form ended before the user answered it: the run ended, the program's authority ended, or
+  /// the form was discarded. Nothing was submitted.
+  case ended = 8
 }
 
 /// The app's answer to one call.
@@ -697,6 +739,11 @@ public enum ScriptHelperMessage: Equatable, Sendable {
   /// connection makes no call.
   case openBegin(OpenBegin)
 
+  /// Declares the connection a question-only session, in place of `begin`. The command runs no
+  /// script code, so the session may make only the three form calls. The app answers with
+  /// `questionOnlyAdmitted` or `controllerRefused`, and no call is answered before that.
+  case questionBegin
+
   /// The frame type of the one call that carries content.
   static let sendType: UInt8 = 4
 
@@ -718,6 +765,7 @@ public enum ScriptHelperMessage: Equatable, Sendable {
     case .fileDeclaration: return 12
     case .undeclaredBegin: return 13
     case .openBegin: return 14
+    case .questionBegin: return 15
     }
   }
 
@@ -731,7 +779,7 @@ public enum ScriptHelperMessage: Equatable, Sendable {
 
     case .pong(let nonce): body.put(nonce)
 
-    case .memoryLimit: break
+    case .memoryLimit, .questionBegin: break
 
     case .controllerBegin(let begin):
       body.put(begin.entry.rawValue)
@@ -885,6 +933,8 @@ public enum ScriptHelperMessage: Equatable, Sendable {
 
       message = .openBegin(OpenBegin(paths: paths))
 
+    case 15: message = .questionBegin
+
     default: throw WireError.unknownType(type)
     }
 
@@ -954,6 +1004,10 @@ public enum ScriptAppMessage: Equatable, Sendable {
   /// did not allow gets `controllerRefused` instead.
   case openDone
 
+  /// The app authenticated the command and admitted its question-only session. The command may
+  /// make form calls now.
+  case questionOnlyAdmitted
+
   var wireType: UInt8 {
     switch self {
     case .hello: return 1
@@ -968,6 +1022,7 @@ public enum ScriptAppMessage: Equatable, Sendable {
     case .fileAdmitted: return 10
     case .undeclaredAdmitted: return 11
     case .openDone: return 12
+    case .questionOnlyAdmitted: return 13
     }
   }
 
@@ -995,7 +1050,7 @@ public enum ScriptAppMessage: Equatable, Sendable {
 
     case .ping(let nonce): body.put(nonce)
 
-    case .stop, .undeclaredAdmitted, .openDone: break
+    case .stop, .undeclaredAdmitted, .openDone, .questionOnlyAdmitted: break
 
     case .controllerAdmitted(let snapshot, let version), .fileAdmitted(let snapshot, let version):
       body.put(string: snapshot, limit: ScriptProtocol.maxDirectoryBytes)
@@ -1132,6 +1187,11 @@ public enum ScriptAppMessage: Equatable, Sendable {
       try reader.finished()
 
       return .openDone
+
+    case 13:
+      try reader.finished()
+
+      return .questionOnlyAdmitted
 
     default:
       throw WireError.unknownType(type)

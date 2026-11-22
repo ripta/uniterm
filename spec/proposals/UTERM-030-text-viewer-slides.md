@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-17
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -310,6 +310,7 @@ None.
 - 2026-11-17: Amended by UTERM-029. "Slide images" gains PDF page references drawn in the sandboxed document helper.
   "Version skew" gains schema 1.3 for them. Both decisions carried the marker "Amended 2026-11-16", which this one
   replaces. Their earlier text stands, and the new bullet and sentence are added.
+- 2026-11-21: Scheduled as UTERM-030 M1-M2 in queue.md.
 
 ## References
 

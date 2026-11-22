@@ -23,7 +23,7 @@
 | [UTERM-019](UTERM-019-browser-automation.md) | Controller scripts run JavaScript, follow page events, and send input in their own browser tabs | accepted |
 | [UTERM-020](UTERM-020-inspector-bridge.md) | Console, network, interception, and debugging for controller tabs through a hidden Web Inspector | accepted |
 | [UTERM-021](UTERM-021-declared-script-permissions.md) | Script files declare their powers, with strict mode by default and a lint | implemented |
-| [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | accepted |
+| [UTERM-022](UTERM-022-questions-applet.md) | Scripts ask the user forms in a tabbed Questions pane, with live validation | implemented |
 | [UTERM-023](UTERM-023-controller-runs-with-sip-off.md) | What uniterm does for controller runs on a Mac with SIP off | draft |
 | [UTERM-024](UTERM-024-controller-input-channel.md) | Janet controllers declare palette commands bound to keys, and read the user's invocations | accepted |
 | [UTERM-025](UTERM-025-presentation-controller.md) | Present a Markdown deck in a text viewer pane beside the terminal, stepped with the arrow keys or the palette | accepted |
@@ -44,7 +44,7 @@
 | [UTERM-040](UTERM-040-program-map-pins-edit-the-map.md) | A program's map pins edit the map as the user's do | accepted |
 | [UTERM-041](UTERM-041-uniform-tab-marker-slot.md) | A uniform marker slot for every tab, with an authority marker first | accepted |
 | [UTERM-042](UTERM-042-actions-for-tabs-and-their-markers.md) | One action menu for a tab and its markers, with every action in the palette | accepted |
-| [UTERM-043](UTERM-043-pause-controllers.md) | Pause controllers for a while without ending their grants | deferred |
+| [UTERM-043](UTERM-043-pause-controllers.md) | Pause controllers for a while without ending their grants | accepted |
 
 ## Dependency Graph
 
@@ -67,7 +67,7 @@ UTERM-015 ← UTERM-001, UTERM-002, UTERM-003, UTERM-004, UTERM-013
 UTERM-016 ← UTERM-004, UTERM-008, UTERM-013, UTERM-015
 UTERM-017 ← UTERM-001
 UTERM-018 ← UTERM-003, UTERM-004, UTERM-005, UTERM-007, UTERM-013, UTERM-015
-UTERM-019 ← UTERM-003, UTERM-004, UTERM-005
+UTERM-019 ← UTERM-003, UTERM-004, UTERM-005, UTERM-041, UTERM-042
 UTERM-020 ← UTERM-019
 UTERM-021 ← UTERM-003, UTERM-004
 UTERM-022 ← UTERM-003, UTERM-004, UTERM-021
@@ -87,7 +87,7 @@ UTERM-038 ← UTERM-008, UTERM-037
 UTERM-039 ← UTERM-005, UTERM-037
 UTERM-040 ← UTERM-008, UTERM-015, UTERM-016
 UTERM-041 ← UTERM-004, UTERM-005, UTERM-037
-UTERM-042 ← UTERM-004, UTERM-019, UTERM-041
+UTERM-042 ← UTERM-004, UTERM-041
 UTERM-043 ← UTERM-004, UTERM-019
 ```
 

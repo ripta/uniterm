@@ -70,6 +70,16 @@ final class ScriptLintTests: XCTestCase {
           + "(import uniterm)\n(uniterm/send {:pane 1} \"a.csv\" \"x\")\n",
         kinds: [.unusedPower], fragments: ["declares clipboard-write but never uses it"]),
       Case(
+        name: "an undeclared ask helper",
+        source: declaration(["pane-control"])
+          + "(import uniterm)\n(uniterm/list-windows)\n(uniterm/ask-text \"Name?\")\n",
+        kinds: [.undeclaredPower], fragments: ["uniterm/ask-text needs ask-user"]),
+      Case(
+        name: "a declared ask used through ask and a helper",
+        source: declaration(["ask-user"])
+          + "(import uniterm)\n(uniterm/ask {:items []})\n(uniterm/ask-confirm \"Sure?\")\n",
+        kinds: [], fragments: []),
+      Case(
         name: "posting status needs no power",
         source: declaration([]) + "(import uniterm)\n(uniterm/post-status :info \"hi\")\n",
         kinds: [], fragments: []),
@@ -316,6 +326,31 @@ final class ScriptLintTests: XCTestCase {
     XCTAssertTrue(idle[0].message.contains("path-read"))
   }
 
+  // MARK: Asking
+
+  /// Catches a form call that needs no declaration, a declared ask power reported unused in a file
+  /// that opens a form, and one that never asks going unreported. Each form call needs ask-user,
+  /// and holding it gives no pane control, so a file that only asks declares nothing else.
+  func testAskUserIsUsedByTheFormCallsAndNeededByThem() {
+    let declared = "(declare-permissions {:kind :ask-user :version 1})\n"
+
+    for call in [
+      "(uniterm/open-form \"{}\")", "(uniterm/wait-form 1)", "(uniterm/discard-form 1)",
+    ] {
+      XCTAssertEqual(summary(findings(declared + "(import uniterm)\n" + call)), [], call)
+
+      let undeclared = findings("(declare-permissions)\n(import uniterm)\n" + call)
+
+      XCTAssertEqual(undeclared.map(\.kind), [.undeclaredPower], call)
+      XCTAssertTrue(undeclared[0].message.contains("ask-user"), undeclared[0].message)
+    }
+
+    let idle = findings(declared + "(import uniterm)\n(uniterm/post-status :info \"x\")\n")
+
+    XCTAssertEqual(idle.map(\.kind), [.unusedPower])
+    XCTAssertTrue(idle[0].message.contains("ask-user"))
+  }
+
   // MARK: Browser powers
 
   /// Catches a declared browser power reported unused in a file that uses it, and one that uses
@@ -483,12 +518,15 @@ final class ScriptLintTests: XCTestCase {
   // MARK: The shared table
 
   /// Catches the module and the shared table drifting apart. A function the module offers without
-  /// a row would lint as a name with no power, and a row without a function would never match.
-  func testTheModulesFunctionsAreTheSharedTablesCallsPlusApiVersion() {
+  /// a row would lint as a name with no power, and a row without a function would never match. The
+  /// form helpers are the functions with no call of their own, and each has a power in the helper
+  /// table.
+  func testTheModulesFunctionsAreTheSharedTablesCallsPlusApiVersionAndTheHelpers() {
     let module = Set(ScriptLint.moduleFunctions())
     let table = Set(ScriptCallKind.allCases.map(\.janetName))
 
-    XCTAssertEqual(module.subtracting(table), ["api-version"])
+    XCTAssertEqual(
+      module.subtracting(table), Set(["api-version"] + ScriptHelperFunctions.powers.keys))
     XCTAssertEqual(table.subtracting(module), [])
     XCTAssertEqual(ScriptLint.moduleFunctions().count, module.count, "a name is listed twice")
   }

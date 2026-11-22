@@ -1,3 +1,4 @@
+import CJanet
 import Darwin
 import Foundation
 import ScriptWire
@@ -10,16 +11,24 @@ enum ScriptSessionError: Error, Equatable {
   /// The socket belongs to another user, so the helper did not talk to it. This is a reachability
   /// failure. The app never answered.
   case foreignSocket(path: String)
+
+  /// An interrupt cut a wait for a form short. The session discarded the form's handle and read
+  /// both replies first, so nothing is left in flight.
+  case interrupted
 }
 
 /// The helper's end of one connection to the app.
 ///
 /// The helper runs one script at a time on one thread, so a call sends its request and waits for
 /// its reply on that thread. Once the watchdog thread starts, it is the only reader of the socket.
-/// It hands a reply to the VM thread through a one-slot mailbox, answers the app's ping itself, and
-/// carries out the app's stop request. A ping is therefore answered while the VM thread is busy in
-/// a loop, in a long call into C, or waiting for a reply. Any thread may send, since the socket's
-/// sends take a lock.
+/// It hands each reply to the VM thread through a mailbox keyed by request ID, answers the app's
+/// ping itself, and carries out the app's stop request. A ping is therefore answered while the VM
+/// thread is busy in a loop, in a long call into C, or waiting for a reply. Any thread may send,
+/// since the socket's sends take a lock.
+///
+/// A wait for a form is the one call that can have a second call in flight. An interrupt during it
+/// sends `discard-form` for the form, and both replies are then read by their IDs in whichever
+/// order the app sends them.
 ///
 /// A connection that is lost ends the helper. A script cannot go on without the app, and a script
 /// that catches the error must not be able to keep running either.
@@ -29,9 +38,15 @@ final class ScriptSession: @unchecked Sendable {
   private var nextRequest: UInt32 = 1
 
   private let mailbox = NSCondition()
-  private var reply: ScriptAppMessage?
+  private var replies: [UInt32: ScriptAppMessage] = [:]
+  private var outstanding: Set<UInt32> = []
   private var dispatching = false
   private var dispatcherEnded = false
+
+  /// How often a wait for a form looks for an interrupt. A signal does not wake a thread that
+  /// waits on a condition, so the wait looks by itself. The look is a flag read, and the interval
+  /// is the longest an interrupt waits to be seen.
+  static let interruptLook: TimeInterval = 0.05
 
   /// What the helper says when the app's end of the connection closes. A REPL words it for a REPL.
   private(set) var quitText = ScriptSession.appQuitText
@@ -105,6 +120,34 @@ final class ScriptSession: @unchecked Sendable {
         default:
           throw WireError.badValue("the app answered an undeclared script with something else")
         }
+      }
+    } catch {
+      session.close()
+
+      throw error
+    }
+  }
+
+  /// Connects and asks the app to admit a question-only session, which the bundled command opens
+  /// for `uniterm ask`. The command runs no script code, so the session may make only the form
+  /// calls. A refusal throws `ScriptSessionError.failed`.
+  static func openQuestionOnly(path: String, quitText: String) throws -> ScriptSession {
+    let session = try connect(path: path)
+
+    session.quitText = quitText
+
+    do {
+      try session.socket.send(ScriptHelperMessage.questionBegin.frame())
+
+      switch try session.readMessage() {
+      case .questionOnlyAdmitted:
+        return session
+
+      case .controllerRefused(let text):
+        throw ScriptSessionError.failed(.refused, text)
+
+      default:
+        throw WireError.badValue("the app answered a question session with something else")
       }
     } catch {
       session.close()
@@ -344,15 +387,17 @@ final class ScriptSession: @unchecked Sendable {
     mailbox.unlock()
   }
 
-  /// Hands a reply to the VM thread. The app answers one call at a time, so a reply that arrives
-  /// while another waits in the slot is a protocol fault the caller reports.
+  /// Hands a reply to the VM thread. A reply that answers no call in flight, or that repeats the
+  /// ID of one already waiting, is a protocol fault the caller reports.
   func deliver(_ message: ScriptAppMessage) -> Bool {
     mailbox.lock()
     defer { mailbox.unlock() }
 
-    guard reply == nil else { return false }
+    guard case .reply(let id, _) = message, outstanding.contains(id), replies[id] == nil else {
+      return false
+    }
 
-    reply = message
+    replies[id] = message
     mailbox.broadcast()
 
     return true
@@ -384,27 +429,42 @@ final class ScriptSession: @unchecked Sendable {
     try? socket.send(ScriptHelperMessage.memoryLimit.frame())
   }
 
-  private func awaitReply() throws -> ScriptAppMessage {
+  /// Takes the reply to `id`, which the caller sent. Without a watchdog it reads the socket itself.
+  /// `interruptible` is a form wait: when an interrupt is waiting and no reply has come, it returns
+  /// nil, and the reply stays owed.
+  private func awaitReply(id: UInt32, interruptible: Bool = false) throws -> ScriptAppMessage? {
     mailbox.lock()
     let useMailbox = dispatching
     mailbox.unlock()
 
-    guard useMailbox else { return try readMessage() }
+    guard useMailbox else {
+      let message = try readMessage()
+
+      mailbox.lock()
+      outstanding.remove(id)
+      mailbox.unlock()
+
+      return message
+    }
 
     mailbox.lock()
     defer { mailbox.unlock() }
 
-    while reply == nil {
+    while replies[id] == nil {
       if dispatcherEnded { throw WireError.closed }
 
-      mailbox.wait()
+      if interruptible, uniterm_janet_interrupt_pending() != 0 { return nil }
+
+      if interruptible {
+        _ = mailbox.wait(until: Date(timeIntervalSinceNow: Self.interruptLook))
+      } else {
+        mailbox.wait()
+      }
     }
 
-    let message = reply!
+    outstanding.remove(id)
 
-    reply = nil
-
-    return message
+    return replies.removeValue(forKey: id)
   }
 
   /// Posts a status message and waits for the app to answer.
@@ -417,9 +477,25 @@ final class ScriptSession: @unchecked Sendable {
     nextRequest &+= 1
 
     do {
+      mailbox.lock()
+      outstanding.insert(id)
+      mailbox.unlock()
+
       try socket.send(ScriptHelperMessage.request(id: id, call: call).frame())
 
-      guard case .reply(let replyID, let result) = try awaitReply() else {
+      var waited: UInt64?
+
+      if case .waitForm(let form) = call { waited = form }
+
+      let message = try awaitReply(id: id, interruptible: waited != nil)
+
+      if message == nil, let form = waited {
+        try discardAfterInterrupt(form: form, waitID: id)
+
+        throw ScriptSessionError.interrupted
+      }
+
+      guard case .reply(let replyID, let result)? = message else {
         throw WireError.badValue("the app answered a call with something else")
       }
 
@@ -437,6 +513,55 @@ final class ScriptSession: @unchecked Sendable {
       lost(quitText)
     } catch {
       lost("the connection to uniterm failed while the script was running: \(error)")
+    }
+  }
+
+  /// Discards a form's handle as a command's last act. The command already holds the answer or the
+  /// reason it has none, so a connection that fails here changes nothing it reports, and nothing
+  /// ends the process.
+  func discardQuietly(_ form: UInt64) {
+    let id = nextRequest
+    nextRequest &+= 1
+
+    mailbox.lock()
+    outstanding.insert(id)
+    mailbox.unlock()
+
+    do {
+      try socket.send(ScriptHelperMessage.request(id: id, call: .discardForm(form: form)).frame())
+
+      _ = try awaitReply(id: id)
+    } catch {
+      return
+    }
+  }
+
+  /// An interrupt reached a wait for `form`. It sends `discard-form` for the form, which fails the
+  /// wait as ended, and reads both replies by their IDs, in either order. A user's answer that came
+  /// at the same moment is dropped with the wait's reply, since the script is stopping.
+  private func discardAfterInterrupt(form: UInt64, waitID: UInt32) throws {
+    let discardID = nextRequest
+    nextRequest &+= 1
+
+    mailbox.lock()
+    outstanding.insert(discardID)
+    mailbox.unlock()
+
+    try socket.send(
+      ScriptHelperMessage.request(id: discardID, call: .discardForm(form: form)).frame())
+
+    mailbox.lock()
+    defer { mailbox.unlock() }
+
+    while replies[discardID] == nil || replies[waitID] == nil {
+      if dispatcherEnded { throw WireError.closed }
+
+      mailbox.wait()
+    }
+
+    for id in [discardID, waitID] {
+      outstanding.remove(id)
+      replies.removeValue(forKey: id)
     }
   }
 

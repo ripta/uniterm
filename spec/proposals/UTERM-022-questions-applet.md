@@ -1,8 +1,8 @@
 # UTERM-022: Questions Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-14
-**Updated:** 2026-11-14
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -55,7 +55,8 @@ Decision: one Questions pane per window holds every open form in that window.
 - The applet uses the existing pane tab bar, `AppletTabBar`. Tab switching uses the same keys as other tabbed panes,
   and those keys stay declared applet commands under ADR-04.
 - The pane's description holds no form content and no requester binding. A restored or reopened Questions pane is
-  empty, per ADR-03.
+  empty, per ADR-03. It shows an empty state that says so, and it stays until the user closes it. Amended 2026-11-21;
+  see Decision Log.
 
 Rationale: one inbox per window keeps several askers in one place. Opening beside the asker keeps the form near its
 context. Tabs that always show give uniterm a title the script cannot draw.
@@ -65,9 +66,10 @@ context. Tabs that always show give uniterm a title the script cannot draw.
 Decision: uniterm draws a header on every form. The script cannot style it, hide it, or put text in it beyond the
 form's title, which appears below it.
 
-- The header names exactly what the transport established, per ADR-09. A controller package or declared file shows
-  its verified name. A bare terminal-session caller shows "Terminal session in <pane>". The header never implies a
-  specific script for a caller that could not be identified.
+- The header names exactly what the transport established, per ADR-14. A controller package or declared file shows
+  its verified ID, since the descriptor's display name proves nothing. A bare terminal-session caller shows "Terminal
+  session in <pane>". The header never implies a specific script for a caller that could not be identified. Amended
+  2026-11-21; see Decision Log.
 - The header and the form body look clearly different from uniterm's permission prompts and the Pending Requests
   window. A form can ask a permission-style question, but it cannot pass for uniterm asking.
 - Question text and content blocks are plain text. They hold no links.
@@ -127,8 +129,11 @@ uniterm ask file "Pick a config" [--directory] [--save] [--type public.json]
   prints one value per line, and `--json` prints JSON instead.
 - Exit codes follow "`uniterm ask` outcomes and exit codes". The command prints a one-line reason on stderr for every
   code but 0 and 1. Amended 2026-11-14; see Decision Log.
-- Janet calls `(uniterm/ask spec)`, which returns the result struct. Helpers mirror the shorthands, such as
-  `uniterm/ask-confirm`.
+- Janet calls `(uniterm/ask spec)`, which returns the result struct. The helpers mirror the shorthands:
+  `uniterm/ask-confirm`, `ask-text`, `ask-choose`, `ask-number`, `ask-color`, and `ask-file`. Each takes the prompt,
+  names the shorthand's flags as named arguments, and returns the answer. It returns nil when the user cancelled or
+  closed the form. `ask-confirm` returns true for Yes, false for No, and nil when the form was closed. Amended
+  2026-11-21; see Decision Log.
 - A Janet spec uses keywords for its keys, for question and button `id`s, and for closed-set values such as `:type`,
   `:role`, `:block`, `:level`, and `:mode`. A string in one of those places refuses the spec. Text, choices,
   and string defaults stay strings. A boolean or number default is a Janet boolean or number. The result struct keys
@@ -169,7 +174,7 @@ Decision: a file question returns a path, never the file's contents. Picking a f
 - A bash script uses the path as it would any argument.
 - A Janet script that reads the file needs file read declared, like any other read.
 
-Rationale: returning contents would mean uniterm reads a file for a script that may not hold file read. ADR-09 forbids
+Rationale: returning contents would mean uniterm reads a file for a script that may not hold file read. ADR-14 forbids
 one power silently granting another. Contents also bring large files, binary data, and memory bounds that a path
 avoids.
 
@@ -181,7 +186,8 @@ appear anywhere among the questions.
 - `paragraph`: plain text.
 - `list`: an array of strings, shown as a bulleted list.
 - `code`: monospaced text, such as a command preview.
-- `table`: key and value pairs, such as a summary.
+- `table`: key and value pairs, such as a summary. The pairs are an object under `rows`, in the order the spec
+  gives them. Amended 2026-11-21; see Decision Log.
 - `notice`: text with `level` `info`, `warning`, or `danger`.
 
 Rationale: question text belongs to its question. A form that shows what it will do before it asks needs structure
@@ -198,6 +204,8 @@ Decision: buttons belong to the form. Each has an `id`, an optional `label`, and
 - `validates` defaults to true, except for `cancel`. A button with `validates: false` submits whatever is filled in,
   unchecked.
 - A form with no `actions` gets OK as `primary` and Cancel as `cancel`.
+- A form whose buttons are all `cancel` is refused, since the user could not submit it. Amended 2026-11-21; see
+  Decision Log.
 - Choices such as "Yes to all" are plain buttons. The script gives them their meaning.
 
 Return inserts a newline in a multiline field. Escape first closes an open color picker, file panel, or popup. These
@@ -250,8 +258,10 @@ Decision: sending a form and waiting for its answer are two calls, per ADR-11.
 - `wait-form` is the form's completion mechanism. ADR-11's completion event serves callers that read an event stream,
   and a form's caller waits on its handle instead.
 - A run end, a revocation, or a closed connection closes the form, fails a pending wait as ended, and frees the
-  handle. Since the form had no effect beyond showing, "ended" truthfully means nothing was submitted.
-- Result slots have the same caps and lifetimes as other ADR-11 handles.
+  handle. Since the form had no effect beyond showing, "ended" truthfully means nothing was submitted. The wire spells
+  it as its own failure kind, `ended`. Amended 2026-11-21; see Decision Log.
+- Result slots have the same caps and lifetimes as other ADR-11 handles. A connection holds at most 32, and a new one
+  drops its oldest settled one. Amended 2026-11-21; see Decision Log.
 
 Rationale: a handle keeps the first answer honest at once. A script that is interrupted still gets a clear outcome.
 
@@ -277,8 +287,10 @@ Decision: asking the user is a permission kind, `ask-user`, version 1.
 - The power has no scope fields. It covers opening a Questions pane in the caller's own window, beside the caller's
   own pane, and showing forms in it. It grants no other pane action, so asking needs no pane-control grant, and
   holding `ask-user` gives no pane control.
-- A bare terminal-session caller, such as bash running `uniterm ask`, may ask without a prompt for forms that name its
-  own pane as the asker, as `post-status` works today. The one-form rule and the open-form cap limit spam.
+- Every caller that is not a declared run may ask without a prompt, for forms that name its own pane as the asker, as
+  `post-status` works today. That covers a bare terminal-session caller such as bash running `uniterm ask`, a REPL, a
+  connection the user granted a pane, and an unsafe undeclared run. The one-form rule and the open-form cap limit
+  spam. Amended 2026-11-21; see Decision Log.
 - A package or declared file that does not declare `ask-user` is refused, with a message that names the missing kind.
 
 Rationale: the bash case is the main use, and a prompt before every `uniterm ask confirm` defeats it. Declared callers
@@ -346,7 +358,7 @@ Decision: a run, a terminal session, or a connection. (autonomous)
 
 Rationale: keying by terminal session lets a multi-step bash script reuse one tab, and keeps two terminal tabs in one
 pane from refusing each other as busy. Keying a granted connection by its pane would put it under "Terminal session in
-<pane>", which names the wrong requester under ADR-09. Keying by session root would put a declared run and the shell's
+<pane>", which names the wrong requester under ADR-14. Keying by session root would put a declared run and the shell's
 bare calls under one header, which cannot name both. Converged in 1 pass.
 
 ### The question-only session
@@ -359,7 +371,8 @@ Decision: `uniterm ask` opens a question-only session. (autonomous)
 
 - The session opens with a new message, the question-only begin. It says the bundled command runs no script code.
   The app admits it in strict and unsafe mode as a terminal-session caller.
-- The app refuses every call on a question-only session except `open-form`, `wait-form`, and `discard-form`.
+- A call on a question-only session other than `open-form`, `wait-form`, or `discard-form` ends the connection as a
+  protocol violation. The command never sends one, so no reply is owed. Amended 2026-11-21; see Decision Log.
 - The bundled command is authenticated as UTERM-021 requires, so a generic peer cannot send the question-only begin.
 
 Rationale: strict mode is the default, and the undeclared begin refuses every `uniterm ask` there. In unsafe mode it
@@ -385,16 +398,23 @@ Decision: sysexits for failures, small codes for answers. (autonomous)
 | 65 | Spec error |
 | 69 | The app is unreachable |
 | 70 | Hello mismatch |
-| 74 | The connection was lost |
+| 74 | The connection was lost, or stdout could not be written |
 | 75 | Busy |
-| 77 | A caller bound to no pane was denied a pane |
+| 77 | The app refused the call, such as when a caller bound to no pane was denied a pane |
 | 130 | Ctrl-C |
 
 - A `cancel`-role press returns `{"form": <handle>, "outcome": "cancelled", "action": <id>}` with no answers. It is not
   a submission.
 - `confirm` shows Yes as `primary` and No as `cancel`. For `confirm` alone, No exits 1.
 - A form has at most one `cancel` button, since Escape activates it.
-- A shorthand prints nothing on stdout for exits other than 0.
+- A shorthand prints nothing on stdout for exits other than 0. `uniterm ask form` prints nothing then either.
+- `confirm` prints nothing on exit 0, and `--json` makes it print `true`.
+- Every wire failure kind maps to a code of its own meaning: a refused spec is 65, a refusal is 77, a busy refusal is
+  75, an ended form and a handle the app does not know are 4, a call the app does not support is 70, a reply that was
+  lost is 74, and a failure inside the app is 69. Exit 74 also covers an answer that could not be written to a closed
+  stdout, with a line on stderr that says so. The command keeps the default SIGPIPE, so a pipe that closes early ends
+  it as it ends any Unix tool, and the app closes the form when the connection closes. Amended 2026-11-21; see
+  Decision Log.
 
 Rationale: a Cancel that exits 0 lets `b=$(uniterm ask text ...) && git checkout -b "$b"` run after the user said no.
 UTERM-003 already publishes 64 for usage, so a second usage code would split one command's contract. Sysexits names
@@ -410,12 +430,15 @@ Decision: free the wait with `discard-form`. `wait-form` has no deadline. (auton
 
 - On Ctrl-C, the helper stops waiting for `wait-form`'s reply and sends `discard-form` for the pending handle. The app
   closes the form as ended and fails the wait.
-- The helper's wait wakes on an interrupt by itself, and the session matches replies by request ID with two calls in
-  flight.
-- In a REPL, the app's own stop request fails the connection's pending wait, so the REPL keeps its VM state.
+- The helper's wait looks for an interrupt itself, every 50 milliseconds, since a signal does not wake a thread that
+  waits on a condition. The look reads a flag and sends nothing. The session matches replies by request ID with two
+  calls in flight. A wait that an interrupt cut short returns nil to the script. The interrupt then stops the script at
+  its next call or backward jump, where the VM looks for it. Amended 2026-11-21; see Decision Log.
+- In a REPL, the app's own stop request fails the connection's pending wait, so the REPL keeps its VM state. The form
+  stays open until the helper discards it. Amended 2026-11-21; see Decision Log.
 - `uniterm ask` keeps the default SIGINT. Ctrl-C ends it with 130, and the closed connection ends the form.
 
-Rationale: Ctrl-C takes effect at once with no new message and no polling. A capped wait would leave a REPL user's
+Rationale: Ctrl-C takes effect at once with no new message and no capped wait. A capped wait would leave a REPL user's
 first Ctrl-C unanswered until the cap. A second press 0.5 to 5 seconds later kills the helper and loses the VM state,
 per UTERM-003. A new stop message would do what `discard-form` already does. An unbounded wait breaks UTERM-003's rule
 that the first Ctrl-C stops a run. Converged in 1 pass, on an option the critic added.
@@ -454,7 +477,9 @@ Decision: ECMA-262 with the `u` flag, translated onto NSRegularExpression. (auto
 - It rebuilds each accepted pattern as ICU syntax from the parse tree, rewriting every token whose ICU meaning differs.
   Examples are `\d` as `[0-9]`, `\w`, `\s`, `\b`, `.`, and `$` as end of input. Source text never passes through.
 - A construct with no proven translation refuses the spec, with a message naming the construct and the field. Every
-  backreference refuses. The documentation lists the accepted grammar.
+  backreference refuses, and so does every lookbehind. A `\p{...}` name outside the supported table refuses, and the
+  table holds the general categories, ECMA-262's binary properties, and a curated list of scripts. The documentation
+  lists the accepted grammar. Amended 2026-11-21; see Decision Log.
 - Widening the accepted set later is additive, since a refused pattern had no meaning before.
 
 Rationale: JSON Schema 2020-12 says `pattern` SHOULD be ECMA-262 with Unicode support, so a pattern copied from a
@@ -532,7 +557,7 @@ None.
 
 ### M1: Form spec and validation
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The strict reader refuses every unknown key, a misapplied keyword, a bad pattern, and each cap, with a message
   that names the field
@@ -553,21 +578,59 @@ None.
 - A differential test runs translated patterns against JavaScriptCore with the `u` flag. It covers `\d` against
   Arabic-Indic digits, `$` before a trailing newline, `.` against U+0085, `\w` against "café", `\s` against U+FEFF, and
   a class containing `&&`
-- Every backreference, and every `\p{...}` name outside ECMA-262's table, refuses the spec with a message naming the
-  construct and the field
+- Every backreference, every lookbehind, and every `\p{...}` name outside the supported table refuses the spec with a
+  message naming the construct and the field
+
+**As built:**
+
+- The form model, strict reader, validation, and `pattern` engine are a new pure target, `QuestionForm`, with
+  `QuestionFormTests`. It depends on `ControllerPackage` and `ScriptWire` and links no AppKit and no Janet. The tests
+  link JavaScriptCore, and the app does not.
+- The reader widening was already built by "Keep a newer policy file that holds a boolean, null, or fraction", which
+  fixes [the policy-file bug](../bugs/20261114-policy-file-newer-format-read-as-broken.md). This milestone only
+  verified it. `ControllerPolicyTests`, `ControllerDescriptorTests`, and the fuzzers pass unchanged in the full package
+  run. The spec reader uses `StrictJSONReader` and the `StrictJSON` cases directly. It does not use `members`, since
+  that throws a `controller.json` error. Its own field helper names the spec field instead.
+- The caps are in `FormLimits`. The spec is at most 32 KiB, with at most 64 items, 8 buttons, and 64 choices a
+  question. Ids are 1 to 32 visible ASCII bytes. A `string` answer is at most 1024 bytes, a `text` answer at most 4096,
+  a choice's free-text entry at most 256, a path at most 1024, and a `file` answer at most 16 paths. Number literals
+  have at most 20 digits and an exponent within 20. A `maxLength` below the type's cap lowers the answer cap, at four
+  bytes a character. The reader refuses a spec whose worst-case answers exceed one reply payload, and names the first
+  item that tips it over. It measures the worst case with the reply encoder itself. Fifteen `text` questions with no
+  `maxLength` fit, and the sixteenth is refused. Widgets read each question's `answerByteLimit` and
+  `answerEntryLimit`.
+- A field's check is `FormChecker.verdict`, which runs every keyword but `pattern` in linear time. `FieldValidator`
+  runs `pattern` on the field's own serial queue, and it reports `checking`, then `valid`, `invalid`, or `couldNotCheck`.
+  A match has a 0.5 second limit and a 4096-unit input cap. A newer value stops the older match at its next progress
+  report, and the older result is never reported. A match that ICU cannot finish, such as when its backtracking stack
+  runs out, is `couldNotCheck`, never a no match. The error shape is `FormErrors`. The result shapes are
+  `FormOutcome`. Its `ended` case has no script value, since M3 delivers ended as a failed wait. Every cap also holds
+  in the result itself: a string is cut at its byte limit, a list keeps its first entries up to the limit, and a
+  color or number that does not read becomes `null`.
+- The `pattern` parser refuses lookbehind and every backreference. Its property table holds the general categories,
+  ECMA-262's binary properties, and 13 common scripts. A test compiles every emitted name in ICU. The differential
+  test compares about 100 pattern and input pairs with JavaScriptCore, including every case the check lists.
+- The spec defines what the proposal left open. A `table` block's pairs are an object under `rows`. A `notice` has
+  `level` `info` by default. A `text` question is single-line unless `multiline` is true. A `choice` takes `other`, and
+  a `multi` does not. A default must pass its question's own rules, except `pattern`. A form needs a button that is not
+  `cancel`. See the Decision Log.
+- A fuzz test for the spec reader and the pattern parser is in `make fuzz`'s filter list. A scoped run of 20,000
+  mutations under the address sanitizer passes.
+- `make test-cost` does not exist in this project. The new test files run in about 1.2 seconds together. Most of that
+  is the catastrophic-pattern test, which waits in real time to prove the stopped match uses no CPU.
 
 ### M2: Questions applet UI
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-20; see Decision Log.
+Amended 2026-11-21; see Decision Log.
 
 - The Questions pane shows a tab per form, with a tab bar even for one form, and uniterm-drawn requester chrome
 - Every answer type and content block renders and returns the answer shape in the table
 - Return, Escape, and the button roles behave as "Buttons" says, including in multiline fields and open pickers
 - Return, or a click on a disabled validating button, counts as trying to submit. It shows every error and moves focus
   to the first one
-- A restored or reopened Questions pane with no tab closes, or shows an empty state, and never sits blank
+- A restored or reopened Questions pane has no tab and shows an empty state, and never sits blank
 - A new requester's form opens its tab, which takes focus as a tab the user opens does. Its fields take keys at once
 - A tab that closes, however it closes, leaves the pane as a tab the user closes does
 - A requester's next form in its own tab selects that tab and takes focus, and its fields take keys at once, with no
@@ -576,14 +639,52 @@ Amended 2026-11-20; see Decision Log.
 - Arrival posts a status line. Resolving a form leaves focus in its tab
 - A field's error appears beside it when the user leaves the field or tries to submit, not while typing, and clears
   as soon as the input is valid. Validating buttons stay disabled until the form passes
-- The user looks at the pane in light and dark mode and confirms the layout and the chrome's contrast with permission
-  prompts
+
+**As built:**
+
+- The pane is a new AppKit target, `QuestionsApplet`, with no SwiftUI. Its type is `questions`. It opens no file and
+  takes no remote control. It has no launcher entry and no New Tab. Its commands are the tab keys the terminal and the
+  browser share, so a user's remap of a tab item covers it.
+- The in-process API for M3 opens a form for a requester key, with the requester's name and asking pane as the host
+  established them, and reports the outcome once through a callback. A requester with an open form and a pane at its cap
+  are refused as busy, and a closed pane is refused as unavailable. A requester's next form reuses its tab. `end`
+  resolves an open form as ended and closes the tab. `discard` resolves it as ended and keeps the tab. The pane's close
+  resolves every open form as dismissed.
+- The tab rules are a pure tab book that the tests drive without a window. It holds the cap, the order in which tabs
+  resolved, and the pick of the tab that gives way, which is the oldest unselected resolved tab. The applet applies the
+  pick when a new requester arrives at the cap, so M3 only has to open forms. The cap is 8 tabs unless the host passes
+  another.
+- Widgets follow the type and the number of choices. A `choice` of up to five entries, `other` included, shows radio
+  buttons, and more show a pop-up. A `multi` of up to eight shows checkboxes, and more scroll in a box. A `boolean` is a
+  checkbox, with a third state for no answer when it has no default. A `color` is the system color well. A `file` opens
+  the system open or save panel as a sheet. Every widget holds the caps from the spec reader.
+- Return, Escape, and the button roles work as "Buttons" says. A click on a disabled validating button and a Return
+  that cannot submit both show every failing error and send the keyboard to the first one. A pop-up and a file panel
+  close on Escape without help. The color panel closes through a key monitor, since it is a window of its own.
+- A closed pane ignores every later call, and its close frees each panel, so a late `end` at run end never exits the
+  applet twice. A dimmed validating button offers the try to submit as an accessibility action. A shown error is tied
+  to its field's help text, and a failed try to submit announces what it found. Return and Escape go on to the next
+  responder when the form has no primary or cancel button to press. The color panel's Escape monitor acts only on keys
+  sent to the panel or to the form's window.
+- A form that opens in a pane whose first control refuses the keyboard, such as a pop-up without full keyboard access,
+  gives the keyboard to the form's panel. Return and Escape still reach the form.
+- The UI tests open forms through a debug-only hook, `UNITERM_TEST_QUESTIONS_DIR`, since no wire call opens a form yet.
+  The asking-pane badge and the host's choice of pane are M3's. The UI tests do not choose a file. The open panel runs
+  in another process, and typing into it failed at a different step from run to run. The file answer's shape is
+  proven at the package layer instead, through the function the panel's completion calls. The UI tests still prove
+  that the panel opens as a sheet and that Escape closes it before Cancel.
+- The package tests run in about a second together. About half of that is the first AppKit window of the test process.
+  `make test-cost` does not exist in this project.
+- The coordinator viewed the UI-test screenshots of one form and of two forms, in light and in dark, and the layout
+  looked right. The user's own look at the pane in both appearances is M5's first check.
+- Residuals: a file sheet that is open when its form ends stays attached until the user answers it, and the answer is
+  then dropped. Nothing else was found.
 
 ### M3: The ask power and the form calls
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-20; see Decision Log.
+Amended 2026-11-21; see Decision Log.
 
 - `ask-user` is a permission kind in `controller.json` and in declarations. An undeclared use is refused with the
   kind named
@@ -613,14 +714,63 @@ Amended 2026-11-20; see Decision Log.
 - A bare terminal-session caller asks without a prompt, and its header reads "Terminal session in <pane>"
 - A REPL caller's header names the REPL pane, never a terminal session
 - A caller bound to no pane is refused or granted a pane as other calls are, and its form opens in that pane's window
-- A Questions pane split beside a member of an owned group survives the owner's next layout request, and no form in it
-  is dismissed by that layout
+- A Questions pane split beside a member of an owned group survives the owner's next layout request. The owner's layout
+  of that group is refused whole, as for any pane the user split off, and no form in the Questions pane is dismissed.
+  This is a run best guess. See the Decision Log.
 - A busy refusal reaches the script as the wire's `busy` failure kind
 - An older command and a newer app refuse each other at the hello
 
+**As built:**
+
+- `ask-user` is a permission kind at version 1 in descriptor format 2. It takes no field, joins the policy file as
+  a kind of its own, and covers only itself. The lint maps the three form calls to it. A declared run that lacks it is
+  refused with the kind named, and a declared run holds it as it holds any other power. A bare terminal-session caller,
+  a REPL, a granted connection, and an unsafe undeclared run pass without a prompt, while the same caller's clipboard
+  calls still ask.
+- ScriptWire is at version 14. It adds the three form calls, the question-only begin and its admitted reply, and the
+  `ended` failure kind. The Janet module offers `uniterm/open-form`, `uniterm/wait-form`, and `uniterm/discard-form`
+  as the plain calls. `open-form` takes the spec as JSON text. See the Decision Log entry for this milestone.
+- The host keeps one result slot for each form, in a table with a cap of 32 for a connection. `open-form` answers with
+  the handle at once. `wait-form` holds its reply in the slot, and the answer comes from the slot whatever became of the
+  tab. A wait reads the caller's authority, binding, and pane again before it answers, and a caller that fails any of
+  them gets `ended` and no answers. A REPL's stop request fails the connection's pending wait and keeps its connection.
+  The form stays open until the helper discards it.
+- A requester is a run, a terminal session, or a connection. A run's or a connection's end closes its tab. A terminal
+  session's tab stays when its program ends, and it closes when the shell ends or the user closes it. A program that
+  ends with its form open leaves that tab showing the ended form.
+- The question-only session is admitted in strict and in unsafe mode after the full check of the command, with no
+  review. It allows only the form calls, and any other call ends the connection as a protocol violation. A second begin
+  from one process is refused under the one-run rule, whichever session came first.
+- The window layer opens a form in the window's Questions pane, or splits beside the asker with the placement a routed
+  open uses. The split takes focus, and so does a new tab. The asker shows a badge beside the control badge, and the
+  badge names the Questions pane in its tooltip and accessibility label. The header says so when the asker closes.
+- An owner's layout of a group that holds a Questions pane is refused whole, so a form asked from a member of an owned
+  group stays open. The owner can lay the group out again once the user closes the Questions pane. See the Decision Log
+  entry for this milestone.
+- The debug hook of the UI tests now opens forms through the window layer's own entry, so the placement, the focus,
+  and the badge are the real ones. `QuestionsWireUITests` drives a declared script through the wire and the real app.
+- The found bug [held requests](../bugs/20261121-held-requests-grow-without-bound.md) does not occur. The connection
+  stops reading at its in-flight limit, and a test pins that. The file is `not-reproducible`.
+- For M4: the Janet wrapper must discard the handle on every unwind, or the REPL's next `open-form` is busy, since a
+  requester has one open form at a time.
+- `make test-cost` does not exist in this project. The 52 new package tests run in about 1.5 seconds together.
+- The owned-group refusal outlasts the answer. A resolved tab keeps the Questions pane open, and the pane sits in the
+  group's content until the user closes it or its last tab goes. A run's tab goes when the run ends, and a terminal
+  session's tab stays until the shell ends. The refusal names the Questions pane and says to close it, but only when
+  that pane is the group's one unowned pane. A layout that fails for another reason reports its own error. See the
+  Decision Log entry for the trace.
+- A stopped host ends its open forms through the path a closed connection takes. A form asked from a program that no
+  longer descends from its session root gets `ended` and no answers, since no call passes `authorize` while a wait
+  waits.
+- Residuals: the owned-group refusal above blocks an owner's relayout while a Questions pane sits in its group. A
+  `uniterm ask` run from a pane the user granted shows the program's executable name and PID, which the transport
+  established.
+
 ### M4: `uniterm ask` and Janet helpers
 
-**Status:** NOT STARTED
+**Status:** DONE
+
+Amended 2026-11-21; see Decision Log.
 
 - `uniterm ask form` and each shorthand print the documented output and exit with the documented codes, including 77
   for a denied pane and 130 for Ctrl-C
@@ -635,7 +785,70 @@ Amended 2026-11-20; see Decision Log.
   does from JSON
 - `uniterm ask` outside the bundle exits 78, and every wire failure kind maps to a documented code other than 0 and 1
 - Script fixtures exercise each shorthand and the full spec through the real command and app
+
+**As built:**
+
+- `uniterm ask` is a new subcommand of the bundled command. It opens the question-only session, opens the form, waits,
+  and discards the handle, on every exit that leaves the process running. Its flags are the ones in "Two API layers",
+  plus `--json` and `--socket`. Each shorthand sends one required question whose id is `answer`, and `confirm` sends a
+  paragraph with the buttons `yes` and `no`. The command reads the whole form from standard input for `form`, and
+  refuses a form past the wire's size with 65 before it connects. The app reads every form, so the command checks only
+  the shape of its flags. A number flag must be a JSON number.
+- Outside the bundle the command exits 78 through the entry point's one check. Every wire failure kind exits with a
+  documented code other than 0 and 1, and a test walks every kind. Ctrl-C keeps the default action, so the process dies
+  of SIGINT, which a shell reports as 130, and the app closes the form when the connection closes. The test asserts the
+  signal, not the shell's number.
+- The Janet module offers `uniterm/ask` as a C function, and the six helpers as Janet source that runs once for each
+  run, over `ask`. The converter in the shim writes the struct as the spec's JSON and refuses a string where a keyword
+  belongs, or a keyword where text belongs, before any call. A table block's `:rows` keys and values must be strings. A
+  number is the shortest decimal that reads back as the same double. Only spelling is checked in the shim. The app still
+  reads the form strictly, so a number where text belongs reaches the app and is refused there.
+- `ask` discards the handle after a result, and after a failed wait it discards first and raises the failure as it was.
+  A discard that itself fails is dropped. A wait that an interrupt cut short is the exception, since the session
+  already discarded the handle. The script lint counts every ask helper as a use of `ask-user`.
+- The session keeps its replies in a mailbox keyed by request ID, and rejects a reply that answers no call in flight. A
+  wait for a form looks for an interrupt every 50 milliseconds. On one, it sends `discard-form`, reads the wait's reply
+  and the discard's in either order, and ends the wait as interrupted. A test plays an app that sends them in each
+  order. A user's answer that lands before the discard is delivered to the wait and dropped. The host leaves the tab as
+  the submit left it, and a test pins that. A REPL that is stopped during an ask discards the form, keeps its
+  definitions, and can ask again.
+- The Janet VM looks for the interrupt at a call, a tail call, a fiber resume, and a jump that goes back or stays in
+  place. Interrupting a wait therefore stops the script at its next call or backward jump, and not at its next
+  instruction.
+- The shipped command's sandbox test passes unchanged. The UI tests run a declared script with a helper and a bash
+  script with the command through the running app. The coordinator runs them, and the user's own run of both flows is
+  M5's second check.
+- The 44 new package tests run in about 5 seconds together, most of it in the process starts of the run and Ctrl-C
+  tests. `make test-cost` does not exist in this project.
+- The shim roots the module and the helpers' scope while the helpers are defined, since defining them runs Janet code
+  that can collect. A test forces a collection there through a hook, and it crashed with the module unrooted.
+- Residuals: a script that Ctrl-C stops during an `ask` returns nil from it for an instant before the interrupt takes
+  effect, so a `protect` around `ask` does not see an error. A number where text belongs passes the shim and fails in
+  the app as a refused spec.
+
+### M5: The user's checks
+
+**Status:** DONE
+
+Amended 2026-11-21; see Decision Log.
+
+Only the user can run these. The coordinator already viewed the UI-test screenshots of one form and of two forms, in
+light and in dark. The coordinator also ran `QuestionsWireUITests`, whose bash and Janet flows drive the real app. The
+user's own runs below confirm what those covered.
+
+- The user looks at the pane in light and dark mode and confirms the layout and the chrome's contrast with permission
+  prompts
 - The user runs a bash script and a Janet script that ask forms in the running app and confirms the flow
+
+**As built:**
+
+- On 2026-11-21 the user ran both checks in the running app and confirmed them.
+  - The bash script used `uniterm ask` to ask a confirm, a text question with a pattern, a multiple choice, and a
+    cancelled text question.
+  - The Janet script was a declared file with `ask-user`. It used the helpers and the full spec, with a notice, a
+    choice with `other`, an integer, a multiline text, and the Deploy, Skip, and Cancel buttons.
+- The user looked at the pane in light and dark mode and confirmed the layout and the chrome's contrast with permission
+  prompts.
 
 ## Decision Log
 
@@ -770,13 +983,122 @@ Amended 2026-11-20; see Decision Log.
 - 2026-11-20: Settled "Reusing a requester's tab". A requester's next form that reuses its own tab selects it and
   takes focus, as a newly opened tab does. "Focus when a form arrives" said whether the reuse selects the tab or moves
   focus was open. M2's reuse check now pins the selection and the focus. The open question is removed.
+- 2026-11-21 (autonomous): M1 settled what the spec left open. A `table` block's pairs are an object under `rows`,
+  since the Janet rule says a table's pair keys are display strings. A `notice` defaults to `info`. A `text` question
+  is single-line unless `multiline` is true. `other` applies to `choice` only. A default must pass its own rules. A form
+  with only `cancel` buttons is refused. Empty answers are `null`. The caps are 32 KiB for the spec, 64 items, 8
+  buttons, and 64 choices of at most 256 bytes. A `string` answer is at most 1024 bytes and a `text` answer at most
+  4096. A path is at most 1024 bytes, with at most 16 paths. A number literal has at most 20 digits and an exponent
+  within 20. A `pattern` is at most 512 bytes, with at most 2048 parse nodes, 16 levels of groups, and repeat counts of
+  at most 1000. A pattern check runs for at most 0.5 seconds on at most 4096 UTF-16 units. The reader reads
+  through `StrictJSONReader` and the `StrictJSON` cases directly, not `StrictJSON.members`, since that throws a
+  `controller.json` error. `ended` has no script value, and M3 delivers it as a failed wait. The `pattern` table
+  narrowed: it refuses lookbehind, since ICU supports only
+  bounded lookbehind, and it accepts general categories, ECMA-262's binary properties, and 13 common scripts. The
+  Content blocks, Buttons, and `pattern` dialect text changed in place. "Content blocks" said "`table`: key and value
+  pairs, such as a summary." "The `pattern` dialect" said "Every backreference refuses. The documentation lists the
+  accepted grammar." "Buttons" had no rule for a form with only cancel buttons.
+- 2026-11-21 (autonomous, work-queue best guess): M2 settled what the proposal left open. A restored or reopened
+  Questions pane has no tab and shows an empty state. It stays until the user closes it. It does not close on its own,
+  since a window whose layout holds only a Questions pane would close at restore. "The Questions pane" said "A restored
+  or reopened Questions pane is empty, per ADR-03." M2 said "A restored or reopened Questions pane with no tab closes,
+  or shows an empty state, and never sits blank." The pane holds at most 8 tabs unless its host says otherwise. A new
+  requester's tab joins the end of the bar. `discard` ends an open form and keeps its tab, which then says so, and `end`
+  closes the tab. The `questions` type declares no remote control and has no launcher entry. A layout request for it is
+  refused as a REPL's is, since a program opens the pane through its form. A `boolean` is a checkbox with a third
+  state for no answer when it has no default. Each question's caption says Required or Optional. The tab key commands
+  carry the terminal's and the browser's titles. An optional pop-up keeps a "Choose…" item beside its default, so
+  Clear shows what the script receives. The header's pane line reads "Asked from Pane 3", and "Pane 3 closed, so the pane
+  that asked is gone" after the pane closes.
+- 2026-11-21 (autonomous, work-queue best guess): M3 settled what the proposal left open. The wire gains its own
+  failure kind, `ended`, since the command must tell a form that ended from any other failure to exit 4, and no
+  existing kind says it. The three form calls are Janet functions too, `uniterm/open-form`, `uniterm/wait-form`, and
+  `uniterm/discard-form`, because the script lint's table and the module must list the same calls. `open-form` takes
+  the spec as JSON text. M4's `uniterm/ask` converts a Janet struct and wraps them. A requester's header shows its
+  verified ID, `<id> (declared file)` for a declared file, and `<name> (unverified script)` for an unsafe undeclared
+  run. The second names the file the command announced and proves nothing. The descriptor's display name proves
+  nothing either, so it appears nowhere. A REPL is `REPL in <pane>`, and a connection the user granted a pane is
+  `<program> (PID n), granted <pane>`. Result slots hold at most 32 for a connection, the cap the text viewer's handle
+  table keeps. A Questions pane that opens beside an asker in an owned group joins the group's content and not its
+  members, as any pane the user splits there does. So the owner's next layout of that group is refused whole until the
+  user closes the Questions pane, and no form is dismissed. The M3 check said "A Questions pane split beside a member
+  of an owned group survives the owner's next layout request, and no form in it is dismissed by that layout". "Requester
+  chrome" said "A controller package or declared file shows its verified name." "Lifecycle and results" said "Result
+  slots have the same caps and lifetimes as other ADR-11 handles." and named the failed wait only as "ended".
+- 2026-11-21 (autonomous, work-queue best guess): The review of M3 kept four choices and amended the text to match.
+  "The ask power" said "A bare terminal-session caller, such as bash running `uniterm ask`, may ask without a prompt for
+  forms that name its own pane as the asker, as `post-status` works today." Every caller that is not a declared run
+  passes now, since M3's checks need a REPL caller and an unsafe undeclared run to ask. "The question-only session" said
+  "The app refuses every call on a question-only session except `open-form`, `wait-form`, and `discard-form`." The
+  listener ends the connection for such a call, since the command never sends one. "Waiting and Ctrl-C" did not say that
+  a REPL's stop leaves the form open. The helper discards it. The `ended` sentence in "Lifecycle and results" gained its
+  marker.
+- 2026-11-21 (autonomous, work-queue best guess): The refusal of an owner's layout, traced. The Questions pane is in the
+  group's content for as long as it is open, so the refusal outlasts the answer. A resolved tab keeps the pane. A run's
+  tab goes when the run ends, and a terminal session's tab stays until its next form, its shell ending, or the user
+  closing it. The refusal ends when the last tab goes and the pane closes with it. The refusal message now names the
+  Questions pane as the cause and says to close it. A test pins both ends. A split the user makes in an owned group
+  behaves the same way, and ADR-15 says a program's operation behaves as the user's. The user may rule that an owner's
+  layout should go ahead around the pane. That needs a tree rule that this milestone does not change.
+- 2026-11-21 (autonomous, work-queue best guess): M4 settled what the proposal left open. The Janet helpers are
+  `uniterm/ask-confirm`, `ask-text`, `ask-choose`, `ask-number`, `ask-color`, and `ask-file`, and each returns the
+  answer or nil. `ask-confirm` returns true for Yes, false for No, and nil when the form was closed. "Two API layers" said
+  "Helpers mirror the shorthands, such as `uniterm/ask-confirm`." Each shorthand's one question is required and has the
+  id `answer`, so the user cannot submit nothing. `confirm` prints nothing, and `--json` prints `true`. `uniterm ask
+  form` prints the whole result record, and prints nothing for a cancel or a close. The wire failure kinds map to codes
+  as "`uniterm ask` outcomes and exit codes" now lists, with a failure inside the app as 69, a handle the app does not
+  know as 4, an unsupported call as 70, and a lost reply as 74. A table block's `:rows` keys and values must be strings
+  in Janet, so a keyword there refuses the spec. The helpers are Janet source over a C `ask`, and the script lint counts
+  each as `ask-user`. The helper's wait looks for an interrupt every 50 milliseconds, since a signal does not wake a
+  thread that waits on a condition. "Waiting and Ctrl-C" said Ctrl-C took effect "with no new message and no polling".
+  The flag look sends nothing and reads one value. A wait that an interrupt cut short returns nil to the script, so the
+  interrupt and not an error stops it. The module-function test now expects the wire calls, `api-version`, and the
+  helpers. `ScriptValue.decode` is public, since the command reads a form's result with it.
+- 2026-11-21 (autonomous, work-queue best guess): The review of M4 settled three more things. A standard output that
+  cannot be written exits 74 with a line on stderr, and the command writes with POSIX `write` so that a caller that
+  ignores SIGPIPE gets a code and not an abort. The command keeps the default SIGPIPE. The exit table's 74 row said
+  "The connection was lost". Its 77 row said "A caller bound to no pane was denied a pane", and now covers every
+  `refused`, with the pane denial as its example. "Waiting and Ctrl-C" said "The helper's wait wakes on an interrupt by
+  itself", and now says the wait looks for one itself, to match the 50 millisecond look.
+- 2026-11-21: ADR candidate (cuts across the system, hard to reverse): which callers a power that controls no pane
+  passes without a prompt. `ask-user` passes for every connection that is not a declared or package run. Later powers
+  would copy that tier. ADR-14 requires explicit grants for separate powers, but it does not say what a user's own
+  session may do without one. Undecided.
+- 2026-11-21: The user ran M5's checks in the running app and confirmed them. M5 had no queue row, so its history row
+  records it after the fact. The proposal is implemented.
+- 2026-11-21 (autonomous, work-queue best guess): The row review moved the two checks that only the user can run out
+  of M2 and M4 and into a new milestone, M5, since a check that only the user can run blocks `DONE`. M2 and M4 stay
+  `DONE`, and M5 is `NOT STARTED`. M2's last check said "The user looks at the pane in light and dark mode and confirms
+  the layout and the chrome's contrast with permission prompts". M4's last check said "The user runs a bash script and
+  a Janet script that ask forms in the running app and confirms the flow". Their As built lines said the user's look
+  and run were "left to the user", and now point at M5. M5 names what the coordinator already verified: the light and
+  dark screenshots of one form and of two forms, and the bash and Janet flows of `QuestionsWireUITests`.
+- 2026-11-21 (autonomous, work-queue best guess): The row review merged the two edits of "Waiting and Ctrl-C" into one
+  bullet with one marker, and corrected how soon an interrupt stops the script. The text said "The helper's wait looks
+  for an interrupt every 50 milliseconds, since a signal does not wake a thread that waits on a condition. The look
+  reads a flag and sends nothing. A wait that an interrupt cut short returns nil to the script, and the interrupt stops
+  the script at its next instruction." Janet's VM checks for the interrupt only at a call, a tail call, a fiber resume,
+  and a jump that goes back or stays in place, so the script stops at its next call or backward jump. The rationale's
+  second marker went, since it marked the same edit.
+- 2026-11-21: Correction of fact. "Requester chrome", "File answers are paths", "What a requester is", and References
+  cited ADR-09, which ADR-14 supersedes. They cite ADR-14 now, where its text carries the same principles: a requester
+  scope no narrower than the transport can establish, and one power never silently granting another. The entries above
+  that name ADR-09 are unchanged.
+- 2026-11-21 (autonomous, work-queue best guess): M2's UI test no longer chooses a file in the open panel. The panel
+  runs out of process, and synthesizing keys into it timed out at a different step in each run. A package test now
+  drives the function that the panel's completion handler calls, for a chosen path, a list held to its entry limit
+  with the "not kept" note, the directory and save modes, and a cancelled panel. The UI test keeps the proof that the
+  panel opens as a sheet and that Escape closes it first. M2's As built had no line on this, and its UI test of the
+  answer types chose a file through the panel.
 
 ## References
 
 - [ADR-02](../adr/ADR-02-pane-tree-nodes-have-stable-ids.md): the asking pane is named by its stable ID
 - [ADR-03](../adr/ADR-03-restored-state-never-runs-a-program.md): forms are never restored
 - [ADR-04](../adr/ADR-04-uniterm-owns-key-bindings-and-terminal-config.md): form keys stay inside the applet's view
+- [ADR-05](../adr/ADR-05-applet-lifecycle-events-and-applet-responses.md): closing an open form needs no confirmation
 - [ADR-07](../adr/ADR-07-failure-isolation.md) and [ADR-08](../adr/ADR-08-ui-responsiveness.md): bounded validation
-- [ADR-09](../adr/ADR-09-control-authority-requires-authenticated-identity-and-explicit-scope.md): the ask power and
-  truthful requester chrome
 - [ADR-11](../adr/ADR-11-deferred-applet-replies-never-hide-effects.md): the handle and the deferred wait
+- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): the ask power and truthful requester chrome
+- [ADR-15](../adr/ADR-15-a-programs-operation-is-the-users.md): proposed. A form that opens beside its asker behaves
+  as the user's own open

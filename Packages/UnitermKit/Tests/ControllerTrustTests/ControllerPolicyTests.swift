@@ -468,6 +468,30 @@ final class ControllerPolicyTests: XCTestCase {
     XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(extra.utf8)))
   }
 
+  /// Catches the ask power lost in the file, written with a field it should not carry, covered by
+  /// another power, or shown with words that hide what it grants.
+  func testAskUserRoundTripsAndIsCoveredOnlyByItself() throws {
+    let policies = [Self.policy([.paneControl, .askUser])]
+    let bytes = ControllerPolicyFile.encode(policies)
+    let text = String(decoding: bytes, as: UTF8.self)
+
+    XCTAssertEqual(try ControllerPolicyFile.decode(bytes), policies)
+    XCTAssertTrue(text.contains("\"ask-user\""))
+    XCTAssertTrue(text.contains("\"format\": 1"), "the policy file format did not change")
+
+    let extra = text.replacingOccurrences(
+      of: "\"kind\": \"ask-user\"", with: "\"kind\": \"ask-user\", \"directories\": []")
+
+    XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(extra.utf8)))
+
+    XCTAssertEqual(PermissionContainment.uncovered([.askUser], by: [.paneControl]), [.askUser])
+    XCTAssertEqual(PermissionContainment.uncovered([.paneControl], by: [.askUser]), [.paneControl])
+    XCTAssertEqual(PermissionContainment.uncovered([.askUser], by: [.askUser]), [])
+    XCTAssertEqual(
+      ControllerPermission.askUser.displayText,
+      "Ask you questions in a Questions pane and read your answers")
+  }
+
   /// Catches a stored approval from before the browser kinds that grows to cover them when the
   /// file is read again: the kinds are new, so the old scopes name neither.
   func testAnApprovalFromBeforeTheBrowserKindsCoversNeither() throws {

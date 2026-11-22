@@ -32,6 +32,7 @@
 		7A000000000000000000007D /* ScriptHost in Frameworks */ = {isa = PBXBuildFile; productRef = 7A000000000000000000007E /* ScriptHost */; };
 		7A000000000000000000007F /* ReplApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000080 /* ReplApplet */; };
 		7A0000000000000000000081 /* AppletFixtures in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000082 /* AppletFixtures */; };
+		7A0000000000000000000083 /* QuestionsApplet in Frameworks */ = {isa = PBXBuildFile; productRef = 7A0000000000000000000084 /* QuestionsApplet */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -182,6 +183,7 @@
 				7A000000000000000000007D /* ScriptHost in Frameworks */,
 				7A000000000000000000007F /* ReplApplet in Frameworks */,
 				7A0000000000000000000081 /* AppletFixtures in Frameworks */,
+				7A0000000000000000000083 /* QuestionsApplet in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -286,6 +288,7 @@
 				7A000000000000000000007E /* ScriptHost */,
 				7A0000000000000000000080 /* ReplApplet */,
 				7A0000000000000000000082 /* AppletFixtures */,
+				7A0000000000000000000084 /* QuestionsApplet */,
 			);
 			productName = uniterm;
 			productReference = 7A0000000000000000000006 /* uniterm.app */;
@@ -934,6 +937,10 @@
 		7A0000000000000000000082 /* AppletFixtures */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AppletFixtures;
+		};
+		7A0000000000000000000084 /* QuestionsApplet */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = QuestionsApplet;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

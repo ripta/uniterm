@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-20
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -404,6 +404,7 @@ None.
   Amended the rationale of "Go to Slide". It said a Questions form "takes no focus under ADR-12, so the user clicks into
   it and back out mid-talk". That reason rested on ADR-12, so it is gone. The decision stands on its other reasons: a
   form is unbuilt and needs the `ask-user` power.
+- 2026-11-21: Scheduled as UTERM-029 M1-M3 in queue.md.
 
 ## References
 

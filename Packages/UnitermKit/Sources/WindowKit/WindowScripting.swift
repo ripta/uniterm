@@ -3,6 +3,7 @@ import AppletKit
 import ControllerPackage
 import Foundation
 import PaneModel
+import QuestionForm
 import ScriptHost
 import ScriptWire
 import SourceAccess
@@ -66,6 +67,27 @@ public final class WindowScripting: ScriptWindowAPI {
     var info = stat()
 
     return stat(path, &info) == 0 && info.st_mode & S_IFMT == S_IFDIR
+  }
+
+  // MARK: Forms
+
+  public func openForm(
+    _ spec: FormSpec, requester: FormRequester, caller: ScriptCaller,
+    resolved: @escaping @MainActor (FormOutcome) -> Void
+  ) throws {
+    let controller = try window(of: caller)
+
+    guard controller.paneActionsEnabled else { throw Self.waitingForAnAnswer }
+
+    try controller.openForm(spec, requester: requester, asker: caller.pane, resolved: resolved)
+  }
+
+  public func discardForm(requester key: String, window: UInt64) {
+    windows.controller(forScriptWindow: window)?.discardForm(requester: key)
+  }
+
+  public func endForms(requester key: String, window: UInt64) {
+    windows.controller(forScriptWindow: window)?.endForm(requester: key)
   }
 
   // MARK: Lists

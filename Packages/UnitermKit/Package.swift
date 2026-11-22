@@ -52,6 +52,7 @@ let package = Package(
     .library(name: "ScriptRuntime", targets: ["ScriptRuntime"]),
     .library(name: "ScriptHost", targets: ["ScriptHost"]),
     .library(name: "ReplApplet", targets: ["ReplApplet"]),
+    .library(name: "QuestionsApplet", targets: ["QuestionsApplet"]),
     .library(name: "ExecDriver", targets: ["ExecDriver"]),
     // Only a debug build of the app registers the fixtures, behind UNITERM_TEST_APPLETS.
     .library(name: "AppletFixtures", targets: ["AppletFixtures"]),
@@ -87,7 +88,7 @@ let package = Package(
       dependencies: [
         "Theme", "Preferences", "AppletKit", "StatusKit", "PaneModel", "LayoutKit", "FileRouting",
         "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ExecDriver", "ControllerPackage",
-        "ControllerTrust", "SourceAccess", "BrowserModel",
+        "ControllerTrust", "SourceAccess", "BrowserModel", "QuestionForm", "QuestionsApplet",
       ]),
     .target(name: "SettingsKit", dependencies: ["Preferences"]),
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
@@ -210,6 +211,10 @@ let package = Package(
     // one reading of the file.
     .target(
       name: "ControllerTrust", dependencies: ["AtomicFile", "ControllerPackage", "SourceAccess"]),
+    // The Questions applet's form: the spec a script sends, its strict reader and caps, the
+    // validation of answers, the `pattern` dialect, and the result shapes. It has no AppKit and
+    // no Janet, so the app, the helper, and the fuzzers read one meaning from the same bytes.
+    .target(name: "QuestionForm", dependencies: ["ControllerPackage", "ScriptWire"]),
     // The helper side of scripting. It owns the one Janet VM of its process, on its main thread.
     .target(name: "ScriptRuntime", dependencies: ["CJanet", "ControllerPackage", "ScriptWire"]),
     // A thin main over ScriptRuntime, so tests can run a helper without the hardened runtime. The
@@ -221,7 +226,8 @@ let package = Package(
       name: "ScriptHost",
       dependencies: [
         "ControllerPackage", "ControllerTrust", "FileRouting", "HelperHost", "PaneModel",
-        "Preferences", "ProcessInspection", "ScriptWire", "SourceAccess", "StatusKit",
+        "Preferences", "ProcessInspection", "QuestionForm", "ScriptWire", "SourceAccess",
+        "StatusKit",
       ]),
     // The REPL applet. It hosts a terminal session whose child is the REPL helper, and binds the
     // helper's control channel to its pane through the script host. It never imports Janet.
@@ -230,11 +236,17 @@ let package = Package(
       dependencies: [
         "AppletKit", "ScriptHost", "ScriptWire", "StatusKit", "TerminalSurface", "Theme",
       ]),
+    // The Questions applet: the pane that shows the forms programs ask, a tab for each requester.
+    // It draws the requester's header itself and holds no script, wire, or Janet code. A host
+    // opens a form through its in-process API and hears the outcome through a callback.
+    .target(
+      name: "QuestionsApplet",
+      dependencies: ["AppletKit", "QuestionForm", "StatusKit", "Theme"]),
     .target(
       name: "AppletCatalog",
       dependencies: [
         "AppletKit", "BrowserApplet", "DataViewerApplet", "ImageViewerApplet", "MapViewerApplet",
-        "ReplApplet", "TerminalApplet", "TextViewerApplet",
+        "QuestionsApplet", "ReplApplet", "TerminalApplet", "TextViewerApplet",
       ]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
@@ -243,7 +255,7 @@ let package = Package(
       dependencies: [
         "AppletCatalog", "FileRouting", "AppletKit", "WindowKit", "BrowserApplet", "Preferences",
         "BrowserTestSupport", "TerminalApplet", "ReplApplet", "DataViewerApplet", "MapViewerApplet",
-        "ImageViewerApplet", "TextViewerApplet",
+        "ImageViewerApplet", "TextViewerApplet", "QuestionsApplet",
       ]),
     // Ends a test process whose `swift test` is gone, so a hung test cannot outlive a cancelled
     // run. Every test target links into one bundle, so one test target's dependency guards all.
@@ -292,6 +304,17 @@ let package = Package(
       dependencies: [
         "AtomicFile", "ControllerPackage", "ControllerTrust", "ControllerTestSupport",
         "SourceAccess", "TableTestSupport",
+      ]),
+    // JavaScriptCore is linked here only. It is the reference the pattern translator is
+    // compared against, and the app never loads it.
+    .testTarget(
+      name: "QuestionFormTests",
+      dependencies: ["ControllerPackage", "QuestionForm", "ScriptWire", "TableTestSupport"],
+      linkerSettings: [.linkedFramework("JavaScriptCore")]),
+    .testTarget(
+      name: "QuestionsAppletTests",
+      dependencies: [
+        "QuestionsApplet", "QuestionForm", "AppletKit", "StatusKit", "Theme", "AppletTestSupport",
       ]),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
@@ -407,7 +430,8 @@ let package = Package(
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
         "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
         "ControllerTrust", "TestProcessGuard", "TextViewerApplet", "SourceAccess",
-        "MapViewerApplet", "BrowserApplet", "BrowserModel", "BrowserTestSupport",
+        "MapViewerApplet", "BrowserApplet", "BrowserModel", "BrowserTestSupport", "QuestionForm",
+        "QuestionsApplet",
       ]),
   ],
   swiftLanguageModes: [.v6],
