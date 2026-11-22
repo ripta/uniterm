@@ -24,9 +24,11 @@
 | [20261121-owner-end-withdraws-other-owners-launches](20261121-owner-end-withdraws-other-owners-launches.md) | An owner's end withdraws every launch waiting in its panes, whoever staged it | open |
 | [20261121-held-requests-grow-without-bound](20261121-held-requests-grow-without-bound.md) | Calls held during a peer's full check grow without bound | not-reproducible |
 | [20261121-ui-test-paste-replaces-the-real-clipboard](20261121-ui-test-paste-replaces-the-real-clipboard.md) | The UI tests' open-panel paste replaces the real clipboard and restores only its text | fixed |
-| [20261122-approval-text-leaves-zero-width-scalars-raw](20261122-approval-text-leaves-zero-width-scalars-raw.md) | Launch approvals and controller names draw zero-width scalars raw | open |
+| [20261122-approval-text-leaves-zero-width-scalars-raw](20261122-approval-text-leaves-zero-width-scalars-raw.md) | Launch approvals and controller names draw zero-width scalars raw | fixed |
 | [20261122-bounded-status-text-keeps-line-separators](20261122-bounded-status-text-keeps-line-separators.md) | Bounded status text keeps U+2028 and U+2029 line breaks | open |
 | [20261122-terminal-directory-check-blocks-main-thread](20261122-terminal-directory-check-blocks-main-thread.md) | An applet's current directory checks the file system on the main thread | open |
 | [20261122-layout-save-runs-on-main-thread](20261122-layout-save-runs-on-main-thread.md) | The layout save encodes and writes every tab on the main thread | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | open |
 | [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | open |
+| [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
+| [20261122-declared-file-watchdog-may-signal-reused-pid](20261122-declared-file-watchdog-may-signal-reused-pid.md) | The declared-file test watchdog may signal a process id that was already reused | open |
