@@ -98,6 +98,17 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// The read of an edited document's pins, while it runs.
   private(set) var editing: Task<Void, Never>?
   private var editGeneration = 0
+
+  /// The read of the newest edit's bytes. Save waits on it, so it never writes bytes the reader
+  /// has not accepted. It is a separate task from `editing`, so a later edit that supersedes the
+  /// read does not lose its verdict.
+  private var pendingRead: PendingRead?
+
+  private struct PendingRead {
+    let bytes: Data
+    let generation: Int
+    let read: Task<Result<GeoFileLayer, GeoJSONFileError>, Never>
+  }
   private var watcher: FileWatcher?
   private var changedOnDisk = false
   /// Unsaved pins a closed pane carried, waiting for its file to load: the edited bytes, the
@@ -121,6 +132,15 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// Asks what Save does when the file changed on disk since it was read. Tests replace it.
   var resolveConflict: @MainActor (String, NSWindow?) async -> SaveConflictChoice =
     MapViewerApplet.runConflictAlert
+
+  /// Writes a file's bytes to disk. Tests replace it to land an edit while a write is in flight.
+  var writeFile: @Sendable (Data, URL) async -> Result<Void, any Error> =
+    MapViewerApplet.atomicWrite
+
+  /// Reads an edited document's pins back. Tests replace it to refuse chosen bytes.
+  var readLayer: @Sendable (Data, String) async -> Result<GeoFileLayer, GeoJSONFileError> = {
+    await GeoJSONFileReader.layer(of: $0, path: $1)
+  }
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
@@ -874,12 +894,18 @@ extension MapViewerApplet {
     let path = record.path ?? "Untitled"
     let bytes = next ?? GeoJSONPatcher.emptyDocument
 
+    let reader = readLayer
+    let read = Task { await reader(bytes, path) }
+
+    pendingRead = PendingRead(bytes: bytes, generation: generation, read: read)
+
     editing = Task { [weak self] in
-      let result = await GeoJSONFileReader.layer(of: bytes, path: path)
+      let result = await read.value
 
       guard let self, generation == self.editGeneration, !self.closed else { return }
 
       self.editing = nil
+      self.pendingRead = nil
 
       switch result {
       case .failure(let error):
@@ -953,6 +979,8 @@ extension MapViewerApplet {
 
     guard let document else { return true }
 
+    guard await readAccepts(document) else { return false }
+
     let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
     let onDisk = try? Data(contentsOf: url)
 
@@ -979,14 +1007,19 @@ extension MapViewerApplet {
       return false
     }
 
-    let bytes = document ?? GeoJSONPatcher.emptyDocument
+    let captured = document
+    let bytes = captured ?? GeoJSONPatcher.emptyDocument
 
+    guard await readAccepts(captured) else { return false }
     guard await write(bytes, to: url) else { return false }
 
     record.path = url.path
     record.bookmark = nil
     record.startDirectory = url.deletingLastPathComponent().path
-    document = bytes
+
+    // An edit that landed during the write stays in the document, so the map stays unsaved.
+    if captured == nil, document == nil { document = bytes }
+
     savedDocument = bytes
     watch(url)
     refresh()
@@ -995,8 +1028,19 @@ extension MapViewerApplet {
     return true
   }
 
+  /// Whether the reader accepts `bytes`. A read of exactly these bytes may still be running, and
+  /// this waits for it off the main thread. A refused edit is reverted and warned about by the
+  /// read's own completion, so a refusal here only keeps Save from writing it.
+  private func readAccepts(_ bytes: Data?) async -> Bool {
+    guard let bytes, let pending = pendingRead, pending.bytes == bytes else { return true }
+
+    if case .failure = await pending.read.value { return false }
+
+    return true
+  }
+
   private func write(_ bytes: Data, to url: URL) async -> Bool {
-    switch await Self.atomicWrite(bytes, to: url) {
+    switch await writeFile(bytes, url) {
     case .success:
       if url.path == record.path { savedDocument = bytes }
 

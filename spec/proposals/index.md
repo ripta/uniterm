@@ -17,7 +17,7 @@
 | [UTERM-013](UTERM-013-shortcut-ownership-and-reopen.md) | Window versus applet shortcuts, and Cmd-Shift-T reopen | implemented |
 | [UTERM-014](UTERM-014-palette-and-reopen-review-fixes.md) | Cmd-K palette, title bar dock, and reopenable exits | implemented |
 | [UTERM-015](UTERM-015-cross-applet-file-opening.md) | Finder, File > Open, and other ways a file reaches an applet, and the path-reading power | implemented |
-| [UTERM-016](UTERM-016-map-pin-editing.md) | Add, edit, and remove map pins by hand, and save them to GeoJSON | accepted |
+| [UTERM-016](UTERM-016-map-pin-editing.md) | Add, edit, and remove map pins by hand, and save them to GeoJSON | implemented |
 | [UTERM-017](UTERM-017-status-bar-placement.md) | Where notices go, their levels, window status slots, and the shared queue | implemented |
 | [UTERM-018](UTERM-018-open-in-nearest-capable-pane.md) | Every open walks to the nearest pane that can handle it | accepted |
 | [UTERM-019](UTERM-019-browser-automation.md) | Controller scripts run JavaScript, follow page events, and send input in their own browser tabs | accepted |
@@ -40,6 +40,8 @@
 | [UTERM-036](UTERM-036-program-opens-take-focus.md) | A program's opens and layouts take focus as the user's do | implemented |
 | [UTERM-037](UTERM-037-controller-browser-commands-act-as-the-users.md) | A controller's browser commands act as the user's | implemented |
 | [UTERM-038](UTERM-038-program-map-moves-and-seeds-act-as-the-users.md) | A program's map move and browser seed act as the user's | implemented |
+| [UTERM-039](UTERM-039-controller-browser-tabs-are-not-capped.md) | A controller's browser tabs are not capped | accepted |
+| [UTERM-040](UTERM-040-program-map-pins-edit-the-map.md) | A program's map pins edit the map as the user's do | accepted |
 
 ## Dependency Graph
 
@@ -79,6 +81,8 @@ UTERM-034 ← UTERM-003, UTERM-015, UTERM-021, UTERM-032
 UTERM-036 ← UTERM-004, UTERM-015
 UTERM-037 ← UTERM-005
 UTERM-038 ← UTERM-008, UTERM-037
+UTERM-039 ← UTERM-005, UTERM-037
+UTERM-040 ← UTERM-008, UTERM-015, UTERM-016
 ```
 
 ## Not Yet Filed

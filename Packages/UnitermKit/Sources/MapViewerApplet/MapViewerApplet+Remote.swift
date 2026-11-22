@@ -440,7 +440,7 @@ extension MapViewerApplet {
       AppletMessageSchema(
         name: "set-region",
         summary:
-          "Moves the map to show a region, given as a center and a span in degrees. The region's edges must stay between the poles. The move is the program's, so it is not saved with the pane.",
+          "Moves the map to show a region, given as a center and a span in degrees. The region's edges must stay between the poles. The region is saved with the pane, as Go to Place saves one.",
         arguments: AppletObjectSchema([
           "center": .init(coordinate),
           "span": .init(

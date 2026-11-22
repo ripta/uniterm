@@ -1,8 +1,8 @@
 # UTERM-016: Map Pin Editing
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-11-05
-**Updated:** 2026-11-05
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -118,7 +118,7 @@ Rationale: the user chose undo over a confirmation on remove. Recovery from a mi
 UTERM-008's command schema gains a file-layer target for its edit commands. A command changes the pane's unsaved
 document, as the user's own edits do, and undoes like one. A caller may target the file only when its scope holds the
 file under UTERM-015's path-reading power, since the commands and their replies reveal the file's pin IDs. Writing the
-file stays a user action. No new write power is needed.
+file stays a user action. No new write power is needed. Superseded in part by UTERM-040; see Decision Log.
 
 ### A file that changes on disk while open
 
@@ -229,11 +229,17 @@ Amended 2026-11-05; see Decision Log.
 
 ### M4: Scripts and the file layer
 
-**Status:** NOT STARTED
+**Status:** DROPPED
 
 - The map's command schema gains a file-layer target for its edit commands, under the path-reading power
 - A command's edit is unsaved until the user saves, and it undoes like the user's own
 - The pin list shows program layers read-only, with their Clear action
+
+**As built:**
+
+- Not built. Dropped on 2026-11-21, replaced by UTERM-040; see the Decision Log entry of 2026-11-21.
+
+Replaced by: UTERM-040
 
 ## Decision Log
 
@@ -268,6 +274,12 @@ Amended 2026-11-05; see Decision Log.
   pane says", but the code has posted them to the status bar since M2. A file that changed on disk under edits also
   shows a "Changed on disk" warning segment. Unsaved pins that cannot come back after a reopen now post an error, under
   UTERM-008's rule for notice levels.
+- 2026-11-21: Superseded in part by UTERM-040. M4 is dropped and replaced by UTERM-040, which the user accepted after
+  its review. A program's pin commands edit the document as the user's do, command layers retire, and the read-only
+  program layer rows in the pin list have nothing left to show. "Scripts may edit the file, and only the user saves"
+  is superseded in part: UTERM-040 settles the gate, addresses, and schema. UTERM-040 also changes M1's and M2's
+  behavior: no edit waits on a read, a read failure reverts nothing, and an edit past the measured byte bound is
+  refused. With M4 dropped, every other milestone is done, so the proposal is implemented.
 
 ## References
 
