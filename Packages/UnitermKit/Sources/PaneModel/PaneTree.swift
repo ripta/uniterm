@@ -506,9 +506,7 @@ public struct PaneTree: Sendable, Equatable {
       let own = group.members.union([anchor])
 
       guard group.content.groups.isEmpty, Set(content).isSubset(of: own) else {
-        throw PaneLayoutError.refused(
-          "the group holds a pane this program does not own, such as one the user split off, so "
-            + "its layout cannot change")
+        throw PaneLayoutError.unownedContent(Set(content).subtracting(own))
       }
 
       guard Set(placed) == Set(content) else {

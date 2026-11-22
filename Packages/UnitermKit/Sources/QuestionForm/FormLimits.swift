@@ -9,8 +9,8 @@ import ScriptWire
 /// refuses it instead. Every cap here that bounds an answer is also what a widget enforces while
 /// the user types.
 public enum FormLimits {
-  /// The most bytes of JSON a spec may hold.
-  public static let maxSpecBytes = 32 * 1024
+  /// The most bytes of JSON a spec may hold. It is the wire's cap, so a spec that fits one reads.
+  public static let maxSpecBytes = ScriptProtocol.maxFormBytes
 
   /// The most items, blocks and questions together. Every question is a field of the answers
   /// record, so this is also the record's field cap.

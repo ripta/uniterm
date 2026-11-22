@@ -66,7 +66,7 @@ context. Tabs that always show give uniterm a title the script cannot draw.
 Decision: uniterm draws a header on every form. The script cannot style it, hide it, or put text in it beyond the
 form's title, which appears below it.
 
-- The header names exactly what the transport established, per ADR-09. A controller package or declared file shows
+- The header names exactly what the transport established, per ADR-14. A controller package or declared file shows
   its verified ID, since the descriptor's display name proves nothing. A bare terminal-session caller shows "Terminal
   session in <pane>". The header never implies a specific script for a caller that could not be identified. Amended
   2026-11-21; see Decision Log.
@@ -174,7 +174,7 @@ Decision: a file question returns a path, never the file's contents. Picking a f
 - A bash script uses the path as it would any argument.
 - A Janet script that reads the file needs file read declared, like any other read.
 
-Rationale: returning contents would mean uniterm reads a file for a script that may not hold file read. ADR-09 forbids
+Rationale: returning contents would mean uniterm reads a file for a script that may not hold file read. ADR-14 forbids
 one power silently granting another. Contents also bring large files, binary data, and memory bounds that a path
 avoids.
 
@@ -358,7 +358,7 @@ Decision: a run, a terminal session, or a connection. (autonomous)
 
 Rationale: keying by terminal session lets a multi-step bash script reuse one tab, and keeps two terminal tabs in one
 pane from refusing each other as busy. Keying a granted connection by its pane would put it under "Terminal session in
-<pane>", which names the wrong requester under ADR-09. Keying by session root would put a declared run and the shell's
+<pane>", which names the wrong requester under ADR-14. Keying by session root would put a declared run and the shell's
 bare calls under one header, which cannot name both. Converged in 1 pass.
 
 ### The question-only session
@@ -430,20 +430,18 @@ Decision: free the wait with `discard-form`. `wait-form` has no deadline. (auton
 
 - On Ctrl-C, the helper stops waiting for `wait-form`'s reply and sends `discard-form` for the pending handle. The app
   closes the form as ended and fails the wait.
-- The helper's wait looks for an interrupt itself, and the session matches replies by request ID with two calls in
-  flight. Amended 2026-11-21; see Decision Log.
+- The helper's wait looks for an interrupt itself, every 50 milliseconds, since a signal does not wake a thread that
+  waits on a condition. The look reads a flag and sends nothing. The session matches replies by request ID with two
+  calls in flight. A wait that an interrupt cut short returns nil to the script. The interrupt then stops the script at
+  its next call or backward jump, where the VM looks for it. Amended 2026-11-21; see Decision Log.
 - In a REPL, the app's own stop request fails the connection's pending wait, so the REPL keeps its VM state. The form
   stays open until the helper discards it. Amended 2026-11-21; see Decision Log.
 - `uniterm ask` keeps the default SIGINT. Ctrl-C ends it with 130, and the closed connection ends the form.
-- The helper's wait looks for an interrupt every 50 milliseconds, since a signal does not wake a thread that waits on a
-  condition. The look reads a flag and sends nothing. A wait that an interrupt cut short returns nil to the script, and
-  the interrupt stops the script at its next instruction. Amended 2026-11-21; see Decision Log.
 
 Rationale: Ctrl-C takes effect at once with no new message and no capped wait. A capped wait would leave a REPL user's
 first Ctrl-C unanswered until the cap. A second press 0.5 to 5 seconds later kills the helper and loses the VM state,
 per UTERM-003. A new stop message would do what `discard-form` already does. An unbounded wait breaks UTERM-003's rule
-that the first Ctrl-C stops a run. Converged in 1 pass, on an option the critic added. Amended 2026-11-21; see
-Decision Log.
+that the first Ctrl-C stops a run. Converged in 1 pass, on an option the critic added.
 
 ### Focus when a form arrives
 
@@ -641,8 +639,6 @@ Amended 2026-11-21; see Decision Log.
 - Arrival posts a status line. Resolving a form leaves focus in its tab
 - A field's error appears beside it when the user leaves the field or tries to submit, not while typing, and clears
   as soon as the input is valid. Validating buttons stay disabled until the form passes
-- The user looks at the pane in light and dark mode and confirms the layout and the chrome's contrast with permission
-  prompts
 
 **As built:**
 
@@ -677,7 +673,7 @@ Amended 2026-11-21; see Decision Log.
 - The package tests run in about a second together. About half of that is the first AppKit window of the test process.
   `make test-cost` does not exist in this project.
 - The coordinator viewed the UI-test screenshots of one form and of two forms, in light and in dark, and the layout
-  looked right. The user's own look at the pane in both appearances is left to the user.
+  looked right. The user's own look at the pane in both appearances is M5's first check.
 - Residuals: a file sheet that is open when its form ends stays attached until the user answers it, and the answer is
   then dropped. Nothing else was found.
 
@@ -757,8 +753,9 @@ Amended 2026-11-21; see Decision Log.
 - `make test-cost` does not exist in this project. The 52 new package tests run in about 1.5 seconds together.
 - The owned-group refusal outlasts the answer. A resolved tab keeps the Questions pane open, and the pane sits in the
   group's content until the user closes it or its last tab goes. A run's tab goes when the run ends, and a terminal
-  session's tab stays until the shell ends. The refusal names the Questions pane and says to close it. See the Decision
-  Log entry for the trace.
+  session's tab stays until the shell ends. The refusal names the Questions pane and says to close it, but only when
+  that pane is the group's one unowned pane. A layout that fails for another reason reports its own error. See the
+  Decision Log entry for the trace.
 - A stopped host ends its open forms through the path a closed connection takes. A form asked from a program that no
   longer descends from its session root gets `ended` and no answers, since no call passes `authorize` while a wait
   waits.
@@ -769,6 +766,8 @@ Amended 2026-11-21; see Decision Log.
 ### M4: `uniterm ask` and Janet helpers
 
 **Status:** DONE
+
+Amended 2026-11-21; see Decision Log.
 
 - `uniterm ask form` and each shorthand print the documented output and exit with the documented codes, including 77
   for a denied pane and 130 for Ctrl-C
@@ -783,7 +782,6 @@ Amended 2026-11-21; see Decision Log.
   does from JSON
 - `uniterm ask` outside the bundle exits 78, and every wire failure kind maps to a documented code other than 0 and 1
 - Script fixtures exercise each shorthand and the full spec through the real command and app
-- The user runs a bash script and a Janet script that ask forms in the running app and confirms the flow
 
 **As built:**
 
@@ -811,9 +809,12 @@ Amended 2026-11-21; see Decision Log.
   order. A user's answer that lands before the discard is delivered to the wait and dropped. The host leaves the tab as
   the submit left it, and a test pins that. A REPL that is stopped during an ask discards the form, keeps its
   definitions, and can ask again.
+- The Janet VM looks for the interrupt at a call, a tail call, a fiber resume, and a jump that goes back or stays in
+  place. Interrupting a wait therefore stops the script at its next call or backward jump, and not at its next
+  instruction.
 - The shipped command's sandbox test passes unchanged. The UI tests run a declared script with a helper and a bash
-  script with the command through the running app. The coordinator runs them, and the user's own run of both flows is left to
-  the user.
+  script with the command through the running app. The coordinator runs them, and the user's own run of both flows is
+  M5's second check.
 - The 44 new package tests run in about 5 seconds together, most of it in the process starts of the run and Ctrl-C
   tests. `make test-cost` does not exist in this project.
 - The shim roots the module and the helpers' scope while the helpers are defined, since defining them runs Janet code
@@ -821,6 +822,20 @@ Amended 2026-11-21; see Decision Log.
 - Residuals: a script that Ctrl-C stops during an `ask` returns nil from it for an instant before the interrupt takes
   effect, so a `protect` around `ask` does not see an error. A number where text belongs passes the shim and fails in
   the app as a refused spec.
+
+### M5: The user's checks
+
+**Status:** NOT STARTED
+
+Amended 2026-11-21; see Decision Log.
+
+Only the user can run these. The coordinator already viewed the UI-test screenshots of one form and of two forms, in
+light and in dark. The coordinator also ran `QuestionsWireUITests`, whose bash and Janet flows drive the real app. The
+user's own runs below confirm what those covered.
+
+- The user looks at the pane in light and dark mode and confirms the layout and the chrome's contrast with permission
+  prompts
+- The user runs a bash script and a Janet script that ask forms in the running app and confirms the flow
 
 ## Decision Log
 
@@ -1036,6 +1051,24 @@ Amended 2026-11-21; see Decision Log.
   passes without a prompt. `ask-user` passes for every connection that is not a declared or package run. Later powers
   would copy that tier. ADR-14 requires explicit grants for separate powers, but it does not say what a user's own
   session may do without one. Undecided.
+- 2026-11-21 (autonomous, work-queue best guess): The row review moved the two checks that only the user can run out
+  of M2 and M4 and into a new milestone, M5, since a check that only the user can run blocks `DONE`. M2 and M4 stay
+  `DONE`, and M5 is `NOT STARTED`. M2's last check said "The user looks at the pane in light and dark mode and confirms
+  the layout and the chrome's contrast with permission prompts". M4's last check said "The user runs a bash script and
+  a Janet script that ask forms in the running app and confirms the flow". Their As built lines said the user's look
+  and run were "left to the user", and now point at M5. M5 names what the coordinator already verified: the light and
+  dark screenshots of one form and of two forms, and the bash and Janet flows of `QuestionsWireUITests`.
+- 2026-11-21 (autonomous, work-queue best guess): The row review merged the two edits of "Waiting and Ctrl-C" into one
+  bullet with one marker, and corrected how soon an interrupt stops the script. The text said "The helper's wait looks
+  for an interrupt every 50 milliseconds, since a signal does not wake a thread that waits on a condition. The look
+  reads a flag and sends nothing. A wait that an interrupt cut short returns nil to the script, and the interrupt stops
+  the script at its next instruction." Janet's VM checks for the interrupt only at a call, a tail call, a fiber resume,
+  and a jump that goes back or stays in place, so the script stops at its next call or backward jump. The rationale's
+  second marker went, since it marked the same edit.
+- 2026-11-21: Correction of fact. "Requester chrome", "File answers are paths", "What a requester is", and References
+  cited ADR-09, which ADR-14 supersedes. They cite ADR-14 now, where its text carries the same principles: a requester
+  scope no narrower than the transport can establish, and one power never silently granting another. The entries above
+  that name ADR-09 are unchanged.
 
 ## References
 
@@ -1043,6 +1076,5 @@ Amended 2026-11-21; see Decision Log.
 - [ADR-03](../adr/ADR-03-restored-state-never-runs-a-program.md): forms are never restored
 - [ADR-04](../adr/ADR-04-uniterm-owns-key-bindings-and-terminal-config.md): form keys stay inside the applet's view
 - [ADR-07](../adr/ADR-07-failure-isolation.md) and [ADR-08](../adr/ADR-08-ui-responsiveness.md): bounded validation
-- [ADR-09](../adr/ADR-09-control-authority-requires-authenticated-identity-and-explicit-scope.md): the ask power and
-  truthful requester chrome
 - [ADR-11](../adr/ADR-11-deferred-applet-replies-never-hide-effects.md): the handle and the deferred wait
+- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): the ask power and truthful requester chrome

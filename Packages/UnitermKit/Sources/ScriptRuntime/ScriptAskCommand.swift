@@ -44,8 +44,8 @@ enum ScriptAskCommand {
       78  this is not the command inside the uniterm app.
      130  Ctrl-C.
 
-    Nothing is printed on standard output unless the exit status is 0. Every status but 0 and 1
-    prints one line on standard error that says why.
+    Nothing is printed on standard output unless the exit status is 0. Every status but 0, 1, and
+    130 prints a line on standard error that says why. Status 64 follows that line with this text.
 
       --socket PATH  connect to the uniterm at PATH, which wins over UNITERM_SOCKET.
       -h, --help     show this text.

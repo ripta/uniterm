@@ -46,8 +46,10 @@ struct FormSlot {
 
 /// The result slots of every connection's forms.
 ///
-/// A connection holds at most `perConnection` slots, the cap the text viewer's handle table keeps.
-/// A new slot drops the connection's oldest settled one when the connection is at the cap, and a
+/// A connection holds at most `perConnection` slots. The number matches the cap of the text
+/// viewer's handle table by choice, and the two are separate literals.
+///
+/// A new slot drops the connection's oldest settled one when the connection is at the cap. A
 /// connection whose every slot is still open has no room.
 ///
 /// A handle names one slot for the life of the host, so a handle that was freed never names

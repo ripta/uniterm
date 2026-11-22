@@ -30,6 +30,7 @@ uncommitted.
 | UTERM-022 M2: Questions applet UI | DONE | "Show script-asked forms in a Questions pane" |
 | UTERM-022 M3: The ask power and the form calls | DONE | "Let scripts ask the user a form and wait for the answer" |
 | UTERM-022 M4: `uniterm ask` and Janet helpers | DONE | "Ask forms from bash with uniterm ask, and from Janet" |
+| UTERM-022 M5: The user's checks | NOT STARTED, not scheduled | split out by the row review |
 
 ## Commands that leave the sandbox
 
@@ -383,3 +384,40 @@ Left over: an ignored, untracked `.build-swiftpm` directory from a mistaken scra
 part of it. It does not show in git status.
 
 Bugs found: one in M4's own new code, the unrooted module table. It was fixed before commit, and a test covers it.
+
+## Row review
+
+Commit: "Tighten the Questions row after its review". It carries the fixes, the proposal amendments, and this report.
+
+The row reviewer and `adr-impact` read the row's five commits as a whole. The milestones fit together. M1's `ended`
+outcome has no script value. M3 delivers it as a failed wait. M4 maps that failure to exit 4.
+
+Findings and dispositions:
+
+- M2 and M4 were DONE while each still held a check only the user can run. The proposal standard says such a check
+  blocks DONE, so both moved into a new milestone, M5 "The user's checks", by amendment. M2 and M4 stay DONE. M5 names
+  what the coordinator already verified: the screenshots of one form and of two forms in light and dark, and the bash
+  and Janet flows in `QuestionsWireUITests`. M5 has no queue row. Scheduling it is the user's call, so the proposal
+  stays `accepted`.
+- "Waiting and Ctrl-C" carried the same edit twice. Fixed: one bullet, one marker. The trace of Janet's VM shows an
+  interrupt stops a script at its next call or backward jump, not its next instruction. The proposal now says so.
+- Any failure of an owned group's layout was blamed on the Questions pane (CONFIRMED). Fixed: the planner's refusal for
+  unowned panes is now its own error case, which carries the panes. The Questions-pane message applies only when that
+  pane is the one unowned pane. A new test failed before the fix and passes now.
+- The 32 KiB spec cap was written twice. Fixed: the spec reader derives it from the wire's constant.
+- `uniterm ask`'s usage text overstated its stderr rule. Fixed.
+- The proposal cited ADR-09, which ADR-14 supersedes. Fixed as a correction of fact.
+
+`adr-impact` reports one PLAUSIBLE conflict with ADR-14. ADR-14 says "Every programmatic control effect requires an
+authenticated requester and an explicit, revocable grant covering the operation." A bare terminal-session caller opens
+a Questions pane with no grant. The row does not block on it:
+
+- The proposal's settled decision "The ask power", which the user chose on 2026-11-14, lets a bare caller ask without a
+  prompt.
+- Bare callers already take pane-control actions with no grant.
+- The question is the ADR candidate the proposal logs as `Undecided`.
+
+The user decides whether ADR-14 gets an amendment, or the proposal gets a deviation entry.
+
+Checks: `make fmt-check`, `make lint`, `make check`, `make build`, `make test-helper-sandbox`, and the UI test build
+pass. `caffeinate -dimsu make test-package` ran 3197 tests with 0 failures and 10 existing skips.

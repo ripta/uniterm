@@ -174,12 +174,13 @@ final class PaneLayoutRequestTests: XCTestCase {
       })
 
     guard
-      case .refused(let reason)? = refusal({
+      case .unownedContent(let panes)? = refusal({
         _ = try tree.layOut(plan, anchoredAt: id(1), for: owner, slots: 0, in: wide)
       })
     else { return XCTFail("a layout swept up the user's pane") }
 
-    XCTAssertTrue(reason.contains("does not own"), reason)
+    XCTAssertEqual(panes, [user], "the refusal names the pane the user split off")
+    XCTAssertTrue(PaneLayoutError.unownedContent(panes).description.contains("does not own"))
     XCTAssertEqual(tree, before)
   }
 

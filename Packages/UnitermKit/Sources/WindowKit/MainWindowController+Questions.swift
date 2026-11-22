@@ -114,19 +114,17 @@ extension MainWindowController {
     questionsPane()?.applet.askingPaneDidClose(label: Self.paneLabel(pane))
   }
 
-  /// The refusal for a layout that the window's Questions pane blocks, or nil when it blocks none.
-  /// A Questions pane that opened beside a pane of the group joins the group's content and not its
-  /// members, so the group holds a pane its owner does not own. The pane stays, resolved tabs
-  /// included, until the user closes it or its last tab goes.
-  func questionsPaneBlocks(_ anchor: NodeID) -> ScriptCallError? {
-    guard let questions = questionsPane()?.pane else { return nil }
-
-    let blocks = paneArea.tree.enclosingGroups(of: anchor).contains {
-      $0.content.paneIDs.contains(questions) && !$0.members.contains(questions)
-        && $0.source != questions
-    }
-
-    guard blocks else { return nil }
+  /// The refusal for a layout that the window's Questions pane blocks, or nil when the planner's
+  /// error has another cause. A Questions pane that opened beside a pane of the group joins the
+  /// group's content and not its members, so the group holds a pane its owner does not own. The
+  /// pane stays, resolved tabs included, until the user closes it or its last tab goes.
+  ///
+  /// The refusal applies only when that pane is the one unowned pane. Another unowned pane makes
+  /// the planner's own message the right one, since closing the Questions pane would not help.
+  func questionsPaneBlocks(_ error: any Error) -> ScriptCallError? {
+    guard case PaneLayoutError.unownedContent(let unowned) = error,
+      let questions = questionsPane()?.pane, unowned == [questions]
+    else { return nil }
 
     return .refused(
       "the group holds the Questions pane that a form opened beside one of its panes, which this "

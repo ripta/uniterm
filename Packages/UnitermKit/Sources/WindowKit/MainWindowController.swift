@@ -807,7 +807,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         request.plan, anchoredAt: anchor, for: owner, slots: request.panes.count,
         in: paneArea.bounds.size)
     } catch {
-      throw questionsPaneBlocks(anchor) ?? Self.layoutFailure(error)
+      throw questionsPaneBlocks(error) ?? Self.layoutFailure(error)
     }
 
     let staged = StagedLayout(request: request, anchor: anchor, owner: owner)
@@ -867,7 +867,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         request.plan, anchoredAt: staged.anchor, for: staged.owner, adding: staged.applets)
     } catch {
       staged.discard()
-      throw questionsPaneBlocks(staged.anchor) ?? Self.layoutFailure(error)
+      throw questionsPaneBlocks(error) ?? Self.layoutFailure(error)
     }
 
     staged.published = true
@@ -900,6 +900,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   private static func layoutFailure(_ error: any Error) -> ScriptCallError {
     switch error {
     case PaneLayoutError.refused(let reason): return .refused(reason)
+    case PaneLayoutError.unownedContent: return .refused(String(describing: error))
     case PaneLayoutError.noRoom: return .refused("the layout does not fit in the window")
     case PaneTreeError.unknownPane: return .notFound("the pane is not open in that window")
     default: return .failed("the layout failed: \(error)")

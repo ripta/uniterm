@@ -364,6 +364,35 @@ final class QuestionsPlacementTests: XCTestCase {
     XCTAssertTrue(controller.paneArea.tree.paneIDs.contains(found.pane))
   }
 
+  /// Catches a refusal that blames the Questions pane for a layout it did not block. The group
+  /// holds a Questions pane, and the layout fails for its own reason, here a pane placed twice. The
+  /// owner hears that reason, never an order to close the pane.
+  func testALayoutThatFailsForAnotherReasonReportsItsOwnError() async throws {
+    let fixture = makeFixture()
+    let (controller, pane) = try fixture.openWindow()
+    let source = NodeID(rawValue: pane.pane)
+    let owner = fixture.caller
+
+    try await layOut(fixture, presentation(source), from: source, as: owner)
+
+    let member = try XCTUnwrap(controller.paneArea.tree.paneIDs.first { $0 != source })
+    let asker = ScriptCaller(connection: 2, window: owner.window, pane: member)
+
+    _ = try ask(fixture, as: "a", from: asker)
+
+    let twice =
+      #"{"split":"column","children":[{"pane":\#(source.rawValue)},{"pane":\#(source.rawValue)}]}"#
+
+    do {
+      try await layOut(fixture, twice, from: source, as: owner)
+      XCTFail("a layout that places a pane twice went ahead")
+    } catch let error as ScriptCallError {
+      XCTAssertEqual(error.kind, .refused)
+      XCTAssertTrue(error.text.contains("more than once"), error.text)
+      XCTAssertFalse(error.text.contains("Questions pane"), error.text)
+    }
+  }
+
   /// Traces whether the refusal outlasts the answer. A resolved tab keeps the Questions pane open,
   /// so the owner's layout stays refused with the answer given, and the refusal names the pane. It
   /// ends when the last tab goes and the pane closes with it.
