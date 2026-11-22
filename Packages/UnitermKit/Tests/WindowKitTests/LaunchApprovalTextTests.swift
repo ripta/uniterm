@@ -34,4 +34,14 @@ final class LaunchApprovalTextTests: XCTestCase {
 
     XCTAssertTrue(unsafe.isEmpty, "the text holds \(unsafe.map { String($0.value, radix: 16) })")
   }
+
+  /// Catches a path or name whose zero-width scalar draws the same as one without it. The
+  /// expected strings are written out by hand, not derived from the escaper.
+  func testZeroWidthScalarsShowAsEscapes() {
+    XCTAssertEqual(LaunchApprovalText.escaped("/usr/bin/l\u{200B}s"), #"/usr/bin/l\u{200B}s"#)
+    XCTAssertEqual(LaunchApprovalText.escaped("a\u{2060}b"), #"a\u{2060}b"#)
+    XCTAssertEqual(LaunchApprovalText.escaped("a\u{FEFF}b"), #"a\u{FEFF}b"#)
+    XCTAssertEqual(LaunchApprovalText.escaped("a\u{200D}b"), #"a\u{200D}b"#)
+    XCTAssertEqual(LaunchApprovalText.escaped("plain é"), "plain é")
+  }
 }

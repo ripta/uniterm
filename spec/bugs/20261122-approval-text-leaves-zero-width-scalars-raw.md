@@ -1,8 +1,9 @@
 # Launch approvals and controller names draw zero-width scalars raw
 
-**Status:** open
-**Validation:** not confirmed; found by reading the code during the UTERM-048 review, not reproduced in the app.
+**Status:** fixed 2026-11-22
+**Estimate:** small; no open design decisions.
 **Found:** 2026-11-22, during the UTERM-048 review
+**Fixed:** 2026-11-22
 
 ## Observed
 
@@ -27,3 +28,13 @@ Call `LaunchApprovalText.escaped("/usr/bin/l\u{200B}s")`. Expected: the result s
 Escape every scalar whose `properties.isDefaultIgnorableCodePoint` is true, beside the current set. Check that no
 caller needs a default-ignorable scalar to join characters, such as U+200D in an emoji sequence. Such a name would then
 draw as escapes. That is likely right for an approval, since the user must see every byte.
+
+## Fix note
+
+Triage run on 2026-11-22. A package test reproduced the bug: `escaped` returned U+200B, U+2060, U+FEFF, and U+200D raw.
+
+`LaunchApprovalText.isUnsafe` (`Packages/UnitermKit/Sources/WindowKit/LaunchApprovalText.swift`) now also escapes every
+scalar with `properties.isDefaultIgnorableCodePoint`. A joiner or variation selector in an emoji name now shows as an
+escape. That is intended, since an approval must show every byte.
+
+The regression test is `LaunchApprovalTextTests.testZeroWidthScalarsShowAsEscapes`. It failed before the fix.
