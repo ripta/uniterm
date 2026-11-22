@@ -18,8 +18,14 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # The tested-tree check reads which PR a push merged and that PR's ci check.
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
     outputs:
       build_required: ${{ steps.changes.outputs.build_required }}
+      tested: ${{ steps.tested.outputs.tested || 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,11 +42,19 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: make ci-changes
 
+      - name: Look for a merged PR that passed this tree
+        id: tested
+        if: github.event_name == 'push' && steps.changes.outputs.build_required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+        run: make ci-tested-tree
+
   # The three macOS jobs run side by side. The UI tests take the longest, so the app job sets the
-  # run's length.
+  # run's length. A push whose tree a merged PR already passed skips the package and app jobs.
   package:
     needs: changes
-    if: needs.changes.outputs.build_required == 'true'
+    if: needs.changes.outputs.build_required == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
@@ -53,7 +67,7 @@ jobs:
 
   app:
     needs: changes
-    if: needs.changes.outputs.build_required == 'true'
+    if: needs.changes.outputs.build_required == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -96,15 +110,28 @@ jobs:
           key: ${{ steps.proof.outputs.key }}
           lookup-only: true
 
+      # Only main's runs save the Ghostty cache that pull requests read. A push whose tree a merged PR
+      # already passed skips the package and app jobs, so this job rebuilds when that cache is gone,
+      # and the setup action saves it again. GitHub evicts a cache that no run read for a week.
+      - name: Look for main's Ghostty cache
+        id: ghostty-cache
+        if: github.event_name == 'push'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/ghostty
+          # The macOS setup action's Ghostty cache key. make test-ci checks that the two agree.
+          key: ghostty-${{ runner.arch }}-${{ hashFiles('ghostty.pin', 'ThirdParty/ghostty-patches/*.patch') }}
+          lookup-only: true
+
       - name: Report the earlier proof
-        if: steps.earlier.outputs.cache-hit == 'true'
+        if: steps.earlier.outputs.cache-hit == 'true' && !(github.event_name == 'push' && steps.ghostty-cache.outputs.cache-hit != 'true')
         run: echo "An earlier run proved ${{ steps.proof.outputs.key }}, so the rebuild is skipped."
 
-      - if: steps.earlier.outputs.cache-hit != 'true'
+      - if: steps.earlier.outputs.cache-hit != 'true' || (github.event_name == 'push' && steps.ghostty-cache.outputs.cache-hit != 'true')
         uses: ./.github/actions/macos-setup
 
       - name: make ghostty-offline-check
-        if: steps.earlier.outputs.cache-hit != 'true'
+        if: steps.earlier.outputs.cache-hit != 'true' || (github.event_name == 'push' && steps.ghostty-cache.outputs.cache-hit != 'true')
         run: make ghostty-offline-check
 
       - name: Record the proof
@@ -134,6 +161,7 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           BUILD_REQUIRED: ${{ needs.changes.outputs.build_required }}
+          TESTED: ${{ needs.changes.outputs.tested }}
           PACKAGE_RESULT: ${{ needs.package.result }}
           APP_RESULT: ${{ needs.app.result }}
           GHOSTTY_OFFLINE_RESULT: ${{ needs.ghostty-offline.result }}
