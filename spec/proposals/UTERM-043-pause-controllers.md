@@ -532,6 +532,8 @@ landed waits for it.
 - 2026-11-21: Risk review: every risk carries a likelihood, an impact, and a mitigation or an acceptance. No risk is
   both high likelihood and high impact. No one-way door: nothing is stored, and neither wire changes. (autonomous)
 - 2026-11-21: Accepted by the user. No decision earns an ADR.
+- 2026-11-21: Scheduled as M1 and M2 in queue.md. M1 is its own row, since it needs no other proposal, and M2 waits on
+  UTERM-019 M6, UTERM-024, UTERM-028, UTERM-041, and UTERM-042.
 
 ## References
 
