@@ -122,6 +122,13 @@ history records how many posts were held back.
 Rationale: the user should know why a source went quiet. The line comes from uniterm's own source, so a script cannot
 fake it.
 
+### Rest the budget on ADR-14 P15 and C1
+
+Decision: the budget is this proposal's bound under ADR-14 P15, that a program's reach is always bounded. A status line
+needs no grant under ADR-14 C1, since it only shows the user something.
+
+Rationale: the user amended ADR-14 to state the principle, so this proposal cites it rather than standing alone.
+
 ### Defer a "mute this source" control
 
 Decision: no control to mute a source. Muting needs a way to list and remove mutes later, and the fair backlog and the
@@ -191,18 +198,6 @@ way.
 - **Programs only.** Scripts and applets.
   - Leaves undone: ADR-15, if accepted, treats a rule for programs only as a special case. This option would need an
     ADR Deviations entry, and the proposal would state why programs are treated apart.
-
-### Whether "reach is bounded by default" becomes an ADR
-
-Original question: this proposal bounds a program's reach in attention, not by a prompt. The Questions applet bounds
-forms the same way: one form per requester and an open-form cap. UTERM-039 leaves controller browser tabs uncapped.
-No ADR states the principle. ADR-14 is about authority: who may act, on what, with which grant.
-
-- **No ADR.** Each proposal bounds its own surface.
-- **Amend ADR-14.** Add that every power is bounded by default in time or attention, and that a prompt is one means.
-- **A new ADR.** State the principle on its own, next to ADR-14 and ADR-15.
-
-Only the user decides whether an ADR is written or amended.
 
 ## Risks
 
@@ -293,12 +288,15 @@ Only the user decides whether an ADR is written or amended.
   labels that never collide, the no-pane label, the held-back wake, the notice bound, and per-window behavior. The
   open questions gained the attention option, the Janet refusal constraint, the bar's capacity, and the ADR-15 fit.
 
+- 2026-11-21: The user amended ADR-14 with P15 and C1. The open question on whether bounded reach becomes an
+  ADR is settled as "Rest the budget on ADR-14 P15 and C1".
+
 ## References
 
 - [ADR-08](../adr/ADR-08-ui-responsiveness.md): the budget never waits on the main thread
 - [ADR-13](../adr/ADR-13-outside-wires-stay-compatible-across-versions.md): ScriptWire's exact-match hello
-- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): the requester scope matches what the transport
-  established
+- [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): P13, the requester scope matches what the
+  transport established; P15, a program's reach is always bounded; C1, a status line needs no grant
 - [ADR-15](../adr/ADR-15-a-programs-operation-is-the-users.md) (proposed): a permitted action is not weakened or
   hidden
 - [UTERM-022](UTERM-022-questions-applet.md): the requester and the terminal-session key
