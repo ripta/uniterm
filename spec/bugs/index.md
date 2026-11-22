@@ -29,3 +29,4 @@
 | [20261122-terminal-directory-check-blocks-main-thread](20261122-terminal-directory-check-blocks-main-thread.md) | An applet's current directory checks the file system on the main thread | open |
 | [20261122-layout-save-runs-on-main-thread](20261122-layout-save-runs-on-main-thread.md) | The layout save encodes and writes every tab on the main thread | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | open |
+| [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | open |
