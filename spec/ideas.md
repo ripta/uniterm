@@ -433,8 +433,13 @@ own extension, as GeoJSON has `.geojson`, would give a lossless round trip that 
 Export would be a browser command with a save panel, as the map viewer's GeoJSON save does in `MapViewerApplet.swift`.
 It could filter schemes as the layout code does. Opening a file back needs a declared file type and a UTERM-015 router
 entry, so the browser claims it, and would reuse the new-tab path. Two concerns carry over. Tab URLs can hold tokens,
-as UTERM-005's risks note for the layout file. A file with many URLs opens many tabs at once. Still open: which format,
-or more than one.
+as UTERM-005's risks note for the layout file. A file with many URLs opens many tabs at once.
+
+Chosen so far. The export defaults to a uniterm JSON format with its own extension. It also offers `text/uri-list` and
+Netscape bookmark HTML. The save panel's own format control picks among the three: `showsContentTypes` with
+`allowedContentTypes`, read back through `currentContentType`, both from macOS 15. Each format needs a declared
+`UTType`, since the system has none for `text/uri-list`. Still open: the JSON format's fields and extension, and which
+of the three formats open back into tabs.
 
 ## Palette: show a command's shortcut
 
