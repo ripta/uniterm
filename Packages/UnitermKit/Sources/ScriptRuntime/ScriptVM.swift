@@ -333,6 +333,8 @@ private let callCallback:
       writeError(message, to: errorBuffer, capacity: capacity)
 
       return Int32(UNITERM_JANET_APP_FAILURE_BASE) + Int32(kind.rawValue)
+    } catch ScriptSessionError.interrupted {
+      return Int32(UNITERM_JANET_CALL_INTERRUPTED)
     } catch {
       writeError("the call failed: \(error)", to: errorBuffer, capacity: capacity)
     }

@@ -129,8 +129,11 @@ uniterm ask file "Pick a config" [--directory] [--save] [--type public.json]
   prints one value per line, and `--json` prints JSON instead.
 - Exit codes follow "`uniterm ask` outcomes and exit codes". The command prints a one-line reason on stderr for every
   code but 0 and 1. Amended 2026-11-14; see Decision Log.
-- Janet calls `(uniterm/ask spec)`, which returns the result struct. Helpers mirror the shorthands, such as
-  `uniterm/ask-confirm`.
+- Janet calls `(uniterm/ask spec)`, which returns the result struct. The helpers mirror the shorthands:
+  `uniterm/ask-confirm`, `ask-text`, `ask-choose`, `ask-number`, `ask-color`, and `ask-file`. Each takes the prompt,
+  names the shorthand's flags as named arguments, and returns the answer. It returns nil when the user cancelled or
+  closed the form. `ask-confirm` returns true for Yes, false for No, and nil when the form was closed. Amended
+  2026-11-21; see Decision Log.
 - A Janet spec uses keywords for its keys, for question and button `id`s, and for closed-set values such as `:type`,
   `:role`, `:block`, `:level`, and `:mode`. A string in one of those places refuses the spec. Text, choices,
   and string defaults stay strings. A boolean or number default is a Janet boolean or number. The result struct keys
@@ -395,16 +398,23 @@ Decision: sysexits for failures, small codes for answers. (autonomous)
 | 65 | Spec error |
 | 69 | The app is unreachable |
 | 70 | Hello mismatch |
-| 74 | The connection was lost |
+| 74 | The connection was lost, or stdout could not be written |
 | 75 | Busy |
-| 77 | A caller bound to no pane was denied a pane |
+| 77 | The app refused the call, such as when a caller bound to no pane was denied a pane |
 | 130 | Ctrl-C |
 
 - A `cancel`-role press returns `{"form": <handle>, "outcome": "cancelled", "action": <id>}` with no answers. It is not
   a submission.
 - `confirm` shows Yes as `primary` and No as `cancel`. For `confirm` alone, No exits 1.
 - A form has at most one `cancel` button, since Escape activates it.
-- A shorthand prints nothing on stdout for exits other than 0.
+- A shorthand prints nothing on stdout for exits other than 0. `uniterm ask form` prints nothing then either.
+- `confirm` prints nothing on exit 0, and `--json` makes it print `true`.
+- Every wire failure kind maps to a code of its own meaning: a refused spec is 65, a refusal is 77, a busy refusal is
+  75, an ended form and a handle the app does not know are 4, a call the app does not support is 70, a reply that was
+  lost is 74, and a failure inside the app is 69. Exit 74 also covers an answer that could not be written to a closed
+  stdout, with a line on stderr that says so. The command keeps the default SIGPIPE, so a pipe that closes early ends
+  it as it ends any Unix tool, and the app closes the form when the connection closes. Amended 2026-11-21; see
+  Decision Log.
 
 Rationale: a Cancel that exits 0 lets `b=$(uniterm ask text ...) && git checkout -b "$b"` run after the user said no.
 UTERM-003 already publishes 64 for usage, so a second usage code would split one command's contract. Sysexits names
@@ -420,16 +430,20 @@ Decision: free the wait with `discard-form`. `wait-form` has no deadline. (auton
 
 - On Ctrl-C, the helper stops waiting for `wait-form`'s reply and sends `discard-form` for the pending handle. The app
   closes the form as ended and fails the wait.
-- The helper's wait wakes on an interrupt by itself, and the session matches replies by request ID with two calls in
-  flight.
+- The helper's wait looks for an interrupt itself, and the session matches replies by request ID with two calls in
+  flight. Amended 2026-11-21; see Decision Log.
 - In a REPL, the app's own stop request fails the connection's pending wait, so the REPL keeps its VM state. The form
   stays open until the helper discards it. Amended 2026-11-21; see Decision Log.
 - `uniterm ask` keeps the default SIGINT. Ctrl-C ends it with 130, and the closed connection ends the form.
+- The helper's wait looks for an interrupt every 50 milliseconds, since a signal does not wake a thread that waits on a
+  condition. The look reads a flag and sends nothing. A wait that an interrupt cut short returns nil to the script, and
+  the interrupt stops the script at its next instruction. Amended 2026-11-21; see Decision Log.
 
-Rationale: Ctrl-C takes effect at once with no new message and no polling. A capped wait would leave a REPL user's
+Rationale: Ctrl-C takes effect at once with no new message and no capped wait. A capped wait would leave a REPL user's
 first Ctrl-C unanswered until the cap. A second press 0.5 to 5 seconds later kills the helper and loses the VM state,
 per UTERM-003. A new stop message would do what `discard-form` already does. An unbounded wait breaks UTERM-003's rule
-that the first Ctrl-C stops a run. Converged in 1 pass, on an option the critic added.
+that the first Ctrl-C stops a run. Converged in 1 pass, on an option the critic added. Amended 2026-11-21; see
+Decision Log.
 
 ### Focus when a form arrives
 
@@ -754,7 +768,7 @@ Amended 2026-11-21; see Decision Log.
 
 ### M4: `uniterm ask` and Janet helpers
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - `uniterm ask form` and each shorthand print the documented output and exit with the documented codes, including 77
   for a denied pane and 130 for Ctrl-C
@@ -770,6 +784,43 @@ Amended 2026-11-21; see Decision Log.
 - `uniterm ask` outside the bundle exits 78, and every wire failure kind maps to a documented code other than 0 and 1
 - Script fixtures exercise each shorthand and the full spec through the real command and app
 - The user runs a bash script and a Janet script that ask forms in the running app and confirms the flow
+
+**As built:**
+
+- `uniterm ask` is a new subcommand of the bundled command. It opens the question-only session, opens the form, waits,
+  and discards the handle, on every exit that leaves the process running. Its flags are the ones in "Two API layers",
+  plus `--json` and `--socket`. Each shorthand sends one required question whose id is `answer`, and `confirm` sends a
+  paragraph with the buttons `yes` and `no`. The command reads the whole form from standard input for `form`, and
+  refuses a form past the wire's size with 65 before it connects. The app reads every form, so the command checks only
+  the shape of its flags. A number flag must be a JSON number.
+- Outside the bundle the command exits 78 through the entry point's one check. Every wire failure kind exits with a
+  documented code other than 0 and 1, and a test walks every kind. Ctrl-C keeps the default action, so the process dies
+  of SIGINT, which a shell reports as 130, and the app closes the form when the connection closes. The test asserts the
+  signal, not the shell's number.
+- The Janet module offers `uniterm/ask` as a C function, and the six helpers as Janet source that runs once for each
+  run, over `ask`. The converter in the shim writes the struct as the spec's JSON and refuses a string where a keyword
+  belongs, or a keyword where text belongs, before any call. A table block's `:rows` keys and values must be strings. A
+  number is the shortest decimal that reads back as the same double. Only spelling is checked in the shim. The app still
+  reads the form strictly, so a number where text belongs reaches the app and is refused there.
+- `ask` discards the handle after a result, and after a failed wait it discards first and raises the failure as it was.
+  A discard that itself fails is dropped. A wait that an interrupt cut short is the exception, since the session
+  already discarded the handle. The script lint counts every ask helper as a use of `ask-user`.
+- The session keeps its replies in a mailbox keyed by request ID, and rejects a reply that answers no call in flight. A
+  wait for a form looks for an interrupt every 50 milliseconds. On one, it sends `discard-form`, reads the wait's reply
+  and the discard's in either order, and ends the wait as interrupted. A test plays an app that sends them in each
+  order. A user's answer that lands before the discard is delivered to the wait and dropped. The host leaves the tab as
+  the submit left it, and a test pins that. A REPL that is stopped during an ask discards the form, keeps its
+  definitions, and can ask again.
+- The shipped command's sandbox test passes unchanged. The UI tests run a declared script with a helper and a bash
+  script with the command through the running app. The coordinator runs them, and the user's own run of both flows is left to
+  the user.
+- The 44 new package tests run in about 5 seconds together, most of it in the process starts of the run and Ctrl-C
+  tests. `make test-cost` does not exist in this project.
+- The shim roots the module and the helpers' scope while the helpers are defined, since defining them runs Janet code
+  that can collect. A test forces a collection there through a hook, and it crashed with the module unrooted.
+- Residuals: a script that Ctrl-C stops during an `ask` returns nil from it for an instant before the interrupt takes
+  effect, so a `protect` around `ask` does not see an error. A number where text belongs passes the shim and fails in
+  the app as a refused spec.
 
 ## Decision Log
 
@@ -961,6 +1012,26 @@ Amended 2026-11-21; see Decision Log.
   Questions pane as the cause and says to close it. A test pins both ends. A split the user makes in an owned group
   behaves the same way, and ADR-15 says a program's operation behaves as the user's. The user may rule that an owner's
   layout should go ahead around the pane. That needs a tree rule that this milestone does not change.
+- 2026-11-21 (autonomous, work-queue best guess): M4 settled what the proposal left open. The Janet helpers are
+  `uniterm/ask-confirm`, `ask-text`, `ask-choose`, `ask-number`, `ask-color`, and `ask-file`, and each returns the
+  answer or nil. `ask-confirm` returns true for Yes, false for No, and nil when the form was closed. "Two API layers" said
+  "Helpers mirror the shorthands, such as `uniterm/ask-confirm`." Each shorthand's one question is required and has the
+  id `answer`, so the user cannot submit nothing. `confirm` prints nothing, and `--json` prints `true`. `uniterm ask
+  form` prints the whole result record, and prints nothing for a cancel or a close. The wire failure kinds map to codes
+  as "`uniterm ask` outcomes and exit codes" now lists, with a failure inside the app as 69, a handle the app does not
+  know as 4, an unsupported call as 70, and a lost reply as 74. A table block's `:rows` keys and values must be strings
+  in Janet, so a keyword there refuses the spec. The helpers are Janet source over a C `ask`, and the script lint counts
+  each as `ask-user`. The helper's wait looks for an interrupt every 50 milliseconds, since a signal does not wake a
+  thread that waits on a condition. "Waiting and Ctrl-C" said Ctrl-C took effect "with no new message and no polling".
+  The flag look sends nothing and reads one value. A wait that an interrupt cut short returns nil to the script, so the
+  interrupt and not an error stops it. The module-function test now expects the wire calls, `api-version`, and the
+  helpers. `ScriptValue.decode` is public, since the command reads a form's result with it.
+- 2026-11-21 (autonomous, work-queue best guess): The review of M4 settled three more things. A standard output that
+  cannot be written exits 74 with a line on stderr, and the command writes with POSIX `write` so that a caller that
+  ignores SIGPIPE gets a code and not an abort. The command keeps the default SIGPIPE. The exit table's 74 row said
+  "The connection was lost". Its 77 row said "A caller bound to no pane was denied a pane", and now covers every
+  `refused`, with the pane denial as its example. "Waiting and Ctrl-C" said "The helper's wait wakes on an interrupt by
+  itself", and now says the wait looks for one itself, to match the 50 millisecond look.
 - 2026-11-21: ADR candidate (cuts across the system, hard to reverse): which callers a power that controls no pane
   passes without a prompt. `ask-user` passes for every connection that is not a declared or package run. Later powers
   would copy that tier. ADR-14 requires explicit grants for separate powers, but it does not say what a user's own

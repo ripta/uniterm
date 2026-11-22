@@ -5,6 +5,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -738,6 +739,9 @@ static void panic_failure(const char *kind, const char *text) {
     janet_panicv(janet_wrap_struct(janet_struct_end(record)));
 }
 
+/* Set when the host cut a wait short because of an interrupt. The shim's ask reads and clears it. */
+static int call_interrupted;
+
 /*
  * Runs one call through the host and turns its reply into a Janet value. A failure raises the
  * app's text. With `structured`, it raises a struct of :kind and :message instead, so a script
@@ -760,6 +764,13 @@ static Janet invoke_reply(JanetBuffer *request, int structured, int raw) {
                                 &reply_length, error, sizeof(error));
 
     error[sizeof(error) - 1] = '\0';
+
+    if (status == UNITERM_JANET_CALL_INTERRUPTED) {
+        free(reply);
+        call_interrupted = 1;
+
+        return janet_wrap_nil();
+    }
 
     if (status != 0) {
         free(reply);
@@ -1320,6 +1331,326 @@ static Janet cfun_discard_form(int32_t argc, Janet *argv) {
     return invoke_call(request, 1);
 }
 
+/*
+ * Asking a form from a struct.
+ *
+ * The converter writes the struct as the spec's JSON, and checks the spelling Janet scripts use
+ * for it. Keys are keywords, and so are the ids and the closed words, `:type`, `:block`, `:level`,
+ * `:role`, and `:mode`. Text, choices, and string defaults are strings. A string where a keyword
+ * belongs, or a keyword where a string belongs, is refused before anything is sent. The one place
+ * keys are strings is a table block's `:rows`, whose keys are text the user reads.
+ *
+ * The app reads the JSON strictly and checks every field, so the converter checks only spelling.
+ */
+
+typedef enum form_scope { FORM_PLAIN, FORM_ROWS } form_scope;
+
+static void form_refuse(const char *format, ...) __attribute__((noreturn, format(printf, 1, 2)));
+
+/* Raises a struct of :kind :bad-argument and the formatted :message, as the app's refusal of a spec does. */
+static void form_refuse(const char *format, ...) {
+    char message[UNITERM_JANET_ERROR_CAPACITY];
+    va_list arguments;
+
+    va_start(arguments, format);
+    vsnprintf(message, sizeof(message), format, arguments);
+    va_end(arguments);
+    panic_failure("bad-argument", message);
+    abort();
+}
+
+typedef struct form_word {
+    const char *key;
+    const char *example;
+} form_word;
+
+/* The keys whose values are keywords, each with an example for the message. */
+static const form_word form_words[] = {{"id", ":region"},   {"type", ":string"},
+                                       {"block", ":paragraph"}, {"level", ":warning"},
+                                       {"role", ":primary"}, {"mode", ":open"}};
+
+static const form_word *form_word_for(const uint8_t *key, int32_t length) {
+    for (size_t index = 0; index < sizeof(form_words) / sizeof(form_words[0]); index++) {
+        const char *name = form_words[index].key;
+
+        if ((size_t)length == strlen(name) && memcmp(key, name, (size_t)length) == 0) {
+            return &form_words[index];
+        }
+    }
+
+    return NULL;
+}
+
+/*
+ * The shortest decimal that reads back as the same double, so `0.1` is written as 0.1 and not as
+ * 0.10000000000000001. A whole number below 10^15 is written with no exponent.
+ */
+static void format_shortest(char *text, size_t size, double number) {
+    if (number == 0) number = 0;
+
+    if (number == floor(number) && fabs(number) < 1e15) {
+        snprintf(text, size, "%.0f", number);
+
+        return;
+    }
+
+    for (int precision = 1; precision <= 17; precision++) {
+        snprintf(text, size, "%.*g", precision, number);
+
+        if (strtod(text, NULL) == number) return;
+    }
+}
+
+static void form_value(JanetBuffer *out, Janet value, int depth, const char *field,
+                       form_scope scope, const json_context *context);
+
+static void form_object(JanetBuffer *out, Janet value, int depth, form_scope scope,
+                        const json_context *context) {
+    const JanetKV *entries = NULL;
+    int32_t count = 0;
+    int32_t capacity = 0;
+    int32_t written = 0;
+
+    janet_dictionary_view(value, &entries, &count, &capacity);
+    janet_buffer_push_u8(out, '{');
+
+    for (const JanetKV *entry = janet_dictionary_next(entries, capacity, NULL); entry != NULL;
+         entry = janet_dictionary_next(entries, capacity, entry)) {
+        int wants_string = scope == FORM_ROWS;
+
+        if (janet_checktype(entry->key, wants_string ? JANET_STRING : JANET_KEYWORD) == 0) {
+            if (wants_string) {
+                form_refuse("a key in a table block's :rows must be a string, since it is text "
+                            "the user reads");
+            }
+
+            if (janet_checktype(entry->key, JANET_STRING)) {
+                form_refuse("the key \"%s\" in the form must be a keyword, such as :text",
+                            (const char *)janet_unwrap_string(entry->key));
+            }
+
+            form_refuse("a key in the form must be a keyword, such as :text");
+        }
+
+        const uint8_t *key = janet_unwrap_string(entry->key);
+        int32_t length = janet_string_length(key);
+
+        if (written > 0) janet_buffer_push_u8(out, ',');
+
+        written++;
+        json_text(out, key, length, context);
+        janet_buffer_push_u8(out, ':');
+
+        char name[64];
+
+        snprintf(name, sizeof(name), "the :%.*s", length > 40 ? 40 : length, (const char *)key);
+
+        const form_word *word = scope == FORM_PLAIN ? form_word_for(key, length) : NULL;
+
+        if (word != NULL) {
+            if (!janet_checktype(entry->value, JANET_KEYWORD)) {
+                form_refuse("%s must be a keyword, such as %s", name, word->example);
+            }
+
+            const uint8_t *text = janet_unwrap_keyword(entry->value);
+
+            json_text(out, text, janet_string_length(text), context);
+
+            continue;
+        }
+
+        if (scope == FORM_ROWS && !janet_checktype(entry->value, JANET_STRING)) {
+            form_refuse("a value in a table block's :rows must be a string");
+        }
+
+        int is_rows = scope == FORM_PLAIN && length == 4 && memcmp(key, "rows", 4) == 0;
+
+        form_value(out, entry->value, depth + 1, name, is_rows ? FORM_ROWS : FORM_PLAIN, context);
+    }
+
+    janet_buffer_push_u8(out, '}');
+}
+
+static void form_value(JanetBuffer *out, Janet value, int depth, const char *field,
+                       form_scope scope, const json_context *context) {
+    if (depth > MAX_JSON_DEPTH) form_refuse("the form nests more than %d levels", MAX_JSON_DEPTH);
+
+    if (out->count > context->limit) json_too_large(context);
+
+    switch (janet_type(value)) {
+    case JANET_NIL:
+        janet_buffer_push_cstring(out, "null");
+        return;
+
+    case JANET_BOOLEAN:
+        janet_buffer_push_cstring(out, janet_unwrap_boolean(value) ? "true" : "false");
+        return;
+
+    case JANET_NUMBER: {
+        double number = janet_unwrap_number(value);
+        char text[40];
+
+        if (!isfinite(number)) form_refuse("%s must be a finite number", field);
+
+        format_shortest(text, sizeof(text), number);
+        janet_buffer_push_cstring(out, text);
+        return;
+    }
+
+    case JANET_STRING: {
+        const uint8_t *text = janet_unwrap_string(value);
+
+        json_text(out, text, janet_string_length(text), context);
+        return;
+    }
+
+    case JANET_BUFFER: {
+        JanetBuffer *buffer = janet_unwrap_buffer(value);
+
+        json_text(out, buffer->data, buffer->count, context);
+        return;
+    }
+
+    case JANET_KEYWORD:
+        form_refuse("%s must be a string, since only ids and the words :type, :block, :level, "
+                    ":role, and :mode are keywords",
+                    field);
+
+    case JANET_ARRAY:
+    case JANET_TUPLE: {
+        const Janet *items = NULL;
+        int32_t count = 0;
+
+        janet_indexed_view(value, &items, &count);
+        janet_buffer_push_u8(out, '[');
+
+        for (int32_t index = 0; index < count; index++) {
+            if (index > 0) janet_buffer_push_u8(out, ',');
+
+            form_value(out, items[index], depth + 1, field, FORM_PLAIN, context);
+        }
+
+        janet_buffer_push_u8(out, ']');
+        return;
+    }
+
+    case JANET_STRUCT:
+    case JANET_TABLE:
+        form_object(out, value, depth, scope, context);
+        return;
+
+    default:
+        form_refuse("%s cannot hold a %s", field, janet_type_names[janet_type(value)]);
+    }
+}
+
+static JanetBuffer *form_json(Janet spec) {
+    json_context context = {"the form spec", UNITERM_JANET_MAX_FORM_BYTES, 1};
+    JanetBuffer *json = janet_buffer(256);
+
+    form_value(json, spec, 0, "the form", FORM_PLAIN, &context);
+
+    if (json->count > context.limit) json_too_large(&context);
+
+    return json;
+}
+
+/* Spells the result's `:action` and `:outcome` as keywords, as the spec spells an id. */
+static Janet form_result(Janet decoded) {
+    if (!janet_checktype(decoded, JANET_STRUCT)) return decoded;
+
+    const JanetKV *entries = janet_unwrap_struct(decoded);
+    int32_t count = janet_struct_length(entries);
+    int32_t capacity = janet_struct_capacity(entries);
+    JanetKV *copy = janet_struct_begin(count);
+
+    for (const JanetKV *entry = janet_dictionary_next(entries, capacity, NULL); entry != NULL;
+         entry = janet_dictionary_next(entries, capacity, entry)) {
+        Janet value = entry->value;
+
+        if ((janet_keyeq(entry->key, "action") || janet_keyeq(entry->key, "outcome"))
+            && janet_checktype(value, JANET_STRING)) {
+            JanetString text = janet_unwrap_string(value);
+
+            value = janet_wrap_keyword(janet_keyword(text, janet_string_length(text)));
+        }
+
+        janet_struct_put(copy, entry->key, value);
+    }
+
+    return janet_wrap_struct(janet_struct_end(copy));
+}
+
+/*
+ * Frees a form's handle after the form is done or the wait failed. A failure here, such as a
+ * handle the app already freed, changes nothing the script needs, so it is dropped.
+ */
+static void discard_form_quietly(uint64_t handle) {
+    JanetTryState state;
+
+    if (janet_try(&state) == JANET_SIGNAL_OK) {
+        JanetBuffer *request = janet_buffer(16);
+
+        put_u16(request, CALL_DISCARD_FORM);
+        put_id(request, handle);
+        invoke_call(request, 1);
+    }
+
+    janet_restore(&state);
+}
+
+/*
+ * Opens a form, waits for the user, and returns the result as a struct. The handle is discarded on
+ * every way out. An error from the wait is discarded under and raised again as it was. A wait that
+ * an interrupt cut short was discarded by the host's own call, so the function returns nil and the
+ * interrupt stops the script.
+ */
+static Janet cfun_ask(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    if (!janet_checktypes(argv[0], JANET_TFLAG_STRUCT | JANET_TFLAG_TABLE)) {
+        form_refuse("the form must be a struct or a table such as {:items [...]}");
+    }
+
+    JanetBuffer *json = form_json(argv[0]);
+    JanetBuffer *request = janet_buffer(json->count + 16);
+
+    put_u16(request, CALL_OPEN_FORM);
+    put_u32(request, (uint32_t)json->count);
+    janet_buffer_push_bytes(request, json->data, json->count);
+
+    uint64_t handle = checked_id(invoke_call(request, 1), "the form");
+    JanetTryState state;
+    Janet result = janet_wrap_nil();
+
+    call_interrupted = 0;
+
+    if (janet_try(&state) == JANET_SIGNAL_OK) {
+        JanetBuffer *wait = janet_buffer(16);
+
+        put_u16(wait, CALL_WAIT_FORM);
+        put_id(wait, handle);
+        result = invoke_call(wait, 1);
+        janet_restore(&state);
+    } else {
+        Janet failure = state.payload;
+
+        janet_restore(&state);
+        discard_form_quietly(handle);
+        janet_panicv(failure);
+    }
+
+    if (call_interrupted) {
+        call_interrupted = 0;
+
+        return janet_wrap_nil();
+    }
+
+    discard_form_quietly(handle);
+
+    return form_result(result);
+}
+
 static const JanetReg uniterm_cfuns[] = {
     {"api-version", cfun_api_version,
      "(uniterm/api-version)\n\nThe version of the host API. A change that breaks a script "
@@ -1398,12 +1729,141 @@ static const JanetReg uniterm_cfuns[] = {
     {"discard-form", cfun_discard_form,
      "(uniterm/discard-form form)\n\nFrees a form's handle. A form still open closes as ended, "
      "and a wait on it fails as :ended."},
+    {"ask", cfun_ask,
+     "(uniterm/ask form)\n\nShows a form to the user, waits for the answer, and returns the result "
+     "as a struct. The form is a struct such as {:title \"Deploy\" :items [{:id :region :text "
+     "\"Which region?\" :type :choice :choices [\"us-east\" \"eu-west\"]}] :actions [{:id :deploy "
+     ":label \"Deploy\" :role :primary} {:id :cancel :role :cancel}]}. Keys, ids, and the words "
+     ":type, :block, :level, :role, and :mode are keywords. Text, choices, and string defaults are "
+     "strings, and so are the keys of a table block's :rows. A submitted form returns {:form "
+     "handle :submission 1 :action :deploy :answers {:region \"us-east\"}}. A cancel button "
+     "returns {:form handle :outcome :cancelled :action :cancel}, and closing the form returns "
+     "{:form handle :outcome :dismissed}. The form's handle is discarded however the call ends. "
+     "A failure raises a struct of :kind and :message, where :kind is :bad-argument for a form "
+     "uniterm refuses, :busy while this program or this window holds as many forms as it may, "
+     ":refused, :ended when the form ended before the user answered it, or :failed. Ctrl-C stops "
+     "the script and closes the form."},
     {NULL, NULL, NULL}};
 
-const char *uniterm_janet_module_function(size_t index) {
-    size_t count = sizeof(uniterm_cfuns) / sizeof(uniterm_cfuns[0]) - 1;
+/*
+ * The helpers that are written in Janet over `ask`. Each asks one question and returns its answer,
+ * or nil when the user cancelled or closed the form. The source runs once for each run, in a scope
+ * that sees only the core environment and `ask`, and its public bindings join the module.
+ */
+static const char *const helper_names[] = {"ask-confirm", "ask-text",  "ask-choose",
+                                           "ask-number",  "ask-color", "ask-file"};
 
-    return index < count ? uniterm_cfuns[index].name : NULL;
+static const char helper_source[] =
+    "(defn- answer-of [result]\n"
+    "  (when (nil? (result :outcome)) ((result :answers) :answer)))\n"
+    "\n"
+    "(defn- question [prompt type extra]\n"
+    "  (def item @{:id :answer :text prompt :type type :required true})\n"
+    "  (eachp [key value] extra (when (not (nil? value)) (put item key value)))\n"
+    "  (answer-of (ask {:items [(table/to-struct item)]})))\n"
+    "\n"
+    "(defn ask-confirm\n"
+    "  \"(uniterm/ask-confirm prompt)\\n\\nAsks a yes or no question. Returns true for Yes, false for "
+    "No, and nil when the user closed the form.\""
+    "\n"
+    "  [prompt]\n"
+    "  (def result (ask {:items [{:block :paragraph :text prompt}]\n"
+    "                    :actions [{:id :yes :label \"Yes\" :role :primary}\n"
+    "                              {:id :no :label \"No\" :role :cancel}]}))\n"
+    "  (cond\n"
+    "    (= (result :action) :yes) true\n"
+    "    (= (result :outcome) :cancelled) false))\n"
+    "\n"
+    "(defn ask-text\n"
+    "  \"(uniterm/ask-text prompt &named default pattern)\\n\\nAsks for one line of text. The "
+    "pattern is an ECMA-262 regular expression that the text must match. Returns the text, or nil "
+    "when the user cancelled or closed the form.\""
+    "\n"
+    "  [prompt &named default pattern]\n"
+    "  (question prompt :string\n"
+    "           {:default default :validate (when pattern {:pattern pattern})}))\n"
+    "\n"
+    "(defn ask-choose\n"
+    "  \"(uniterm/ask-choose prompt choices &named multiple other)\\n\\nAsks for one of the "
+    "choices, or with :multiple some of them, as an array. With :other the user may type a choice "
+    "of their own, which only one choice allows. Returns nil when the user cancelled or closed the "
+    "form.\""
+    "\n"
+    "  [prompt choices &named multiple other]\n"
+    "  (when (and multiple other)\n"
+    "    (error {:kind :bad-argument :message \"a multiple choice cannot take :other\"}))\n"
+    "  (question prompt (if multiple :multi :choice)\n"
+    "           {:choices choices :other (when other true)}))\n"
+    "\n"
+    "(defn ask-number\n"
+    "  \"(uniterm/ask-number prompt &named integer min max)\\n\\nAsks for a number, a whole one "
+    "with :integer. Returns the number, or nil when the user cancelled or closed the form.\""
+    "\n"
+    "  [prompt &named integer min max]\n"
+    "  (question prompt (if integer :integer :number)\n"
+    "           {:validate (when (or min max)\n"
+    "                        (table/to-struct\n"
+    "                          (merge (if min @{:minimum min} @{}) (if max @{:maximum max} @{}))))}))\n"
+    "\n"
+    "(defn ask-color\n"
+    "  \"(uniterm/ask-color prompt)\\n\\nAsks for a color. Returns it as #rrggbbaa, or nil when the "
+    "user cancelled or closed the form.\""
+    "\n"
+    "  [prompt]\n"
+    "  (question prompt :color {}))\n"
+    "\n"
+    "(defn ask-file\n"
+    "  \"(uniterm/ask-file prompt &named mode types)\\n\\nAsks for a path. The mode is :open, the "
+    "default, :directory, or :save, and the types are UTIs such as \\\"public.json\\\". Returns the "
+    "path, or nil when the user cancelled or closed the form.\""
+    "\n"
+    "  [prompt &named mode types]\n"
+    "  (question prompt :file {:mode mode :types types}))\n";
+
+const char *uniterm_janet_module_function(size_t index) {
+    size_t cfuns = sizeof(uniterm_cfuns) / sizeof(uniterm_cfuns[0]) - 1;
+    size_t helpers = sizeof(helper_names) / sizeof(helper_names[0]);
+
+    if (index < cfuns) return uniterm_cfuns[index].name;
+
+    return index - cfuns < helpers ? helper_names[index - cfuns] : NULL;
+}
+
+/*
+ * Defines the helpers in Janet over `ask` and puts them in the module. The caller roots `module`.
+ * The helper source runs Janet code, which can collect, so the scope is rooted here until its
+ * bindings are copied out.
+ */
+static int helper_gc_stress;
+
+void uniterm_janet_set_helper_gc_stress(int enabled) {
+    helper_gc_stress = enabled;
+}
+
+static void register_helpers(JanetTable *env, JanetTable *module) {
+    JanetTable *scope = janet_table(0);
+    Janet ignored;
+
+    janet_gcroot(janet_wrap_table(scope));
+
+    scope->proto = env;
+    janet_table_put(scope, janet_csymbolv("ask"),
+                    janet_table_get(module, janet_csymbolv("ask")));
+
+    if (helper_gc_stress) janet_collect();
+
+    if (janet_dostring(scope, helper_source, "uniterm-module", &ignored) != 0) {
+        janet_gcunroot(janet_wrap_table(scope));
+        janet_panic("the uniterm module's helpers did not install");
+    }
+
+    for (size_t index = 0; index < sizeof(helper_names) / sizeof(helper_names[0]); index++) {
+        Janet name = janet_csymbolv(helper_names[index]);
+
+        janet_table_put(module, name, janet_table_get(scope, name));
+    }
+
+    janet_gcunroot(janet_wrap_table(scope));
 }
 
 /*
@@ -1413,13 +1873,16 @@ const char *uniterm_janet_module_function(size_t index) {
 static void register_module(JanetTable *env) {
     JanetTable *module = janet_table(0);
 
+    janet_gcroot(janet_wrap_table(module));
     janet_cfuns(module, "uniterm", uniterm_cfuns);
+    register_helpers(env, module);
 
     Janet cache_binding = janet_table_get(env, janet_csymbolv("module/cache"));
     Janet cache_value = janet_table_get(janet_unwrap_table(cache_binding), janet_ckeywordv("value"));
 
     janet_table_put(janet_unwrap_table(cache_value), janet_cstringv("uniterm"),
                     janet_wrap_table(module));
+    janet_gcunroot(janet_wrap_table(module));
 }
 
 static void fill_failure(uniterm_script_failure *failure, int32_t line, int32_t column,
@@ -1569,6 +2032,11 @@ static void interrupt_attach(int hard) {
 static void interrupt_detach(void) {
     interrupt_settle();
     __atomic_store_n(&interrupt_vm, NULL, __ATOMIC_SEQ_CST);
+}
+
+int uniterm_janet_interrupt_pending(void) {
+    return __atomic_load_n(&interrupt_vm, __ATOMIC_SEQ_CST) != NULL
+           && __atomic_load_n(&interrupt_fired, __ATOMIC_SEQ_CST) > 0;
 }
 
 void uniterm_janet_request_interrupt(void) {

@@ -39,6 +39,13 @@
  */
 #define UNITERM_JANET_APP_FAILURE_BASE 16
 
+/*
+ * A call callback returns this when a wait for a form was cut short by an interrupt. The host has
+ * already discarded the form's handle and read both replies. The shim returns nil to the script,
+ * and the interrupt stops the script at its next instruction. No other call returns it.
+ */
+#define UNITERM_JANET_CALL_INTERRUPTED 2
+
 /* Levels as scripts name them: :info, :warning, :error. */
 #define UNITERM_STATUS_INFO 0
 #define UNITERM_STATUS_WARNING 1
@@ -122,6 +129,19 @@ void uniterm_janet_enable_run_sigint(void);
  * form is running, and it leaves no interrupt behind for the next one.
  */
 void uniterm_janet_request_interrupt(void);
+
+/*
+ * Whether an interrupt is waiting to stop the running script or REPL form. The host's wait for a
+ * reply polls it, since a signal alone does not wake a thread that waits on a condition. It is
+ * false when nothing is running.
+ */
+int uniterm_janet_interrupt_pending(void);
+
+/*
+ * Makes the next run collect garbage just before it defines the module's helpers, so a test can
+ * prove the module and the helpers' scope survive a collection there.
+ */
+void uniterm_janet_set_helper_gc_stress(int enabled);
 
 typedef struct uniterm_script_failure {
     int32_t line;

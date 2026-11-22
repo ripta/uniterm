@@ -741,7 +741,9 @@ enum ScriptLint {
 
         if use.call == .sendCommand { usesCommand = true }
 
-        guard let power = use.call?.power else { continue }
+        guard let power = use.call?.power ?? ScriptHelperFunctions.power(of: use.name) else {
+          continue
+        }
 
         used.insert(power.rawValue)
 

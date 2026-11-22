@@ -29,7 +29,7 @@ uncommitted.
 | UTERM-022 M1: Form spec and validation | DONE | "Read and check script-asked form specs" |
 | UTERM-022 M2: Questions applet UI | DONE | "Show script-asked forms in a Questions pane" |
 | UTERM-022 M3: The ask power and the form calls | DONE | "Let scripts ask the user a form and wait for the answer" |
-| UTERM-022 M4: `uniterm ask` and Janet helpers | QUEUED | |
+| UTERM-022 M4: `uniterm ask` and Janet helpers | DONE | "Ask forms from bash with uniterm ask, and from Janet" |
 
 ## Commands that leave the sandbox
 
@@ -321,3 +321,65 @@ file is `not-reproducible`, and a flood test pins the bound.
 
 Bugs found in M3's own work: two, both fixed before commit. One is the ancestry gap in the wait recheck. The other is
 the non-idempotent focus that showed an error before the user typed. A test covers each.
+
+### M4: `uniterm ask` and Janet helpers
+
+Commit: "Ask forms from bash with uniterm ask, and from Janet". It carries the code, the proposal's DONE status and As
+built block, and this report.
+
+M4 adds `uniterm ask`, with `form` and the `confirm`, `text`, `choose`, `number`, `color`, and `file` shorthands. Its
+exit codes follow the proposal's table. It adds Janet's `uniterm/ask` and its `ask-*` helpers, which convert a
+keyword-keyed struct. The session now matches replies by request ID. On Ctrl-C during a wait, the helper discards the
+form and stops the script.
+
+Checks: `make fmt-check`, `make lint`, `make check`, `make build`, `make test-helper-sandbox`, and the UI test build
+pass. A scoped address-sanitizer fuzz of the wire and declaration readers passed 20,000 iterations.
+`caffeinate -dimsu make test-package` ran 3196 tests with 0 failures and 10 existing skips. `proposals.py check`
+reports only the two row-completion findings, which the row's finish handles. The coordinator ran
+`QuestionsWireUITests` twice, before and after the review fixes. All 3 tests passed both times: a declared full-spec
+form, a declared Janet helper, and a bash `uniterm ask` with its answer and its cancel exit status.
+
+Test cost: the 46 new package tests run in about 5 seconds, mostly process starts. `QuestionsWireUITests` runs in about
+18 seconds.
+
+Best guesses, all in the proposal's Decision Log:
+
+1. Each shorthand asks one required question with the id `answer`. `confirm` asks with a paragraph and two buttons:
+   `yes` as primary and `no` as cancel. It prints nothing on exit 0, and `--json` prints `true`. `ask form` prints the
+   whole result record.
+2. `--multiple` with `--other` is a usage error. A form on stdin over 32 KiB exits 65.
+3. Wire failure kinds map to exit codes this way: `failed` 69, `notFound` and `ended` 4, `unsupported` 70, `replyLost`
+   74, `badArgument` 65, `refused` 77, `busy` 75. The 77 row now covers every refusal, with a denied pane as its
+   example.
+4. A write to a closed stdout exits 74, sysexits' I/O error, with a reason on stderr. The default SIGPIPE action stays,
+   so `uniterm ask … | head -0` dies by SIGPIPE like any Unix tool.
+5. The Janet helpers return the answer, or nil when the form is cancelled or closed. `ask-confirm` returns true, false,
+   or nil. Flags are named arguments.
+6. A wait looks for an interrupt every 50 ms, because a signal does not wake a condition wait. "Waiting and Ctrl-C"
+   said "no polling", and it is amended. An interrupted `ask` returns nil, and the interrupt stops the script at its
+   next call. `protect` cannot swallow it.
+7. The shim checks keyword spelling only. A number where text belongs reaches the app, which refuses it.
+
+Review findings:
+
+- The module table in the C shim was unrooted while helper registration ran Janet code (PLAUSIBLE). The trace confirmed
+  it: a forced collection crashed with SIGSEGV. Fixed by rooting the table, and a test forces the collection. The
+  collection is forced through a new hook in the shim's header that only tests call.
+- A broken pipe on stdout aborted the command with 134 when SIGPIPE was ignored (PLAUSIBLE). Fixed: POSIX writes and
+  exit 74, with a test. The test pins the fix for the ignored-SIGPIPE case. It did not run against the old code.
+- The "Waiting and Ctrl-C" amendment lacked markers, one bullet contradicted the poll, and the 77 row was too narrow.
+  Fixed.
+- Two comments sat over the wrong definitions in the shim, and one was hard to read. Fixed.
+- A failure-kind test accepted any documented code. Fixed: all eight kinds are pinned exactly.
+
+`adr-impact` found no conflicts. It named the `uniterm ask` exit-code contract as a possible candidate, but the
+proposal's own section holds it. It also named the Janet-over-C helper pattern, which is too small. Neither passes the
+bar. The `ask-user` tier candidate from M3 stands.
+
+Left to the user: running a bash script and a Janet script that ask forms in the running app, and confirming the flow.
+The UI tests cover the same flow first.
+
+Left over: an ignored, untracked `.build-swiftpm` directory from a mistaken scratch path. The sandbox refused to remove
+part of it. It does not show in git status.
+
+Bugs found: one in M4's own new code, the unrooted module table. It was fixed before commit, and a test covers it.

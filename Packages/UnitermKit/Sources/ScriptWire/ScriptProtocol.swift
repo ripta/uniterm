@@ -528,7 +528,7 @@ public enum ScriptCall: Equatable, Sendable {
 }
 
 /// Why a call did not succeed. The kind lets a script tell its own mistake from a refusal.
-public enum ScriptFailureKind: UInt8, Sendable, Equatable {
+public enum ScriptFailureKind: UInt8, Sendable, Equatable, CaseIterable {
   /// The call's arguments are not acceptable.
   case badArgument = 1
 

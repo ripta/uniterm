@@ -85,3 +85,23 @@ extension ScriptCall {
     }
   }
 }
+
+/// The `uniterm` module's functions that are not wire calls of their own. Each one makes the wire
+/// calls of the power named here, so the script lint counts a use of it as a use of that power.
+///
+/// They are written in Janet over the typed calls above. A form's helpers open the form, wait for
+/// it, and discard it, so each needs `ask-user` and nothing else.
+public enum ScriptHelperFunctions {
+  /// The function names, without a prefix, and the power each needs.
+  public static let powers: [String: ScriptCallPower] = [
+    "ask": .askUser,
+    "ask-confirm": .askUser,
+    "ask-text": .askUser,
+    "ask-choose": .askUser,
+    "ask-number": .askUser,
+    "ask-color": .askUser,
+    "ask-file": .askUser,
+  ]
+
+  public static func power(of janetName: String) -> ScriptCallPower? { powers[janetName] }
+}
