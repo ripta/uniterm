@@ -404,8 +404,9 @@ class UnitermUITestCase: XCTestCase {
   }
 
   /// Chooses a file in the system's open panel that is already showing, by entering its path in
-  /// the go-to-folder sheet. The path is pasted, not typed. The field autocompletes a typed path
-  /// against sibling folders, which makes the entry slow and can change the path.
+  /// the go-to-folder sheet. The path is typed. Pasting it would rewrite the developer's clipboard,
+  /// which may hold secrets. The field autocompletes a typed path against sibling folders, so the
+  /// entry is slow and the path is checked after it.
   ///
   /// Each query while the panel shows takes 1.5 to 5 s, so each wait on the panel allows 20 s. That
   /// holds several queries, where 5 s held one and failed whenever the first came too early.
@@ -418,10 +419,15 @@ class UnitermUITestCase: XCTestCase {
     let goTo = panel.sheets.firstMatch
     XCTAssertTrue(goTo.appears(timeout: 20), "no go-to-folder sheet. \(focusReport(app))")
 
-    paste(file.path, in: app)
+    let pasteboardChanges = NSPasteboard.general.changeCount
 
-    // Pasting inserts the path whole. Check it anyway, because a path the field changed sends the
-    // panel nowhere.
+    app.typeText(file.path)
+
+    XCTAssertEqual(
+      NSPasteboard.general.changeCount, pasteboardChanges,
+      "entering the path rewrote the user's clipboard")
+
+    // Check the entered path, because a path the field changed sends the panel nowhere.
     let typed = goTo.textFields.firstMatch
     XCTAssertTrue(
       waitFor(typed, timeout: 20) { $0 == file.path },
@@ -445,23 +451,5 @@ class UnitermUITestCase: XCTestCase {
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 20), "the panel never closed")
-  }
-
-  /// Puts `text` in the focused field through the pasteboard, then restores what the pasteboard held.
-  func paste(_ text: String, in app: XCUIApplication) {
-    let pasteboard = NSPasteboard.general
-    let saved = pasteboard.string(forType: .string)
-
-    pasteboard.clearContents()
-    pasteboard.setString(text, forType: .string)
-    app.typeKey("v", modifierFlags: .command)
-
-    // The paste is read when the key event is handled, so restore only after the field shows it.
-    _ = waitFor(app.sheets.firstMatch.sheets.firstMatch.textFields.firstMatch, timeout: 20) {
-      $0 == text
-    }
-
-    pasteboard.clearContents()
-    if let saved { pasteboard.setString(saved, forType: .string) }
   }
 }
