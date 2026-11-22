@@ -253,8 +253,10 @@ class UnitermUITestCase: XCTestCase {
   func waitFor(
     _ element: XCUIElement, timeout: TimeInterval, _ condition: @escaping (String) -> Bool
   ) -> Bool {
+    // Reading `value` of an element that does not exist yet fails the test outright, so a wait that
+    // starts before the element appears must check for it first.
     pollUntil(timeout: timeout) {
-      guard let value = element.value as? String else { return false }
+      guard element.exists, let value = element.value as? String else { return false }
 
       return condition(value)
     }
