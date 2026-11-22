@@ -21,6 +21,12 @@ class UnitermUITestCase: XCTestCase {
   private(set) var scriptDirectory = ""
   private var launched: [XCUIApplication] = []
 
+  /// Whether the last launch kept the system's open panel. See `launchApp`.
+  private var usesRealOpenPanel = false
+
+  /// The file the app's open panel reads its answer from, when the test answers it.
+  private var openPanelAnswer: String { scratch + "-open-panel" }
+
   override func setUpWithError() throws {
     continueAfterFailure = false
     scratch = NSTemporaryDirectory() + "uniterm-ui-\(UUID().uuidString)"
@@ -43,6 +49,8 @@ class UnitermUITestCase: XCTestCase {
     try? FileManager.default.removeItem(atPath: scratch + "-layout")
     try? FileManager.default.removeItem(atPath: scratch + "-browser")
     try? FileManager.default.removeItem(atPath: scratch + "-controller-policy")
+    try? FileManager.default.removeItem(atPath: openPanelAnswer)
+    try? FileManager.default.removeItem(atPath: openPanelAnswer + ".asked")
     try? FileManager.default.removeItem(atPath: scriptDirectory)
   }
 
@@ -62,8 +70,12 @@ class UnitermUITestCase: XCTestCase {
   ///
   /// The app writes the seed itself. A seed the runner wrote into the plist would keep answering
   /// reads on macOS 26.7, even after the app changed the setting.
+  ///
+  /// The app's open panel answers through `choose` unless `realOpenPanel` is set. Only a test about
+  /// the system's panel itself should set it. See `choose`.
   func launchApp(
-    environment: [String: String] = [:], arguments: [String] = [], settings: [String: String] = [:]
+    environment: [String: String] = [:], arguments: [String] = [], settings: [String: String] = [:],
+    realOpenPanel: Bool = false
   ) -> XCUIApplication {
     let app = XCUIApplication()
     if !settings.isEmpty {
@@ -97,6 +109,9 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UT_SCRATCH"] = scratch
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""
     app.launchEnvironment["UNITERM_PLACE_NAMES"] = "off"
+
+    usesRealOpenPanel = realOpenPanel
+    if !realOpenPanel { app.launchEnvironment["UNITERM_OPEN_PANEL_ANSWER"] = openPanelAnswer }
     app.launch()
     app.activate()
     launched.append(app)
@@ -355,17 +370,53 @@ class UnitermUITestCase: XCTestCase {
     XCTAssertTrue(waitUntilGone(launcher(in: window), timeout: 10), "Return left the launcher")
   }
 
-  /// Chooses a file in the open panel that is already showing, by entering its path in the
-  /// go-to-folder sheet. The path is pasted, not typed. The field autocompletes a typed path
-  /// against sibling folders, which makes the entry slow and can change the path.
+  /// Chooses `file` in the open panel that the last action asked for. The panel must hang from a
+  /// window, as a sheet.
+  ///
+  /// By default the app's panel is answered through a file, and the system's panel never shows.
+  /// That panel runs in another process, and each accessibility query while it shows takes 1.5 to
+  /// 5 s. A test about what uniterm does with a chosen file has no use for that cost. A test that
+  /// launched with `realOpenPanel` drives the system's panel instead.
   func choose(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
+    guard usesRealOpenPanel else {
+      answerOpenPanel(with: file)
+      return
+    }
+
+    chooseInSystemPanel(file, in: app, window: window)
+  }
+
+  private func answerOpenPanel(with file: URL) {
+    let asked = openPanelAnswer + ".asked"
+    let request = waitForFile(asked, timeout: 10)
+    XCTAssertNotNil(request, "the app never asked for an open panel")
+    XCTAssertTrue(
+      request?.hasPrefix("sheet ") ?? false,
+      "the open panel would not hang from the window: \(request ?? "")")
+
+    try? FileManager.default.removeItem(atPath: asked)
+
+    do {
+      try (file.path + "\n").write(toFile: openPanelAnswer, atomically: true, encoding: .utf8)
+    } catch {
+      XCTFail("could not answer the open panel: \(error)")
+    }
+  }
+
+  /// Chooses a file in the system's open panel that is already showing, by entering its path in
+  /// the go-to-folder sheet. The path is pasted, not typed. The field autocompletes a typed path
+  /// against sibling folders, which makes the entry slow and can change the path.
+  ///
+  /// Each query while the panel shows takes 1.5 to 5 s, so each wait on the panel allows 20 s. That
+  /// holds several queries, where 5 s held one and failed whenever the first came too early.
+  private func chooseInSystemPanel(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
     let panel = window.sheets.firstMatch
-    XCTAssertTrue(panel.appears(timeout: 10), "no open panel")
+    XCTAssertTrue(panel.appears(timeout: 20), "no open panel")
 
     app.typeKey("g", modifierFlags: [.command, .shift])
 
     let goTo = panel.sheets.firstMatch
-    XCTAssertTrue(goTo.appears(timeout: 5), "no go-to-folder sheet. \(focusReport(app))")
+    XCTAssertTrue(goTo.appears(timeout: 20), "no go-to-folder sheet. \(focusReport(app))")
 
     paste(file.path, in: app)
 
@@ -373,12 +424,12 @@ class UnitermUITestCase: XCTestCase {
     // panel nowhere.
     let typed = goTo.textFields.firstMatch
     XCTAssertTrue(
-      waitFor(typed, timeout: 5) { $0 == file.path },
+      waitFor(typed, timeout: 20) { $0 == file.path },
       "the go-to field holds \(String(describing: typed.value)), not \(file.path)")
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(
-      waitUntilGone(goTo, timeout: 5),
+      waitUntilGone(goTo, timeout: 20),
       "the go-to-folder sheet never closed. \(focusReport(app)) "
         + "The sheet: \(goTo.debugDescription)")
 
@@ -390,10 +441,10 @@ class UnitermUITestCase: XCTestCase {
       .matching(NSPredicate(format: "selected == true"))
       .containing(shown).firstMatch
     XCTAssertTrue(
-      selected.appears(timeout: 5), "the panel never selected \(name). \(focusReport(app))")
+      selected.appears(timeout: 20), "the panel never selected \(name). \(focusReport(app))")
 
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")
+    XCTAssertTrue(waitForNoSheet(in: window, timeout: 20), "the panel never closed")
   }
 
   /// Puts `text` in the focused field through the pasteboard, then restores what the pasteboard held.
@@ -406,7 +457,7 @@ class UnitermUITestCase: XCTestCase {
     app.typeKey("v", modifierFlags: .command)
 
     // The paste is read when the key event is handled, so restore only after the field shows it.
-    _ = waitFor(app.sheets.firstMatch.sheets.firstMatch.textFields.firstMatch, timeout: 5) {
+    _ = waitFor(app.sheets.firstMatch.sheets.firstMatch.textFields.firstMatch, timeout: 20) {
       $0 == text
     }
 

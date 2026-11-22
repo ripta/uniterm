@@ -9,7 +9,8 @@ fixed ones.
 - A test that fails again when run alone is a confirmed flake. Fix its cause in the test or the product.
 - A fixed flake moves to "Fixed". Its entry names the fix by commit subject.
 - A failure that reproduces reliably is a bug. File it under `spec/bugs/`.
-- Never fix a flake with retries, longer timeouts, or weaker assertions.
+- Never fix a flake with retries, longer timeouts, or weaker assertions. A wait may grow only when a measurement
+  shows that one observation costs most of the old wait. The entry then records that measurement.
 
 ## Potential
 
@@ -47,25 +48,6 @@ fixed ones.
 - Status: unresolved.
 - Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
   focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
-
-### `MapViewerUITests.testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins`
-
-- Seen: 2026-11-08, once, in a run of `TextViewerUITests` and `MapViewerUITests` together.
-- Evidence: the shared open-panel helper at `UnitermUITestCase.swift:227` failed with "no go-to-folder sheet" after
-  Cmd-Shift-G. The cg server restarted while that run was going. `MapViewerUITests` then passed 8 of 8 alone.
-- Suspected cause: Cmd-Shift-G sent before the open panel took key focus, as in the pane-tree entries above.
-- Status: unresolved.
-- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
-  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
-- Seen again: 2026-11-20, once, in a run of `MapViewerUITests` alone with 10 tests. The go-to field check at
-  `UnitermUITestCase.swift:379` failed. The field held the path of the test that ran just before,
-  `testARestoredFileLoadsAndClearingItSticksOverARelaunch`, not this test's. The go-to sheet remembers its last
-  path, so the paste never landed. The same class order then passed 10 of 10, and the test passed 3 of 3 alone.
-- Suspected cause of this sighting: the paste's Cmd-V went nowhere, as Cmd-D did in the next test. Both fit a key
-  sent while the app or the sheet did not hold key focus. Autocomplete is not the cause, since the field held a whole
-  earlier path.
-- Reruns: the whole `MapViewerUITests` class then ran 5 more times in its original order, with 11 tests each. Every
-  run passed. Counting the rerun above, the class order passed 6 times after the failure.
 
 ### `MapViewerUITests.testLauncherOpensAMapAndTheViewMenuSwitchesItsStyle`
 
@@ -123,23 +105,6 @@ fixed ones.
 - Suspected cause: a cold first launch of WebKit at the start of the suite. Not confirmed.
 - Status: unresolved.
 
-### `TextViewerUITests.testAnEditedFileReloadsInPlaceAndByRename`
-
-- Seen: 2026-11-15, once, in the second CI `app` run of PR #49, which does not touch the open-panel helper.
-- Evidence: the shared open-panel helper at `UnitermUITestCase.swift:308` failed with "the go-to-folder sheet never
-  closed". The other 157 UI tests passed. `TextViewerUITests` then passed 13 of 13 alone. The same message failed
-  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` on PR #43's first CI run. It failed
-  `DataViewerUITests.testCommandOOpensAWorkbookAndTheSheetPickerSwitchesSheets` on PR #53's first CI run, which does
-  not touch the helper either. The rerun passed.
-- Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
-- Seen again: 2026-11-21, in the first CI `app` run of PR #80, which does not touch the open-panel helper.
-  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` failed at `UnitermUITestCase.swift:384` with "the
-  go-to-folder sheet never closed". uniterm was frontmost, and no element in it held keyboard focus. The rerun passed
-  this test.
-- Status: unresolved.
-- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
-  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
-
 ### `ControllerConsentUITests`, several tests, after the strict and unsafe modes landed
 
 - Seen: 2026-11-15, in four local runs during the work-queue run that added strict and unsafe script modes. Each run
@@ -174,6 +139,9 @@ fixed ones.
   Requests then opened, and its first row never appeared in 30 s. The test passed 3 of 3 alone right after, on the
   same tree. That run typed script paths through a `.zshrc` variable. This class keeps the fixture's `.zshrc`, so the
   variable was set, as the indicator shows.
+- Seen again: 2026-11-22, locally on main, in a run of the five classes up to `DataViewerUITests`.
+  `testAPaneCallQuestionShowsTheRunsPID` failed at `ControllerConsentUITests.swift:139` with "the terminal did not
+  take the keys, so typing would beep". That run made three passes, and the class failed once.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
@@ -354,7 +322,86 @@ fixed ones.
   `ControllerRunUITests`, `ExecPaneUITests`, and `StatusBarUITests` entries above. Whether a key sent that soon after
   launch makes it likelier is not known.
 
+### `CommandPaletteUITests.testATabThatClosesWhileThePaletteShowsDisappearsFromTheList`
+
+- Seen: 2026-11-22, once, in a full local `make ci` run on a tree that adds the Questions applet and changes no
+  palette code. It was one of 5 failures of 203 UI tests.
+- Evidence: `CommandPaletteUITests.swift:319` failed a bare `XCTAssertTrue`. The test passed alone right after, on the
+  same tree.
+- Status: unresolved.
+
+### `MapViewerUITests.testProgramPinsReturnOnReopenAndAreAnnouncedAfterARelaunch`
+
+- Seen: 2026-11-22, once, in the same full local run as the `CommandPaletteUITests` entry above.
+- Evidence: `MapViewerUITests.swift:489` failed with "a live run shows the earlier-run segment". The test passed alone
+  right after, on the same tree.
+- Status: unresolved.
+
+### `MapViewerUITests.testTheStyleSurvivesARelaunchAndAnUnknownStyleShowsStandard`
+
+- Seen: 2026-11-22, once, in a local run of the four viewer classes and `OpenPanelUITests`.
+- Evidence: `MapViewerUITests.swift:160` failed a bare `XCTAssertTrue`. Apple's TV app had started 9 s before the
+  first test, from outside the run. In the same run,
+  `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile` failed with TV frontmost and uniterm
+  in the background. The next two passes of the same classes passed 98 of 98.
+- Suspected cause: another app took the front during the test. Not confirmed.
+- Status: unresolved.
+
 ## Fixed
+
+### `MapViewerUITests.testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins`
+
+Fixed by: "Answer the open panel through a file in UI tests" and "Size the real open panel's waits to its query cost"
+
+- Seen: 2026-11-08, once, in a run of `TextViewerUITests` and `MapViewerUITests` together.
+- Evidence: the shared open-panel helper at `UnitermUITestCase.swift:227` failed with "no go-to-folder sheet" after
+  Cmd-Shift-G. The cg server restarted while that run was going. `MapViewerUITests` then passed 8 of 8 alone.
+- Suspected cause: Cmd-Shift-G sent before the open panel took key focus, as in the pane-tree entries above.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
+- Seen again: 2026-11-20, once, in a run of `MapViewerUITests` alone with 10 tests. The go-to field check at
+  `UnitermUITestCase.swift:379` failed. The field held the path of the test that ran just before,
+  `testARestoredFileLoadsAndClearingItSticksOverARelaunch`, not this test's. The go-to sheet remembers its last
+  path, so the paste never landed. The same class order then passed 10 of 10, and the test passed 3 of 3 alone.
+- Suspected cause of this sighting: the paste's Cmd-V went nowhere, as Cmd-D did in the next test. Both fit a key
+  sent while the app or the sheet did not hold key focus. Autocomplete is not the cause, since the field held a whole
+  earlier path.
+- Reruns: the whole `MapViewerUITests` class then ran 5 more times in its original order, with 11 tests each. Every
+  run passed. Counting the rerun above, the class order passed 6 times after the failure.
+- Seen again: 2026-11-22, in two full local `make ci` runs and one run of the five classes up to
+  `DataViewerUITests` on main. Each failing test passed alone, and the next full run failed another open-panel test. The messages were "the panel never selected sales.csv" at
+  `UnitermUITestCase.swift:392`, "no go-to-folder sheet" at line 368, and "Timed out while synthesizing event" on
+  Cmd-Shift-G at line 365.
+- Cause: every accessibility query of an element in the main window takes 1.5 to 5 s while the system's open panel
+  shows, and 0.03 s once it is gone. The panel runs in another process, and each query snapshots its whole tree. The
+  helper's 5 s waits held one or two queries. A wait whose first query came before the panel was ready timed out
+  before its second returned. On 2026-11-22, the selection wait queried at 7.9 s and 13.1 s and failed, and Cmd-Shift-G
+  took 5.1 s just to synthesize. `DataViewerUITests` passed 60 of 60 alone on main. It failed on the third pass when
+  the five classes before it ran first.
+- Fix: the app's open panel now answers through a file in UI tests, so the tests about what uniterm does with a
+  chosen file never show the system's panel. `OpenPanelUITests` and
+  `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile` keep the real panel for Cmd-O and the
+  Open button. Their waits on the panel allow 20 s, which holds several queries at the measured cost. With the hook,
+  the four viewer classes and `OpenPanelUITests` passed 98 of 98 over two passes.
+
+### `TextViewerUITests.testAnEditedFileReloadsInPlaceAndByRename`
+
+Fixed by: "Answer the open panel through a file in UI tests" and "Size the real open panel's waits to its query cost"
+
+- Seen: 2026-11-15, once, in the second CI `app` run of PR #49, which does not touch the open-panel helper.
+- Evidence: the shared open-panel helper at `UnitermUITestCase.swift:308` failed with "the go-to-folder sheet never
+  closed". The other 157 UI tests passed. `TextViewerUITests` then passed 13 of 13 alone. The same message failed
+  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` on PR #43's first CI run. It failed
+  `DataViewerUITests.testCommandOOpensAWorkbookAndTheSheetPickerSwitchesSheets` on PR #53's first CI run, which does
+  not touch the helper either. The rerun passed.
+- Suspected cause: Return reached the go-to-folder sheet before it accepted the pasted path. Not confirmed.
+- Seen again: 2026-11-21, in the first CI `app` run of PR #80, which does not touch the open-panel helper.
+  `DataViewerUITests.testCommandORoutesACSVFileToTheDataViewer` failed at `UnitermUITestCase.swift:384` with "the
+  go-to-folder sheet never closed". uniterm was frontmost, and no element in it held keyboard focus. The rerun passed
+  this test.
+- Next sighting: the failure message now names the app's state, the frontmost app, and the element with keyboard
+  focus. UI runs also wait for each other now, so a run from another session cannot share the screen.
+- Cause and fix: as for `MapViewerUITests.testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins` above.
 
 ### `MarkdownViewTests.testATwentyMegabyteDocumentNeverStallsTheMainThread`
 

@@ -24,6 +24,10 @@ public protocol SourceReplacing: Applet {
   /// The file types the pane's open panel accepts, or nil for any file. Folders are always
   /// choosable.
   var openPanelContentTypes: [UTType]? { get }
+
+  /// Shows the panel the pane-local Open command asks with. The app gives each viewer the
+  /// system's panel. A debug build can give it one that answers without showing.
+  var openPicker: OpenPicker { get }
 }
 
 extension SourceReplacing {
@@ -40,17 +44,15 @@ extension AppletCommand {
   ///
   /// It replaces the source of the pane the command is aimed at. Choosing the file in the panel is
   /// the user's act. The applet gets that one file and nothing more.
-  public static func openSource(
-    section: Int = 0, picker: @escaping OpenPicker = SystemOpenPanel.pick
-  ) -> AppletCommand {
+  public static func openSource(section: Int = 0) -> AppletCommand {
     AppletCommand(
       name: openSourceName, title: "Open\u{2026}", home: .file, section: section,
       isAvailable: { $0 is any SourceReplacing },
       run: { applet in
         Task { @MainActor [weak applet] in
-          guard let applet else { return }
+          guard let target = applet as? any SourceReplacing else { return }
 
-          await SourceOpening.open(applet, picker: picker)
+          await SourceOpening.open(target, picker: target.openPicker)
         }
       })
   }

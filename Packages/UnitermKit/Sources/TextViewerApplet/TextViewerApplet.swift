@@ -40,6 +40,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
   public private(set) var title = TextViewerApplet.untitled
   public private(set) var segments: [AppletSegment] = []
   public private(set) var publishedTabs: AppletTabList
+  public let openPicker: OpenPicker
 
   private static let untitled = "Text viewer"
 
@@ -133,20 +134,29 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
-  public convenience init(startDirectory: String?) {
+  public convenience init(
+    startDirectory: String?, picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) {
     self.init(
-      startDirectory: startDirectory, settings: .bundled, opener: WorkspaceURLOpener())
+      startDirectory: startDirectory, settings: .bundled, opener: WorkspaceURLOpener(),
+      picker: picker)
   }
 
   /// Restores a pane from its description. The file is found and read when the pane starts, so
   /// restoring touches nothing on disk. A description this build cannot read is refused.
-  public convenience init(restoring description: AppletDescription) throws {
+  public convenience init(
+    restoring description: AppletDescription, picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) throws {
     try self.init(
-      restoring: description, settings: .bundled, opener: WorkspaceURLOpener())
+      restoring: description, settings: .bundled, opener: WorkspaceURLOpener(), picker: picker)
   }
 
-  init(startDirectory: String?, settings: DocumentHelperSettings, opener: any URLOpening) {
+  init(
+    startDirectory: String?, settings: DocumentHelperSettings, opener: any URLOpening,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) {
     record = TextViewerDescription(startDirectory: startDirectory)
+    openPicker = picker
     restoreWaitsForStart = false
     describesFromRecord = false
     self.settings = settings
@@ -164,9 +174,10 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
   init(
     restoring description: AppletDescription, settings: DocumentHelperSettings,
-    opener: any URLOpening
+    opener: any URLOpening, picker: @escaping OpenPicker = SystemOpenPanel.pick
   ) throws {
     record = try TextViewerDescription.decode(description)
+    openPicker = picker
 
     restoredInline =
       record.path == nil && record.inlineContent ? Self.keptInline(in: description) : nil
@@ -196,8 +207,10 @@ public final class TextViewerApplet: Applet, SourceReplacing {
 
   /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
   /// opens `file`.
-  public static func opening(_ file: URL, startDirectory: String) throws -> TextViewerApplet {
-    let applet = TextViewerApplet(startDirectory: startDirectory)
+  public static func opening(
+    _ file: URL, startDirectory: String, picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) throws -> TextViewerApplet {
+    let applet = TextViewerApplet(startDirectory: startDirectory, picker: picker)
     try applet.replaceSource(with: file, startDirectory: startDirectory)
 
     return applet
@@ -1063,7 +1076,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     Task { @MainActor [weak self] in
       guard let self else { return }
 
-      await SourceOpening.open(self, picker: SystemOpenPanel.pick)
+      await SourceOpening.open(self, picker: openPicker)
     }
   }
 

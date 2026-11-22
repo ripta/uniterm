@@ -22,6 +22,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   public private(set) var title = DataViewerApplet.untitled
   public private(set) var segments: [AppletSegment] = []
   public private(set) var publishedTabs: AppletTabList
+  public let openPicker: OpenPicker
 
   private static let untitled = "Data viewer"
 
@@ -60,9 +61,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   /// reads it from another pane.
   public init(
     startDirectory: String?, budget: TableBudget = .shared,
-    pageTarget: Int = TableLoader.defaultPageTarget
+    pageTarget: Int = TableLoader.defaultPageTarget,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
   ) {
     record = DataViewerDescription(startDirectory: startDirectory)
+    openPicker = picker
     restoreWaitsForStart = false
     describesFromRecord = false
     self.budget = budget
@@ -79,9 +82,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   /// restoring touches nothing on disk. A description this build cannot read is refused.
   public init(
     restoring description: AppletDescription, budget: TableBudget = .shared,
-    pageTarget: Int = TableLoader.defaultPageTarget
+    pageTarget: Int = TableLoader.defaultPageTarget,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
   ) throws {
     record = try DataViewerDescription.decode(description)
+    openPicker = picker
     restoreWaitsForStart = record.path != nil
     describesFromRecord = true
     self.budget = budget
@@ -98,9 +103,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
   /// opens `file`.
   public static func opening(
-    _ file: URL, startDirectory: String, budget: TableBudget = .shared
+    _ file: URL, startDirectory: String, budget: TableBudget = .shared,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
   ) throws -> DataViewerApplet {
-    let applet = DataViewerApplet(startDirectory: startDirectory, budget: budget)
+    let applet = DataViewerApplet(startDirectory: startDirectory, budget: budget, picker: picker)
     try applet.replaceSource(with: file, startDirectory: startDirectory)
 
     return applet
@@ -332,7 +338,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     Task { @MainActor [weak self] in
       guard let self else { return }
 
-      await SourceOpening.open(self, picker: SystemOpenPanel.pick)
+      await SourceOpening.open(self, picker: openPicker)
     }
   }
 

@@ -47,7 +47,7 @@ final class DataViewerUITests: UnitermUITestCase {
   /// viewer, and the pane's Open button opens a panel that loads the chosen file.
   func testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile() throws {
     let file = try makeCSV("region,amount\neast,3\nwest,5\nnorth,2\n")
-    let app = launchApp()
+    let app = launchApp(realOpenPanel: true)
     let window = mainWindow(in: app)
     _ = waitForTerminal(in: app)
 

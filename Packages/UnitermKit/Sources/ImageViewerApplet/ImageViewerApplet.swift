@@ -29,6 +29,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   public internal(set) var title = ImageViewerApplet.untitled
   public internal(set) var segments: [AppletSegment] = []
   public internal(set) var publishedTabs: AppletTabList
+  public let openPicker: OpenPicker
 
   static let untitled = "Image viewer"
 
@@ -173,18 +174,22 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   /// An empty pane that starts in `startDirectory`. The directory is explicit, and the applet never
   /// reads it from another pane.
-  public convenience init(startDirectory: String?) {
+  public convenience init(
+    startDirectory: String?, picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) {
     self.init(
       startDirectory: startDirectory, settings: HelperSettings(location: .bundledImageDecoder),
-      helperBudget: .shared, bitmapBudget: .shared)
+      helperBudget: .shared, bitmapBudget: .shared, picker: picker)
   }
 
   init(
     startDirectory: String?, settings: HelperSettings, helperBudget: ImageHelperBudget,
     bitmapBudget: ImageBitmapBudget, scanPace: ScanPace = ScanPace(),
-    slideshowSleep: @escaping SlideshowSleep = ImageViewerApplet.realSleep
+    slideshowSleep: @escaping SlideshowSleep = ImageViewerApplet.realSleep,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
   ) {
     record = ImageViewerDescription(startDirectory: startDirectory)
+    openPicker = picker
     restoreWaitsForStart = false
     describesFromRecord = false
 
@@ -202,19 +207,23 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   /// Restores a pane from its description. The source is found and opened when the pane starts, so
   /// restoring touches nothing on disk. A description this build cannot read is refused.
-  public convenience init(restoring description: AppletDescription) throws {
+  public convenience init(
+    restoring description: AppletDescription, picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) throws {
     try self.init(
       restoring: description, settings: HelperSettings(location: .bundledImageDecoder),
-      helperBudget: .shared, bitmapBudget: .shared)
+      helperBudget: .shared, bitmapBudget: .shared, picker: picker)
   }
 
   init(
     restoring description: AppletDescription, settings: HelperSettings,
     helperBudget: ImageHelperBudget, bitmapBudget: ImageBitmapBudget,
     scanPace: ScanPace = ScanPace(),
-    slideshowSleep: @escaping SlideshowSleep = ImageViewerApplet.realSleep
+    slideshowSleep: @escaping SlideshowSleep = ImageViewerApplet.realSleep,
+    picker: @escaping OpenPicker = SystemOpenPanel.pick
   ) throws {
     record = try ImageViewerDescription.decode(description)
+    openPicker = picker
     restoreWaitsForStart = record.path != nil
     describesFromRecord = true
 
@@ -233,8 +242,10 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   /// The factory behind the router and the launcher: a pane that starts in `startDirectory` and
   /// opens `file`.
-  public static func opening(_ file: URL, startDirectory: String) throws -> ImageViewerApplet {
-    let applet = ImageViewerApplet(startDirectory: startDirectory)
+  public static func opening(
+    _ file: URL, startDirectory: String, picker: @escaping OpenPicker = SystemOpenPanel.pick
+  ) throws -> ImageViewerApplet {
+    let applet = ImageViewerApplet(startDirectory: startDirectory, picker: picker)
     try applet.replaceSource(with: file, startDirectory: startDirectory)
 
     return applet
@@ -495,7 +506,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
     Task { @MainActor [weak self] in
       guard let self else { return }
 
-      await SourceOpening.open(self, picker: SystemOpenPanel.pick)
+      await SourceOpening.open(self, picker: openPicker)
     }
   }
 
