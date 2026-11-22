@@ -17,7 +17,7 @@
   "remote-control marker" as the pane badge. Separately, UTERM-019 designs a second, per-tab marker for tabs not
   rebuilt at run end (about lines 509, 522, and 888). That marker says a controller's code may still run in the tab,
   offers a rebuild, and outlives the grant. This proposal's slot must hold it, so UTERM-019 M3's marker waits on this
-  proposal's M1. UTERM-019 is updated once this proposal is decided. M1 builds the run-end kind and its menu. UTERM-019
+  proposal's M1. UTERM-019 is updated once this proposal is decided. M1 builds the run-end kind, and UTERM-042 offers its action from the tab's menu. UTERM-019
   M3 publishes the marker and implements "Rebuild Tab", per "Interactive markers". It gains these checks: choosing
   "Rebuild Tab" runs the rebuild through the unsent-input question, and a spared tab shows the run-end marker in the
   tab bar or at the pane level.
@@ -127,21 +127,24 @@ have nothing to offer once the grant has ended. What does clicking a marker do i
 pane-level marker do when the marker has no badge to belong to? Where does a pane-level marker sit when no badge
 shows? Without an answer, UTERM-019's rebuild marker cannot use this slot.
 
-Decision: each marker kind either has actions or has none. A click on a marker with actions opens a small menu at the
-marker. The menu's first line says what the marker means, and its items are the kind's actions. No action runs on the
-click itself. A marker with no actions is inert, so a click on it selects the tab like the rest of the item. Every
-marker has a tooltip that says what it means. (autonomous)
+Decision: each marker kind either has actions or has none. A click on any marker is inert, so it selects the tab like
+the rest of the item. A kind's actions are offered in the tab's right-click menu, in a section headed by the marker's
+meaning, per UTERM-042 "Where the menu opens". No action runs on a click on the marker. Every marker has a tooltip that
+says what it means. (autonomous) Amended 2026-11-21; see Decision Log.
 
 - The authority marker has no actions. It shows only while the pane is remote-controlled, so the badge always sits
   beside it, and the badge's menu already offers control.
 - UTERM-019's run-end marker has one action, "Rebuild Tab". The rebuild still goes through UTERM-019's unsent-input
   question.
 - A published marker carries only its kind and which of the kind's actions are available. The chip also carries the
-  controller names the host supplied, per "What a click on the chip does". AppletKit derives each kind's symbol,
-  accessibility label, meaning, and action titles from the kind. So two applets cannot word one kind
-  differently, and no applet text, such as a title, reaches the menu. Amended 2026-11-21; see Decision Log.
-- The host draws the pane-level marker and its menu. A new `Applet` call asks the applet to perform a marker's action
-  on one of its tabs. The host and the applets ship in one binary, so the call has no version skew.
+  controller names the host supplied, per "What a click on the chip does". The authority marker also carries the
+  owners it stands for, as the host identified them, per UTERM-042 "How the host learns which owners a tab's authority
+  marker stands for". AppletKit derives each kind's symbol, accessibility label, meaning, and action titles from the
+  kind. So two applets cannot word one kind differently, and no applet text, such as a title, reaches the menu.
+  Amended 2026-11-21; see Decision Log.
+- The host draws the pane-level marker. A new `Applet` call asks the applet to perform a marker's action on one of its
+  tabs. The host and the applets ship in one binary, so the call has no version skew. Amended 2026-11-21; see Decision
+  Log.
 - When no badge shows, the pane-level markers take the badge's corner. Only the run-end marker can show without a
   badge, after the user disconnects the pane and dissolves its group.
 
@@ -251,7 +254,7 @@ kinds. The candidates were every marker in a fixed order up to a cap, every mark
 highest-ranked marker with the rest in the tooltip.
 
 Decision: a tab shows every marker it carries, in a fixed order by kind. Each marker is its own hit target and
-tooltip, and one with actions opens its menu, per "Interactive markers". A tab carries at most one marker of each
+tooltip, and none acts on a click, per "Interactive markers". A tab carries at most one marker of each
 kind, so the slot needs no cap. The title truncates to make room. (autonomous)
 
 Rationale: this is the plain behavior. It costs nothing while a tab carries one marker, which holds for every tab in a
@@ -378,9 +381,9 @@ No pane type has a marker that always agrees with the badge, so folding has no c
 Original question: how a marked tab and the pane-level marker read to VoiceOver. The candidates were the tab's
 accessibility value naming its markers, and each marker being its own accessibility element.
 
-Decision: each marker is its own accessibility element, labeled with its meaning. A marker with actions is a button
-that opens its menu. An inert one is an image. The tab's accessibility value stays "selected" or "unselected". The
-pane-level markers are elements beside the badge, inside the pane's group. (autonomous)
+Decision: each marker is its own accessibility element, labeled with its meaning. Every marker is an image, since none
+acts on a click. The tab's accessibility value stays "selected" or "unselected". The pane-level markers are elements
+beside the badge, inside the pane's group. (autonomous) Amended 2026-11-21; see Decision Log.
 
 Rationale: one rule covers every kind and both positions. A pane with no tab bar has no tab element to name a marker
 in, so a rule built on the tab's value would leave the pane-level authority marker silent. The meaning sits in its own
@@ -474,9 +477,9 @@ None.
   meaning, its accessibility label, and its action titles. The run-end kind draws the slash over `gearshape.2.fill`
   and has the "Rebuild Tab" action
 - A published marker carries its kind and its available actions, and the new `Applet` call performs an action on a
-  tab. A run-end marker in a tab bar or at the pane level opens a menu with its meaning and "Rebuild Tab", and calls
-  the applet only when that item is chosen. UTERM-019 M3 then publishes the run-end marker and implements the rebuild,
-  without changing the slot
+  tab. A click on a run-end marker, in a tab bar or at the pane level, opens no menu and calls nothing. UTERM-042
+  offers "Rebuild Tab" from the tab's menu through the call. UTERM-019 M3 then publishes the run-end marker and
+  implements the rebuild, without changing the slot
 - A click on an inert pane-level marker does not reach the applet content beneath it
 - Every applet type that takes applet commands or sent content, in a pane a live owner may address, publishes the
   authority marker. An applet takes them when it handles applet commands, or replaces its source and does not own its
@@ -671,6 +674,17 @@ None.
 - 2026-11-21: ADR candidate (cuts across the system): an authority sign carries no text an applet, page, or title
   supplies. Declined: this proposal records it with its reason.
 - 2026-11-21: Accepted by the user.
+- 2026-11-21: Amended "Interactive markers" and "VoiceOver" from UTERM-042's review, where the user chose one mouse
+  path for a tab's actions: the tab's right-click menu. "Interactive markers" said: "A click on a marker with actions
+  opens a small menu at the marker. The menu's first line says what the marker means, and its items are the kind's
+  actions." Every marker is now inert on a click, and a kind's actions are offered in the tab's menu under the
+  marker's meaning. Its bullet said: "The host draws the pane-level marker and its menu." "VoiceOver" said: "A marker
+  with actions is a button that opens its menu. An inert one is an image." Every marker is now an image. M1's run-end
+  check now says a click on the marker opens no menu. "One marker or several" said a marker with actions "opens its
+  menu", and the Impacts line said M1 builds the run-end kind "and its menu". Both now match.
+- 2026-11-21: Amended "Interactive markers" from UTERM-042's review: the authority marker also carries the owners it
+  stands for, as the host identified them. Only the browser knows which owner opened a tab. Without the owners, the
+  host could not name the controller behind a tab's marker in a pane with two owners.
 
 ## References
 
