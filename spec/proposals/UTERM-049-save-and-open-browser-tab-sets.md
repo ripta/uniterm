@@ -1,6 +1,6 @@
 # UTERM-049: Save and Open Browser Tab Sets
 
-**Status:** draft
+**Status:** accepted
 **Created:** 2026-11-22
 **Updated:** 2026-11-22
 
@@ -11,6 +11,7 @@
 - UTERM-015, for the file router, type declarations, and the `Info.plist` drift test
 - UTERM-018, for where a routed file opens when no pane can take it in place
 - UTERM-021, for the powers a script file declares
+- UTERM-018 M5, for the script file open that a program's open of a tab file uses
 
 ## Impacts
 
@@ -23,6 +24,12 @@
   other than Alternate.
 - UTERM-018 — "Applets whose open makes a new pane". The browser joins the terminal as an applet whose panes never take
   a file in place.
+- UTERM-005 — "Control". A script's open of a tab file needs browser navigation, as a seeded layout URL does.
+  `save-tabs` supersedes in part its rule that every browser command needs a browser permission and acts only on the
+  controller's own tabs.
+- UTERM-015 — the routed open. The router gains an optional prepare step that runs before an applet's factory.
+- UTERM-018 — "Scripts and controllers" and M5. A script's file open may make a pane under pane control, for an applet
+  whose open always makes one. Amended 2026-11-22.
 
 ## Summary
 
@@ -52,8 +59,8 @@ appears in the palette. It acts on the target pane's browser, as every browser c
 that pane.
 
 Rationale: the browser already owns its File items through `AppletCommand` with `home: .file`. The map viewer's Save As
-is the precedent for an applet's own save. ADR-04 lets an applet bind keys only for its own actions; whether this one
-has a key is open.
+is the precedent for an applet's own save. ADR-04 lets an applet bind keys only for its own actions. This one has
+no default key; see "A default shortcut for Save Tabs As".
 
 ### The save panel picks the format
 
@@ -67,15 +74,17 @@ custom accessory view would rebuild what the panel already does.
 ### The tab-set format carries an extension and an in-file tag
 
 Decision: the tab-set format has a uniterm-specific extension and a `UTType` under `dev.uniterm` that conforms to
-`public.json`. The file opens with a tag and a version, such as `{"type": "uniterm.tabs", "version": 1, ...}`.
+`public.json`. The file opens with a tag and a version. "The extension and the type identifiers" settles their values.
 
-- The tag decides what the file is. When the extension and the tag disagree, the tag wins.
+- The extension decides which applet opens the file. The tag validates a file the browser receives: a file whose tag
+  is not a tab set is refused with a message. A tab set renamed to `.json` opens in the data viewer as JSON, and
+  renaming it back opens it as tabs. See "How the tag wins on open". Amended 2026-11-22; see Decision Log.
 - A build reads every version up to its own. A newer version than the build knows is an error that names the version.
 - The format holds tab sets only. A shared envelope for other uniterm data waits for a second payload, and the tag
   leaves room for one.
 
 Rationale: the extension and its type are what macOS works with: Finder, the save panel, and UTERM-015's router. The
-tag keeps a renamed file, a piped script output, or pasted text self-describing. Conforming to `public.json` keeps
+tag keeps a file self-describing, so the browser never reads a stray JSON file as tabs. Conforming to `public.json` keeps
 editors and `jq` working. The version rule follows ADR-06's pattern for the layout file and ADR-13's spirit for
 outside formats, though neither governs this file.
 
@@ -127,12 +136,17 @@ restored layout's tabs do.
   explanation, and keeps the URL, as a restored tab does.
 - A `text/uri-list` file has no titles or selection. Its tabs show their hosts until they load, as an untitled
   restored tab does, and the first tab is selected.
-- An open a program chose, through `uniterm open` or Launch Services, still loads the selected tab today. See "A
-  program-chosen open of a tab file".
+- A file that lists more tabs than a threshold asks once, in a window sheet, before any pane or tab is made. The
+  sheet names the file and the tab count, and lists the first URLs with "and N more", as the app's other sheets list
+  items. Cancel makes nothing. A file at or under the threshold opens without asking. The same rule holds for every
+  source: File > Open, a drop, Finder, `uniterm open`, and other apps. "Bounds on opening a file" settles the
+  threshold's value.
 
 Rationale: the user chose a new pane with lazy loading. A file with hundreds of URLs then fetches one page, so the
-open is bounded by the user's own selections, under ADR-03 and ADR-14 P15, without a cap or a prompt. UTERM-018
-already derives "never in place" from the applet contract, so no declaration field is added.
+network work is bounded by the user's own selections, under ADR-03 and ADR-14 P15. Opening many tabs is often a
+mistake, whoever asks for it, so a large set asks first, as a page's pop-ups past the browser's limit do. UTERM-018
+already derives "never in place" from the applet contract, so no declaration field is added. Amended 2026-11-22; see
+Decision Log.
 
 ### URLs are written as they are
 
@@ -146,75 +160,145 @@ unreliable.
 ### Scripts and controllers can save and open tab files
 
 Decision: a script or controller can save a browser pane's tabs to a tab file and open a tab file into browser tabs.
-Both behave as the user's commands do, per ADR-15. Writing the user's files is not a C1 effect under ADR-14, so the
-save needs an authenticated requester and an explicit, revocable grant under P7. How the call is granted and shaped is
-open.
+Both behave as the user's commands do, per ADR-15. Each needs an authenticated requester and an explicit, revocable
+grant under ADR-14 P7. "A program saves tabs through the user's save panel" and "How a program opens a tab file" name
+the powers. Amended 2026-11-22; see Decision Log.
 
 Rationale: the user added this to the proposal's scope.
 
-## Design Decisions (Open)
+### The extension and the type identifiers
 
-### The extension and the type identifier
+Original question: what are the tab-set format's extension and its `UTType` identifier? `text/uri-list` needs an
+identifier too, since the system has no type for it.
 
-Original question: what are the tab-set format's extension and its `UTType` identifier?
+Decision: the tab-set format's extension is `.uniterm-tabs`. Its exported type is `dev.uniterm.tabs`, conforming to
+`public.json`. The in-file tag is that identifier, so a file opens with `{"type": "dev.uniterm.tabs", "version": 1,
+...}`. uniterm imports `text/uri-list` as `dev.uniterm.uri-list`, with the `.uris` and `.uri` extensions and the
+`text/uri-list` MIME type.
 
-- `.unitabs`, with `dev.uniterm.tabs`.
-- `.uniterm-tabs`, with `dev.uniterm.tabs`. Longer, and plainly uniterm's.
-- Another uniterm-specific name. A generic name such as `.urljson` invites a collision with another tool.
+Rationale: `.uniterm-tabs` names its owner plainly, and nothing traced breaks on the hyphen. One string serves as the
+type and the tag, so the format has one published name instead of two. No one declares `text/uri-list` under a shared
+identifier. The IETF publishes none, so a name such as `org.ietf.uri-list` would coin one in another organization's
+namespace. Markdown's `net.daringfireball.markdown` is different, since other apps already declare it. Under uniterm's
+own namespace, a collision can only be uniterm's own doing.
 
-`text/uri-list` needs an identifier too. The system has no type for it: `UTType(mimeType: "text/uri-list")` returns a
-dynamic type with no extension. uniterm imports one under an identifier it picks, with `.uris` and `.uri` and the MIME
-type. Saved Open With choices key on the exact type, so this identifier is also a published name.
-
-The extension and both identifiers become published names once a file is saved, so they are one-way doors. See Risks.
+The extension and `dev.uniterm.tabs` are one-way doors. The `text/uri-list` identifier is not. A saved Open With choice
+for a type no applet declares is ignored, and the router falls back to the types the system registers for `.uris`. See
+Risks.
 
 ### The tab-set format's fields
 
 Original question: what does the JSON hold beyond each tab's URL and title and the selected tab?
 
-- **URL, title, selected only.** The minimum a round trip needs. Version 1 stays small.
-- **Also a save time and a set name.** A name could default to the pane's title. Helps a user with many saved sets,
-  and a reader can show the name.
-- **Also per-tab extras**, such as a favicon URL or a last-visited time. More to keep correct, and no current reader
-  needs them.
+Decision: version 1 holds each tab's URL and title and the selected tab, and nothing else. Both the URL and the title
+are optional, per "Tabs with nothing storable". Readers ignore keys they do
+not know. The version bumps only for a change that an older reader would misread by ignoring the new key. A per-tab
+field that picks which website data a tab loads with is an example.
 
-Constraint: a build refuses a version newer than its own. If every added field bumps the version, an older build
-refuses a file it could read whole. ADR-06 bumps the layout's version for a field an older reader would drop, because
-the layout is written back. A tab file is never written back by its reader. One candidate rule: readers ignore keys
-they do not know, and only a change in meaning bumps the version.
+Rationale: an older build then opens any file whose known fields keep their meaning. Bumping for every field would make
+an older build refuse a file it could read whole. ADR-06 bumps for any dropped field because the layout is written
+back, and a tab file is not. A set name and a save time would duplicate the file's own name and modification time, and
+no reader shows them. Per-tab extras have no reader, and a favicon URL would be one more file-chosen URL to filter.
+
+An older build that opens a newer file and saves it back to the same path drops the keys it does not know. That needs
+the user to confirm Replace, so it is accepted.
+
+### A program-chosen open of a tab file
+
+Original question: a session approval for `uniterm open` covers every program in that session. Its text says "asks to
+open this path in a new pane", and names no page load. A program in an approved session can write a `.uris` file and
+open it. The new pane then loads its selected tab with uniterm's website data, signed in as the user. Elsewhere,
+uniterm gates a program's browser page loads behind browser navigation: a seeded browser page in a layout request
+needs that power, and UTERM-018 limits a program's URL opens to browser panes the program created. Any local process
+can already make Safari load a URL through macOS `open`. What is new is uniterm's own website data.
+
+Decision: a program's open of a tab file behaves exactly as the user's does, under the approvals that already gate
+opens. It makes the same pane, loads the same selected tab, and asks the same question past the tab threshold. No
+approval wording is specific to tab files. A script's own open, through UTERM-018's script file open, also needs
+browser navigation whenever it would make a browser pane, whatever the file holds. See "How a program opens a tab file". Amended
+2026-11-22; see Decision Log.
+
+Rationale: a program running as the user can already read uniterm's website data directly. uniterm is not sandboxed,
+and its cookie file sits in `~/Library/WebKit/dev.uniterm.app/WebsiteDataStore/<store>/Cookies/` with mode 644. On
+2026-11-22, a launchd job with no Full Disk Access read it, while the same job was refused Safari's history. A signed-in
+page load through a tab file therefore gives a program nothing it could not take itself. ADR-15 puts the authority
+decision in the approval that lets the program open files at all, and the open then behaves as the user's.
+
+That reasoning holds for a process running unsandboxed as the user, which is what `uniterm open` and Launch Services
+serve. It does not hold for a Janet script, which UTERM-003 runs without network access unless its run grants it.
 
 ### Tabs with nothing storable
 
 Original question: a tab whose record holds no storable URL has nothing to save. What does the file hold for it, and
 what happens to the selection when the selected tab is such a tab?
 
-Each tab saves its record's last storable page, per "Saved values reuse the layout's filters". A tab that moved from
-an https page to a `blob:` page still saves the https page. The empty cases are narrower: a tab that never loaded, a
-pop-up that opened straight on `blob:` or `data:`, a tab whose only page was over 32 KiB, and a tab an opened file
-filled with a refused URL.
+Decision: the tab-set format writes such a tab as an entry with no `url`. The entry keeps the tab's bounded title when
+it has one. The `url` key is optional from version 1. Opening the file makes a blank tab for that entry, as the layout
+restores a tab that loaded nothing. Tab count, order, and the selection are kept. `text/uri-list` and bookmark HTML
+cannot carry an empty entry, so they leave the tab out. Their selection is not recorded. A save in either of those
+formats from a pane with no storable tab is refused with a message, since the file would be one uniterm refuses.
 
-- **Skip the tab.** The file lists only tabs whose record has a storable URL. When the selected tab is skipped, the
-  nearest kept tab before it is selected, or the first.
-- **Write an empty entry.** The tab-set file keeps the tab count and position, and opening it back makes a blank tab.
-  `text/uri-list` and bookmark HTML cannot carry an empty entry, so they skip it either way.
+Rationale: the layout already holds such a tab as a record with a nil URL, so this writes what the layout holds and
+needs no rule to move the selection. Skipping would add that rule, and a pane with nothing storable would write an
+empty tab set that the open refuses. Making `url` optional now keeps version 1 readers able to read every later file
+with empty entries, with no version bump.
 
 ### Bounds on opening a file
 
 Original question: a tab file can list any number of URLs. Lazy loading bounds the fetches. What bounds the file's
 size and the pane's tab count?
 
-- **A byte limit on the file, no tab cap.** Like the viewers' size limits, a file over the limit is refused with a
-  message that names the limit. The user can have as many tabs as they choose.
-- **A byte limit and a tab cap.** Tabs past the cap are dropped, and a status line says how many.
-- **No limit.** The file is read whole. A huge file stalls the main thread while it parses, against ADR-08.
+Decision: the tab threshold is 15. A file that lists more than 15 tabs asks before anything is made. Every tab file is
+bounded at 32 MiB, the map's and the Markdown viewer's limit. The open stats the file, reads at most the limit plus one
+byte, and parses, all off the main thread. A file over the limit is refused with a message that names it. Only then
+does the threshold sheet show, and only after it does the pane exist. Save Tabs As applies the same limit to the
+encoded file in every format, and refuses with a message naming it, so uniterm never writes a tab file it refuses to
+open. No tab ceiling applies to an open the user confirms.
 
-### A default shortcut for Save Tabs As
+The routing path gains a step for this, as an applet contract every applet may use. An applet's type declaration may
+name a prepare step. The router runs it off the main thread, before the factory. It reads and validates the file and
+returns the prepared source and, when needed, a question to ask. The router shows the question, then hands the
+prepared source to the factory, which never reads the file again. The count the sheet shows is then the count that
+opens. Applets with no prepare step route as they do today. With no window, the question shows app-modal, as the batch
+sheet does. Amended 2026-11-22; see Decision Log.
 
-Original question: does Save Tabs As get a default key?
+Leaves undone: a confirmed open of a huge count still stalls the main thread. The tab bar builds one view per tab, and
+the layout saver encodes every tab on the main thread, at each change and at each launch's restore. Those are the
+filed bugs `20261121-tab-bar-overflow-hides-tabs` and `20261122-layout-save-runs-on-main-thread`, and New Tab and
+controllers reach the same state today.
 
-- **None.** The palette and the File menu reach it. A later key can be added without a contract change.
-- **Cmd-Shift-S.** The map viewer uses it for its Save As. It is an applet key, so the two never conflict, and it
-  matches the macOS convention.
+Rationale: 15 is the number Firefox's `browser.tabs.maxOpenBeforeWarn` and Chrome's open-all-bookmarks prompt use for
+the same operation. These are from their known defaults, not checked here. The app's own batch threshold of 10 bounds
+a different operation, files opening into panes. A byte limit bounds what the file costs to read and parse. A tab
+ceiling on file opens alone would be a special case, since other paths reach the same count. Dropping tabs past a
+ceiling would lose them on the next save.
+
+### A program saves tabs through the user's save panel
+
+Original question: how does a script or controller save a browser pane's tabs? This is the save half of "The program
+call".
+
+Decision: the browser gains a `save-tabs` command. It shows Save Tabs As for the target pane, the panel the user's
+command shows, with the same formats. The user picks the file and confirms any Replace. The reply is the path written,
+or a cancel. The command needs pane control over the target pane, which must be among the program's targets under
+ADR-14 P1 to P3. The user's pick in the panel authorizes the write, as it does for the user's own save, so no write
+power is needed. One panel is up at a time per window, and a second request while one is up is refused, as the pane's
+other questions are. No new permission kind is added. Amended 2026-11-22; see Decision Log.
+
+This supersedes in part UTERM-005's "Control", which says every browser command needs a browser permission and acts
+only on tabs the controller opened. `save-tabs` needs pane control alone and saves every tab in the pane, because the
+user's pick in the panel, not the program, decides that anything is written.
+
+Leaves undone: a program cannot save tabs unattended, such as on a schedule. A program with its own file access that
+learns the path can read the saved URLs of a pane it did not open. That happens only after the user saves in the panel,
+and is accepted.
+
+Skew: a newer program on an older uniterm gets the older build's answer for an unknown command or schema version, a
+clear error under ADR-13. No permission kind crosses the descriptor or the policy file, so neither changes.
+
+Rationale: this is the user's own operation, under ADR-15. A path argument would need the first path-write power, and
+a folder-scoped write could replace any file in that folder without the Replace the user's save shows. A tab-list read
+power would make every program reimplement the format and add a power to read tabs it did not open.
 
 ### How the tag wins on open
 
@@ -232,65 +316,87 @@ the file's system type, which comes from its extension, and reads no content. Ho
 - **The router reads content.** It checks a JSON file's tag before matching. This contradicts UTERM-015's rule that
   the router resolves a file's type through the system, and would amend it.
 
-### A program-chosen open of a tab file
+Decision: the extension routes, and the tag validates. This narrows the settled "the tag wins" to what routing can
+deliver. A file the browser receives whose tag is not a tab set is refused with a message. A tab set renamed to `.json`
+opens in the data viewer as JSON, and renaming it back to `.uniterm-tabs` opens it as tabs. Piped or pasted text has
+no entry point.
 
-Original question: a session approval for `uniterm open` covers every program in that session. Its text says "asks to
-open this path in a new pane", and names no page load. A program in an approved session can write a `.uris` file and
-open it. The new pane then loads its selected tab with uniterm's website data, signed in as the user. Elsewhere,
-uniterm gates a program's browser page loads behind browser navigation: a seeded browser page in a layout request
-needs that power, and UTERM-018 limits a program's URL opens to browser panes the program created. Any local process
-can already make Safari load a URL through macOS `open`. What is new is uniterm's own website data.
+Rationale: the router types files through the system and reads no content, under UTERM-015. Reading every `.json`
+file's tag would parse it twice, since the tag need not be the first key. A browser claim on `public.json` would list
+the browser for every `.json` file, and one saved choice would send every later `.json` file to a refusal.
 
-- **A program-chosen open loads no tab.** Every tab waits for the user to select it. The tabs are the same as for the
-  user's open. Leaves undone: ADR-15, which is proposed, says a permitted action "is not weakened, delayed, or hidden".
-  This open does less than the user's, so it needs an ADR Deviations entry or an ADR-15 amendment.
-- **A program cannot open a tab file through these paths.** Browser navigation is a controller power. A `uniterm open`
-  approval and a Launch Services sender hold no controller grant, so no caller on either path can hold it. The open is
-  refused with a message that names the missing power. Leaves undone: uniterm cannot tell the user's own shell from a
-  script in an approved session, so this also refuses the user's `uniterm open tabs.uris`. It refuses `/usr/bin/open`,
-  which is not on the list of openers that count as the user's act, and opens from apps such as a mail client's
-  attachment. File > Open and a drop still work. A program reaches a tab file only if "The program call" settles on a
-  call that opens one.
-- **The `uniterm open` approval also grants browser navigation for the open.** Its review then says the open may load
-  a page signed in as the user. This adds scope: a new power on UTERM-015's approval. Launch Services still has no
-  grant to carry it.
-- **The approval text names the page load.** The session approval stays as it is, and its review says the open may
-  load a page signed in as the user.
+### How a program opens a tab file
 
-The Launch Services path has the same question for an open another app chose.
+Original question: how does a script or controller open a tab file? This is the open half of "The program call". The
+save half is settled in "A program saves tabs through the user's save panel".
 
-### The program call
+`uniterm open` and Launch Services already make a new pane beside the origin, and behave as the user's open. A Janet
+script has no file open: its API has `open-pane`, `open-tab`, and `open-form`. A Janet controller without `subprocess`
+cannot run `uniterm open`. One with it runs `uniterm open` outside a terminal session, where ADR-14 P13 keeps the
+controller's own grant from covering the request. UTERM-018's "a script open never creates a pane" covers its unbuilt M5
+file open, not `uniterm open`. A tab file always needs a new pane.
 
-Original question: how does a script or controller save or open a tab file?
+- **Build UTERM-018's script file open, and let it make a pane for an applet whose open always makes one.** The open
+  runs through the router, as the user's does, under the path-read power and the pane-control power that already
+  makes panes for `open-pane`. Every file type gets one program open path. This adds scope: it builds UTERM-018 M5
+  and amends UTERM-018's "a script open never creates a pane".
+- **A browser `open-tabs` command taking a path.** It reads the file under path-read and makes a new pane under
+  pane-control, beside the program's source pane. Leaves undone: it is an open command for one applet that skips the
+  router and saved choices, so other file types still have no program open.
+- **No new open call.** Programs use `uniterm open` and Launch Services. Leaves undone: a Janet script, and a controller
+  without `subprocess`, cannot open a tab file. That falls short of "Scripts and controllers can save and open tab
+  files".
 
-- Which power does it use? Saving writes the user's files and reads URLs that can hold tokens. The browser-read power
-  reads only tabs the controller opened itself, through `ownedTab`, so reading the user's tabs is a new power. No
-  path-write power exists among the controller powers. A write to a path needs a power of its own under ADR-14 P8,
-  which says one granted power never silently grants another. Opening a path needs UTERM-015's path-reading power.
-- Is a new open call needed at all? A controller with its own file access can already open a tab set: it parses the
-  file, sends a layout request with a seeded browser URL under browser navigation, then opens the rest as tabs. That
-  is the "no new open call" candidate. Leaves undone: the browser's `open` command loads each tab at once, so lazy
-  loading is lost. It refuses past 16 tabs per controller per pane until UTERM-039 is built. It carries no title. So
-  it cannot reproduce the user's open, which ADR-15 asks for.
-- Does the program get the save panel, or name a path? ADR-15 asks that the operation behave as the user's, which
-  shows the panel. A named path has no user counterpart, which ADR-15 allows, but the grant then needs a write scope.
-- How does a program's open make a pane? UTERM-018 says a script open never creates a pane, citing UTERM-004. A tab
-  file always opens in a new pane. Candidates: the program opens into a browser pane it controls, it opens into a new
-  pane only with a grant that covers pane creation, or a program cannot open a tab file.
-- What is the wire command, and how does it handle version skew? ADR-13 lets ScriptWire refuse every version but its
-  own, since its two sides ship together. The controller wire must give a newer program on an older uniterm a clear
-  error. A new browser applet command gets that for free: an older build answers an unknown name with
-  `unknownCommand`.
+Decision: build UTERM-018 M5's script file open, and let it make a pane for an applet whose open always makes one. A
+script or controller opens a tab file through it, routed as the user's open is, under the path-read power. The pane
+needs pane control, and goes beside the program's source pane. It joins the run's owned group, as a pane from
+`open-pane` does. Its tabs come from the file, not from the browser's `open` command, so they are not controller tabs.
+Without pane control, the open fails with UTERM-018's not-found error. Because the pane loads a page, the open also needs
+browser navigation, whatever the file holds, as a layout request seeding a browser URL does under UTERM-005. UTERM-018
+M5 enforces this for every script open that would make a browser pane. Without it, the open is refused before any
+sheet or pane. With both, the open behaves as the user's: the same tabs, the same selected tab
+loading, and the same sheet past the tab threshold. A cancelled sheet replies with a distinct cancelled result. While
+a threshold sheet from a script open is up in a window, a second script open into that window is refused, which bounds the questions a
+program can raise under ADR-14 P15. UTERM-018 is amended to match. Amended 2026-11-22; see Decision Log.
+
+Rationale: every file type gets one program open path, through the router and saved choices. Pane creation stays its
+own power, as UTERM-018's 2026-11-21 ruling requires. A browser-only command would skip the router and leave other
+file types with no program open. Browser navigation keeps a script that UTERM-003 denies network access from reaching
+the network through a URL it wrote into a tab file, which ADR-14 P8 forbids.
+
+Dissent left standing: the review's critic held that a script with pane control should make a pane for any file with
+no capable pane, as the user's open does, not only for an applet whose open always makes one. The user chose the
+narrower rule, and it is kept.
+
+### A default shortcut for Save Tabs As
+
+Original question: does Save Tabs As get a default key?
+
+Decision: no default key. The File menu and the palette reach it, and the user can bind a key by its title in App
+Shortcuts, which UTERM-013 lets win.
+
+Leaves undone: no default key. Keyboard users reach the command through the palette or a remap.
+
+Rationale: the window routes an enabled applet menu key before web content sees it. A default key would take that key
+from every page in a browser pane. Cmd-S would break the save of web editors such as Google Docs, and Cmd-Shift-S that
+of web IDEs that bind Save As. Cmd-Shift-S means Save As for a document that also has Save, and this command is an
+export. A key can be added later with no contract change.
+
+## Design Decisions (Open)
+
+None.
 
 ## Risks
 
-- **The extension, the format, and the type identifiers become published names** — likelihood: high, impact: medium.
-  Mitigation: the in-file version lets the format change without renaming. A build reads every earlier version. The
-  extension, the tab-set identifier, and the imported `text/uri-list` identifier cannot change once files and saved
-  Open With choices exist, so their open question settles them before any milestone ships.
-- **A program's open loads a page signed in as the user** — likelihood: medium, impact: high.
-  Mitigation: "A program-chosen open of a tab file" settles the gate before M2 ships. Lazy loading already limits such
-  an open to one page.
+- **The extension, the format, and the tab-set identifier become published names** — likelihood: high, impact: medium.
+  Mitigation: the in-file version lets the format change without renaming. A build reads every earlier version, and
+  readers ignore unknown keys. `.uniterm-tabs` and `dev.uniterm.tabs` cannot change once files exist, and they are
+  settled before any milestone ships. The imported `dev.uniterm.uri-list` identifier can change later. A stale saved
+  choice is ignored, and `.uris` still routes through its extension.
+- **A program's open loads a page signed in as the user** — likelihood: medium, impact: low.
+  Accepted for `uniterm open` and Launch Services: a process running unsandboxed as the user can already read
+  uniterm's cookies from disk, so the load gives it nothing new. Mitigated for scripts: a script's open needs browser
+  navigation, so a script denied network access cannot reach it. Lazy loading limits each open to one page.
 - **Finder may not pick uniterm for its own type** — likelihood: medium, impact: low.
   Mitigation: UTERM-015 registers every document type at the Alternate rank, so a double-clicked tab-set file might go
   to another app that edits `public.json`. M2 checks a double-click in Finder. When it fails, the follow-up is an
@@ -298,14 +404,27 @@ Original question: how does a script or controller save or open a tab file?
 - **Saved URLs leak tokens** — likelihood: medium, impact: medium.
   Accepted: the user picks the file and its place, as for the layout file under UTERM-005. A file the user shares is
   shared by the user's choice.
-- **A program call widens what a script can write** — likelihood: medium, impact: high.
-  Mitigation: the call needs an explicit, revocable grant under ADR-14 P7, and its power is its own under P8. "The
-  program call" settles the power before its milestone starts.
+- **A program call widens what a script can write** — likelihood: low, impact: high.
+  Mitigation: a program's save shows the user's panel, so the user picks every file written and confirms any Replace.
+  See "A program saves tabs through the user's save panel".
 - **The browser's new type claim surprises an existing route** — likelihood: low, impact: low.
   Mitigation: the tab-set type is uniterm's own, and `text/uri-list` had no claimant. The drift test and the
   same-rank test catch a collision. A `.uris` file previously opened nowhere.
 - **A huge file stalls the app** — likelihood: low, impact: medium.
-  Mitigation: "Bounds on opening a file" settles a limit, and lazy loading bounds the network work.
+  Mitigation: the file is bounded at 32 MiB and read off the main thread, and a file past 15 tabs asks first. A
+  confirmed huge open still stalls on the tab bar and the layout save, which are filed bugs. Lazy loading bounds the
+  network work.
+
+- **The program decisions rest on ADR-15, which is proposed** — likelihood: medium, impact: medium.
+  Mitigation: "A program-chosen open of a tab file", "How a program opens a tab file", and UTERM-018's script open cite
+  it. M2 builds `uniterm open` of tab files on it, and M3 builds the script open and save. If ADR-15 changes before
+  either starts, those decisions are reviewed again before it is scheduled.
+- **`save-tabs` becomes a published controller command** — likelihood: high, impact: low.
+  Mitigation: it travels in the browser's versioned command schema, so a later change bumps the version and an older
+  or newer peer gets a clear error under ADR-13. Its reply holds only a path or a cancel, which leaves little to change.
+- **M3 waits on a long chain** — likelihood: high, impact: low.
+  Accepted: M3 starts after UTERM-018 M5, which waits on UTERM-004 M6, UTERM-005 M8, and UTERM-015 M4. M1 and M2 do
+  not wait on it, so saving and opening ship first.
 
 ## Milestones
 
@@ -335,6 +454,10 @@ Original question: how does a script or controller save or open a tab file?
 - A failed write raises an error alert naming the file, and leaves an earlier file intact
 - The tab-set type is exported in `Info.plist` and conforms to `public.json`, and the drift test passes
 - A UI test screenshot of the save panel shows the format control
+- A tab with no storable page writes a tab-set entry with no `url`, keeping its bounded title when it has one
+- A `.uris` or bookmark save from a pane with no storable tab is refused with a message, and writes nothing
+- A save whose encoded file passes 32 MiB, in any format, is refused with a message naming the limit, and writes
+  nothing
 
 ### M2: Open tab files back into a pane
 
@@ -354,22 +477,58 @@ Original question: how does a script or controller save or open a tab file?
   selected
 - A tab-set file round-trips: saving, then opening, gives the same URLs, titles, and selection
 - A URL the scheme policy refuses keeps its tab, shows `about:blank` with an explanation, and keeps its URL
-- A file with the tab-set extension whose tag names another type is refused with a message, and a renamed tab-set
-  file behaves as "How the tag wins on open" settles
-- A program's open of a tab file behaves as "A program-chosen open of a tab file" settles
+- A file with the tab-set extension whose tag names another type is refused with a message
+- A tab-set file renamed to `.json` opens in the data viewer, and renamed back to `.uniterm-tabs` opens as tabs
+- A program's open of a tab file through `uniterm open` makes the same pane and tabs as File > Open, and loads the
+  same selected tab
+- A file past the tab threshold shows one sheet before any pane exists, naming the file and the count and listing the
+  first URLs with "and N more". Cancel makes no pane, and the same file from `uniterm open` asks the same sheet
 - A version newer than the build is refused with a message naming the version, and every earlier version opens
-- A file past the settled bound behaves as "Bounds on opening a file" settles
+- A version-1 file with an unknown top-level key and an unknown per-tab key opens with no error, and the keys are
+  ignored
+- A file over 32 MiB is refused with a message naming the limit, and only the limit plus one byte is read
+- The file is read and parsed off the main thread by the browser's prepare step, and no pane exists until the read
+  and any sheet are done. The factory takes the prepared tabs and never reads the file again
+- A Finder open with no window open still shows the threshold question, app-modal, and Cancel makes nothing
+- Threshold sheets raised by repeated `uniterm open` runs count against UTERM-015's bound on waiting questions
+- A text viewer, data viewer, and map open still route as before, with no prepare step
+- A file of 16 tabs shows the sheet, and a file of 15 does not
+- A batch of more than 10 files from `uniterm open` shows the batch sheet first, then one tab sheet per tab file past
+  the threshold, and an approved program skips neither tab sheet
+- The sheet's URLs pass the same control and bidirectional character escaping as the open approvals, and each is
+  shortened for display
+- An entry with no `url` opens as a blank tab with its title, and keeps its position and the selection
 - A plain `.json` file still opens in the data viewer, and an `.html` file opens where it did before
 
 ### M3: Program save and open
 
 **Status:** NOT STARTED
 
-- A script or controller with the settled grant saves a browser pane's tabs with the same content as the user's save
-- A program without the grant is refused with an error that names the missing power, and nothing is written
-- A program's open makes tabs as "The program call" settles, and the same tabs open as for the user's open
-- The grant appears in the approval review and the Controllers window, and revoking it stops further calls
-- An older uniterm answers the new command with a clear error, per ADR-13
+Starts after UTERM-018 M5, which builds the script file open.
+
+- A program's `save-tabs` shows the user's Save Tabs As panel for its target pane, and the file the user saves holds
+  the same content as the user's own save
+- The reply names the path written, or says the user cancelled
+- A program without pane control over the target pane, or whose target pane is outside its targets, is refused with
+  an error that names what is missing, and no panel shows
+- A second `save-tabs` while a panel is up in that window is refused
+- A script or controller with path-read, pane control, and browser navigation opens a tab file through UTERM-018's
+  script file open, into a new browser pane beside its source pane, with the same tabs, load, and sheet as the user's
+  open. The pane joins the run's owned group
+- The same open without pane control fails with the not-found error, and makes no pane
+- The same open without browser navigation is refused before any sheet or pane, with an error naming the power
+- A script open of a file past the threshold checks its powers before the sheet shows, and a cancelled sheet replies
+  with a distinct cancelled result
+- A second script open into a window while a script open's threshold sheet is up is refused
+- After the user confirms the threshold sheet, path-read, pane control, browser navigation, and the source pane are
+  checked again
+  before the pane is made, per ADR-14 P11. Any that was revoked or closed meanwhile makes no pane and replies with an
+  error
+- A script open with no room beside its source pane fails before any sheet shows
+- A file whose selected entry has no `url` still needs browser navigation to open from a script
+- Revoking pane control or browser navigation stops further calls
+- An older uniterm answers the new command with a clear error, an unsupported schema version or an unknown command,
+  per ADR-13
 
 ## Decision Log
 
@@ -403,6 +562,69 @@ Original question: how does a script or controller save or open a tab file?
 - 2026-11-22 (autonomous): The third pass confirmed those fixes. It found that "A program cannot open a tab file
   through these paths" also refuses the user's own shell and `/usr/bin/open`, so that option gained a leaves-undone
   line. This fix was not re-checked, since the critique loop's three passes were spent.
+- 2026-11-22: Review start: 3 milestones, 9 settled decisions, 7 risks, no `**Live after:**` lines or row gates, 8 open
+  questions; one scope statement, that the format holds tab sets only. Baseline is the commit "Label what UTERM-049's
+  refuse-program-opens option refuses". The user asked for an autonomous review of every open question.
+- 2026-11-22 (autonomous): The tab-set format uses `.uniterm-tabs` and `dev.uniterm.tabs`, and its in-file tag is that
+  identifier. `text/uri-list` is imported as `dev.uniterm.uri-list`. A name in the IETF's namespace would be coined, not
+  shared. "The tab-set format carries an extension and an in-file tag" gave `uniterm.tabs` as an example tag. It now
+  points at this decision. The published-names risk now says the `text/uri-list` identifier can change.
+- 2026-11-22 (autonomous): Version 1 of the tab-set format holds URL, title, and the selected tab only. Readers ignore
+  unknown keys, and only a change an older reader would misread bumps the version. An M2 check pins the unknown-key
+  rule.
+- 2026-11-22: The user chose that a program's open of a tab file behaves as the user's, and that a file past a tab
+  threshold asks once in a sheet before anything is made, for every source. A launchd job with no Full Disk Access
+  read uniterm's cookie file, so a program running as the user gains nothing from a signed-in load. "An opened file
+  makes a new pane and loads lazily" said "An open a program chose, through `uniterm open` or Launch Services, still
+  loads the selected tab today", and its rationale said the open is bounded "without a cap or a prompt". The risk of a
+  program's signed-in load is now accepted at low impact. "Bounds on opening a file" now settles the threshold.
+- 2026-11-22 (autonomous): A tab with nothing storable is written as an entry with no `url`, keeping its title. `url`
+  is optional from version 1. `.uris` and bookmark saves leave it out, and a save in those formats with nothing
+  storable is refused. Skipping tabs would have needed a selection rule and could write an empty set the open refuses.
+- 2026-11-22 (autonomous): The tab threshold is 15, as Firefox and Chrome use for the same operation. Tab files are
+  bounded at 32 MiB, read off the main thread before any pane exists, and Save Tabs As refuses a file past the same
+  limit. No tab ceiling applies to a confirmed open. A confirmed huge open still stalls on two filed bugs. The open now
+  needs a read step before the applet's factory. The critic ranked 15 first and the app's batch threshold of 10 second.
+- 2026-11-22 (autonomous): A program saves tabs through a `save-tabs` command that shows the user's Save Tabs As panel,
+  under the ask-user power and ADR-14's targets. No path-write power is added. "The program call" is now "How a program
+  opens a tab file", the open half. The risk of a program call widening writes drops to low likelihood.
+- 2026-11-22: The user chose that the extension routes a file and the tag only validates what the browser receives.
+  "The tab-set format carries an extension and an in-file tag" said "The tag decides what the file is. When the
+  extension and the tag disagree, the tag wins." Its rationale said the tag keeps "a renamed file, a piped script
+  output, or pasted text self-describing".
+- 2026-11-22 (addition): The user chose that programs open tab files through UTERM-018 M5's script file open, which may
+  make a pane under pane control for an applet whose open always makes one. UTERM-018 is amended to match, and M3 now
+  starts after UTERM-018 M5. It brings in building UTERM-018 M5 and amending its "a script open never creates a pane".
+- 2026-11-22 (autonomous): Save Tabs As has no default key. Applet menu keys run before web content, so any default
+  would take the key from pages, and Cmd-Shift-S means Save As for a document with a Save.
+- 2026-11-22: The coherence review found that a Janet script denied network access could open a tab file it wrote and
+  make uniterm load a URL it chose. The cookie-file reasoning holds only for unsandboxed processes. The user chose that
+  a script's open of a tab file needs browser navigation, as a seeded layout URL does under UTERM-005. "A program-chosen
+  open of a tab file" said "No gate, refusal, or approval wording is specific to tab files or to programs".
+- 2026-11-22 (autonomous): The coherence review found that `save-tabs` rested on the ask-user power, which means a
+  Questions form and passes for most programs. It now needs pane control, and the user's pick in the panel authorizes
+  the write. "Scripts and controllers can save and open tab files" said "Writing the user's files is not a C1 effect
+  under ADR-14, so the save needs an authenticated requester and an explicit, revocable grant under P7". The save
+  decision said "The command needs the ask-user power, since it puts the user in front of a panel".
+- 2026-11-22 (autonomous): The coherence review's other fixes. A pane a script open makes joins the run's owned group,
+  and its tabs are not controller tabs. A second program open while a threshold sheet is up is refused, as ADR-14 P15
+  asks. The read step before the factory is now an optional prepare step in the applet contract: the factory takes the
+  prepared source and never reads the file again. "Bounds on opening a file" said "The browser's open reads and parses
+  the file before the router asks the applet's factory for a pane". Two risks joined: the reliance on proposed ADR-15,
+  and M3's dependency chain. The critic's dissent on the narrower script-pane rule is kept in the settled entry.
+- 2026-11-22 (autonomous, provisional): `save-tabs` supersedes in part UTERM-005's "Control" rule that every browser
+  command needs a browser permission and acts only on the controller's own tabs. UTERM-005 is implemented, so its text
+  is not edited until the user confirms this at the review gate. The browser-navigation gate for a script open now
+  lives in UTERM-018 M5, whatever the file holds. The one-sheet-per-window bound covers script opens only.
+- 2026-11-22 (autonomous): Risk review. Every risk carries a likelihood, an impact, and a mitigation or acceptance. The
+  `save-tabs` command joined as a one-way door, mitigated by its versioned schema. No risk is high likelihood and high
+  impact. The proposal loop converged on its third pass.
+- 2026-11-22: No decision in this review earns an ADR. The browser-navigation gate on script opens applies ADR-14 P8.
+  The format, extension, and identifiers are mechanisms, not invariants. The threshold sheet and the prepare step each
+  shape one component.
+- 2026-11-22: Review gate: kept all. The user confirmed that `save-tabs` needs pane control and saves every tab,
+  superseding in part UTERM-005's "Control". UTERM-005 carries the marker.
+- 2026-11-22: The user accepted the proposal.
 
 ## References
 
@@ -411,7 +633,7 @@ Original question: how does a script or controller save or open a tab file?
   actions
 - [ADR-05](../adr/ADR-05-applet-lifecycle-events-and-applet-responses.md): the applet owns its tabs
 - [ADR-06](../adr/ADR-06-layout-file-versioning-and-schema-ownership.md): the version pattern this format follows
-- [ADR-08](../adr/ADR-08-ui-responsiveness.md): a small, bounded write may run on the main thread
+- [ADR-08](../adr/ADR-08-ui-responsiveness.md): the save's write runs off the main thread
 - [ADR-13](../adr/ADR-13-outside-wires-stay-compatible-across-versions.md): the program call's wire versions
 - [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): P7 grants, P8 separate powers, P15 bounded reach,
   C1 effects that need no grant

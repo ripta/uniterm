@@ -2,7 +2,7 @@
 
 **Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-20
+**Updated:** 2026-11-22
 
 ## Dependencies
 
@@ -322,7 +322,7 @@ Original question, "Control levels": which UTERM-004 levels the browser supports
 navigate and reload. UTERM-004 has since replaced levels with two access modes and an independent exec driver.
 
 Decision: the browser supports remote-controlled and disconnected, and no exec driver. Its commands need two browser
-permissions of their own, and act only on tabs the controller opened.
+permissions of their own, and act only on tabs the controller opened. Superseded in part by UTERM-049; see Decision Log.
 
 - Exec is refused before anything starts, per UTERM-004.
 - The commands are open a new tab with a URL, navigate, reload, back, forward, select a tab, and read URLs and titles.
@@ -1693,6 +1693,8 @@ Starts after UTERM-004 M6.
   behave as the user's New Tab, typed address, toolbar buttons, and tab click do, so "Control" and M8 no longer keep the
   keyboard from a command, refuse a move for focus or unsent input, skip the resend question, or ask for every download
   and handoff.
+- 2026-11-22: "Control" superseded in part by UTERM-049. Its `save-tabs` command needs pane control alone and
+  saves every tab in the pane, since the user's pick in the save panel decides that anything is written.
 
 ## References
 
