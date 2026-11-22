@@ -185,16 +185,15 @@ they do not know, and only a change in meaning bumps the version.
 
 ### Tabs with nothing storable
 
-Original question: some tabs have no URL to save. What does the file hold for them, and what happens to the selection
-when the selected tab is such a tab?
+Original question: a tab whose record holds no storable URL has nothing to save. What does the file hold for it, and
+what happens to the selection when the selected tab is such a tab?
 
-A tab's layout record keeps its last storable page. A tab that moved from an https page to a `blob:` page still holds
-the https page. The empty cases are narrower: a tab that never loaded, a pop-up that opened straight on `blob:` or
-`data:`, a tab whose only page was over 32 KiB, and a tab an opened file filled with a refused URL.
+Each tab saves its record's last storable page, per "Saved values reuse the layout's filters". A tab that moved from
+an https page to a `blob:` page still saves the https page. The empty cases are narrower: a tab that never loaded, a
+pop-up that opened straight on `blob:` or `data:`, a tab whose only page was over 32 KiB, and a tab an opened file
+filled with a refused URL.
 
-- **Save the record as the layout does.** Each tab saves its last storable page. A tab with none is skipped in every
-  format, and the selection moves as in "Skip the tab".
-- **Skip the tab.** The file lists only storable tabs. When the selected tab is skipped, the nearest kept tab before it
+- **Skip the tab.** The file lists only tabs whose record has a storable URL. When the selected tab is skipped, the nearest kept tab before it
   is selected, or the first.
 - **Write an empty entry.** The tab-set file keeps the tab count and position, and opening it back makes a blank tab.
   `text/uri-list` and bookmark HTML cannot carry an empty entry, so they skip it either way.
@@ -223,7 +222,8 @@ Original question: the settled format decision says the tag decides what a file 
 the file's system type, which comes from its extension, and reads no content. How does the tag win on open?
 
 - **The browser's reader checks the tag.** A file routed to the browser is refused unless its tag is a tab set. A tab
-  set renamed to `.json` goes to the data viewer, and the user renames it back or uses Open With. Leaves undone: the
+  set renamed to `.json` goes to the data viewer, and the user must rename it back, since uniterm's Open With lists
+  only the data viewer for `public.json`. Leaves undone: the
   renamed-file direction of "the tag wins", and piped or pasted text, which have no entry point here.
 - **The browser also claims `public.json` at the alternate rank.** Open With then lists the browser for any `.json`
   file, and the data viewer stays the owner, so the equal-rank test passes. The browser's reader refuses a `.json`
@@ -242,9 +242,15 @@ needs that power, and UTERM-018 limits a program's URL opens to browser panes th
 can already make Safari load a URL through macOS `open`. What is new is uniterm's own website data.
 
 - **A program-chosen open loads no tab.** Every tab waits for the user to select it. The tabs are the same as for the
-  user's open. ADR-15 allows this as a difference in authority.
-- **A program-chosen open needs browser navigation.** Without the power the open is refused with a message that names
-  it.
+  user's open. Leaves undone: ADR-15, which is proposed, says a permitted action "is not weakened, delayed, or hidden".
+  This open does less than the user's, so it needs an ADR Deviations entry or an ADR-15 amendment.
+- **A program cannot open a tab file through these paths.** Browser navigation is a controller power. A `uniterm open`
+  approval and a Launch Services sender hold no controller grant, so no caller on either path can hold it. The open is
+  refused with a message that names the missing power. A program that needs it uses the controller call in "The
+  program call".
+- **The `uniterm open` approval also grants browser navigation for the open.** Its review then says the open may load
+  a page signed in as the user. This adds scope: a new power on UTERM-015's approval. Launch Services still has no
+  grant to carry it.
 - **The approval text names the page load.** The session approval stays as it is, and its review says the open may
   load a page signed in as the user.
 
@@ -260,7 +266,9 @@ Original question: how does a script or controller save or open a tab file?
   which says one granted power never silently grants another. Opening a path needs UTERM-015's path-reading power.
 - Is a new open call needed at all? A controller with its own file access can already open a tab set: it parses the
   file, sends a layout request with a seeded browser URL under browser navigation, then opens the rest as tabs. That
-  is the "no new open call" candidate.
+  is the "no new open call" candidate. Leaves undone: the browser's `open` command loads each tab at once, so lazy
+  loading is lost. It refuses past 16 tabs per controller per pane until UTERM-039 is built. It carries no title. So
+  it cannot reproduce the user's open, which ADR-15 asks for.
 - Does the program get the save panel, or name a path? ADR-15 asks that the operation behave as the user's, which
   shows the panel. A named path has no user counterpart, which ADR-15 allows, but the grant then needs a write scope.
 - How does a program's open make a pane? UTERM-018 says a script open never creates a pane, citing UTERM-004. A tab
@@ -318,6 +326,9 @@ Original question: how does a script or controller save or open a tab file?
 - The tab-set format's version is its own, independent of the browser's layout payload version, and a golden test pins
   the version-1 bytes
 - A save of a large pane never blocks the main thread
+- A second Save Tabs As while a write is in flight, or a pane that closes during the write, behaves as the map viewer's
+  save does: one write runs at a time, and a failure alert still reaches the user
+- A stored URL string that does not parse counts as nothing storable, and never traps
 - A failed write raises an error alert naming the file, and leaves an earlier file intact
 - The tab-set type is exported in `Info.plist` and conforms to `public.json`, and the drift test passes
 - A UI test screenshot of the save panel shows the format control
@@ -334,6 +345,8 @@ Original question: how does a script or controller save or open a tab file?
 - A `.uris` file with no URLs, and a tab-set file with no tabs or a `selected` value out of range, are refused with a
   message
 - A URL over 32 KiB is not stored in an opened tab, and a title is cut to 512 characters
+- The imported `text/uri-list` type conforms only to a text type no other applet claims, and a `.uris` file whose
+  preferred type comes from another app still reaches the browser through its extension
 - The new pane holds every listed tab in order, only the selected tab loads, and each other tab loads when first
   selected
 - A tab-set file round-trips: saving, then opening, gives the same URLs, titles, and selection
@@ -378,6 +391,12 @@ Original question: how does a script or controller save or open a tab file?
   a tab file". It also found that `text/uri-list` has no system type, that adding a field could make older builds
   refuse files, and that Finder may not pick uniterm. These joined the open questions and Risks. Its edge cases were
   routed to M1 and M2 checks.
+- 2026-11-22 (autonomous): The re-check found four misstatements in the new open questions. The "loads no tab" option
+  conflicts with ADR-15 rather than fitting it. "Needs browser navigation" had two readings, now two options, one of
+  them an addition. The "no new open call" candidate loads eagerly and is capped, so it gained a leaves-undone line.
+  "Tabs with nothing storable" repeated a settled choice as a candidate, so its two skip options merged. These fixes
+  were not re-checked, since the loop's passes were limited to what the draft needed. Its concurrency, parsing, and
+  `.uris` type edge cases were routed to M1 and M2 checks.
 
 ## References
 
