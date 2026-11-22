@@ -52,6 +52,7 @@ let package = Package(
     .library(name: "ScriptRuntime", targets: ["ScriptRuntime"]),
     .library(name: "ScriptHost", targets: ["ScriptHost"]),
     .library(name: "ReplApplet", targets: ["ReplApplet"]),
+    .library(name: "QuestionsApplet", targets: ["QuestionsApplet"]),
     .library(name: "ExecDriver", targets: ["ExecDriver"]),
     // Only a debug build of the app registers the fixtures, behind UNITERM_TEST_APPLETS.
     .library(name: "AppletFixtures", targets: ["AppletFixtures"]),
@@ -234,11 +235,17 @@ let package = Package(
       dependencies: [
         "AppletKit", "ScriptHost", "ScriptWire", "StatusKit", "TerminalSurface", "Theme",
       ]),
+    // The Questions applet: the pane that shows the forms programs ask, a tab for each requester.
+    // It draws the requester's header itself and holds no script, wire, or Janet code. A host
+    // opens a form through its in-process API and hears the outcome through a callback.
+    .target(
+      name: "QuestionsApplet",
+      dependencies: ["AppletKit", "QuestionForm", "StatusKit", "Theme"]),
     .target(
       name: "AppletCatalog",
       dependencies: [
         "AppletKit", "BrowserApplet", "DataViewerApplet", "ImageViewerApplet", "MapViewerApplet",
-        "ReplApplet", "TerminalApplet", "TextViewerApplet",
+        "QuestionsApplet", "ReplApplet", "TerminalApplet", "TextViewerApplet",
       ]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
     .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
@@ -247,7 +254,7 @@ let package = Package(
       dependencies: [
         "AppletCatalog", "FileRouting", "AppletKit", "WindowKit", "BrowserApplet", "Preferences",
         "BrowserTestSupport", "TerminalApplet", "ReplApplet", "DataViewerApplet", "MapViewerApplet",
-        "ImageViewerApplet", "TextViewerApplet",
+        "ImageViewerApplet", "TextViewerApplet", "QuestionsApplet",
       ]),
     // Ends a test process whose `swift test` is gone, so a hung test cannot outlive a cancelled
     // run. Every test target links into one bundle, so one test target's dependency guards all.
@@ -303,6 +310,11 @@ let package = Package(
       name: "QuestionFormTests",
       dependencies: ["ControllerPackage", "QuestionForm", "ScriptWire", "TableTestSupport"],
       linkerSettings: [.linkedFramework("JavaScriptCore")]),
+    .testTarget(
+      name: "QuestionsAppletTests",
+      dependencies: [
+        "QuestionsApplet", "QuestionForm", "AppletKit", "StatusKit", "Theme", "AppletTestSupport",
+      ]),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
       name: "DataViewerAppletTests",

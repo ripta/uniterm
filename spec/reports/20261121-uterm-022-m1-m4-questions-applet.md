@@ -27,7 +27,7 @@ uncommitted.
 | Milestone | Run status | Commit |
 |---|---|---|
 | UTERM-022 M1: Form spec and validation | DONE | "Read and check script-asked form specs" |
-| UTERM-022 M2: Questions applet UI | QUEUED | |
+| UTERM-022 M2: Questions applet UI | DONE | "Show script-asked forms in a Questions pane" |
 | UTERM-022 M3: The ask power and the form calls | QUEUED | |
 | UTERM-022 M4: `uniterm ask` and Janet helpers | QUEUED | |
 
@@ -141,3 +141,79 @@ Freeze: one hunk with origin `other`, in UTERM-004's References. Another session
 the user.
 
 Bugs found: none outside the milestone's own code. ADR candidates: none. Deviations: none.
+
+### M2: Questions applet UI
+
+Commit: "Show script-asked forms in a Questions pane". It carries the code, the proposal's DONE status and As built
+block, and this report.
+
+M2 adds an AppKit `QuestionsApplet`. Each requester has a tab, and the tab bar shows even for one tab. A form shows a
+uniterm-drawn requester header, then the form's title, its numbered questions and content blocks, and its buttons.
+Widgets enforce M1's caps. Return, Escape, and the button roles follow "Buttons". A field's error shows on leaving it
+or on a try to submit. A new or reused tab takes focus. The pane offers an in-process API that M3 calls. A debug-only
+hook lets UI tests open forms from fixture files.
+
+The commit between M1 and M2, "Order UTERM-019 M3 after UTERM-042's tab menu", is another session's. It is not part
+of this run.
+
+Checks: `make fmt-check`, `make lint`, `make check`, `scripts/swiftpm-offline-check.sh`, `make build`,
+`make test-helper-sandbox`, and the UI test build pass. `caffeinate -dimsu make test-package` ran 3086 tests with 0
+failures and 10 existing skips. `proposals.py check` is clean.
+
+The coordinator ran `QuestionsUITests` twice. The first run passed 21 of 22. `testEveryAnswerTypeReturnsItsShape`
+failed with EPERM, writing its picked file into the app's socket folder. After the fixes, all 22 passed. Neither run
+left a crash report.
+
+The coordinator viewed the screenshots of one form and of two forms, in light and dark. The header band, the tab bar,
+the numbered questions, the notice block, the radios with an Other field, and the disabled primary button all render
+as intended. Focus sits on the first field. The user's own look at the pane is left to the user.
+
+Test cost: the new package test files run in about 1 second together. About half of that is the first AppKit window
+in the process. `QuestionsUITests` runs in about 105 seconds for 22 tests.
+
+Best guesses, all in the proposal's 2026-11-21 Decision Log entry:
+
+1. A restored or reopened Questions pane with no tab shows an empty state, "No questions are open". It does not close
+   itself. A window whose layout holds only a Questions pane would otherwise close at restore. "The Questions pane" and
+   the M2 check were amended in place.
+2. The tab cap is 8. It counts only open forms against a newcomer, and the host may pass another number. The eviction
+   pick is built and tested in a pure `QuestionsBook`.
+3. The API for M3: `open(spec, for:resolved:)` returns opened or busy, and the callback gets a `FormOutcome` once.
+   `end(requester:)` resolves an open form as ended and closes its tab. `discard(tab:)` resolves it as ended and keeps
+   the tab. `askingPaneDidClose(forRequester:)` updates the header. Closing a pane or a tab dismisses open forms.
+4. Widget thresholds: a `choice` shows radios for 5 entries or fewer, and a pop-up above that. A `multi` shows
+   checkboxes up to 8, and a scrolling box above that. A `boolean` with no default is a checkbox with a mixed state.
+5. A question caption reads "Question N of M · Required" or "· Optional".
+6. The `questions` type has no remote control, no launcher entry, and no New Tab.
+7. When the first control refuses focus, the keyboard goes to the form panel. Return and Escape then still reach the
+   form.
+8. The arrival status line reads "<requester> is asking you a question." It carries no script text.
+
+Deviation: the plan named the create factory too. The implementer left the `.hosted` create case out. A script's layout
+request of kind `questions` would otherwise build an empty Questions pane. M3 places the applet itself. The Decision Log
+records it.
+
+Review findings:
+
+- The As built block did not say who looks at the pane in light and dark. Fixed: it says the coordinator viewed the
+  screenshots, and the user's look is left to the user.
+- `end` after the pane closed called `appletDidExit` on a closed applet (PLAUSIBLE). The trace confirmed it. Fixed:
+  every entry point is a no-op after close, and close empties the book. A test covers it.
+- A VoiceOver user could not reach the try-to-submit on a disabled button, and shown errors were not announced
+  (PLAUSIBLE). The trace confirmed it. Fixed: an accessibility action runs the try. A shown error becomes the field's
+  help, and a failed try posts an announcement.
+- The color well's Escape monitor acted in any window (PLAUSIBLE). The trace confirmed it. Fixed: it acts only in the
+  color panel or the form's window.
+- Return and Escape were swallowed when the form had no matching button. Fixed: they pass up.
+- A comment would go stale at M3. Fixed.
+- Two tests covered the same eviction rule. Fixed: the applet-level test now covers the tab leaving and its panel being
+  freed. A new test checks that a closed tab and a closed pane free their panels.
+
+`adr-impact` found no conflicts. It noted two weaker candidates: closing a pane dismisses an open form without asking,
+and the applet is program-only. Neither passes the ADR bar. The proposal already records both.
+
+Freeze: only the UTERM-004 hunk with origin `other`. `spec/proposals/UTERM-043-pause-controllers.md` is modified in the
+working tree by another session. The run leaves it alone.
+
+Bugs found: two in the milestone's own new code, both fixed before commit and covered by tests that failed first. ADR
+candidates: none.

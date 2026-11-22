@@ -55,7 +55,8 @@ Decision: one Questions pane per window holds every open form in that window.
 - The applet uses the existing pane tab bar, `AppletTabBar`. Tab switching uses the same keys as other tabbed panes,
   and those keys stay declared applet commands under ADR-04.
 - The pane's description holds no form content and no requester binding. A restored or reopened Questions pane is
-  empty, per ADR-03.
+  empty, per ADR-03. It shows an empty state that says so, and it stays until the user closes it. Amended 2026-11-21;
+  see Decision Log.
 
 Rationale: one inbox per window keeps several askers in one place. Opening beside the asker keeps the form near its
 context. Tabs that always show give uniterm a title the script cannot draw.
@@ -601,16 +602,16 @@ None.
 
 ### M2: Questions applet UI
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-20; see Decision Log.
+Amended 2026-11-21; see Decision Log.
 
 - The Questions pane shows a tab per form, with a tab bar even for one form, and uniterm-drawn requester chrome
 - Every answer type and content block renders and returns the answer shape in the table
 - Return, Escape, and the button roles behave as "Buttons" says, including in multiline fields and open pickers
 - Return, or a click on a disabled validating button, counts as trying to submit. It shows every error and moves focus
   to the first one
-- A restored or reopened Questions pane with no tab closes, or shows an empty state, and never sits blank
+- A restored or reopened Questions pane has no tab and shows an empty state, and never sits blank
 - A new requester's form opens its tab, which takes focus as a tab the user opens does. Its fields take keys at once
 - A tab that closes, however it closes, leaves the pane as a tab the user closes does
 - A requester's next form in its own tab selects that tab and takes focus, and its fields take keys at once, with no
@@ -621,6 +622,43 @@ Amended 2026-11-20; see Decision Log.
   as soon as the input is valid. Validating buttons stay disabled until the form passes
 - The user looks at the pane in light and dark mode and confirms the layout and the chrome's contrast with permission
   prompts
+
+**As built:**
+
+- The pane is a new AppKit target, `QuestionsApplet`, with no SwiftUI. Its type is `questions`. It opens no file and
+  takes no remote control. It has no launcher entry and no New Tab. Its commands are the tab keys the terminal and the
+  browser share, so a user's remap of a tab item covers it.
+- The in-process API for M3 opens a form for a requester key, with the requester's name and asking pane as the host
+  established them, and reports the outcome once through a callback. A requester with an open form and a pane at its cap
+  are refused as busy, and a closed pane is refused as unavailable. A requester's next form reuses its tab. `end`
+  resolves an open form as ended and closes the tab. `discard` resolves it as ended and keeps the tab. The pane's close
+  resolves every open form as dismissed.
+- The tab rules are a pure tab book that the tests drive without a window. It holds the cap, the order in which tabs
+  resolved, and the pick of the tab that gives way, which is the oldest unselected resolved tab. The applet applies the
+  pick when a new requester arrives at the cap, so M3 only has to open forms. The cap is 8 tabs unless the host passes
+  another.
+- Widgets follow the type and the number of choices. A `choice` of up to five entries, `other` included, shows radio
+  buttons, and more show a pop-up. A `multi` of up to eight shows checkboxes, and more scroll in a box. A `boolean` is a
+  checkbox, with a third state for no answer when it has no default. A `color` is the system color well. A `file` opens
+  the system open or save panel as a sheet. Every widget holds the caps from the spec reader.
+- Return, Escape, and the button roles work as "Buttons" says. A click on a disabled validating button and a Return
+  that cannot submit both show every failing error and send the keyboard to the first one. A pop-up and a file panel
+  close on Escape without help. The color panel closes through a key monitor, since it is a window of its own.
+- A closed pane ignores every later call, and its close frees each panel, so a late `end` at run end never exits the
+  applet twice. A dimmed validating button offers the try to submit as an accessibility action. A shown error is tied
+  to its field's help text, and a failed try to submit announces what it found. Return and Escape go on to the next
+  responder when the form has no primary or cancel button to press. The color panel's Escape monitor acts only on keys
+  sent to the panel or to the form's window.
+- A form that opens in a pane whose first control refuses the keyboard, such as a pop-up without full keyboard access,
+  gives the keyboard to the form's panel. Return and Escape still reach the form.
+- The UI tests open forms through a debug-only hook, `UNITERM_TEST_QUESTIONS_DIR`, since no wire call opens a form yet.
+  The asking-pane badge and the host's choice of pane are M3's.
+- The package tests run in about a second together. About half of that is the first AppKit window of the test process.
+  `make test-cost` does not exist in this project.
+- The coordinator viewed the UI-test screenshots of one form and of two forms, in light and in dark, and the layout
+  looked right. The user's own look at the pane in both appearances is left to the user.
+- Residuals: a file sheet that is open when its form ends stays attached until the user answers it, and the answer is
+  then dropped. Nothing else was found.
 
 ### M3: The ask power and the form calls
 
@@ -828,6 +866,18 @@ Amended 2026-11-20; see Decision Log.
   Content blocks, Buttons, and `pattern` dialect text changed in place. "Content blocks" said "`table`: key and value
   pairs, such as a summary." "The `pattern` dialect" said "Every backreference refuses. The documentation lists the
   accepted grammar." "Buttons" had no rule for a form with only cancel buttons.
+- 2026-11-21 (autonomous, work-queue best guess): M2 settled what the proposal left open. A restored or reopened
+  Questions pane has no tab and shows an empty state. It stays until the user closes it. It does not close on its own,
+  since a window whose layout holds only a Questions pane would close at restore. "The Questions pane" said "A restored
+  or reopened Questions pane is empty, per ADR-03." M2 said "A restored or reopened Questions pane with no tab closes,
+  or shows an empty state, and never sits blank." The pane holds at most 8 tabs unless its host says otherwise. A new
+  requester's tab joins the end of the bar. `discard` ends an open form and keeps its tab, which then says so, and `end`
+  closes the tab. The `questions` type declares no remote control and has no launcher entry. A layout request for it is
+  refused as a REPL's is, since a program opens the pane through its form. A `boolean` is a checkbox with a third
+  state for no answer when it has no default. Each question's caption says Required or Optional. The tab key commands
+  carry the terminal's and the browser's titles. An optional pop-up keeps a "Choose…" item beside its default, so
+  Clear shows what the script receives. The header's pane line reads "Asked from Pane 3", and "Pane 3 closed, so the pane
+  that asked is gone" after the pane closes.
 
 ## References
 
