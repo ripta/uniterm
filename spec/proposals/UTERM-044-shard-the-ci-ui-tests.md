@@ -165,7 +165,8 @@ A class that no shard runs would silently stop running in CI.
 - When the helper sandbox checks run in their own job, both skips cover that job, and `ci` requires its result
 - Under a run-time split, every shard lists the classes in the same order, a `make test-ci` case proves the split
   covers every class once, and each shard logs its selection so a local rerun can copy it
-- Under a run-time split, each shard's class list comes from the built test bundle, and a class missing from it fails CI
+- Under a run-time split, each shard's class list comes from the built test bundle, and a class missing from it fails
+  CI
 - The measured length of a full CI run, and of a one-shard rerun, are recorded in the As built block
 
 ## Decision Log
