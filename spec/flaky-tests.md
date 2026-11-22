@@ -306,11 +306,7 @@ fixed ones.
   test does not tell the two apart.
 - Status: unresolved.
 
-## Fixed
-
 ### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
-
-Fixed by: "Scroll the short launcher either way the machine's wheel goes"
 
 - Seen: 2026-11-15, 2026-11-18, and 2026-11-19, once each in CI on PRs that did not touch the launcher. On
   2026-11-21 it failed 5 of 10 CI `app` runs, 2 of them on main.
@@ -320,12 +316,21 @@ Fixed by: "Scroll the short launcher either way the machine's wheel goes"
 - Evidence: `LauncherUITests.swift:199` failed with "the scroll wheel did not scroll the list", with uniterm frontmost
   and the launcher's filter box focused. The failure screenshot showed the list still at its top. Waiting for the list
   to settle did not help. Locally it passed 15 of 15, and 10 of 10 with legacy scrollers forced as CI shows them.
-- Cause: the test sent one wheel of -1000 to a list that starts at the top. Which way that moves the list follows the
-  machine's scroll direction setting, and CI runners differ in it. When the wheel went up, the list could not move.
-  Flipping the sign to +1000 on a local machine failed the first run with CI's message.
-- Fix: the wheel goes the other way when the first one leaves the last entry out of view. A list that scrolls neither
-  way still fails. The image viewer's scroll test already works the same way. After the fix, the launcher tests passed
-  7 of 7, and 3 of 3 with the two wheels swapped.
+- First suspected cause: the test sent one wheel of -1000 to a list that starts at the top. Which way that moves the
+  list follows the machine's scroll direction setting, and CI runners differ in it. When the wheel went up, the list
+  could not move. Flipping the sign to +1000 on a local machine failed the first run with CI's message.
+- Tried: "Scroll the short launcher either way the machine's wheel goes". The wheel goes the other way when the first
+  one leaves the last entry out of view. A list that scrolls neither way still fails. After that change, the launcher
+  tests passed 7 of 7 locally, and 3 of 3 with the two wheels swapped.
+- Seen again after that change: 2026-11-21, at `LauncherUITests.swift:209`, the assertion after both wheels. It failed
+  CI on the merge of #82 into main, which carried the change, and on the first `app` runs of #83 and #87. Neither PR
+  touches the launcher. #83's rerun passed. So the scroll direction is not the whole cause.
+- Evidence: #83's CI step log shows both wheels sent to the launcher's only scroll view, 80 pt tall. Its screenshot
+  before the wheels shows the list at its top, as expected. No screenshot was kept after them.
+- Status: unresolved. The failure now reports the scroller's value, the list's frame, and the last entry's frame before
+  the wheels and after each one. It also attaches a screenshot after each wheel that left the last entry out of view.
+
+## Fixed
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
 

@@ -199,15 +199,28 @@ final class LauncherUITests: UnitermUITestCase {
     // runners differ in it. The list starts at the top, so a wheel that goes up moves nothing.
     // The wheel then goes the other way. A list that scrolls neither way still fails.
     let list = pane.scrollViews.firstMatch
+    var wheels = ["before: \(scrollReport(list, last: last))"]
 
     list.scroll(byDeltaX: 0, deltaY: -1000)
 
     if !waitUntilHittable(last, timeout: 2) {
+      wheels.append("after -1000: \(scrollReport(list, last: last))")
+      attach(window, named: "launcher-quarter-height-first-wheel")
+
       list.scroll(byDeltaX: 0, deltaY: 1000)
     }
 
+    let scrolled = waitUntilHittable(last)
+
+    if !scrolled {
+      wheels.append("after +1000: \(scrollReport(list, last: last))")
+      attach(window, named: "launcher-quarter-height-second-wheel")
+    }
+
     XCTAssertTrue(
-      waitUntilHittable(last), "the scroll wheel did not scroll the list. \(focusReport(app))")
+      scrolled,
+      "the scroll wheel did not scroll the list. \(wheels.joined(separator: "; ")). "
+        + focusReport(app))
     Thread.sleep(forTimeInterval: 0.5)
     attach(window, named: "launcher-quarter-height-wheel")
 
@@ -220,6 +233,16 @@ final class LauncherUITests: UnitermUITestCase {
     XCTAssertTrue(waitUntilHittable(last), "the last entry is out of sight. \(focusReport(app))")
     Thread.sleep(forTimeInterval: 0.5)
     attach(window, named: "launcher-quarter-height-last")
+  }
+
+  /// Where the list stands, for a wheel that seemed to move nothing. The scroller's value says
+  /// whether the list moved at all, and the last entry's frame against the list's says whether it
+  /// moved without the entry turning hittable.
+  private func scrollReport(_ list: XCUIElement, last: XCUIElement) -> String {
+    let scroller = list.scrollBars.firstMatch
+    let position = scroller.exists ? "\(scroller.value ?? "none")" : "no scroller"
+
+    return "scroller \(position), list \(list.frame), last entry \(last.frame)"
   }
 
   private func attach(_ element: XCUIElement, named name: String) {
