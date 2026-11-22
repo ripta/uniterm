@@ -71,6 +71,14 @@ public enum ControllerPermissionKind: Hashable, Sendable {
   /// not name is left out.
   case pathRead(ReadScope)
 
+  /// The controller opens browser tabs and navigates them. That is network access signed in as
+  /// the user, whatever the controller's own sandbox allows.
+  case browserNavigation
+
+  /// The controller reads the addresses and titles of the browser tabs it opened. An address may
+  /// carry a token.
+  case browserRead
+
   /// The kind as the descriptor and the policy file spell it.
   public var name: String {
     switch self {
@@ -80,6 +88,8 @@ public enum ControllerPermissionKind: Hashable, Sendable {
     case .clipboardWrite: return "clipboard-write"
     case .hostLaunch: return "host-launch"
     case .pathRead: return "path-read"
+    case .browserNavigation: return "browser-navigation"
+    case .browserRead: return "browser-read"
     }
   }
 
@@ -88,7 +98,9 @@ public enum ControllerPermissionKind: Hashable, Sendable {
   /// path-read once, with every directory in one scope.
   var scopeName: String {
     switch self {
-    case .paneControl, .clipboardRead, .clipboardWrite, .pathRead: return ""
+    case .paneControl, .clipboardRead, .clipboardWrite, .pathRead, .browserNavigation,
+      .browserRead:
+      return ""
     case .capability(let name): return name
     case .hostLaunch(let scope): return scope.executable
     }
@@ -127,6 +139,8 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
   public static let paneControl = ControllerPermission(.paneControl)
   public static let clipboardRead = ControllerPermission(.clipboardRead)
   public static let clipboardWrite = ControllerPermission(.clipboardWrite)
+  public static let browserNavigation = ControllerPermission(.browserNavigation)
+  public static let browserRead = ControllerPermission(.browserRead)
 
   public static func capability(_ name: String) -> ControllerPermission {
     ControllerPermission(.capability(name))
@@ -148,6 +162,8 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
     ControllerPermissionMeaning(kind: "clipboard-write", version: 1, covers: [1], format: 2),
     ControllerPermissionMeaning(kind: "host-launch", version: 1, covers: [1], format: 2),
     ControllerPermissionMeaning(kind: "path-read", version: 1, covers: [1], format: 2),
+    ControllerPermissionMeaning(kind: "browser-navigation", version: 1, covers: [1], format: 2),
+    ControllerPermissionMeaning(kind: "browser-read", version: 1, covers: [1], format: 2),
   ]
 
   /// The meaning of a pair, or nil when this build does not know it.
@@ -185,6 +201,8 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
         + scope.environmentKeys.joined(separator: ",")
     case .pathRead(let scope):
       return "5" + scope.directories.joined(separator: "\u{0}")
+    case .browserNavigation: return "6"
+    case .browserRead: return "7"
     }
   }
 }

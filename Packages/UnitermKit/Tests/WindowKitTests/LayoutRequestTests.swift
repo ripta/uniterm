@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import BrowserApplet
 import LayoutKit
 import PaneModel
 import ScriptHost
@@ -550,6 +551,56 @@ final class LayoutRequestTests: XCTestCase {
       await expectError(.notFound) {
         try fixture.prepareSend(
           to: ScriptPaneReference(window: window.scriptWindowID, pane: UInt64(id)), as: caller)
+      }
+    }
+  }
+}
+
+/// The browser seed a layout reads. The window's tests prove the seed's authority and what a
+/// seeded pane does. These prove only what the request reads, with no window.
+final class LayoutSeedParseTests: XCTestCase {
+  private let declarations = [BrowserApplet.typeDeclaration]
+
+  private func parse(_ node: String) throws -> LayoutRequest {
+    try LayoutRequest.parse(node, window: 1, declarations: declarations)
+  }
+
+  /// Catches a seed that is read with another rule than a controller's open command, so the two
+  /// disagree about what loads. A scheme-less host gets HTTPS and loopback gets HTTP.
+  func testASeedReadsUnderTheControllerRule() throws {
+    let cases: [(text: String, url: String)] = [
+      ("https://example.com/a", "https://example.com/a"),
+      ("  HTTP://Example.com/b  ", "HTTP://Example.com/b"),
+      ("example.com/c", "https://example.com/c"),
+      ("localhost:8080/d", "http://localhost:8080/d"),
+    ]
+
+    for (text, expected) in cases {
+      let request = try parse(#"{"open":"browser","url":"\#(text)"}"#)
+      let pane = try XCTUnwrap(request.panes.first)
+
+      XCTAssertTrue(request.needsBrowserNavigation, text)
+      XCTAssertEqual(pane.choice, .browserPage(try XCTUnwrap(URL(string: expected))), text)
+    }
+
+    let plain = try parse(#"{"open":"browser"}"#)
+
+    XCTAssertFalse(plain.needsBrowserNavigation)
+    XCTAssertEqual(plain.panes.first?.choice, .browser)
+  }
+
+  /// Catches a seed that reads a refused address, text that is not an address, a url on another
+  /// kind of pane, or a url that is not text.
+  func testASeedThatTheRuleRefusesIsABadArgument() {
+    for node in [
+      #"{"open":"browser","url":"javascript:alert(1)"}"#,
+      #"{"open":"browser","url":" JAVASCRIPT:alert(1) "}"#, #"{"open":"browser","url":"data:x"}"#,
+      #"{"open":"browser","url":"file:///etc/hosts"}"#,
+      #"{"open":"browser","url":"two words"}"#, #"{"open":"browser","url":""}"#,
+      #"{"open":"browser","url":3}"#, #"{"open":"terminal","url":"https://example.com"}"#,
+    ] {
+      XCTAssertThrowsError(try parse(node), node) { error in
+        XCTAssertEqual((error as? ScriptCallError)?.kind, .badArgument, node)
       }
     }
   }

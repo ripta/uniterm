@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import ControllerPackage
 import Foundation
 import PaneModel
 import ScriptHost
@@ -223,6 +224,8 @@ public final class WindowScripting: ScriptWindowAPI {
       throw ScriptCallError.refused("the pane's applet cannot open another tab")
     }
 
+    if let refusal = opener.programOpenRefusal { throw ScriptCallError.refused(refusal) }
+
     if directory != nil, !opener.tabsStartInDirectory {
       throw ScriptCallError.badArgument("the pane's tabs have no directory")
     }
@@ -312,6 +315,7 @@ public final class WindowScripting: ScriptWindowAPI {
     command: String,
     arguments: String, caller: ScriptCaller,
     access: @escaping @MainActor () -> ReadAccess = { .none },
+    powers: @escaping @MainActor () -> Set<ControllerPermission> = { [] },
     stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
     let parsed: JSONValue
@@ -335,6 +339,8 @@ public final class WindowScripting: ScriptWindowAPI {
 
     let paths = controller.dispatcher.pathArguments(of: submission, for: applet)
     let opened = await walk(paths, for: caller.connection, in: access())
+    let grant = Self.grant(of: caller)
+    let tab = Self.targetTab(of: target, in: controller)
 
     let result = await withCheckedContinuation { continuation in
       controller.dispatcher.submit(
@@ -364,12 +370,16 @@ public final class WindowScripting: ScriptWindowAPI {
           }
         },
         reads: CommandReads(opened: opened, access: access),
+        caller: { CommandCaller(identity: grant, permissions: Self.appletPermissions(powers())) },
+        tab: tab,
         reply: { continuation.resume(returning: $0) })
     }
 
     switch result {
     case .success(let value):
-      return try Self.scriptValue(value, depth: 0)
+      return try Self.scriptValue(
+        Self.referencingTab(in: value, pane: pane, controller: controller, applet: applet),
+        depth: 0)
 
     case .failure(let error):
       throw ScriptCallError(Self.kind(of: error.code), error.message)
@@ -386,6 +396,7 @@ public final class WindowScripting: ScriptWindowAPI {
   /// and the reply has one reference for each leaf of the layout, in order.
   public func requestLayout(
     anchor target: ScriptTarget, layout: String, caller: ScriptCaller,
+    powers: @escaping @MainActor () -> Set<ControllerPermission> = { [] },
     stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue {
     let controller = try window(of: caller)
@@ -397,6 +408,10 @@ public final class WindowScripting: ScriptWindowAPI {
       request, anchor: anchor, owner: GroupOwner(connection: caller.connection),
       authorize: { [self] in
         try stillAllowed()
+
+        if request.needsBrowserNavigation, !powers().contains(.browserNavigation) {
+          throw ScriptCallError.refused(LayoutRequest.navigationRefusal)
+        }
 
         let (now, nowAnchor, _) = try resolve(target, for: caller)
 
@@ -464,9 +479,79 @@ public final class WindowScripting: ScriptWindowAPI {
     switch code {
     case .unsupportedApplet, .unsupportedVersion: return .unsupported
     case .unknownCommand, .badArgument: return .badArgument
-    case .refused, .busy: return .refused
+    case .refused, .permissionMissing, .notOwned: return .refused
+    case .busy, .keyFocused, .unsentInput: return .busy
     case .notFound: return .notFound
     case .failed: return .failed
+    }
+  }
+
+  /// The grant a connection's commands act under. Ownership an applet keeps for a caller keys on
+  /// it. A group the connection owns carries the same description as its owner, so an applet told
+  /// of the grant's end by owner finds the same value.
+  static func grant(of caller: ScriptCaller) -> AppletCaller {
+    AppletCaller(grant: GroupOwner(connection: caller.connection).description)
+  }
+
+  /// The browser powers among the permissions a caller holds, by the permission's name.
+  static func appletPermissions(_ held: Set<ControllerPermission>) -> Set<AppletCommandPermission> {
+    Set(held.compactMap { AppletCommandPermission(rawValue: $0.kindName) })
+  }
+
+  /// The controller permission that grants a command's power.
+  static func controllerPermission(for power: AppletCommandPermission) -> ControllerPermission {
+    switch power {
+    case .browserNavigation: return .browserNavigation
+    case .browserRead: return .browserRead
+    }
+  }
+
+  /// The tab a target names, when it names one.
+  private static func targetTab(of target: ScriptTarget, in controller: MainWindowController)
+    -> AppletTabID?
+  {
+    guard case .pane(let reference) = target, let number = reference.tab else { return nil }
+
+    return controller.scriptTabNumbers.tab(for: number)
+  }
+
+  /// A reply that names a tab by its applet-side ID becomes a full reference, since a script
+  /// addresses a tab by its number in the window. Any other reply passes as it is.
+  private static func referencingTab(
+    in value: JSONValue, pane: NodeID, controller: MainWindowController, applet: any Applet
+  ) -> JSONValue {
+    guard case .object(var fields) = value, case .string(let text)? = fields["tab"],
+      let id = AppletTabID(reply: text), applet.publishedTabs.contains(id)
+    else { return value }
+
+    fields["tab"] = .number(Double(controller.scriptTabNumbers.number(for: id)))
+    fields["window"] = .number(Double(controller.scriptWindowID))
+    fields["pane"] = .number(Double(pane.rawValue))
+
+    return .object(fields)
+  }
+
+  public func extraPower(for call: ScriptCall, caller: ScriptCaller) -> ControllerPermission? {
+    switch call {
+    case .sendCommand(let target, _, _, let command, _):
+      guard let (_, _, applet) = try? resolve(target, for: caller),
+        let handler = applet as? any AppletCommandHandling,
+        let power = handler.commandSchema.command(named: command)?.permission
+      else { return nil }
+
+      return Self.controllerPermission(for: power)
+
+    case .requestLayout(_, let layout):
+      guard let controller = try? window(of: caller),
+        let request = try? LayoutRequest.parse(
+          layout, window: caller.window, declarations: controller.appletTypes),
+        request.needsBrowserNavigation
+      else { return nil }
+
+      return .browserNavigation
+
+    default:
+      return nil
     }
   }
 

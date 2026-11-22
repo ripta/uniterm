@@ -871,6 +871,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     for (pane, (applet, asked)) in zip(outcome.created, zip(staged.applets, request.panes)) {
       if asked.access != .disconnected {
         applet.controlDidChange(paneControls.set(asked.access, for: pane))
+
+        (applet as? any CallerOwning)?.adoptFirstTab(
+          for: AppletCaller(grant: staged.owner.description))
       }
 
       if let exec = asked.exec {

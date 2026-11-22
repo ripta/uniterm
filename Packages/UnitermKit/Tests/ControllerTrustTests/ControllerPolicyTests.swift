@@ -427,6 +427,58 @@ final class ControllerPolicyTests: XCTestCase {
       "the policy file format did not change")
   }
 
+  // MARK: Browser powers
+
+  /// Catches an approval of pane control, or of one browser power, that covers another power. ADR-09
+  /// keeps one power from granting another, and an approval that predates the browser kinds holds
+  /// neither of them.
+  func testBrowserPowersAreCoveredOnlyByThemselvesAtAKnownVersion() {
+    let both: Set<ControllerPermission> = [.browserNavigation, .browserRead]
+
+    XCTAssertEqual(PermissionContainment.uncovered(both, by: [.paneControl]).count, 2)
+    XCTAssertEqual(
+      PermissionContainment.uncovered([.browserRead], by: [.paneControl, .browserNavigation]),
+      [.browserRead])
+    XCTAssertEqual(
+      PermissionContainment.uncovered([.browserNavigation], by: [.paneControl, .browserRead]),
+      [.browserNavigation])
+    XCTAssertEqual(PermissionContainment.uncovered(both, by: both), [])
+    XCTAssertEqual(
+      PermissionContainment.uncovered(
+        [ControllerPermission(.browserRead, version: 2)], by: both
+      ).count,
+      1, "a version this build does not know is never covered")
+  }
+
+  /// Catches a browser power lost in the file, written with a field it should not carry, or read
+  /// from a file that spells it with one.
+  func testBrowserPowersRoundTripThroughTheFile() throws {
+    let policies = [Self.policy([.paneControl, .browserNavigation, .browserRead])]
+    let bytes = ControllerPolicyFile.encode(policies)
+    let text = String(decoding: bytes, as: UTF8.self)
+
+    XCTAssertEqual(try ControllerPolicyFile.decode(bytes), policies)
+    XCTAssertTrue(text.contains("\"browser-navigation\""))
+    XCTAssertTrue(text.contains("\"browser-read\""))
+    XCTAssertTrue(text.contains("\"format\": 1"), "the policy file format did not change")
+
+    let extra = text.replacingOccurrences(
+      of: "\"kind\": \"browser-read\"", with: "\"kind\": \"browser-read\", \"directories\": []")
+
+    XCTAssertThrowsError(try ControllerPolicyFile.decode(Data(extra.utf8)))
+  }
+
+  /// Catches a stored approval from before the browser kinds that grows to cover them when the
+  /// file is read again: the kinds are new, so the old scopes name neither.
+  func testAnApprovalFromBeforeTheBrowserKindsCoversNeither() throws {
+    let before = [Self.policy([.paneControl, .clipboardRead])]
+    let decoded = try ControllerPolicyFile.decode(ControllerPolicyFile.encode(before))
+
+    XCTAssertEqual(
+      decoded[0].uncovered([.paneControl, .browserNavigation, .browserRead]),
+      [.browserNavigation, .browserRead])
+  }
+
   /// Catches a path-reading scope that an older build would read. A build that lacks the kind
   /// reads the file as a newer one: it grants nothing and writes nothing, as for any unknown kind.
   /// The test stands in for that build by naming a kind this one lacks, and checks that the current

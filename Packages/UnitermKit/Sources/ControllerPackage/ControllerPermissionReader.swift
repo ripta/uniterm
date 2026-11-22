@@ -92,6 +92,12 @@ public enum ControllerPermissionReader {
       case "clipboard-write":
         permissionValue = .clipboardWrite
 
+      case "browser-navigation":
+        permissionValue = .browserNavigation
+
+      case "browser-read":
+        permissionValue = .browserRead
+
       case "host-launch":
         guard let executable = fields["executable"], let directory = fields["directory"],
           let environment = fields["environment"]

@@ -17,8 +17,8 @@ final class BuiltInAppletsTests: XCTestCase {
   /// Catches a declaration that changes without a deliberate edit here. The terminal opens folders
   /// as the owner, the data viewer opens CSV, JSON, and `.xlsx` as the owner, the map viewer
   /// opens GeoJSON as the owner, the text viewer opens PDF, RTF, and Word as the owner, and the
-  /// REPL opens nothing. The terminal, the REPL, and the text viewer declare remote control. The
-  /// image viewer and the map viewer declare every combination.
+  /// REPL opens nothing. The terminal, the REPL, the text viewer, and the browser declare remote
+  /// control. The image viewer and the map viewer declare every combination.
   func testTheCatalogIsTheTerminalOpeningFoldersAndTheDataViewerOpeningTables() {
     XCTAssertEqual(
       BuiltInApplets.declarations,
@@ -39,7 +39,8 @@ final class BuiltInAppletsTests: XCTestCase {
           opens: [OpenedType("public.geojson", rank: .owner)],
           controlSupport: ControlCombination.all),
         AppletTypeDeclaration(
-          typeID: "browser", displayName: "Browser", symbolName: "safari", opens: []),
+          typeID: "browser", displayName: "Browser", symbolName: "safari", opens: [],
+          controlSupport: [.disconnected, .remoteControlled]),
         AppletTypeDeclaration(
           typeID: "image-viewer", displayName: "Image Viewer", symbolName: "photo",
           opens: [
@@ -70,7 +71,7 @@ final class BuiltInAppletsTests: XCTestCase {
 
     let expected: [String: Set<ControlCombination>] = [
       "terminal": remote, "repl": remote, "data-viewer": [.disconnected],
-      "map-viewer": ControlCombination.all, "browser": [.disconnected],
+      "map-viewer": ControlCombination.all, "browser": remote,
       "image-viewer": ControlCombination.all, "text-viewer": remote,
     ]
 
@@ -90,14 +91,14 @@ final class BuiltInAppletsTests: XCTestCase {
   }
 
   /// Catches an applet that takes applet commands before its own proposal designs them. Only the
-  /// text viewer and the image viewer adopt the command hook. The terminal and the REPL may be
+  /// browser, the text viewer, the map viewer, and the image viewer adopt the command hook. The terminal and the REPL may be
   /// remote-controlled, and still refuse every command, since only an applet that adopts the hook
   /// can take one.
-  func testOnlyTheViewersAdoptTheCommandHook() {
+  func testOnlyTheViewersAndTheBrowserAdoptTheCommandHook() {
     let types: [(String, any Applet.Type, Bool)] = [
       ("terminal", TerminalApplet.self, false), ("repl", ReplApplet.self, false),
       ("data-viewer", DataViewerApplet.self, false), ("map-viewer", MapViewerApplet.self, true),
-      ("browser", BrowserApplet.self, false), ("image-viewer", ImageViewerApplet.self, true),
+      ("browser", BrowserApplet.self, true), ("image-viewer", ImageViewerApplet.self, true),
       ("text-viewer", TextViewerApplet.self, true),
     ]
 

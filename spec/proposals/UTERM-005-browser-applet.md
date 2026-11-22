@@ -1,8 +1,8 @@
 # UTERM-005: Browser Applet
 
-**Status:** accepted
+**Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-06
+**Updated:** 2026-11-20
 
 ## Dependencies
 
@@ -388,9 +388,11 @@ Decide whether that counts as running a program under ADR-03, or whether restore
 request. Also decide what counts as running something, such as a download or a form with unsent input. On detach the
 browser pauses media, per ADR-05.
 
-Decision: the browser needs no change to the applet contract. The host gains what any new applet type needs: a launcher
-entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer. The
-factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
+Decision: the browser needs no change to the applet's lifecycle, description, or restore. Its remote commands add three
+things to the shared command contract, in the last bullet below. Amended 2026-11-20; see Decision Log. The host gains
+what any new applet type needs: a
+launcher entry, an applet choice, and a restorer branch for the browser's type, as UTERM-009 does for the data viewer.
+The factory also passes the browser the search engine setting, per "Search from the address bar", the list of HTTPS-only
 hosts, and the opener for other apps. The host also passes each pane the browser's website data store, with no
 default. Restore is settled in "What restore loads".
 
@@ -406,8 +408,14 @@ default. Restore is settled in "What restore loads".
   warning. There is no count limit, and at most 16 dialogs wait. Amended 2026-11-06; see Decision Log.
 - Running something: see "Unsent input" and "Downloads". `runningLabels` names each such tab by title, and a download
   by file name.
+- A remote command carries three things it did not before. A command's schema may name the power its caller must hold,
+  and shared dispatch refuses the command without it, at submission and again at delivery, before the applet sees it.
+  A command carries an opaque caller token that names the grant it acts under, derived by the host and never sent by
+  the caller. A command carries the tab its target named, resolved by the host to a tab the applet listed. The browser
+  keeps the tabs a token opened. A token's tabs end with its grant, and with any change of the pane's control.
 
-Rationale: the data viewer in UTERM-009 also needed no contract change, and the browser's needs fit the same contract.
+Rationale: the data viewer in UTERM-009 needed no contract change. The browser's lifecycle needs fit the same
+contract. Its three command-contract additions exist because remote control needs them.
 Holding alerts follows ADR-05's rule for what the user would notice but cannot see. Leaving media paused on reattach
 keeps a pane coming back into view from starting sound the user did not ask for.
 
@@ -1189,7 +1197,7 @@ None.
 
 ### M8: Remote control
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 Starts after UTERM-004 M6.
 
@@ -1214,6 +1222,81 @@ Starts after UTERM-004 M6.
   see Decision Log.
 - A browser pane created by a layout request starts at `about:blank`
 - Exec is refused before anything starts
+
+**As built:**
+
+- The two kinds enter descriptor format 2 at version 1 and add no format. The policy file stays at format 1, so an
+  older build reads a file that names them as a newer file and authorizes nothing. A pane-control approval stored before
+  the kinds existed covers neither of them, and a test pins that at the policy and at the run. The Janet lint counts
+  navigation as used by a sent command or a layout, and read as used by a sent command, since it cannot see either
+  schema.
+- The review says navigation is network access signed in as the user and that read returns addresses that may carry a
+  token, each only when the controller asked for that kind. Controllers & Permissions lists both through the same text
+  as the review. The permission's own wording is one clause, since the Pending Requests question lowercases it.
+- The power is gated in shared dispatch. A command's schema names its power, and the caller's held powers ride beside
+  its read access as a closure the dispatcher asks again at delivery. A power the controller never declared reaches the
+  dispatcher and gets a structured permission-missing error, so a plain script and a pane-control-only controller are
+  told the same way and never asked. A power it declared and does not yet hold is asked about with pane control's own
+  question. The remembered answer to Allow once is now a set, so a call that needs two powers asks about each in turn,
+  and the app sees both held for that call alone.
+- The four new error codes ride on two existing script failure kinds with no wire bump: permission-missing and
+  not-owned read as refused, and key-focused and unsent-input read as busy, so a script retries only the two that a
+  retry can fix. An exec driver gets the raw code string.
+- Ownership keys on the grant: the owner's description, which reads `connection N` for a script and `driver N` for a
+  driver run. It is not the connection's pane control generation, so a controller that acts from the browser pane
+  itself still loses its tabs when its run ends. The window tells the applet when an owner ends, and a new control
+  generation clears every owner. A tab a page opened, a reopened tab, and a restored tab never enter the map, and a
+  test drives each. The user typing in a controller's tab changes nothing about its owner, and the move is refused for
+  the input and not for ownership. A closed tab leaves the map.
+- A reply that names a new tab carries its applet-side ID, and the window turns it into a full reference with the tab's
+  number in the window. An exec driver names no tab in its message, so the tab commands also take an optional `tab`
+  argument that holds the same ID, and a target and an argument that disagree are refused. This is a work-queue best
+  guess: the exec message has no field for a tab, and changing that wire was outside this milestone. If wrong, a driver
+  opens tabs and reads none, and the argument goes. See Decision Log.
+- Open puts the tab after the last tab the same grant opened in the pane, or after the selected tab. The pane holding
+  the keyboard keeps its selection. Otherwise the new tab is selected. It never calls the address bar, and a select
+  refuses while the pane holds the keyboard. "Holds the keyboard" means the pane's view holds the window's first
+  responder, whether or not the window is key. The cost: a window whose only pane is the browser cannot have its
+  selected tab navigated, so a controller there works in tabs it opened behind it.
+- Skew: the four new error codes reach an exec driver as raw strings, on an error frame. Only two places throw them:
+  shared dispatch throws `permission-missing` for a command whose schema names a power, and the browser's remote
+  commands throw all four. No other applet's command names a power, so no existing command can return one. A driver
+  or script written before this build never targets the browser with success, because it had no schema. It sees an
+  unknown code on an error frame, and an error frame is a failure whatever its code. It sends no `tab` argument, so
+  its tab commands other than open are refused as a bad argument. A script reads the codes as `refused` or `busy`. On
+  a build without this milestone, the browser is not a command handler. A newer driver or script is refused with
+  `refused`, "this pane's applet takes no commands", and the authority check runs first. Nothing runs, the `tab`
+  argument is never read, and no deploy order is needed.
+- The controller's reload, back, and forward use their own methods, which set no resend intent, so a repeat of a post is
+  refused with the existing notice and never asked. A controller's load of a failed address retries as not the user's.
+  Measured on a real post result: the server's count stays one after a controller reload, and the tab's own reload on
+  the same page asks.
+- In a controller's tab every app handoff asks, `mailto:` included, and every download waits for the pane's download
+  question, whether a click or the first three. The question names the program as the cause. The user's own tabs keep
+  their rules.
+- A tab a controller opened while the pane was detached loads when the pane comes back, and every start and reattach
+  loads any owned tab that never loaded.
+- A layout's `url` takes the same rule as the open command and reaches the factory as a separate applet choice. The
+  first tab of a layout's browser pane belongs to the layout's caller when the pane is remote-controlled. A script's
+  layout and a driver's layout both need browser navigation for a seed. The window package now depends on the browser's
+  pure model for that rule.
+- The generic tab open from a script refuses a browser pane and names its open command. The user's New Tab does not
+  consult the refusal.
+- An exec driver acts under its own run: a browser power it holds comes from a question the user answered, kept for the
+  run like a clipboard grant, and cleared when the run ends or is revoked. The browser declares remote control and no
+  exec driver, and tests prove a layout with an exec for a browser pane is refused.
+- The control badge no longer covers the trailing profile button or the tab bar's new-tab button: the browser keeps both
+  clear of the host's reach.
+- The UI test serves its pages from the terminal's shell. The UI test runner is sandboxed with the network client
+  entitlement alone, so a listener in the runner accepts no connection from the app, and a first run saw no request
+  from either tab. The pages and the request log now live in a small server the shell starts.
+- Not covered. The UI test compiles and the coordinator runs it, so the badge's clearance and a page loading in an
+  unselected tab are unseen here. A grant may hold at most 16 open tabs in a pane, and the 17th open is refused as busy
+  before any effect. Nothing else bounded it: the pop-up limit covers a page's script only, and the pane has no tab cap.
+  See Decision Log. ADR-12, which the plan cited for the keyboard rules, was retracted on 2026-11-20, and its
+  principle that a program's change behaves as the user's does not match the rule here that a controller's tab never
+  takes the keyboard. The rules in this milestone stand as the proposal's own. Whether they should follow the
+  retraction is the user's to rule on.
 
 ## Decision Log
 
@@ -1580,6 +1663,27 @@ Starts after UTERM-004 M6.
 - 2026-11-11: M8 amended: browser navigation and browser read enter controller.json format 2 at version 1, per
   UTERM-019 "Permission descriptor format" and "Who builds descriptor format 2". M8 said nothing about how its kinds
   enter the descriptor, and format 1 refuses unknown kinds. UTERM-004 M6 builds format 2.
+- 2026-11-20: The command contract gains a per-command power, a caller token, and a target tab (work-queue best guess).
+  "The applet contract" said the browser needs no change to the applet contract. Remote control needs three things the
+  shared contract lacked, and ADR-14 asks that every control entry point use the same permission boundaries. A schema
+  command may name the power its caller must hold, and dispatch refuses the command without it. A command carries the
+  grant it acts under as an opaque token the host derives, so an applet keys what it keeps by the grant and CLAUDE.md's
+  rule that an attribute flows explicitly holds. A command carries the tab its target named. If wrong, the power check
+  moves into the applet, the token becomes the pane's control generation alone, and the tab rides in the arguments.
+- 2026-11-20: Tab commands take an optional `tab` argument (work-queue best guess). M8 and "Control" name no way for an
+  exec driver to address a tab, and the exec message carries no tab field. The tab commands accept the tab text that
+  `open` answers with. A script names the tab in its target, and a target and an argument that disagree are refused. If
+  wrong, a driver opens tabs and reads none, and the argument goes.
+- 2026-11-20: A grant holds at most 16 open tabs in a pane (work-queue best guess). "Control" bounds nothing about how
+  many tabs a controller opens, and each is a web view and a content process. No existing bound applies: the pop-up limit
+  counts a page's script-opened tabs, and the pane has no tab cap. The cap equals the held-download limit and the
+  waiting-dialog limit. An open past it fails as busy, before any effect, and a closed tab frees a place. If wrong, a
+  larger or smaller number is one constant. (addition)
+- 2026-11-20: ADR candidate (cuts across the system): every control entry point refuses a command whose caller lacks
+  the power that command needs, before any applet sees it. Undecided. Found in UTERM-005 M8.
+- 2026-11-20: ADR candidate (cuts across the system): a controller controls the parts of a pane it opened, such as a
+  tab, only for its live grant. Undecided. Found in UTERM-005 M8.
+
 ## References
 
 - Original write-up: `~/projects/private_specs/uniterm/spec/research/original-writeup.md`, APPLET-3

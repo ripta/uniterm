@@ -118,6 +118,48 @@ final class ControllersWindowTests: XCTestCase {
     XCTAssertFalse(plain.contains(ControllerReviewText.readsNeedStanding), plain)
   }
 
+  /// Catches a review that asks for browser navigation without saying it is network access signed in
+  /// as the user, one that asks for browser read without saying addresses may carry tokens, and a
+  /// review that says either when the controller did not ask for that power.
+  func testABrowserReviewSaysNavigationIsNetworkAccessAndReadReturnsAddresses() throws {
+    func summary(_ requested: Set<ControllerPermission>) -> String {
+      ControllerReviewText.summary(
+        ControllerReview(
+          id: 4, name: "Reviewed",
+          identity: ControllerIdentity(
+            controllerID: "dev.uniterm.fixture.reviewed",
+            version: String(repeating: "3", count: 64), keyFingerprint: nil),
+          requested: requested.sorted(), added: [], revises: nil, canRemember: true, notice: nil,
+          waiting: [(1, 100)]))
+    }
+
+    let navigation = summary([.paneControl, .browserNavigation])
+    let reading = summary([.paneControl, .browserRead])
+    let neither = summary([.paneControl])
+
+    XCTAssertTrue(navigation.contains(ControllerReviewText.navigationIsNetworkAccess), navigation)
+    XCTAssertTrue(navigation.contains("network access signed in as you"), navigation)
+    XCTAssertFalse(navigation.contains(ControllerReviewText.browserReadShowsAddresses), navigation)
+    XCTAssertTrue(reading.contains(ControllerReviewText.browserReadShowsAddresses), reading)
+    XCTAssertTrue(reading.contains("may carry a token"), reading)
+    XCTAssertFalse(reading.contains(ControllerReviewText.navigationIsNetworkAccess), reading)
+    XCTAssertFalse(neither.contains("browser"), neither)
+    XCTAssertFalse(neither.contains("Browser"), neither)
+  }
+
+  /// Catches a window row that leaves out a remembered browser power, or names it as another.
+  func testTheWindowNamesEachBrowserPower() {
+    XCTAssertTrue(
+      ControllerPermission.browserNavigation.displayText.contains("network access signed in"))
+    XCTAssertTrue(ControllerPermission.browserRead.displayText.contains("addresses and titles"))
+
+    let lines = ControllerReviewText.permissionLines(
+      for: .browserNavigation, prefix: "  ", suffix: ", asks each time")
+
+    XCTAssertEqual(lines.count, 1)
+    XCTAssertTrue(lines[0].hasSuffix(", asks each time"), lines[0])
+  }
+
   /// Catches a review that hides what is new, leaves out a power, or lets a name reorder the text
   /// the user reads.
   func testTheReviewShowsWhatIsNewAndEveryPowerEscaped() throws {

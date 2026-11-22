@@ -58,6 +58,9 @@ public enum ControllerFixtures {
   /// A format 2 descriptor with every permission kind at version 1, which every reader accepts.
   public static let formatTwo = "format-two"
 
+  /// A format 2 descriptor that holds the two browser kinds at version 1.
+  public static let formatTwoBrowser = "format-two-browser"
+
   /// Descriptors every reader refuses, with a fragment of the reason each one gives.
   public static let rejected: [(name: String, reason: String)] = [
     ("duplicate-key", "appears twice"),
@@ -70,6 +73,11 @@ public enum ControllerFixtures {
     ("unicode-alias", "not a plain relative path"),
     ("unknown-permission", "not one descriptor format 1 knows"),
     ("format-one-clipboard", "\"clipboard-read\" is not one descriptor format 1 knows"),
+    (
+      "format-one-browser-navigation", "\"browser-navigation\" is not one descriptor format 1 knows"
+    ),
+    ("browser-read-version-two", "browser-read version 2 is not one this uniterm knows"),
+    ("browser-navigation-with-field", "only path-read takes directories"),
     ("host-launch-relative", "executable must be an absolute path"),
     ("missing-version", "a permission is missing \"version\""),
     ("unknown-version", "clipboard-read version 2 is not one this uniterm knows"),

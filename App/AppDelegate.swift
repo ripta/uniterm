@@ -467,6 +467,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       case .browser:
         return BrowserApplet(dataStore: websiteData.store, services: browserServices)
 
+      case .browserPage(let url):
+        return BrowserApplet(
+          dataStore: websiteData.store, services: browserServices, seed: url)
+
       case .imageViewer:
         return ImageViewerApplet(startDirectory: directory)
 

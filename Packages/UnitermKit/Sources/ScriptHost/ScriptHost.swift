@@ -56,7 +56,7 @@ public final class ScriptHost {
 
   let listener: ScriptListener
   private let issueProducer: ProducerIssuer
-  private let windows: (any ScriptWindowAPI)?
+  let windows: (any ScriptWindowAPI)?
   private let sentContent: ScriptSentContent?
 
   /// Where the content programs sent waits, if the host holds any.
@@ -461,16 +461,7 @@ public final class ScriptHost {
 
       if let refusal = authorize(connection) { return connection.reply(id: id, result: refusal) }
 
-      switch checkPower(call, on: connection) {
-      case .allowed:
-        dispatch(call, id: id, on: connection, once: nil)
-
-      case .refused(let result):
-        connection.reply(id: id, result: result)
-
-      case .needsApproval(let power):
-        askForOperation(call, id: id, on: connection, power: power)
-      }
+      routeRequest(call, id: id, on: connection, once: [])
 
     case .closed(let connection):
       peerWatches.removeValue(forKey: connection.id)?.cancel()
@@ -496,7 +487,7 @@ public final class ScriptHost {
   /// Runs a call whose power check passed, or that the user allowed once. `once` carries that
   /// one allowed power, so the check at the effect sees the same answer and nothing more.
   func dispatch(
-    _ call: ScriptCall, id: UInt32, on connection: ScriptConnection, once: ControllerPermission?
+    _ call: ScriptCall, id: UInt32, on connection: ScriptConnection, once: Set<ControllerPermission>
   ) {
     guard !connection.isClosed else { return }
 
@@ -526,7 +517,7 @@ public final class ScriptHost {
 
   /// The refusal for a call whose power no longer holds at its effect, or nil.
   private func powerRefusal(
-    _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission?
+    _ call: ScriptCall, on connection: ScriptConnection, once: Set<ControllerPermission>
   ) -> ScriptResult? {
     switch checkPower(call, on: connection, once: once) {
     case .allowed: return nil
@@ -536,7 +527,7 @@ public final class ScriptHost {
   }
 
   private func run(
-    _ call: ScriptCall, on connection: ScriptConnection, once: ControllerPermission?
+    _ call: ScriptCall, on connection: ScriptConnection, once: Set<ControllerPermission>
   ) -> ScriptResult {
     if let refusal = authorize(connection) { return refusal }
 
@@ -574,7 +565,7 @@ public final class ScriptHost {
 
   /// The calls that check a directory run off the main actor and answer later.
   private func runAsync(
-    _ call: ScriptCall, connection: ScriptConnection, once: ControllerPermission?
+    _ call: ScriptCall, connection: ScriptConnection, once: Set<ControllerPermission>
   ) async -> ScriptResult {
     if let refusal = authorize(connection) { return refusal }
 
@@ -616,13 +607,16 @@ public final class ScriptHost {
             to: pane, appletType: type, schemaVersion: version, command: command,
             arguments: arguments, caller: caller,
             access: { [weak self] in self?.readAccess(for: connection.id) ?? .none },
+            powers: { [weak self] in self?.heldPowers(for: connection.id, once: once) ?? [] },
             stillAllowed: stillAllowed),
           commandRan: true)
 
       case .requestLayout(let pane, let layout):
         return Self.result(
           of: try await requireWindows().requestLayout(
-            anchor: pane, layout: layout, caller: caller, stillAllowed: stillAllowed),
+            anchor: pane, layout: layout, caller: caller,
+            powers: { [weak self] in self?.heldPowers(for: connection.id, once: once) ?? [] },
+            stillAllowed: stillAllowed),
           commandRan: true)
 
       default:

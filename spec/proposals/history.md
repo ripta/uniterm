@@ -23,3 +23,4 @@
 | UTERM-006 M4 | UTERM-015 M4 | Split from M1-M3: waits on UTERM-015 M4's read power, after UTERM-003 M2 and UTERM-004 M3 |
 | UTERM-036 M1 | None | Landed with the ADR-12 retraction, before the proposal was filed |
 | UTERM-008 M3 | UTERM-004 M3 | Split from M1-M2: waits on the exec driver and applet command hook from UTERM-004 M3 |
+| UTERM-005 M8 | UTERM-004 M6 | Split from M1-M7: waits on UTERM-004 M6, which builds descriptor format 2 for M8's browser permissions |

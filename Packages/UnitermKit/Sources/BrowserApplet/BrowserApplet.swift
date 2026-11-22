@@ -18,7 +18,9 @@ import WebKit
 /// navigation each have a source, and the policy is the one place that says what that source may
 /// load. A refused address leaves the page where it was.
 @MainActor
-public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, BrowserDownloadsDelegate {
+public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDelegate,
+  BrowserDownloadsDelegate
+{
   /// The type of the description this applet writes and restores.
   public nonisolated static let descriptionTypeID = BrowserDescription.typeID
 
@@ -42,9 +44,9 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
   /// gone, and its history is WebKit's opaque record.
   private var closedTabs: [BrowserDescription.ClosedTab] = []
 
-  private let dataStore: WKWebsiteDataStore
-  private let services: BrowserServices
-  private var alerts = AppletAlerts()
+  let dataStore: WKWebsiteDataStore
+  let services: BrowserServices
+  var alerts = AppletAlerts()
 
   /// The pane's downloads. The pane holds them, not the tab.
   let downloads: BrowserDownloads
@@ -72,9 +74,20 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
       }
     }
   }
-  private var started = false
-  private var closed = false
+  private(set) var started = false
+  private(set) var closed = false
   private var lastShown: Shown?
+
+  /// The tabs controllers opened, by the grant that opened each. A tab a page opened, a tab
+  /// reopened with Cmd-Shift-T, and a restored tab never enter it. It empties when the pane's
+  /// control moves to a new generation and when a grant ends.
+  var tabOwners: [AppletTabID: AppletCaller] = [:]
+
+  /// The generation of the control the pane last heard about.
+  var controlGeneration: UInt64?
+
+  /// Where the applet emits events. The browser emits none, and closes the outlet with the pane.
+  public let events = AppletEventOutlet()
 
   /// What the undo-only part was last built from.
   private struct UndoKey: Equatable {
@@ -108,13 +121,18 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
   /// default, so a construction site that forgets it does not compile, and no pane reaches WebKit's
   /// app-wide store by accident. The host passes the same store and the same `services` to every
   /// pane it builds, new or restored.
-  public convenience init(dataStore: WKWebsiteDataStore, services: BrowserServices) {
+  ///
+  /// `seed` is an address that already passed the controller rule. The first tab loads it at
+  /// `start`. Without one the pane starts at `about:blank`.
+  public convenience init(
+    dataStore: WKWebsiteDataStore, services: BrowserServices, seed: URL? = nil
+  ) {
     self.init(
       dataStore: dataStore, services: services,
       tabs: [
         BrowserTab(
-          id: .make(), record: BrowserDescription.Tab(), dataStore: dataStore, hsts: services.hsts,
-          clock: services.clock, hang: services.hang)
+          id: .make(), record: BrowserDescription.Tab(url: seed?.absoluteString),
+          dataStore: dataStore, hsts: services.hsts, clock: services.clock, hang: services.hang)
       ],
       selected: 0, closed: [])
   }
@@ -240,7 +258,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
   /// Puts the selected tab's page, buttons, warning, and address on screen. The web view reports
   /// no change until it loads something, so the buttons take their state here. Without it a new
   /// pane shows Back and Forward enabled.
-  private func showSelectedTab(replacingEdit: Bool) {
+  func showSelectedTab(replacingEdit: Bool) {
     let tab = self.tab
 
     content.show(page: tab.webView)
@@ -261,6 +279,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     for tab in tabs { tab.loadOrigin = origin.loadOrigin }
 
     loadIfNeverLoaded()
+    loadControlledTabs()
   }
 
   /// Begins a tab's first load from the address it stores, after the rule for a restored tab. A
@@ -287,6 +306,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
 
   public func close() {
     closed = true
+    events.close()
     alerts.discard()
     downloads.cancelAll()
     dialogs.dismissAll()
@@ -329,6 +349,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     for tab in tabs { tab.setMediaSuspended(false) }
 
     loadIfNeverLoaded()
+    loadControlledTabs()
     syncDialog(restoringFocus: false)
   }
 
@@ -468,13 +489,13 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
       return
     }
 
-    guard !isQuestionUp || AppHandoff.opensWithoutAsking(url) else {
+    guard !isQuestionUp || (AppHandoff.opensWithoutAsking(url) && !source.isControlled) else {
       refuseHandOff(
         "Did not open \(address). Another question is already waiting.", from: source, typed: false)
       return
     }
 
-    if AppHandoff.opensWithoutAsking(url) {
+    if AppHandoff.opensWithoutAsking(url), !source.isControlled {
       finishHandOff(url, from: source, typed: typed)
       return
     }
@@ -603,7 +624,31 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     return opened.id
   }
 
+  /// Adds a tab a controller opened. A selected one is shown without taking the keyboard. One
+  /// that is not selected leaves the user's tab where it is.
+  func insert(_ opened: BrowserTab, at position: Int, selecting: Bool) {
+    tabs.insert(opened, at: position)
+
+    if selecting {
+      selectedIndex = position
+
+      showSelectedTab(replacingEdit: true)
+      syncDialog(restoringFocus: false)
+    } else if position <= selectedIndex {
+      selectedIndex += 1
+    }
+
+    refresh()
+  }
+
   public func selectTab(at index: Int) {
+    selectTab(at: index, takingKeyboard: true)
+  }
+
+  /// Selects a tab. The keyboard follows when the pane held it, and when the tab has nothing to
+  /// show, since then the address bar is the tab's only use. A controller's select never takes
+  /// the keyboard.
+  func selectTab(at index: Int, takingKeyboard: Bool) {
     guard !closed, tabs.indices.contains(index), index != selectedIndex else { return }
 
     let hadFocus = hasFocus
@@ -614,7 +659,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     syncDialog(restoringFocus: false)
     refresh()
 
-    if hadFocus || tab.hasLoadedNothing { focus() }
+    if takingKeyboard, hadFocus || tab.hasLoadedNothing { focus() }
   }
 
   public func selectTab(id: AppletTabID) -> Bool {
@@ -644,6 +689,16 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     }
 
     loadStored(tab)
+  }
+
+  /// A tab a controller opened loads whether or not anyone looked at it, as soon as the pane is
+  /// attached. A pane that was detached when the tab opened loads it here.
+  private func loadControlledTabs() {
+    guard started, !closed, !alerts.isDetached else { return }
+
+    for tab in tabs where tab.isControlled && !tab.hasBegunLoading && !tab.isStopped {
+      loadStored(tab)
+    }
   }
 
   public func closeCurrentTab() async -> TabCloseResult {
@@ -744,6 +799,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
 
     let removed = tabs.remove(at: index)
 
+    tabOwners[removed.id] = nil
     removed.close()
     removed.delegate = nil
 
@@ -798,7 +854,9 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     return .reopened(title: entry.title)
   }
 
-  private var hasFocus: Bool {
+  /// True while the pane's view holds the window's first responder, whether or not the window is
+  /// key.
+  var hasFocus: Bool {
     guard let responder = content.window?.firstResponder as? NSView else { return false }
 
     return responder.isDescendant(of: content)
@@ -942,7 +1000,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
   /// Shows the selected tab's oldest waiting dialog, or hides the one on show when it is not that
   /// tab's, or the pane is detached. A pane the user is not typing in keeps the keyboard where it
   /// is, so a page cannot take the focus.
-  private func syncDialog(restoringFocus: Bool) {
+  func syncDialog(restoringFocus: Bool) {
     let wanted = closed || alerts.isDetached ? nil : dialogs.first(for: tab)
     let view = content.dialogView
 
@@ -1115,7 +1173,12 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     let file = named.map { " It started with \u{201C}\($0)\u{201D}." } ?? ""
     let request = AppletConfirmation(
       title: "Let this page download more files?",
-      detail: """
+      detail: page.isControlled
+        ? """
+        A program controls \u{201C}\(Self.title(of: page))\u{201D}, and it started a \
+        download.\(file) Allow it to download, and to start more until it loads again?
+        """
+        : """
         \u{201C}\(Self.title(of: page))\u{201D} started downloads without a click.\(file) \
         Allow it to download, and to start more until it loads again?
         """,
@@ -1312,7 +1375,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
 
   /// What the address bar shows for a tab. A tab that has not begun loading shows the address it
   /// stores.
-  private static func address(of tab: BrowserTab) -> String {
+  static func address(of tab: BrowserTab) -> String {
     let url = tab.currentURL ?? (tab.hasBegunLoading ? nil : storedURL(of: tab))
 
     guard let url, !SecurityIndicator.isBlank(url) else { return "" }
@@ -1320,13 +1383,13 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
     return url.absoluteString
   }
 
-  private static func storedURL(of tab: BrowserTab) -> URL? {
+  static func storedURL(of tab: BrowserTab) -> URL? {
     tab.record.url.flatMap { URL(string: $0) }
   }
 
   /// The tab's name for the user. A page chose its title, so the name is cleaned here, once, and
   /// the tab bar, the pane title, the notices, and the questions all read the clean one.
-  private static func title(of tab: BrowserTab) -> String {
+  static func title(of tab: BrowserTab) -> String {
     let raw =
       tab.pageTitle ?? tab.record.title ?? tab.currentURL?.host(percentEncoded: false)
       ?? storedURL(of: tab)?.host(percentEncoded: false) ?? untitled
@@ -1367,7 +1430,7 @@ public final class BrowserApplet: Applet, TabOpening, BrowserTabDelegate, Browse
       symbolName: "arrow.down.circle", text: "\(shown) \(Int((fraction * 100).rounded(.down)))%")
   }
 
-  private func refresh() {
+  func refresh() {
     guard !closed else { return }
 
     let titles = tabs.map(Self.title(of:))

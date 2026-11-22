@@ -1,4 +1,5 @@
 import AppletKit
+import BrowserModel
 import Foundation
 import PaneModel
 import ScriptHost
@@ -10,10 +11,10 @@ import ScriptWire
 /// A node is one of three objects. `{"split": "row", "children": [...]}` is a split, with two or
 /// more children. `{"pane": 3}` is a pane already open in the caller's window, and may name that
 /// window as `"window"`. `{"open": "fixture-notes"}` is a new pane, with `"control"` of
-/// `"disconnected"` or `"remote-controlled"`, an absolute `"directory"`, and an `"exec"`
-/// declaration of `"argv"`, `"directory"`, and `"environment-keys"` as options. Any node may take
-/// a positive `"weight"`, which is relative to its siblings and defaults to 1. A key outside
-/// these is refused, so a misspelled option never goes unnoticed.
+/// `"disconnected"` or `"remote-controlled"`, an absolute `"directory"`, an `"exec"` declaration
+/// of `"argv"`, `"directory"`, and `"environment-keys"`, and for a browser a `"url"` as options.
+/// Any node may take a positive `"weight"`, which is relative to its siblings and defaults to 1.
+/// A key outside these is refused, so a misspelled option never goes unnoticed.
 ///
 /// Reading checks the shape, the bounds, the kinds, and that each kind supports the control and
 /// driver asked of it. It checks no authority and no directory on disk. The window does both.
@@ -26,6 +27,13 @@ struct LayoutRequest: Equatable {
     let directory: String?
     let exec: ExecDeclaration?
 
+    /// True when the pane loads a page, which needs the controller's browser navigation power.
+    var seedsBrowserPage: Bool {
+      if case .browserPage = choice { return true }
+
+      return false
+    }
+
     var combination: ControlCombination {
       ControlCombination(access: access, driver: exec == nil ? .none : .exec)
     }
@@ -33,6 +41,17 @@ struct LayoutRequest: Equatable {
 
   let plan: PaneLayoutPlan
   let panes: [NewPane]
+
+  /// True when a pane the layout opens loads a page.
+  var needsBrowserNavigation: Bool { panes.contains(where: \.seedsBrowserPage) }
+
+  /// What a layout that seeds a page says when the controller lacks the power.
+  static let navigationRefusal =
+    "a layout that gives a browser pane a url needs the browser-navigation permission, which this "
+    + "caller does not hold"
+
+  /// The longest address a layout may seed a browser pane with.
+  static let maxURLBytes = 8192
 
   /// The most leaves one layout may hold. It bounds the applets one request can build.
   static let maxLeaves = 16
@@ -113,7 +132,7 @@ struct LayoutRequest: Equatable {
         return .existing(try existing(fields, at: path))
 
       default:
-        try only(fields, ["open", "control", "directory", "exec", "weight"], at: path)
+        try only(fields, ["open", "control", "directory", "exec", "url", "weight"], at: path)
         try countLeaf(at: path)
         panes.append(try newPane(fields, at: path))
         return .new(slot: panes.count - 1)
@@ -196,8 +215,16 @@ struct LayoutRequest: Equatable {
         kind.utf8.count <= ScriptProtocol.maxKindBytes
       else { throw .badArgument("\(path)'s open must name an applet kind") }
 
-      guard let choice = LayoutRequest.choice(forKind: kind, in: declarations) else {
+      guard var choice = LayoutRequest.choice(forKind: kind, in: declarations) else {
         throw .badArgument("\(path) opens \(kind), which this window does not know")
+      }
+
+      if let value = fields["url"] {
+        guard choice == .browser else {
+          throw .badArgument("\(path)'s url is for a browser pane only")
+        }
+
+        choice = .browserPage(try seed(value, at: path))
       }
 
       let access: PaneAccessMode
@@ -215,7 +242,7 @@ struct LayoutRequest: Equatable {
           text.utf8.count <= ScriptProtocol.maxDirectoryBytes
         else { throw .badArgument("\(path)'s directory must be an absolute path") }
 
-        guard choice != .browser else { throw .badArgument("a browser has no directory") }
+        guard !choice.isBrowser else { throw .badArgument("a browser has no directory") }
 
         directory = text
       }
@@ -235,6 +262,29 @@ struct LayoutRequest: Equatable {
       }
 
       return pane
+    }
+
+    /// A browser pane's first page. It meets the same rule as a controller's open command: only
+    /// http and https load, a scheme-less host gets HTTPS, and loopback gets HTTP.
+    private func seed(_ value: JSONValue, at path: String) throws(ScriptCallError) -> URL {
+      guard case .string(let text) = value, text.utf8.count <= LayoutRequest.maxURLBytes else {
+        throw .badArgument(
+          "\(path)'s url must be text of at most \(LayoutRequest.maxURLBytes) bytes")
+      }
+
+      switch AddressPolicy.resolve(text, source: .controller) {
+      case .load(let url, _):
+        return url
+
+      case .refused(let refusal):
+        throw .badArgument("\(path)'s url: \(refusal.message(for: text))")
+
+      case .empty:
+        throw .badArgument("\(path)'s url is empty")
+
+      case .search, .handoff:
+        throw .badArgument("\(path)'s url: \(SchemeRefusal.notAnAddress.message(for: text))")
+      }
     }
 
     private func declaration(_ value: JSONValue, at path: String) throws(ScriptCallError)
