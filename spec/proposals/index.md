@@ -49,6 +49,7 @@
 | [UTERM-045](UTERM-045-settle-ui-test-input.md) | Settle input before UI tests send it | draft |
 | [UTERM-046](UTERM-046-deterministic-package-test-flakes.md) | Make the logged package-test flakes deterministic | draft |
 | [UTERM-047](UTERM-047-rate-limit-status-per-source.md) | Rate-limit status posts per source, with a fair bar and session-keyed sources | draft |
+| [UTERM-049](UTERM-049-save-and-open-browser-tab-sets.md) | Save a browser pane's tabs as uniterm JSON, uri-list, or bookmark HTML, and open them back | draft |
 
 ## Dependency Graph
 
@@ -94,6 +95,7 @@ UTERM-041 ← UTERM-004, UTERM-005, UTERM-037
 UTERM-042 ← UTERM-004, UTERM-041
 UTERM-043 ← UTERM-004, UTERM-019
 UTERM-047 ← UTERM-001, UTERM-003, UTERM-004, UTERM-017, UTERM-022
+UTERM-049 ← UTERM-004, UTERM-005, UTERM-015, UTERM-018, UTERM-021
 ```
 
 ## Not Yet Filed
