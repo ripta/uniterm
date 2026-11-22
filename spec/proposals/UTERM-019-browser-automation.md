@@ -1104,6 +1104,8 @@ Starts after UTERM-005 M8.
 - 2026-11-21: Added UTERM-041 M1 and UTERM-042 M2 to Dependencies, for M3. UTERM-041's Impacts already said M3 waits
   on UTERM-041 M1, but this list left it out. UTERM-042 M2 builds the only way to choose "Rebuild Tab". Without it, M3
   would ship the run-end marker with no way to rebuild the tab.
+- 2026-11-21: Scheduled as M1-M2, M3, and M4-M6 in queue.md. M3 is its own row because it waits on UTERM-041 M1 and
+  UTERM-042 M2.
 
 ## References
 

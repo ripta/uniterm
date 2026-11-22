@@ -529,6 +529,7 @@ Builds on M2 and on UTERM-041 M2, for the chip.
   rebuild the tab. Dependencies dropped UTERM-019, which would have made the two proposals depend on each other, and
   now names which UTERM-041 milestone each of M2 and M3 needs. M2 is now "The tab menu, marker actions, and closing
   tabs", and M3 is "Controllers in the menu".
+- 2026-11-21: Scheduled as M1-M3 in queue.md.
 
 ## References
 

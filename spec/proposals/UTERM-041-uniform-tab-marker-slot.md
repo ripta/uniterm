@@ -685,6 +685,7 @@ None.
 - 2026-11-21: Amended "Interactive markers" from UTERM-042's review: the authority marker also carries the owners it
   stands for, as the host identified them. Only the browser knows which owner opened a tab. Without the owners, the
   host could not name the controller behind a tab's marker in a pane with two owners.
+- 2026-11-21: Scheduled as M1-M2 in queue.md.
 
 ## References
 
