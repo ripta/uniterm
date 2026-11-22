@@ -438,8 +438,18 @@ as UTERM-005's risks note for the layout file. A file with many URLs opens many 
 Chosen so far. The export defaults to a uniterm JSON format with its own extension. It also offers `text/uri-list` and
 Netscape bookmark HTML. The save panel's own format control picks among the three: `showsContentTypes` with
 `allowedContentTypes`, read back through `currentContentType`, both from macOS 15. Each format needs a declared
-`UTType`, since the system has none for `text/uri-list`. Still open: the JSON format's fields and extension, and which
-of the three formats open back into tabs.
+`UTType`, since the system has none for `text/uri-list`.
+
+The JSON format carries both an extension and an in-file tag, as GeoJSON does. The extension and its `UTType` are
+what macOS uses: Finder, the save panel's format control, and UTERM-015's router. The type conforms to `public.json`,
+so editors and `jq` still read it. The file opens with a tag and a version, such as
+`{"type": "uniterm.tabs", "version": 1, "tabs": [...]}`. The tag lets a renamed file, a piped script output, or a
+pasted text still say what it is. When the extension and the tag disagree, the tag wins. An unknown version is a clear
+error. The format holds tab sets only. A shared envelope for other uniterm data waits for a second payload, and the tag
+leaves room for one. The extension is uniterm-specific, such as `.unitabs`, to avoid colliding with a generic name like
+`.urljson`, and its identifier sits under `dev.uniterm`.
+
+Still open: the extension's name, the JSON format's fields, and which of the three formats open back into tabs.
 
 ## Palette: show a command's shortcut
 
