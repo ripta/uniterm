@@ -248,6 +248,7 @@ The app never opens a path for a declared script file or its signature.
 - 2026-11-22: The privacy-attribution risk is re-rated from low to medium likelihood. Nothing was run, and the critic
   could not rule the other attribution out, so it takes the higher rating. It is not high on both, so it does not block
   acceptance. The M1 manual check can run before M1 is built. (autonomous)
+- 2026-11-22: Scheduled as UTERM-034 M1 in queue.md, after UTERM-032 M1-M2.
 
 ## References
 

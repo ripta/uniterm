@@ -9,6 +9,7 @@
 | UTERM-019 M3 | UTERM-041 M1, UTERM-042 M2 | Split from M1-M2: M3 publishes the run-end marker. It needs UTERM-041 M1's slot and UTERM-042 M2's "Rebuild Tab" menu, so the marker never ships without a way to rebuild the tab |
 | UTERM-019 M4-M6 | None | Split after M3: these follow M3 in order and need nothing more from these proposals |
 | UTERM-032 M1-M2 | None | |
+| UTERM-034 M1 | UTERM-032 | M1 amends UTERM-032's input-file sections and moves its input-file mark onto the bytes the command reads |
 | UTERM-024 M1-M2 | UTERM-032 | New permission kinds follow UTERM-032's rule on where a kind may appear |
 | UTERM-030 M1-M2 | UTERM-032, UTERM-024 | Slide images load from UTERM-032's granted folder. The Markdown page opts in to UTERM-024's controller keys |
 | UTERM-025 M1 | UTERM-024, UTERM-030, UTERM-032 | The presenter needs UTERM-024's commands and keys, UTERM-030's slides, and UTERM-032's deck argument |
