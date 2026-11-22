@@ -669,7 +669,10 @@ Amended 2026-11-21; see Decision Log.
 - A form that opens in a pane whose first control refuses the keyboard, such as a pop-up without full keyboard access,
   gives the keyboard to the form's panel. Return and Escape still reach the form.
 - The UI tests open forms through a debug-only hook, `UNITERM_TEST_QUESTIONS_DIR`, since no wire call opens a form yet.
-  The asking-pane badge and the host's choice of pane are M3's.
+  The asking-pane badge and the host's choice of pane are M3's. The UI tests do not choose a file. The open panel runs
+  in another process, and typing into it failed at a different step from run to run. The file answer's shape is
+  proven at the package layer instead, through the function the panel's completion calls. The UI tests still prove
+  that the panel opens as a sheet and that Escape closes it before Cancel.
 - The package tests run in about a second together. About half of that is the first AppKit window of the test process.
   `make test-cost` does not exist in this project.
 - The coordinator viewed the UI-test screenshots of one form and of two forms, in light and in dark, and the layout
@@ -1069,6 +1072,12 @@ user's own runs below confirm what those covered.
   cited ADR-09, which ADR-14 supersedes. They cite ADR-14 now, where its text carries the same principles: a requester
   scope no narrower than the transport can establish, and one power never silently granting another. The entries above
   that name ADR-09 are unchanged.
+- 2026-11-21 (autonomous, work-queue best guess): M2's UI test no longer chooses a file in the open panel. The panel
+  runs out of process, and synthesizing keys into it timed out at a different step in each run. A package test now
+  drives the function that the panel's completion handler calls, for a chosen path, a list held to its entry limit
+  with the "not kept" note, the directory and save modes, and a cancelled panel. The UI test keeps the proof that the
+  panel opens as a sheet and that Escape closes it first. M2's As built had no line on this, and its UI test of the
+  answer types chose a file through the panel.
 
 ## References
 

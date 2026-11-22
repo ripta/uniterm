@@ -103,70 +103,17 @@ final class QuestionsUITests: UnitermUITestCase {
     return found
   }
 
-  /// Picks a file in the open panel that is showing, by typing its path into the panel's go-to
-  /// field. The panel runs out of process, and it shows the field as a nested sheet, inline, or in
-  /// a popover, depending on its state. So the test finds the field by what it is, the element with
-  /// keyboard focus after Command-Shift-G, wherever the panel put it. The path is short enough to
-  /// type, and the test never touches the pasteboard, which may hold something private.
-  ///
-  /// A failure attaches a screenshot of the window and the app's element tree, so the next one
-  /// shows where the panel put the field.
-  private func pick(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
-    let panel = window.sheets.firstMatch
-
-    guard panel.appears(timeout: 10) else {
-      return diagnose("no open panel", app, window)
+  /// Attaches a screenshot of the uniterm window element only, never the screen. A window
+  /// screenshot shows whatever is on screen over the window's rectangle, so the app must be in front
+  /// first. When it cannot be brought forward, the test fails and attaches nothing, rather than
+  /// attach pixels that belong to other applications.
+  private func attachWindow(named name: String, in app: XCUIApplication) {
+    guard waitForForeground(app, activating: true) else {
+      XCTFail("uniterm was not frontmost, so no screenshot was taken: \(name)")
+      return
     }
 
-    app.typeKey("g", modifierFlags: [.command, .shift])
-
-    let focused = app.descendants(matching: .any)
-      .matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
-
-    // The go-to field is the focused element once the panel shows it. The panel's own list, which
-    // had the keyboard before, is not a text field.
-    let isField = pollUntil(timeout: 5) {
-      focused.exists && [.textField, .comboBox, .searchField].contains(focused.elementType)
-    }
-
-    guard isField else { return diagnose("no go-to field took the keyboard", app, window) }
-
-    app.typeText(file.path)
-
-    guard waitFor(focused, timeout: 5, { $0 == file.path }) else {
-      return diagnose("the go-to field holds \(String(describing: focused.value))", app, window)
-    }
-
-    app.typeKey(.return, modifierFlags: [])
-
-    guard pollUntil(timeout: 5, { !(focused.exists && (focused.value as? String) == file.path) })
-    else { return diagnose("the go-to field never closed", app, window) }
-
-    app.typeKey(.return, modifierFlags: [])
-
-    if !waitForNoSheet(in: window, timeout: 10) { diagnose("the panel never closed", app, window) }
-  }
-
-  /// Fails the test with `message` and the focus report, and keeps what a person needs to see
-  /// where the panel put its field: the window as it looked and the app's element tree.
-  private func diagnose(_ message: String, _ app: XCUIApplication, _ window: XCUIElement) {
-    XCTFail("\(message). \(focusReport(app))")
-
-    let shot = XCTAttachment(screenshot: window.screenshot())
-
-    shot.name = "open-panel-window"
-    shot.lifetime = .keepAlways
-    add(shot)
-
-    let tree = XCTAttachment(string: app.debugDescription)
-
-    tree.name = "open-panel-element-tree"
-    tree.lifetime = .keepAlways
-    add(tree)
-  }
-
-  private func attach(_ element: XCUIElement, named name: String) {
-    let attachment = XCTAttachment(screenshot: element.screenshot())
+    let attachment = XCTAttachment(screenshot: mainWindow(in: app).screenshot())
 
     attachment.name = name
     attachment.lifetime = .keepAlways
@@ -252,17 +199,15 @@ final class QuestionsUITests: UnitermUITestCase {
 
     try ask(deploy, requester: "deploy", name: "Deploy script")
 
-    let pane = element("questions-applet", in: app)
-
     XCTAssertTrue(element("question-region-choice-0", in: app).appears(timeout: 10))
     Thread.sleep(forTimeInterval: 0.5)
-    attach(pane, named: "questions-one-form-\(mode)")
+    attachWindow(named: "questions-one-form-\(mode)", in: app)
 
     try ask(branch, requester: "other", name: "Terminal session in Pane 2", pane: nil)
 
     XCTAssertTrue(element("tab-1", in: app).appears(timeout: 10))
     Thread.sleep(forTimeInterval: 0.5)
-    attach(pane, named: "questions-two-forms-\(mode)")
+    attachWindow(named: "questions-two-forms-\(mode)", in: app)
   }
 
   /// Catches a form whose fields do not take keys at once. The form opens, and typing reaches the
@@ -283,8 +228,11 @@ final class QuestionsUITests: UnitermUITestCase {
 
   // MARK: Answers
 
-  /// Catches an answer type that renders wrong or returns the wrong shape. Four forms in one tab
-  /// cover every type and content block, and each outcome is the shape the type table gives.
+  /// Catches an answer type that renders wrong or returns the wrong shape. Three forms in one tab
+  /// cover every type except a chosen file, and each outcome is the shape the type table gives. The
+  /// file question only has to draw and answer null while nothing is chosen. A chosen file's answer
+  /// is proven by `FieldWidgetTests`, since the open panel runs in another process and a test
+  /// cannot type into it reliably.
   func testEveryAnswerTypeReturnsItsShape() throws {
     let app = launchQuestions()
 
@@ -349,11 +297,6 @@ final class QuestionsUITests: UnitermUITestCase {
     XCTAssertEqual(second["region"] as? String, "eu")
     XCTAssertEqual(second["size"] as? String, "c")
 
-    let picked = URL(fileURLWithPath: scratch + "-pick.txt")
-
-    try write("x", to: picked.path)
-    addTeardownBlock { try? FileManager.default.removeItem(at: picked) }
-
     let rest = try ask(
       """
       {"items": [
@@ -367,22 +310,17 @@ final class QuestionsUITests: UnitermUITestCase {
 
     element("question-tags-choice-2", in: app).click()
     element("question-tags-choice-0", in: app).click()
-    element("question-config", in: app).click()
-    pick(picked, in: app, window: mainWindow(in: app))
 
-    XCTAssertTrue(
-      waitFor(element("question-config-paths", in: app), timeout: 10) { !$0.contains("Nothing") })
+    XCTAssertTrue(element("question-config", in: app).exists, "the file question did not draw")
+    XCTAssertEqual(element("question-config-paths", in: app).value as? String, "Nothing chosen")
 
     element("form-button-ok", in: app).click()
 
     let last = answers(outcome(of: rest))
-    let path = (last["config"] as? String).map {
-      URL(fileURLWithPath: $0).resolvingSymlinksInPath()
-    }
 
     XCTAssertEqual(last["tags"] as? [String], ["x", "z"])
     XCTAssertEqual(last["accent"] as? String, "#336699ff")
-    XCTAssertEqual(path?.path, picked.resolvingSymlinksInPath().path)
+    XCTAssertTrue(last["config"] is NSNull, "an unchosen file answered something")
   }
 
   /// Catches a content block that does not draw. Each block has its own identifier.
@@ -542,16 +480,40 @@ final class QuestionsUITests: UnitermUITestCase {
     XCTAssertTrue(button.appears(timeout: 10))
 
     button.click()
-    XCTAssertTrue(window.sheets.firstMatch.appears(timeout: 10), "the file panel never opened")
+    XCTAssertTrue(window.sheets.firstMatch.appears(timeout: 20), "the file panel never opened")
 
-    app.typeKey(.escape, modifierFlags: [])
+    // The panel's contents belong to another process, and a query for its sheet is unreliable. The
+    // proof comes from the outcomes and the focus uniterm owns. An Escape that arrives before the
+    // panel is ready to take keys is lost, and it leaves the panel up. So the Escape is sent again
+    // while the keyboard has not come back to the form's button and the sheet is still there. No
+    // Escape sent while the panel is up can cancel the form. Once the keyboard is back on the
+    // button, the panel is closed, and the form must be open with no outcome. The next Escape then
+    // cancels it.
+    let focused = app.descendants(matching: .any)
+      .matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
+    var closed = false
 
-    XCTAssertTrue(waitForNoSheet(in: window), "Escape left the file panel open")
+    _ = pollUntil(timeout: 5) { focused.exists && focused.identifier != "question-config" }
+
+    for _ in 0..<3 {
+      app.typeKey(.escape, modifierFlags: [])
+
+      if pollUntil(timeout: 5, { focused.exists && focused.identifier == "question-config" }) {
+        closed = true
+        break
+      }
+
+      guard window.sheets.firstMatch.exists else { break }
+    }
+
+    XCTAssertTrue(closed, "Escape left the file panel open. \(focusReport(app))")
     XCTAssertTrue(noOutcome(of: request), "the Escape that closed the panel also cancelled")
 
     app.typeKey(.escape, modifierFlags: [])
 
-    XCTAssertEqual(outcome(of: request)?["outcome"] as? String, "cancelled")
+    XCTAssertEqual(
+      outcome(of: request)?["outcome"] as? String, "cancelled",
+      "Escape did not cancel the form with the keyboard on the file button. \(focusReport(app))")
   }
 
   /// Catches Escape that cancels the form while the color panel is open. The first Escape closes
@@ -718,7 +680,7 @@ final class QuestionsUITests: UnitermUITestCase {
       badge.label.contains("Pane 2"), "the badge says \(badge.label), not the Questions pane")
     XCTAssertFalse(element("pane-asking-2", in: app).exists, "the Questions pane is no asker")
 
-    attach(mainWindow(in: app), named: "questions-asking-badge")
+    attachWindow(named: "questions-asking-badge", in: app)
 
     app.typeKey(.escape, modifierFlags: [])
 

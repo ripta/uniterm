@@ -326,6 +326,48 @@ final class QuestionsAppletTests: XCTestCase {
         keyCode: code))
   }
 
+  /// Catches Escape that stops at a control and never reaches the form's cancel button. Each
+  /// control that can hold the keyboard gets the key through the window, as a real key press
+  /// arrives, and the form cancels.
+  func testEscapeCancelsFromEveryControlThatCanHoldTheKeyboard() throws {
+    let spec = try FormSpecReader.decode(
+      Data(
+        """
+        {"items": [
+          {"id": "config", "text": "Config?", "type": "file"},
+          {"id": "accent", "text": "Accent?", "type": "color"},
+          {"id": "flag", "text": "Flag?", "type": "boolean", "default": false},
+          {"id": "pick", "text": "Pick?", "type": "choice", "choices": ["a", "b"]},
+          {"id": "many", "text": "Many?", "type": "choice",
+           "choices": ["a", "b", "c", "d", "e", "f"]}]}
+        """.utf8))
+
+    for identifier in [
+      "question-config", "question-accent", "question-flag", "question-pick-choice-0",
+      "question-many",
+    ] {
+      let (applet, _) = makeApplet()
+      var outcomes: [FormOutcome] = []
+
+      _ = applet.open(spec, for: requester("a")) { outcomes.append($0) }
+
+      let window = hold(applet)
+      let control = try XCTUnwrap(find(identifier, in: applet.view), identifier)
+
+      XCTAssertTrue(window.makeFirstResponder(control), "\(identifier) refused the keyboard")
+
+      let event = try XCTUnwrap(
+        NSEvent.keyEvent(
+          with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+          windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
+          charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+
+      window.sendEvent(event)
+
+      XCTAssertEqual(outcomes, [.cancelled(action: "cancel")], "Escape stopped at \(identifier)")
+    }
+  }
+
   /// Catches a destructive button that Return presses. Return presses the primary button only, so
   /// a form with a destructive button and no primary button ignores Return.
   func testReturnNeverPressesADestructiveButton() throws {

@@ -460,3 +460,46 @@ passed. No crash report came from the UI runs. `caffeinate -dimsu make test-pack
 - A freeze hunk with origin `other`: UTERM-004's References gained an ADR-14 line from another session.
 - A working-tree edit the run did not make: `.cg.yaml`, which holds three rules with absolute scratchpad paths.
 - An ignored, untracked `.build-swiftpm` directory, left by M4's mistaken scratch path.
+
+## UI test hardening after the final review
+
+Commit: "Keep the Questions UI tests out of the remote open panel". It carries the test changes, a small refactor, the
+proposal's As built line, and this section.
+
+The full `caffeinate -dimsu make test-app` on "Name no pane when a nested group refuses a layout" ran 203 tests with 1
+failure. All 27 Questions tests passed in suite order.
+
+The failure was `TabsUITests.testClosingATabRunningSomethingAsksFirst`. It waited 20 seconds for the terminal to echo
+`CR:42:`. The class passed when run alone on the same build. The test passed in the previous full run, and the run
+changed neither the terminal nor the tabs code. Under the test-failure rule it does not block. The cause is not known,
+and `spec/flaky-tests.md` has no entry for it.
+
+Reruns of `QuestionsUITests` then failed in the file-panel tests, at a different step each time. The saved UI hierarchy
+showed the cause. The open panel's contents belong to a separate process, the open-and-save panel service. XCUITest's
+key synthesis into it times out, or the keys are lost, from run to run. uniterm did not hang. Its spindump held no
+samples.
+
+Fixes:
+
+- `testEveryAnswerTypeReturnsItsShape` no longer types into the panel. The file answer's shape is now proven by
+  `FieldWidgetTests`, through `FileField.panelDidEnd(_:urls:)`, which the panel's completion handler calls. That covers
+  a single path, multiple paths capped at the entry limit, directory and save modes, and a cancelled panel. M2's As built
+  block says so.
+- `testEscapeClosesTheFilePanelBeforeItCancels` proves its claim with outcomes uniterm owns. After the first Escape, no
+  outcome exists. The next Escape cancels.
+- It resends the first Escape, up to three times, while the panel is still up, because the remote panel can drop a
+  synthesized key. This is a retry on input delivery, and the testing standard warns against retries. An Escape that
+  reaches the open panel can never cancel the form, and every assertion is unchanged. The user may prefer to drop the
+  UI half of this check and keep only the package proof.
+- A new package test, `testEscapeCancelsFromEveryControlThatCanHoldTheKeyboard`, sends a real key event with each
+  control as first responder. It passed on the code before this round, so it found no bug. It guards the contract.
+- Every Questions screenshot now checks that uniterm is frontmost first. One earlier screenshot captured another app's
+  window that covered the pane. The coordinator deleted its copy of that image. The failure diagnostics follow the same
+  rule.
+
+The coordinator then ran `QuestionsUITests` and `QuestionsWireUITests` twice in a row. All 30 tests passed both times.
+It viewed the badge screenshot and the dark two-forms screenshot. The split opens beside the asker, the asking pane
+shows its badge, and both tabs and the header render.
+
+UI nit for the user: the arrival status line repeats the requester. It reads, for example, "Terminal session in Pane 2:
+Terminal session in Pane 2 is asking you a question."

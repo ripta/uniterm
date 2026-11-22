@@ -282,17 +282,26 @@ final class FileField: FieldWidget {
 
     panel.beginSheetModal(for: window) { [weak self, weak panel] response in
       MainActor.assumeIsolated {
-        guard response == .OK, let self, let panel else { return }
+        guard let self, let panel else { return }
 
-        let urls = (panel as? NSOpenPanel)?.urls ?? [panel.url].compactMap { $0 }
+        let urls =
+          response == .OK ? (panel as? NSOpenPanel)?.urls ?? [panel.url].compactMap { $0 } : []
 
-        self.take(urls.map(\.path))
+        self.panelDidEnd(response, urls: urls)
       }
     }
   }
 
+  /// What the panel's completion does with its response. Only an OK takes the chosen paths. Any
+  /// other response leaves the answer as it was.
+  func panelDidEnd(_ response: NSApplication.ModalResponse, urls: [URL]) {
+    guard response == .OK else { return }
+
+    take(urls.map(\.path))
+  }
+
   /// Records the paths the panel returned, up to what the question takes.
-  func take(_ chosen: [String]) {
+  private func take(_ chosen: [String]) {
     let limit = question.answerEntryLimit
 
     paths = Array(chosen.prefix(limit))

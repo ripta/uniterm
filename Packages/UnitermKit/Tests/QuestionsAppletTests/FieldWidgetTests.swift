@@ -254,23 +254,67 @@ final class FieldWidgetTests: XCTestCase {
     XCTAssertEqual(srgb.blueComponent, 0.6, accuracy: 0.001)
   }
 
-  /// Catches a file answer in the wrong shape. A single file is a path, and `multiple` is an array
-  /// of paths, held to the question's entry limit.
-  func testFileReturnsAPathOrAnArrayOfPaths() throws {
+  /// Catches the panel's completion mishandling what the open panel returns, which no UI test can
+  /// drive since the panel runs out of process. It calls the function the completion handler
+  /// calls, with the response and URLs the panel would hand back. It cannot prove that the panel
+  /// opens, which `testEscapeClosesTheFilePanelBeforeItCancels` does.
+  func testThePanelsCompletionShapesTheFileAnswer() throws {
     let (single, singleSpec) = try widget(#""type": "file""#)
     let singleLast = record(single)
+    let singleField = try XCTUnwrap(single as? FileField)
 
-    try XCTUnwrap(single as? FileField).take(["/tmp/a"])
+    singleField.panelDidEnd(.OK, urls: [URL(fileURLWithPath: "/tmp/a.txt")])
 
-    XCTAssertEqual(received(singleSpec, singleLast()), .string("/tmp/a"))
+    XCTAssertEqual(received(singleSpec, singleLast()), .string("/tmp/a.txt"))
 
     let (many, manySpec) = try widget(
       #""type": "file", "multiple": true, "validate": {"maxItems": 2}"#)
     let manyLast = record(many)
+    let manyField = try XCTUnwrap(many as? FileField)
 
-    try XCTUnwrap(many as? FileField).take(["/tmp/a", "/tmp/b", "/tmp/c"])
+    manyField.panelDidEnd(
+      .OK, urls: ["/tmp/a", "/tmp/b", "/tmp/c"].map { URL(fileURLWithPath: $0) })
 
     XCTAssertEqual(received(manySpec, manyLast()), .array([.string("/tmp/a"), .string("/tmp/b")]))
+
+    let summary = try XCTUnwrap(find(NSTextField.self, "question-q-paths", in: many.root))
+
+    XCTAssertTrue(summary.stringValue.contains("1 more not kept"), summary.stringValue)
+    XCTAssertTrue(summary.stringValue.contains("at most 2"), summary.stringValue)
+
+    for mode in ["directory", "save"] {
+      let (widget, spec) = try widget(#""type": "file", "mode": "\#(mode)""#)
+      let last = record(widget)
+
+      try XCTUnwrap(widget as? FileField).panelDidEnd(
+        .OK, urls: [URL(fileURLWithPath: "/tmp/\(mode)")])
+
+      XCTAssertEqual(received(spec, last()), .string("/tmp/\(mode)"), mode)
+    }
+  }
+
+  /// Catches a cancelled panel that clears or replaces an answer already chosen, or reports a
+  /// change. The answer and the summary stay as they were.
+  func testACancelledPanelLeavesTheFileAnswerAlone() throws {
+    let (widget, spec) = try widget(#""type": "file""#)
+    var changes = 0
+    var last: FormAnswer?
+
+    widget.onChange = {
+      changes += 1
+      last = $0
+    }
+
+    let field = try XCTUnwrap(widget as? FileField)
+
+    field.panelDidEnd(.OK, urls: [URL(fileURLWithPath: "/tmp/a")])
+    field.panelDidEnd(.cancel, urls: [URL(fileURLWithPath: "/tmp/other")])
+
+    let summary = try XCTUnwrap(find(NSTextField.self, "question-q-paths", in: widget.root))
+
+    XCTAssertEqual(changes, 1, "a cancelled panel reported a change")
+    XCTAssertEqual(received(spec, last), .string("/tmp/a"))
+    XCTAssertEqual(summary.stringValue, "/tmp/a")
   }
 
   /// Catches the file panel's modes and types drifting from the spec. The panel itself runs in
