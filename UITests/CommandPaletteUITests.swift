@@ -51,12 +51,28 @@ final class CommandPaletteUITests: UnitermUITestCase {
       "the terminal did not get the keyboard back")
   }
 
-  /// Catches Control-K that the palette takes from the shell while it is closed, or one that does
-  /// not fill in the kind keyword while it is open. The shell's Control-K kills the rest of the
-  /// line, so the half-typed word after the caret must never run.
-  func testControlKFillsInTheKindKeywordOnlyWhileThePaletteIsOpen() {
+  /// Catches a keyword key that the palette takes from the shell while it is closed, or one that
+  /// does not fill in its keyword while it is open. The shell's Control-A moves to the start of the
+  /// line, so the `e` typed after it completes `echo`. Its Control-K kills the rest of the line, so
+  /// the half-typed word after the caret must never run.
+  func testKeywordKeysFillInTheirKeywordOnlyWhileThePaletteIsOpen() {
     let app = launchApp(settings: ["appearance": "light"])
     let terminal = waitForTerminal(in: app)
+
+    // The prompt can show before the line editor reads keys, and Control-A typed ahead of it does
+    // not move the caret. A finished command proves the line editor is live.
+    app.typeText("echo editor-ready\n")
+    XCTAssertTrue(waitFor(terminal, timeout: 20) { $0.contains("\neditor-ready") })
+
+    app.typeText("cho moved-to-start")
+    app.typeKey("a", modifierFlags: .control)
+    app.typeText("e\n")
+    XCTAssertTrue(
+      waitFor(terminal, timeout: 20) { $0.contains("\nmoved-to-start") },
+      "the shell did not get Control-A")
+
+    let afterControlA = terminal.value.map { "\($0)" } ?? ""
+    XCTAssertFalse(afterControlA.contains("not found"), "a command failed: \(afterControlA)")
 
     app.typeText("echo kept-word dropped-word")
     for _ in 0..<"dropped-word".count {
@@ -76,10 +92,22 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     XCTAssertTrue(
       waitFor(field(in: app), timeout: 5) { $0 == "kind:" }, "Control-K did not fill in kind:")
-    let tabs = app.descendants(matching: .any).matching(identifier: "command-palette-row")
-      .element(matching: NSPredicate(format: "label == %@", "Tabs"))
-    XCTAssertTrue(tabs.appears(timeout: 5), "kind: did not list its values")
+    XCTAssertTrue(suggestion("Tabs", in: app).appears(timeout: 5), "kind: did not list its values")
     keepScreenshot("kind-keyword", of: app)
+
+    app.typeKey("a", modifierFlags: .control)
+
+    XCTAssertTrue(
+      waitFor(field(in: app), timeout: 5) { $0 == "applet:" },
+      "Control-A did not fill in applet:")
+    XCTAssertTrue(
+      suggestion("Terminal", in: app).appears(timeout: 5), "applet: did not list its values")
+    keepScreenshot("applet-keyword", of: app)
+  }
+
+  private func suggestion(_ title: String, in app: XCUIApplication) -> XCUIElement {
+    app.descendants(matching: .any).matching(identifier: "command-palette-row")
+      .element(matching: NSPredicate(format: "label == %@", title))
   }
 
   /// Catches a palette command that does not run on Enter.

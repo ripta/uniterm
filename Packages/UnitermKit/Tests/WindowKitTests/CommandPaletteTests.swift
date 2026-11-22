@@ -327,25 +327,37 @@ final class CommandPaletteTests: XCTestCase {
     XCTAssertEqual(catcher.keysSeen, 1)
   }
 
-  /// Catches Control-K that does not fill in the kind keyword while the palette is open, or one that
-  /// the palette takes from the focused view while it is closed.
-  func testControlKFillsInTheKindKeywordOnlyWhileThePaletteIsOpen() throws {
+  /// Catches a keyword key that does not fill in its keyword while the palette is open, or one
+  /// that the palette takes from the focused view while it is closed.
+  func testKeywordKeysFillInTheirKeywordOnlyWhileThePaletteIsOpen() throws {
+    let keys: [(letter: String, keyword: String, values: [String])] = [
+      ("k", "kind:", ["Tabs", "Commands"]),
+      ("a", "applet:", ["Fake"]),
+    ]
+
     let window = try XCTUnwrap(controller.window)
     let catcher = KeyCatcher()
     try applet(controller.focusedPane).view.addSubview(catcher)
     XCTAssertTrue(window.makeFirstResponder(catcher))
 
-    XCTAssertTrue(window.performKeyEquivalent(with: try key("k", .control)))
-    XCTAssertEqual(catcher.keysSeen, 1, "a closed palette took Control-K")
+    for (letter, _, _) in keys {
+      XCTAssertTrue(window.performKeyEquivalent(with: try key(letter, .control)))
+    }
+
+    XCTAssertEqual(catcher.keysSeen, keys.count, "a closed palette took a keyword key")
     XCTAssertEqual(palette.query, "")
 
     controller.showCommandPalette()
-    type("zsh")
 
-    XCTAssertTrue(window.performKeyEquivalent(with: try key("k", .control)))
-    XCTAssertEqual(catcher.keysSeen, 1)
-    XCTAssertEqual(palette.query, "kind:")
-    XCTAssertEqual(palette.entries.map(\.title), ["Tabs", "Commands"])
+    for (letter, keyword, values) in keys {
+      type("zsh")
+
+      XCTAssertTrue(window.performKeyEquivalent(with: try key(letter, .control)))
+      XCTAssertEqual(palette.query, keyword)
+      XCTAssertEqual(palette.entries.map(\.title), values)
+    }
+
+    XCTAssertEqual(catcher.keysSeen, keys.count)
   }
 
   // MARK: Filter chips

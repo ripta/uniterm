@@ -319,19 +319,23 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
     onQueryChange?(field.stringValue)
   }
 
-  /// Control-K fills in the `kind:` keyword. The key belongs to the palette only while its field
-  /// holds the keyboard. Otherwise the key goes on, so a closed palette or an inactive docked one
-  /// binds nothing.
-  static let kindKey = KeyChord("k", .control)
+  /// The keys that fill in a category's keyword, such as Control-K for `kind:`. They belong to the
+  /// palette only while its field holds the keyboard. Otherwise the key goes on, so a closed
+  /// palette or an inactive docked one binds nothing.
+  static let keywordKeys: [KeyChord: PaletteFilter.Category] = [
+    KeyChord("a", .control): .applet,
+    KeyChord("k", .control): .kind,
+  ]
 
   /// Takes a key that belongs to the palette while its field holds the keyboard. The window asks
   /// before any view, so a terminal that takes Control chords as input never sees it.
   func handleKey(_ event: NSEvent) -> Bool {
     guard isActive, let editor = field.currentEditor(), window?.firstResponder === editor,
-      KeyChord(event.charactersIgnoringModifiers ?? "", event.modifierFlags) == Self.kindKey
+      let category = Self.keywordKeys[
+        KeyChord(event.charactersIgnoringModifiers ?? "", event.modifierFlags)]
     else { return false }
 
-    setText(PaletteFilter.Category.kind.keyword)
+    setText(category.keyword)
     return true
   }
 
