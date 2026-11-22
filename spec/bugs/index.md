@@ -25,7 +25,7 @@
 | [20261121-held-requests-grow-without-bound](20261121-held-requests-grow-without-bound.md) | Calls held during a peer's full check grow without bound | not-reproducible |
 | [20261121-ui-test-paste-replaces-the-real-clipboard](20261121-ui-test-paste-replaces-the-real-clipboard.md) | The UI tests' open-panel paste replaces the real clipboard and restores only its text | fixed |
 | [20261122-approval-text-leaves-zero-width-scalars-raw](20261122-approval-text-leaves-zero-width-scalars-raw.md) | Launch approvals and controller names draw zero-width scalars raw | fixed |
-| [20261122-bounded-status-text-keeps-line-separators](20261122-bounded-status-text-keeps-line-separators.md) | Bounded status text keeps U+2028 and U+2029 line breaks | open |
+| [20261122-bounded-status-text-keeps-line-separators](20261122-bounded-status-text-keeps-line-separators.md) | Bounded status text keeps U+2028 and U+2029 line breaks | fixed |
 | [20261122-terminal-directory-check-blocks-main-thread](20261122-terminal-directory-check-blocks-main-thread.md) | An applet's current directory checks the file system on the main thread | open |
 | [20261122-layout-save-runs-on-main-thread](20261122-layout-save-runs-on-main-thread.md) | The layout save encodes and writes every tab on the main thread | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | open |
