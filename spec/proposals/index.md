@@ -48,6 +48,7 @@
 | [UTERM-044](UTERM-044-shard-the-ci-ui-tests.md) | Shard CI's UI tests across macOS runners | draft |
 | [UTERM-045](UTERM-045-settle-ui-test-input.md) | Settle input before UI tests send it | draft |
 | [UTERM-046](UTERM-046-deterministic-package-test-flakes.md) | Make the logged package-test flakes deterministic | draft |
+| [UTERM-047](UTERM-047-rate-limit-status-per-source.md) | Rate-limit status posts per source, with a fair bar and session-keyed sources | draft |
 
 ## Dependency Graph
 
@@ -92,6 +93,7 @@ UTERM-040 ← UTERM-008, UTERM-015, UTERM-016
 UTERM-041 ← UTERM-004, UTERM-005, UTERM-037
 UTERM-042 ← UTERM-004, UTERM-041
 UTERM-043 ← UTERM-004, UTERM-019
+UTERM-047 ← UTERM-001, UTERM-003, UTERM-004, UTERM-017, UTERM-022
 ```
 
 ## Not Yet Filed
