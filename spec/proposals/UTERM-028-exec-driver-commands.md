@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-20
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -376,6 +376,7 @@ Amended 2026-11-20; see Decision Log.
 - 2026-11-21: Renamed the pane-wide revoke from "Revoke Controller" to "Revoke All Controllers" in the settled
   decisions, the risk, and M1, per UTERM-042 "Palette commands: wording and target". It is the same command, with the
   same ID. The title changes once UTERM-042 M1 lands. The Impacts line on UTERM-004 keeps the shipped name.
+- 2026-11-21: Scheduled as UTERM-028 M1 in queue.md.
 
 ## References
 

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-20
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -706,6 +706,7 @@ Amended 2026-11-20; see Decision Log.
 - 2026-11-21: Renamed the pane-wide revoke in "How the badge shows live keys" from "Revoke Controller" to "Revoke All
   Controllers", per UTERM-042 "Palette commands: wording and target". It is the same command, with the same ID. The
   title changes once UTERM-042 M1 lands.
+- 2026-11-21: Scheduled as UTERM-024 M1-M2 in queue.md.
 
 ## References
 

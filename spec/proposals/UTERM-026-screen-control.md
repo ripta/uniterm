@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-20
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -650,6 +650,7 @@ Amended 2026-11-20; see Decision Log.
     says another script's layout mid-talk shows the audience the hidden panes.
   - Amended M1. The check "A layout request in a zoomed window keeps zoom, and its new panes open hidden" now checks
     that such a request ends zoom and its last new pane takes focus. No check covers a layout that makes no new pane.
+- 2026-11-21: Scheduled as UTERM-026 M1-M4 in queue.md.
 
 ## References
 

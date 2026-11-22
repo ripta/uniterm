@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-17
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -501,6 +501,7 @@ None.
   file's own path, since no caller needs it", and the sheet line said "Let the text viewer show images from
   /Users/me/talks/demo or a folder inside it, in panes it controls". `input-name` now returns the base name, and the
   sheet line names PDF pages. The stored folder kind keeps its version, so an older build still reads the store.
+- 2026-11-21: Scheduled as UTERM-032 M1-M2 in queue.md.
 
 ## References
 
