@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-21
+**Updated:** 2026-11-22
 
 ## Dependencies
 
@@ -152,6 +152,7 @@ is needed.
   often they act, so this proposal deviates from P15. The user accepted the risk and deferred a per-controller rate on
   opens, with a revisit hook. The runaway-controller risk said "A rate limit or a pane-wide cap would apply to the
   user's New Tab too, and is out of scope." A rate on one controller's opens would not apply to the user's New Tab.
+- 2026-11-22: Scheduled as UTERM-039 M1 in queue.md.
 
 ## References
 

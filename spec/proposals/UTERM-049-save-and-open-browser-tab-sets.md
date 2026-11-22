@@ -625,6 +625,7 @@ Starts after UTERM-018 M5, which builds the script file open.
 - 2026-11-22: Review gate: kept all. The user confirmed that `save-tabs` needs pane control and saves every tab,
   superseding in part UTERM-005's "Control". UTERM-005 carries the marker.
 - 2026-11-22: The user accepted the proposal.
+- 2026-11-22: Scheduled as UTERM-049 M1-M3 in queue.md.
 
 ## References
 

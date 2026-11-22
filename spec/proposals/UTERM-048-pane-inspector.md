@@ -602,6 +602,7 @@ None.
 - 2026-11-22: ADR candidate (cuts across the system): program-set text is drawn escaped wherever it sits beside trusted
   UI. Declined: the status bar drops such text instead, so the rule does not hold for every member.
 - 2026-11-22: Accepted by the user.
+- 2026-11-22: Scheduled as UTERM-048 M1 and UTERM-048 M2-M5 in queue.md.
 
 ## References
 

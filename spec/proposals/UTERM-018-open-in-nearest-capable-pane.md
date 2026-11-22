@@ -688,6 +688,7 @@ and the path-reading power.
   holds. That gate now lives here in M5, not only in UTERM-049 M3, so no build between the two milestones lets a script
   denied network access load a URL it wrote into a tab file. M5's check on a cancelled question moved to UTERM-049 M3,
   since only a tab file shows one.
+- 2026-11-22: Scheduled as UTERM-018 M1-M5 in queue.md.
 
 ## References
 
