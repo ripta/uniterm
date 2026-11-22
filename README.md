@@ -42,6 +42,8 @@ Commands:
 - `make test` runs the CI gating checks, package tests, and app UI tests. UI tests need a logged-in desktop session
   and Accessibility permission for the terminal. The UI tests build into `.build/DerivedData-test`, so their test
   signing never reaches the app that `make build` leaves. `make test-ci` runs just the CI gating checks, without Xcode or Zig.
+- `make test-app-select UI_TESTS='...'` and `make test-package-select PACKAGE_TESTS='...'` run only the named tests.
+  See "Testing while iterating" below.
 - `make fuzz` runs the table readers' fuzzer under the address sanitizer, in its own build folder. It tries
   `FUZZ_ITERATIONS` mutated inputs, 5000 by default. `make test-package` runs the same fuzzer at a small count. `make ci`
   does not run `make fuzz`.
@@ -72,6 +74,23 @@ toolchain fields.
 
 The libghostty build, the pinned Zig, its package cache, and the artifacts live under `.cache/ghostty`. A rebuild of the pinned
 commit needs no network once that cache exists.
+
+### Testing while iterating
+
+The full UI suite takes about 27 minutes, and the package tests about 2. While iterating on a feature or a fix, run
+only the tests the change touches:
+
+```sh
+make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'
+make test-package-select PACKAGE_TESTS='LayoutStoreTests'
+```
+
+`UI_TESTS` takes UI test class names, or `Class/testMethod` for a single test. `PACKAGE_TESTS` takes `swift test`
+filters. Each name becomes its own `--filter`. Both targets fail when their list is empty, so a partial run never
+stands in for a full one.
+
+Pick the classes from what the diff touches, plus any new test. Run the full `make test-app` and `make test-package`
+before calling the work done. Run them earlier when a change touches shared UI test helpers or app-wide code.
 
 ## License
 

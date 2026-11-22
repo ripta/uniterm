@@ -30,6 +30,10 @@ DRY_RUN ?=
 # Seconds one package test may run before it is sampled and aborted. It sits above the longest wait
 # a failing test makes, so a failing test still reports its own assertion.
 TEST_TIME_LIMIT ?= 120
+# Space-separated UI test classes or Class/testMethod names, for test-app-select.
+UI_TESTS ?=
+# Space-separated swift test filters, for test-package-select.
+PACKAGE_TESTS ?=
 
 PACKAGE_DIR := Packages/UnitermKit
 SWIFT_DIRS := App Helpers UITests $(PACKAGE_DIR)/Sources $(PACKAGE_DIR)/Tests $(PACKAGE_DIR)/Package.swift
@@ -39,6 +43,11 @@ xcodebuild_into = xcodebuild -project uniterm.xcodeproj -scheme uniterm \
 	-clonedSourcePackagesDirPath $(SOURCE_PACKAGES)
 XCODEBUILD := $(call xcodebuild_into,$(DERIVED_DATA))
 XCODEBUILD_TEST := $(call xcodebuild_into,$(TEST_DERIVED_DATA))
+UI_TEST_FLAGS := -test-timeouts-enabled YES \
+	-default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120 \
+	-collect-test-diagnostics never
+# The Xcode target's name holds a space, so each -only-testing argument is quoted whole.
+UI_TEST_TARGET := uniterm UITests
 
 ##@ Build
 
@@ -85,6 +94,14 @@ test-package: ghostty ## Run the package tests with swift test, each test under 
 	cd $(PACKAGE_DIR) && ../../scripts/run-swift-tests.sh $(TEST_TIME_LIMIT) \
 		swift test --scratch-path ../../$(SWIFTPM_SCRATCH)
 
+# An empty list fails instead of falling back to the whole suite, so a partial run never passes for
+# a full one.
+.PHONY: test-package-select
+test-package-select: ghostty ## Run only the named package tests, e.g. make test-package-select PACKAGE_TESTS='LayoutStoreTests'
+	$(if $(strip $(PACKAGE_TESTS)),,$(error PACKAGE_TESTS is empty. Name the tests to run, or use make test-package for all of them))
+	cd $(PACKAGE_DIR) && ../../scripts/run-swift-tests.sh $(TEST_TIME_LIMIT) \
+		swift test --scratch-path ../../$(SWIFTPM_SCRATCH) $(foreach t,$(PACKAGE_TESTS),--filter $(t))
+
 # A helper's sandbox cannot be proved from a package build. This runs the probe and the samples
 # against each helper inside the built app, and it fails when a helper is missing, so a lost copy
 # phase cannot pass quietly. Run it outside an agent sandbox, where the helpers can start.
@@ -115,9 +132,14 @@ fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, 
 # records nothing either.
 .PHONY: test-app
 test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission
-	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) -test-timeouts-enabled YES \
-		-default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 120 \
-		-collect-test-diagnostics never test
+	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) test
+
+# Like test-package-select, an empty list fails instead of running the whole suite.
+.PHONY: test-app-select
+test-app-select: ghostty ## Run only the named UI test classes or methods, e.g. make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'
+	$(if $(strip $(UI_TESTS)),,$(error UI_TESTS is empty. Name the tests to run, or use make test-app for the full suite))
+	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) \
+		$(foreach t,$(UI_TESTS),'-only-testing:$(UI_TEST_TARGET)/$(t)') test
 
 .PHONY: ghostty-offline-check
 ghostty-offline-check: ## Rebuild the pinned Ghostty with the network off, from the kept caches
