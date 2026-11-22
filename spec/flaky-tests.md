@@ -142,6 +142,9 @@ fixed ones.
 - Seen again: 2026-11-22, locally on main, in a run of the five classes up to `DataViewerUITests`.
   `testAPaneCallQuestionShowsTheRunsPID` failed at `ControllerConsentUITests.swift:139` with "the terminal did not
   take the keys, so typing would beep". That run made three passes, and the class failed once.
+- Seen again: 2026-11-22, in a full local `make ci` on a tree that adds the Questions applet.
+  `testASignedFilesReviewOffersTrustThisIdentity` failed at `ControllerConsentUITests.swift:126` with
+  "pending-requests-window did not close". It passed 3 of 3 alone right after, on the same tree.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
@@ -226,6 +229,9 @@ fixed ones.
 - Evidence: `CommandPaletteUITests.swift:290` failed with "the palette never showed". Typing Cmd-K took 20 s, from
   3.91 s to 24.36 s. The palette did not appear in the 5 s wait after it. The test then passed 3 of 3 alone on the same
   tree.
+- Seen again: 2026-11-22, in the same full local run as the third `ControllerConsentUITests` sighting of that day.
+  It failed at `CommandPaletteUITests.swift:294` with "the title was not neutralized", and passed 3 of 3 alone
+  right after.
 - Status: unresolved. A single keystroke that takes about 20 s also shows in the `ControllerRunUITests` and
   `ExecPaneUITests` entries above. The app may stall now and then in a long run. That is not confirmed.
 
@@ -360,7 +366,56 @@ fixed ones.
   confirmed.
 - Status: unresolved. UTERM-046 proposes a fix.
 
+### `BrowserUITests.testCommandLFocusesTheAddressBar`
+
+- Seen: 2026-11-22, once, in a full local `make ci` on a tree that adds the Questions applet and changes no browser
+  code.
+- Evidence: `BrowserUITests.swift:55` failed a bare `XCTAssertTrue`. The test passed 3 of 3 alone right after, on the
+  same tree.
+- Status: unresolved.
+
+### `ImageViewerScrollTests.testScrollMovesTheImageTheWayAScrollViewMovesItsDocument`
+
+Earlier fix: "Wait for the reference scroll view to move in the image viewer scroll test"
+
+- Seen: 2026-11-08, once in CI on a PR that changed no image viewer code.
+- Evidence: the first case, a precise scroll of 0,40, failed "no oracle". The reference scroll view had not moved, so
+  the test also read the image's correct pan as wrong. Run alone, it failed 1 of 20 before the fix.
+- Cause: a fresh scroll view applies its first scroll on a later run loop pass, not inside `scrollWheel(with:)`. The
+  test ran the run loop for a fixed 0.05 s and then read the scroll view once. Under load, that pass had not run yet.
+  With no wait at all, the test failed every time, on that first case only. The image viewer itself was right.
+- Fix: the test now runs the run loop until the scroll view leaves its starting point, with a two-second bound. A scroll
+  view that never moves still fails the "no oracle" check. After the fix, it passed 20 of 20 alone.
+- Seen again: 2026-11-22, once, in a local `make ci-package` of a batch that changes only a script host test. The
+  first case of the 0,-40 precise scroll failed "no oracle", as before the fix: the reference scroll view had not
+  moved within the two-second bound. The test then passed 20 of 20 alone on the same tree.
+- Status: unresolved. The earlier fix does not cover this sighting.
+
 ## Fixed
+
+### `PatternTests.testACatastrophicPatternStopsAtItsLimitAndStopsUsingCPU`
+
+Fixed by: "Check the stopped pattern match's CPU per thread"
+
+- Seen: 2026-11-22, in the first CI `package` run of the PR that added it.
+- Evidence: the process used 0.43 s of CPU in the half second after the match stopped, against a 0.15 s bound. The
+  match runs on the calling thread and ends when the search returns.
+- Cause: the check read the whole process's CPU. The package suite runs in one process, and an earlier test's work
+  can still be running there.
+- Fix: the test samples each thread's CPU over a window before the search and an equal one after. It fails when one
+  thread uses half the window more than its baseline. A thread left spinning after the check failed it at 0.50 s.
+  The fixed test passed 10 of 10 alone.
+
+### `QuestionsUITests.testEveryAnswerTypeReturnsItsShape`
+
+Fixed by: "Wait for the form's focus before typing its answers"
+
+- Seen: 2026-11-22, in the first CI `app` run of the PR that added it.
+- Evidence: `QuestionsUITests.swift:266` read a null name where "Ada" was typed.
+- Cause: the test typed as soon as the name field appeared. The form takes the keyboard a moment later, so the keys
+  went nowhere.
+- Fix: the test waits for the field to hold the keyboard before typing. `testANewFormTakesKeysAtOnce` still types
+  as soon as the field appears, since how soon keys arrive is its claim. It shares the exposure.
 
 ### `MapViewerUITests.testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins`
 
@@ -611,15 +666,3 @@ Fixed by: "Wait for the app to be frontmost before UI tests type, and paste open
   the one-shot read in `testClosingTheLastWindowKeepsTheAppRunningAndCommandNOpensAgain`. `waitForTerminal` activates
   the app before the first key.
 
-### `ImageViewerScrollTests.testScrollMovesTheImageTheWayAScrollViewMovesItsDocument`
-
-Fixed by: "Wait for the reference scroll view to move in the image viewer scroll test"
-
-- Seen: 2026-11-08, once in CI on a PR that changed no image viewer code.
-- Evidence: the first case, a precise scroll of 0,40, failed "no oracle". The reference scroll view had not moved, so
-  the test also read the image's correct pan as wrong. Run alone, it failed 1 of 20 before the fix.
-- Cause: a fresh scroll view applies its first scroll on a later run loop pass, not inside `scrollWheel(with:)`. The
-  test ran the run loop for a fixed 0.05 s and then read the scroll view once. Under load, that pass had not run yet.
-  With no wait at all, the test failed every time, on that first case only. The image viewer itself was right.
-- Fix: the test now runs the run loop until the scroll view leaves its starting point, with a two-second bound. A scroll
-  view that never moves still fails the "no oracle" check. After the fix, it passed 20 of 20 alone.
