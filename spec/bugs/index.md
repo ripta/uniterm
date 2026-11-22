@@ -22,4 +22,5 @@
 | [20261121-tab-bar-overflow-hides-tabs](20261121-tab-bar-overflow-hides-tabs.md) | Tabs past the tab bar's trailing edge cannot be seen or clicked | open |
 | [20261121-revoked-controller-stays-on-badge](20261121-revoked-controller-stays-on-badge.md) | A revoked controller that keeps its connection open stays listed on the badge | open |
 | [20261121-owner-end-withdraws-other-owners-launches](20261121-owner-end-withdraws-other-owners-launches.md) | An owner's end withdraws every launch waiting in its panes, whoever staged it | open |
+| [20261121-held-requests-grow-without-bound](20261121-held-requests-grow-without-bound.md) | Calls held during a peer's full check grow without bound | not-reproducible |
 | [20261121-ui-test-paste-replaces-the-real-clipboard](20261121-ui-test-paste-replaces-the-real-clipboard.md) | The UI tests' open-panel paste replaces the real clipboard and restores only its text | open |

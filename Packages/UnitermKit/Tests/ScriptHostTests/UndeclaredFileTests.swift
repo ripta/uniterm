@@ -36,6 +36,20 @@ private struct GatedHelper: ControllerHelperIdentity {
   func isRunningCommand(_ token: AuditToken) -> Bool { true }
 }
 
+/// A helper whose cheap check fails for the command and whose full check waits for the test, so a
+/// peer's calls are held for as long as the test wants.
+private struct StaleGatedHelper: ControllerHelperIdentity {
+  let gate: DispatchSemaphore
+
+  func refusal(forPeer token: AuditToken) -> String? {
+    gate.wait()
+
+    return nil
+  }
+
+  func isRunningCommand(_ token: AuditToken) -> Bool { false }
+}
+
 /// Script files that declare nothing: strict mode, the unsafe review, and what each choice grants.
 ///
 /// The raw peers play the bundled command against a host that takes every peer for it. The runs
@@ -312,6 +326,59 @@ final class UndeclaredFileTests: XCTestCase {
     }
 
     XCTAssertEqual(refusals, [.plainBeginFromCommand])
+  }
+
+  /// Catches calls held during the full check growing without bound. The connection stops reading
+  /// at its in-flight limit, and a held call has no answer yet, so a flood never holds more than
+  /// the limit. Every call is answered once the check passes.
+  func testAFloodDuringTheFullCheckHoldsNoMoreThanTheInFlightLimit() async throws {
+    settings.set(.unsafe)
+
+    let gate = DispatchSemaphore(value: 0)
+
+    try startHost(helper: StaleGatedHelper(gate: gate))
+
+    let peer = try await connect()
+    let limit = ScriptConnection.maxInFlight
+    let sent = limit * 3
+
+    try peer.send(ScriptHelperMessage.undeclaredBegin(UndeclaredBegin(name: "flood")).frame())
+
+    for id in 1...sent {
+      try peer.send(
+        ScriptHelperMessage.request(id: UInt32(id), call: .postStatus(level: .info, text: "x"))
+          .frame())
+    }
+
+    var most = 0
+
+    let filled = await waitUntil(timeout: .seconds(5)) {
+      most = max(most, self.host.heldRequests.values.map(\.count).max() ?? 0)
+
+      return most >= limit
+    }
+
+    // The flood is already sent, so a reader that kept reading would pass the limit within this
+    // bounded wait. The wait ends when the time does.
+    let grew = await waitUntil(timeout: .milliseconds(500)) {
+      (self.host.heldRequests.values.map(\.count).max() ?? 0) > limit
+    }
+
+    most = max(most, host.heldRequests.values.map(\.count).max() ?? 0)
+    gate.signal()
+
+    XCTAssertFalse(grew, "the host held more calls than the in-flight limit")
+
+    expect(filled, "the calls were never held")
+    XCTAssertEqual(most, limit)
+
+    var answered: Set<UInt32> = []
+
+    while answered.count < sent {
+      if case .reply(let id, _) = try await read(peer) { answered.insert(id) }
+    }
+
+    XCTAssertEqual(answered, Set((1...sent).map { UInt32($0) }))
   }
 
   /// Catches a stale-cache command skipping the one-session rule. Its file begin is admitted, and a
