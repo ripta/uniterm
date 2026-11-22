@@ -45,6 +45,9 @@
 | [UTERM-041](UTERM-041-uniform-tab-marker-slot.md) | A uniform marker slot for every tab, with an authority marker first | accepted |
 | [UTERM-042](UTERM-042-actions-for-tabs-and-their-markers.md) | One action menu for a tab and its markers, with every action in the palette | accepted |
 | [UTERM-043](UTERM-043-pause-controllers.md) | Pause controllers for a while without ending their grants | accepted |
+| [UTERM-044](UTERM-044-shard-the-ci-ui-tests.md) | Shard CI's UI tests across macOS runners | draft |
+| [UTERM-045](UTERM-045-settle-ui-test-input.md) | Settle input before UI tests send it | draft |
+| [UTERM-046](UTERM-046-inject-clocks-into-timing-tests.md) | Inject clocks into timing-sensitive package tests | draft |
 
 ## Dependency Graph
 
