@@ -47,7 +47,7 @@
 | [UTERM-043](UTERM-043-pause-controllers.md) | Pause controllers for a while without ending their grants | accepted |
 | [UTERM-044](UTERM-044-shard-the-ci-ui-tests.md) | Shard CI's UI tests across macOS runners | draft |
 | [UTERM-045](UTERM-045-settle-ui-test-input.md) | Settle input before UI tests send it | draft |
-| [UTERM-046](UTERM-046-inject-clocks-into-timing-tests.md) | Inject clocks into timing-sensitive package tests | draft |
+| [UTERM-046](UTERM-046-deterministic-package-test-flakes.md) | Make the logged package-test flakes deterministic | draft |
 
 ## Dependency Graph
 

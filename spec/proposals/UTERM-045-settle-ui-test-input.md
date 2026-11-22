@@ -10,103 +10,126 @@
 
 ## Summary
 
-UI tests send synthesized keys, clicks, and scroll wheels. Several logged flakes fail because an event arrived before
-its target could take it. This proposal adds shared helpers to the UI test base class that settle the pointer and the
-keyboard on their target first. It then moves the flaky tests onto them, one at a time, each on its own evidence.
+UI tests send synthesized wheels, clicks, and keys. When an event arrives before its target can take it, the test fails
+with no change to the code. This proposal gives the UI test base class one way to aim and send a wheel that settles the
+pointer first. It moves every wheel onto it once CI shows the launcher change holds, and states when a flaky entry may
+close.
 
 ## Motivation
 
-`spec/flaky-tests.md` lists 24 open entries. Many share one shape: the test sent an event, and the app never saw it.
+One logged flake has evidence of a pointer race. In a CI failure of the launcher scroll test on #90, the first wheel
+scrolled the middle pane's launcher while the same lookup gave the focused list's frame just before and after it. The
+change "Settle the pointer on the launcher list before the scroll test's wheels" moves the pointer onto the list and
+waits until it is inside before any wheel. That change is a hypothesis. A local run that left the pointer over the
+middle pane still passed, and CI had run it once by the time this proposal was filed.
 
-- The launcher scroll test's first wheel scrolled the middle pane's list on CI. The pointer had not yet reached the
-  focused list. "Settle the pointer on the launcher list before the scroll test's wheels" fixed that one test in place.
-- The PaneTree, Windows, and open-panel entries record keys that went nowhere.
-- `TerminalLinkUITests` failed when a real mouse moved during a local run. Real events carry the real modifiers, so the
-  synthesized Command was lost.
+The other wheel sites, such as the image viewer's scroll test (`UITests/ImageViewerUITests.swift:507-538`), send raw
+`element.scroll` calls with no settle. If the race is real, they share it.
 
-The base class already waits for the app to be frontmost before the first key, in `waitForForeground`
-(`UITests/UnitermUITestCase.swift:233`). It has no equivalent for the pointer. Each test that needs one writes its own,
-as the launcher test now does.
+Most other entries in `spec/flaky-tests.md` point elsewhere. The open-panel failures involve a panel in another
+process. Several entries record a single synthesized event taking 5 to 20 s. `TerminalLinkUITests` failed because a
+person moved the real mouse during a local run. The PaneTree entry's own check rules out a responder race in the app.
 
 ## Design Decisions (Settled)
 
 ### Test code only
 
-Decision: the helpers live in the UI test target. No product code changes.
+Decision: the change lives in the UI test target. No product code changes.
 
-Rationale: the events are synthesized by the test. The app handles real input correctly. The race is between the test
-and the window server.
+Rationale: the events are synthesized by the test, and the race is between the test and the window server.
 
 ### No retries and no longer timeouts
 
-Decision: a helper waits for a stated condition, such as the pointer inside the target's frame, and fails with a report
-when it never holds. It never resends an event or widens a timeout.
+Decision: a settle waits for a stated precondition, such as the pointer inside the target's frame, and fails with a
+report when it never holds. It never resends an event or widens a timeout. It never waits for the app's response to an
+event.
 
-Rationale: the flaky-test rule forbids fixing a flake with retries, longer timeouts, or weaker assertions. A wait for a
-named condition is not one of those. It removes the race, and its failure says which condition did not hold.
+Rationale: the flaky-test rule forbids fixing a flake with retries, longer timeouts, or weaker assertions. A wait for
+the test's own precondition removes the race, and its failure names which precondition did not hold.
 
-### Each entry closes on its own evidence
+### When an entry closes
 
-Decision: moving a test onto a helper does not close its flaky entry. The entry closes after CI runs show the failure
-gone, or after a run fails with the helper's report and names a different cause.
+Decision: an entry moves to Fixed only with a fix commit, and only after enough clean CI `app` runs that a flake still
+present at its observed rate would very likely have shown. For an entry seen once in N runs, that is about 3N clean
+runs, which gives a 95% chance of seeing it again. An entry seen too rarely to reach that stays under Potential, with
+the change named. A run that fails with a settle's report closes nothing. It records a new cause on the same entry.
 
-Rationale: on 2026-11-21 the launcher entry moved to Fixed after one change, and CI then failed it again. A change that
-fits the evidence is a hypothesis until runs confirm it.
+Rationale: the launcher entry moved to Fixed after one change on 2026-11-21, and CI then failed it again. Three clean
+runs say little about a flake seen once in twenty.
 
 ## Design Decisions (Open)
 
-### Which entries are in scope
+### Which call sites move
 
-- **Pointer events only.** Wheels and clicks, where the launcher evidence points. The lost-key entries stay as they are.
-- **Pointer events and keys.** Keys already wait for the app to be frontmost. A lost key after that may be a different
-  race, such as the first responder moving after a close. This option adds a keyboard-focus settle, and needs evidence
-  per entry that focus, not the app, was the problem.
+- **Every synthesized wheel.** Every wheel goes through one base-class entry point that aims and settles, so a new
+  wheel test gets the settle by default. Takes in the image viewer's wheels, which have no flaky entry. An addition.
+- **Wheels and keys.** As above, plus a keyboard-focus settle before keys. Keys already wait for the app to be frontmost
+  (`UnitermUITestCase.swift:233`). A focus settle would wait for the app's first responder, which is the app's response
+  to the last action, against the decision above. It also cannot see the open panel, which runs in another process.
+  `QuestionsUITests` resends Escape up to three times for a panel not yet ready, a retry this option would have to
+  replace. An addition.
+- **Flaky entries only.** Only tests with a logged pointer flake move, which today is the launcher test. Leaves undone:
+  raw wheels elsewhere, and the `QuestionsUITests` Escape retry.
+
+### How the wheel is aimed
+
+- **Hover, wait, then the element's scroll.** What the launcher change does. Whether XCUI's element scroll moves the
+  pointer again before the wheel is not known.
+- **Scroll at a coordinate.** `XCUICoordinate.scroll(byDeltaX:deltaY:)` sends the wheel at an explicit point, which also
+  avoids XCUI's hit-point lookup that fails for the launcher's scroll view. Whether it removes the race is not known.
+
+The xcresult activity log for one wheel shows which events XCUI synthesizes, and decides between these.
 
 ### Whether clicks need settling
 
-XCUI's `click()` moves the pointer as part of the click, unlike a wheel sent with `scroll(byDeltaX:deltaY:)`. Whether a
-click can land before the move is not known. Candidates: settle clicks too, or settle only wheels and hovers until a
-click flake shows the same race.
+XCUI's `click()` aims at the element as part of the click. Whether a click can land before the pointer arrives is not
+known, and no logged flake shows it. Candidates: settle clicks too, or leave clicks until a flake shows the race.
 
 ### Whether to detect outside input
 
-A real mouse or keyboard moving during a local run breaks synthesized input. Candidates:
-
 - **No detection.** Document that a local UI run needs the pointer and keyboard left alone.
-- **Detect and name it.** A helper notices a pointer move the test did not make, and the failure says so. This needs a
-  way to tell the test's events from a person's, which is not known to exist.
+- **Check pointer drift.** Before each event, compare the pointer with where the settle put it, and fail when a person
+  moved it. Leaves undone: a person's modifier keys still change synthesized input, which was the TerminalLink cause.
 
 ## Risks
 
-- **A settle helper hides a real product bug** — likelihood: low, impact: medium.
-  Mitigation: a helper only waits for the test's own precondition, such as where the pointer is. It never waits for the
-  app's response, so a product that drops a well-aimed event still fails.
-- **The helper's condition reads the wrong coordinate space** — likelihood: low, impact: low.
-  Mitigation: the launcher fix converts AppKit's bottom-left pointer to XCUI's top-left frames, and its run proves the
-  conversion. The shared helper keeps that conversion and its proof.
+- **The launcher hypothesis is wrong** — likelihood: medium, impact: medium.
+  Mitigation: M1 waits for CI evidence. A CI failure with the pointer inside the list sends this proposal back to its
+  scope question before anything is built on the cause.
+- **A settle never actually waits** — likelihood: medium, impact: low.
+  Mitigation: if `hover()` returns only after the pointer moved, the wait proves the precondition but guards nothing.
+  The aiming question above decides what the settle actually guards, and its comment says so.
+- **The settle reads the wrong coordinate space** — likelihood: low, impact: low.
+  Mitigation: a wrong conversion fails the wait every time, never silently. The launcher change's local runs already
+  passed with it.
 
 ## Milestones
 
-### M1: Shared pointer settle
+### M1: The launcher change holds in CI
 
 **Status:** NOT STARTED
 
-- The base class settles the pointer inside a target's frame before a wheel, and reports the pointer's position when
-  it never arrives
-- The launcher scroll test uses the shared helper in place of its own
-- The `LauncherUITests` class passes locally with the shared helper
+- The launcher change has run clean in CI `app` runs to the count the closing rule sets, or a failure's report is
+  recorded in the launcher entry
+- When a failure shows the pointer inside the list, the open scope question is reopened before M2 starts
 
-### M2: Move the flaky tests onto the helpers
+### M2: One way to send a wheel
 
 **Status:** NOT STARTED
 
-- Each in-scope flaky entry names the helper its test now uses, or why it does not apply
-- No entry moves to Fixed without CI runs that show the failure gone
+- The base class aims and settles a wheel in one call, and reports the pointer and the target's frame when the
+  precondition never holds
+- The settle reads the target's frame on each poll
+- Every call site the scope question names uses it, and no raw wheel remains among them
+- CI `app` runs, not local runs, prove the change
 
 ## Decision Log
 
 - 2026-11-21: Filed during a landing run in which UI flakes cost several CI reruns. The user asked whether this
   flakiness could be fixed for the future.
+- 2026-11-21: A design review found the premise rested on one unconfirmed pointer race. The user chose to gate the work
+  on CI evidence for the launcher change, widen the scope candidates to every synthesized wheel, and state a closing
+  rule.
 
 ## References
 
