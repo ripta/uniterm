@@ -269,7 +269,8 @@ final class ControllerDescriptorTests: XCTestCase {
     let known = Set(ControllerPermission.meanings.map(\.kind))
 
     XCTAssertEqual(
-      known.subtracting(olderKinds), ["path-read", "browser-navigation", "browser-read"])
+      known.subtracting(olderKinds),
+      ["path-read", "browser-navigation", "browser-read", "ask-user"])
     XCTAssertEqual(ControllerPermission.meaning(kind: "path-read", version: 1)?.format, 2)
 
     let files = #"{"main.janet": "sha256:\#(String(repeating: "a", count: 64))"}"#
@@ -302,6 +303,39 @@ final class ControllerDescriptorTests: XCTestCase {
       try ControllerFixtures.descriptor(ControllerFixtures.formatTwoBrowser))
 
     XCTAssertEqual(descriptor.permissions, [.paneControl, .browserNavigation, .browserRead])
+  }
+
+  /// Catches the ask power joining format 2 as a format bump, and a scope or a name that it
+  /// silently accepts. It has no scope field, so a field on it is a mistake the reader names. A
+  /// format 1 descriptor never reads it, since an older build did not know the kind.
+  func testAskUserJoinsFormatTwoAtVersionOneWithNoScope() throws {
+    let meaning = try XCTUnwrap(ControllerPermission.meaning(kind: "ask-user", version: 1))
+
+    XCTAssertEqual(meaning.format, 2)
+    XCTAssertEqual(meaning.covers, [1])
+    XCTAssertNil(ControllerPermission.meaning(kind: "ask-user", version: 2))
+    XCTAssertEqual(ControllerPermission.askUser.kindName, "ask-user")
+
+    let files = #"{"main.janet": "sha256:\#(String(repeating: "a", count: 64))"}"#
+
+    func descriptor(format: Int, permission: String) -> Data {
+      let version = format >= 2 ? #", "version": 1"# : ""
+
+      return Data(
+        #"{"format": \#(format), "id": "dev.uniterm.fixture.ask", "name": "X", "entry": {"kind": "janet", "path": "main.janet"}, "files": \#(files), "permissions": [{"kind": "ask-user"\#(version)\#(permission)}]}"#
+          .utf8)
+    }
+
+    XCTAssertEqual(
+      try ControllerDescriptor.parse(descriptor(format: 2, permission: "")).permissions,
+      [.askUser])
+
+    for extra in [#", "name": "x""#, #", "directories": ["/a"]"#, #", "executable": "/bin/ls""#] {
+      XCTAssertThrowsError(
+        try ControllerDescriptor.parse(descriptor(format: 2, permission: extra)), extra)
+    }
+
+    XCTAssertThrowsError(try ControllerDescriptor.parse(descriptor(format: 1, permission: "")))
   }
 
   /// Catches a format 1 descriptor and a format 2 descriptor sharing one reader state: each loads

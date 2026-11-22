@@ -316,6 +316,31 @@ final class ScriptLintTests: XCTestCase {
     XCTAssertTrue(idle[0].message.contains("path-read"))
   }
 
+  // MARK: Asking
+
+  /// Catches a form call that needs no declaration, a declared ask power reported unused in a file
+  /// that opens a form, and one that never asks going unreported. Each form call needs ask-user,
+  /// and holding it gives no pane control, so a file that only asks declares nothing else.
+  func testAskUserIsUsedByTheFormCallsAndNeededByThem() {
+    let declared = "(declare-permissions {:kind :ask-user :version 1})\n"
+
+    for call in [
+      "(uniterm/open-form \"{}\")", "(uniterm/wait-form 1)", "(uniterm/discard-form 1)",
+    ] {
+      XCTAssertEqual(summary(findings(declared + "(import uniterm)\n" + call)), [], call)
+
+      let undeclared = findings("(declare-permissions)\n(import uniterm)\n" + call)
+
+      XCTAssertEqual(undeclared.map(\.kind), [.undeclaredPower], call)
+      XCTAssertTrue(undeclared[0].message.contains("ask-user"), undeclared[0].message)
+    }
+
+    let idle = findings(declared + "(import uniterm)\n(uniterm/post-status :info \"x\")\n")
+
+    XCTAssertEqual(idle.map(\.kind), [.unusedPower])
+    XCTAssertTrue(idle[0].message.contains("ask-user"))
+  }
+
   // MARK: Browser powers
 
   /// Catches a declared browser power reported unused in a file that uses it, and one that uses

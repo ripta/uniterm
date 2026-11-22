@@ -161,6 +161,17 @@ final class ScriptHostAPITests: XCTestCase {
     XCTAssertEqual(windows.sent.first?.content.count, ScriptProtocol.maxSendBytes)
   }
 
+  /// Catches a form call whose spec, handle, or failure kind is lost on the way. The script opens
+  /// a form, sees a second one refused as busy, a bad spec refused as a bad argument, a handle
+  /// that is not open as not found, and a discard that frees the handle.
+  func testFormCallsCarryTheSpecAndTheHandleAndRaiseStructuredErrors() async throws {
+    try await run("forms")
+
+    XCTAssertEqual(windows.askedForms.count, 2)
+    XCTAssertEqual(windows.askedForms.first?.spec.title, "T")
+    XCTAssertEqual(windows.discardedForms.count, 2, "the script's discard, then the run's end")
+  }
+
   /// Catches a send-command that loses its target, applet type, schema version, or command, that
   /// writes arguments the app reads as other JSON, or a refusal that reaches the script as plain
   /// text in place of a struct naming its kind.

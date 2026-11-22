@@ -44,6 +44,7 @@ final class ScriptWireFuzzTests: XCTestCase {
       ScriptHelperMessage.openBegin(
         OpenBegin(paths: ["/synthetic/a.md", "/synthetic/folder", "/synthetic/caf\u{00E9}"])
       ).frame(),
+      ScriptHelperMessage.questionBegin.frame(),
       ScriptHelperMessage.fileDeclaration(#"{"permissions":[{"kind":"pane-control","version":1}]}"#)
         .frame(),
       ScriptHelperMessage.request(id: 3, call: .postStatus(level: .warning, text: "synthetic"))
@@ -70,6 +71,8 @@ final class ScriptWireFuzzTests: XCTestCase {
         ).frame(),
         ScriptAppMessage.undeclaredAdmitted.frame(),
         ScriptAppMessage.openDone.frame(),
+        ScriptAppMessage.questionOnlyAdmitted.frame(),
+        ScriptAppMessage.reply(id: 6, result: .failure(.ended, "synthetic end")).frame(),
       ]
   }
 

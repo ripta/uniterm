@@ -51,6 +51,12 @@ final class ScriptCodecTests: XCTestCase {
       .readClipboard,
       .writeClipboard(text: ""),
       .writeClipboard(text: String(repeating: "x", count: ScriptProtocol.maxClipboardBytes)),
+      .openForm(spec: #"{"items":[{"id":"a","text":"A?","type":"boolean"}]}"#),
+      .openForm(spec: String(repeating: " ", count: ScriptProtocol.maxFormBytes)),
+      .waitForm(form: 1),
+      .waitForm(form: top),
+      .discardForm(form: 0),
+      .discardForm(form: top),
     ]
   }()
 
@@ -100,6 +106,7 @@ final class ScriptCodecTests: XCTestCase {
         UndeclaredBegin(name: "caf\u{00E9}.janet", capabilities: ["fs-read", "net-connect"])),
       .openBegin(OpenBegin(paths: ["/Users/synthetic/notes.md"])),
       .openBegin(OpenBegin(paths: ["/tmp/caf\u{00E9}", "/a b/c", "/"])),
+      .questionBegin,
     ]
 
     for level in ScriptStatusLevel.allCases {
@@ -137,6 +144,8 @@ final class ScriptCodecTests: XCTestCase {
         snapshot: "/tmp/run.synthetic/script.janet", version: Data(repeating: 0x5A, count: 32)),
       .undeclaredAdmitted,
       .openDone,
+      .questionOnlyAdmitted,
+      .reply(id: 47, result: .failure(.ended, "the form ended")),
     ]
 
     for message in messages {
@@ -144,16 +153,70 @@ final class ScriptCodecTests: XCTestCase {
     }
   }
 
-  /// Catches an old command or an old app that the version 13 side accepts. Version 12 has no open
-  /// begin, so an old command could never ask for one and an old app would read the new begin as
-  /// an unknown message. Version 11 writes a command's schema version as one number. Each side
-  /// refuses the other at the hello, before any call or admission.
-  func testTheOpenBeginVersionRefusesTheVersionBeforeIt() {
-    XCTAssertEqual(ScriptProtocol.version, 13)
+  /// Catches an old command or an old app that the version 14 side accepts. Version 13 has no form
+  /// calls and no question-only begin, so an old command could never ask a form and an old app
+  /// would read the new begin as an unknown message. Version 12 has no open begin. Version 11
+  /// writes a command's schema version as one number. Each side refuses the other at the hello,
+  /// before any call or admission.
+  func testTheFormCallsVersionRefusesTheVersionBeforeIt() {
+    XCTAssertEqual(ScriptProtocol.version, 14)
 
-    for older: UInt16 in [10, 11, 12] {
+    for older: UInt16 in [10, 11, 12, 13] {
       XCTAssertThrowsError(try ScriptHelperMessage.validateHello(.hello(version: older)))
       XCTAssertThrowsError(try ScriptAppMessage.validateHello(.hello(version: older)))
+    }
+  }
+
+  /// Catches a form spec that is cut to fit, which would hand the app a different form than the
+  /// script wrote. A spec past the bound, or one shorter than it declares, is refused whole. A spec
+  /// at the bound is read exactly.
+  func testAFormSpecIsRefusedWholeAndNeverCut() throws {
+    func body(declared: Int, actual: Int) -> Data {
+      var body = ByteWriter()
+
+      body.put(UInt16(11))
+      body.put(UInt32(declared))
+      body.put(raw: Data(repeating: 0x20, count: actual))
+
+      return body.bytes
+    }
+
+    let limit = ScriptProtocol.maxFormBytes
+    var over = ByteReader(body(declared: limit + 1, actual: limit + 1))
+    var short = ByteReader(body(declared: 10, actual: 9))
+    var exact = ByteReader(body(declared: limit, actual: limit))
+
+    XCTAssertThrowsError(try ScriptCall.decode(from: &over))
+    XCTAssertThrowsError(try ScriptCall.decode(from: &short))
+
+    guard case .openForm(let spec) = try ScriptCall.decode(from: &exact) else {
+      return XCTFail("a spec at the bound was not read")
+    }
+
+    XCTAssertEqual(spec.utf8.count, limit)
+  }
+
+  /// Catches a form handle that is read short or with bytes left over, which would name another
+  /// form than the script meant.
+  func testAFormHandleIsReadExactly() {
+    for code: UInt16 in [12, 13] {
+      var writer = ByteWriter()
+
+      writer.put(code)
+      writer.put(id: 5)
+
+      var whole = ByteReader(writer.bytes)
+
+      XCTAssertNoThrow(try ScriptCall.decode(from: &whole))
+
+      var shortWriter = ByteWriter()
+
+      shortWriter.put(code)
+      shortWriter.put(UInt32(5))
+
+      var cut = ByteReader(shortWriter.bytes)
+
+      XCTAssertThrowsError(try ScriptCall.decode(from: &cut))
     }
   }
 

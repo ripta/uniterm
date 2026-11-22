@@ -253,9 +253,23 @@ public final class QuestionsApplet: Applet {
 
   /// The pane that asked closed. The header says so, and never points at another pane.
   public func askingPaneDidClose(forRequester key: String) {
-    guard !closed, let entry = book.entry(forRequester: key), let tab = tabs[entry.id] else {
-      return
+    guard !closed, let entry = book.entry(forRequester: key) else { return }
+
+    markAskingPaneGone(of: entry.id)
+  }
+
+  /// A pane closed. Every tab whose form it asked says so. The label is the pane's stable name,
+  /// which no later pane reuses.
+  public func askingPaneDidClose(label: String) {
+    guard !closed else { return }
+
+    for entry in book.entries where tabs[entry.id]?.requester.askingPane == .open(label: label) {
+      markAskingPaneGone(of: entry.id)
     }
+  }
+
+  private func markAskingPaneGone(of id: AppletTabID) {
+    guard let tab = tabs[id] else { return }
 
     switch tab.requester.askingPane {
     case .open(let label), .gone(let label):

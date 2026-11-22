@@ -118,6 +118,16 @@ final class PaneFrameView: NSView {
   /// mouse, so they stay reachable when the applet takes every key.
   let controlBadge = NSButton()
 
+  /// The host's marker for a pane whose program waits for the user's answer in the Questions pane.
+  /// It sits beside the control badge and never takes a click.
+  let askingBadge = NSImageView()
+
+  var askingMark: PaneAskingMark? {
+    didSet {
+      if askingMark != oldValue { refreshAskingBadge() }
+    }
+  }
+
   var controlMark: PaneControlMark? {
     didSet {
       if controlMark != oldValue { refreshBadge() }
@@ -187,6 +197,17 @@ final class PaneFrameView: NSView {
     controlBadge.isHidden = true
     addSubview(controlBadge)
 
+    askingBadge.image = NSImage(
+      systemSymbolName: "questionmark.bubble.fill", accessibilityDescription: "Asking")
+    askingBadge.imageScaling = .scaleProportionallyDown
+    askingBadge.wantsLayer = true
+    askingBadge.layer?.cornerRadius = 4
+    askingBadge.setAccessibilityElement(true)
+    askingBadge.setAccessibilityRole(.image)
+    askingBadge.setAccessibilityIdentifier("pane-asking-\(paneID)")
+    askingBadge.isHidden = true
+    addSubview(askingBadge)
+
     execStrip.wantsLayer = true
     execStrip.isHidden = true
     execStrip.setAccessibilityElement(true)
@@ -249,7 +270,7 @@ final class PaneFrameView: NSView {
 
   override func resizeSubviews(withOldSize oldSize: NSSize) {
     applet.view.frame = innerFrame
-    controlBadge.frame = Self.badgeFrame(in: bounds)
+    layoutBadges()
     layoutExecStrip()
     reportBadgeReach()
   }
@@ -261,9 +282,13 @@ final class PaneFrameView: NSView {
   }
 
   private func reportBadgeReach() {
+    let leading = [controlBadge, askingBadge].filter { !$0.isHidden }.map(\.frame.minX).min()
+
     let reach =
-      controlBadge.isHidden
-      ? 0 : Self.badgeReach(badge: controlBadge.frame, appletFrame: applet.view.frame)
+      leading.map {
+        Self.badgeReach(
+          badge: NSRect(x: $0, y: 0, width: 0, height: 0), appletFrame: applet.view.frame)
+      } ?? 0
 
     guard reach != reportedBadgeReach else { return }
 
@@ -314,9 +339,38 @@ final class PaneFrameView: NSView {
       width: badgeSize, height: badgeSize)
   }
 
+  /// The asking badge sits left of the control badge when that one shows, and takes its place when
+  /// it does not.
+  private func layoutBadges() {
+    controlBadge.frame = Self.badgeFrame(in: bounds)
+
+    var asking = Self.badgeFrame(in: bounds)
+
+    if !controlBadge.isHidden { asking.origin.x -= Self.badgeSize + 4 }
+
+    askingBadge.frame = asking
+  }
+
+  private func refreshAskingBadge() {
+    guard let mark = askingMark else {
+      askingBadge.isHidden = true
+      reportBadgeReach()
+      return
+    }
+
+    askingBadge.isHidden = false
+    layoutBadges()
+    askingBadge.toolTip = mark.summary
+    askingBadge.setAccessibilityLabel(mark.summary)
+    askingBadge.contentTintColor = palette[.blue].nsColor
+    askingBadge.layer?.backgroundColor = palette[.surface0].cgColor
+    reportBadgeReach()
+  }
+
   private func refreshBadge() {
     guard let mark = controlMark, mark.isShown else {
       controlBadge.isHidden = true
+      layoutBadges()
       reportBadgeReach()
       return
     }
@@ -324,7 +378,7 @@ final class PaneFrameView: NSView {
     let active = mark.access == .remoteControlled || mark.driver != .none
 
     controlBadge.isHidden = false
-    controlBadge.frame = Self.badgeFrame(in: bounds)
+    layoutBadges()
     controlBadge.toolTip = mark.summary.joined(separator: "\n")
     controlBadge.setAccessibilityValue(mark.accessibilityValue)
     controlBadge.contentTintColor = active ? palette[.peach].nsColor : palette[.overlay1].nsColor
@@ -397,6 +451,7 @@ final class PaneFrameView: NSView {
     applet.apply(palette)
     refresh()
     refreshBadge()
+    refreshAskingBadge()
     refreshExecStrip()
   }
 

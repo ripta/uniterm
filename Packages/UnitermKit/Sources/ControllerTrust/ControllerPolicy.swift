@@ -242,6 +242,9 @@ extension ControllerPermission {
     case .browserRead:
       text = "Read the addresses and titles of the browser tabs it opened"
 
+    case .askUser:
+      text = "Ask you questions in a Questions pane and read your answers"
+
     case .pathRead(let scope):
       text =
         "Make applets read files and folders inside \(scope.directories.joined(separator: ", "))"

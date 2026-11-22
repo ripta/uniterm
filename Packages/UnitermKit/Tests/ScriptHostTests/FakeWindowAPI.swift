@@ -2,6 +2,7 @@ import ControllerPackage
 import Darwin
 import Foundation
 import PaneModel
+import QuestionForm
 import ScriptWire
 import SourceAccess
 import XCTest
@@ -48,6 +49,62 @@ final class FakeWindowAPI: ScriptWindowAPI {
     default: return nil
     }
   }
+
+  /// One form the host asked this layer to show.
+  struct AskedForm {
+    var spec: FormSpec
+    var requester: FormRequester
+    var caller: ScriptCaller
+  }
+
+  /// Every form the host opened, oldest first.
+  private(set) var askedForms: [AskedForm] = []
+
+  /// The requesters whose form is open, and what each one hears when it resolves.
+  private var openForms: [String: @MainActor (FormOutcome) -> Void] = [:]
+
+  /// The requesters the host discarded, and the ones it ended, in order.
+  private(set) var discardedForms: [String] = []
+  private(set) var endedForms: [String] = []
+
+  /// How many forms may be open at once. A form past it is refused as busy.
+  var formCap = 8
+
+  /// When set, `openForm` throws it.
+  var formRefusal: ScriptCallError?
+
+  func openForm(
+    _ spec: FormSpec, requester: FormRequester, caller: ScriptCaller,
+    resolved: @escaping @MainActor (FormOutcome) -> Void
+  ) throws {
+    if let formRefusal { throw formRefusal }
+
+    guard openForms[requester.key] == nil else {
+      throw ScriptCallError.busy("this requester has a form open")
+    }
+
+    guard openForms.count < formCap else { throw ScriptCallError.busy("the pane is full") }
+
+    askedForms.append(AskedForm(spec: spec, requester: requester, caller: caller))
+    openForms[requester.key] = resolved
+  }
+
+  /// The user's answer to a requester's open form.
+  func resolveForm(requester key: String, with outcome: FormOutcome) {
+    openForms.removeValue(forKey: key)?(outcome)
+  }
+
+  func discardForm(requester key: String, window: UInt64) {
+    discardedForms.append(key)
+    openForms.removeValue(forKey: key)?(.ended)
+  }
+
+  func endForms(requester key: String, window: UInt64) {
+    endedForms.append(key)
+    openForms.removeValue(forKey: key)?(.ended)
+  }
+
+  func hasOpenForm(requester key: String) -> Bool { openForms[key] != nil }
 
   /// False for a test that sends many large files and only needs to count them.
   var keepsContent = true

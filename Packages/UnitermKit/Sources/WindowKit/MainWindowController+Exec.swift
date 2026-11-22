@@ -755,7 +755,7 @@ extension MainWindowController {
     case .unsupported: return AppletCommandError(.unsupportedApplet, error.text)
     case .refused: return AppletCommandError(.refused, error.text)
     case .busy: return AppletCommandError(.busy, error.text)
-    case .failed, .replyLost: return AppletCommandError(.failed, error.text)
+    case .failed, .replyLost, .ended: return AppletCommandError(.failed, error.text)
     }
   }
 

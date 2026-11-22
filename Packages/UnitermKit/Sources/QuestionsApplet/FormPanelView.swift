@@ -407,9 +407,21 @@ final class FormPanelView: NSView {
   private func give(_ target: NSView?) {
     guard let window else { return }
 
+    // A field that already has the keyboard keeps it. Asking again would end its editing, and
+    // an empty required field would show its error before the user typed.
+    if let target, Self.holdsKeyboard(target, in: window) { return }
+
     if let target, window.makeFirstResponder(target) { return }
 
     window.makeFirstResponder(self)
+  }
+
+  private static func holdsKeyboard(_ target: NSView, in window: NSWindow) -> Bool {
+    if window.firstResponder === target { return true }
+
+    guard let editor = window.firstResponder as? NSTextView else { return false }
+
+    return editor.delegate === target
   }
 
   /// The view of the question's first control, for tests that look at what holds the keyboard.

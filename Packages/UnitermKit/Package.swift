@@ -88,7 +88,7 @@ let package = Package(
       dependencies: [
         "Theme", "Preferences", "AppletKit", "StatusKit", "PaneModel", "LayoutKit", "FileRouting",
         "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ExecDriver", "ControllerPackage",
-        "ControllerTrust", "SourceAccess", "BrowserModel",
+        "ControllerTrust", "SourceAccess", "BrowserModel", "QuestionForm", "QuestionsApplet",
       ]),
     .target(name: "SettingsKit", dependencies: ["Preferences"]),
     .binaryTarget(name: "GhosttyKit", path: ghosttyKitPath),
@@ -226,7 +226,8 @@ let package = Package(
       name: "ScriptHost",
       dependencies: [
         "ControllerPackage", "ControllerTrust", "FileRouting", "HelperHost", "PaneModel",
-        "Preferences", "ProcessInspection", "ScriptWire", "SourceAccess", "StatusKit",
+        "Preferences", "ProcessInspection", "QuestionForm", "ScriptWire", "SourceAccess",
+        "StatusKit",
       ]),
     // The REPL applet. It hosts a terminal session whose child is the REPL helper, and binds the
     // helper's control channel to its pane through the script host. It never imports Janet.
@@ -429,7 +430,8 @@ let package = Package(
         "FileRouting", "GeoData", "PlaceSearch", "ScriptHost", "ScriptWire", "ScriptTestSupport",
         "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
         "ControllerTrust", "TestProcessGuard", "TextViewerApplet", "SourceAccess",
-        "MapViewerApplet", "BrowserApplet", "BrowserModel", "BrowserTestSupport",
+        "MapViewerApplet", "BrowserApplet", "BrowserModel", "BrowserTestSupport", "QuestionForm",
+        "QuestionsApplet",
       ]),
   ],
   swiftLanguageModes: [.v6],

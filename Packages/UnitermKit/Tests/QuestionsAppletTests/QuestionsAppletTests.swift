@@ -249,6 +249,30 @@ final class QuestionsAppletTests: XCTestCase {
     XCTAssertEqual(panel(in: applet)?.question(holding: window.firstResponder), "name")
   }
 
+  /// Catches a second request for the keyboard that ends the first field's editing. A host that
+  /// focuses the pane after the form opened would blur the empty required field, and its error
+  /// would show before the user typed. The field keeps the keyboard and shows no error.
+  func testFocusingAgainNeverBlursTheFirstFieldOrShowsItsError() throws {
+    let (applet, _) = makeApplet()
+    let window = hold(applet)
+
+    defer { window.close() }
+
+    _ = applet.open(simple, for: requester("a")) { _ in }
+
+    let field = try XCTUnwrap(find("question-name", in: applet.view) as? NSTextField)
+
+    XCTAssertNotNil(field.currentEditor(), "the field never took the keyboard")
+
+    applet.focus()
+    applet.focus()
+
+    XCTAssertNotNil(field.currentEditor(), "focusing again ended the field's editing")
+    XCTAssertTrue(
+      (find("question-name-error", in: applet.view) as? NSTextField)?.isHidden ?? true,
+      "an error showed before the user typed")
+  }
+
   /// Catches Return that does nothing on a form that cannot submit, and Return that submits it.
   /// Return counts as trying, so every error shows and nothing is sent.
   func testReturnOnAnInvalidFormTriesToSubmitAndSendsNothing() throws {

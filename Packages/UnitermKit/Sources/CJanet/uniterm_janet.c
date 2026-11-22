@@ -261,7 +261,10 @@ enum {
     CALL_SEND_COMMAND = 7,
     CALL_REQUEST_LAYOUT = 8,
     CALL_READ_CLIPBOARD = 9,
-    CALL_WRITE_CLIPBOARD = 10
+    CALL_WRITE_CLIPBOARD = 10,
+    CALL_OPEN_FORM = 11,
+    CALL_WAIT_FORM = 12,
+    CALL_DISCARD_FORM = 13
 };
 
 /* The largest ID a script may hold. Every integer below it is exact in a double. */
@@ -721,6 +724,7 @@ static const char *failure_kind_name(int32_t status) {
     case 5: return "unsupported";
     case 6: return "reply-lost";
     case 7: return "busy";
+    case 8: return "ended";
     default: return "failed";
     }
 }
@@ -1267,6 +1271,55 @@ static Janet cfun_write_clipboard(int32_t argc, Janet *argv) {
     return invoke_call(request, 1);
 }
 
+/*
+ * The spec is JSON text. The app reads it strictly and checks every field, so the shim checks only
+ * that the text fits the wire and is UTF-8. A script that builds a spec as a struct writes the
+ * text first.
+ */
+static Janet cfun_open_form(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    JanetString spec = janet_getstring(argv, 0);
+    int32_t length = janet_string_length(spec);
+
+    if (length > UNITERM_JANET_MAX_FORM_BYTES) {
+        janet_panicf("the form spec is %d bytes, and the most is %d", length,
+                     UNITERM_JANET_MAX_FORM_BYTES);
+    }
+
+    if (!uniterm_valid_utf8(spec, length)) janet_panic("the form spec is not UTF-8");
+
+    JanetBuffer *request = janet_buffer(length + 16);
+
+    put_u16(request, CALL_OPEN_FORM);
+    put_u32(request, (uint32_t)length);
+    janet_buffer_push_bytes(request, spec, length);
+
+    return invoke_call(request, 1);
+}
+
+static Janet cfun_wait_form(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    JanetBuffer *request = janet_buffer(16);
+
+    put_u16(request, CALL_WAIT_FORM);
+    put_id(request, checked_id(argv[0], "the form"));
+
+    return invoke_call(request, 1);
+}
+
+static Janet cfun_discard_form(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+
+    JanetBuffer *request = janet_buffer(16);
+
+    put_u16(request, CALL_DISCARD_FORM);
+    put_id(request, checked_id(argv[0], "the form"));
+
+    return invoke_call(request, 1);
+}
+
 static const JanetReg uniterm_cfuns[] = {
     {"api-version", cfun_api_version,
      "(uniterm/api-version)\n\nThe version of the host API. A change that breaks a script "
@@ -1330,6 +1383,21 @@ static const JanetReg uniterm_cfuns[] = {
      "Writing is a permission of its own, apart from reading and from pane control. The user "
      "approves it in uniterm, and the call waits until the user answers. A failure raises a struct "
      "of :kind and :message, as uniterm/read-clipboard does, and leaves the clipboard as it was."},
+    {"open-form", cfun_open_form,
+     "(uniterm/open-form spec)\n\nShows a form to the user and returns its handle at once. The "
+     "spec is the form's JSON text, at most 32 KiB, which uniterm reads strictly. Asking is a "
+     "permission of its own, :ask-user, which gives no pane control. A failure raises a struct of "
+     ":kind and :message, where :kind is :bad-argument for a spec uniterm refuses, :busy while "
+     "this program or this window holds as many forms as it may, :refused, or :failed."},
+    {"wait-form", cfun_wait_form,
+     "(uniterm/wait-form form)\n\nWaits for the user to finish a form and returns the result as a "
+     "struct. Reading does not consume the result, so it may be read again until the handle is "
+     "discarded. The wait has no deadline. A failure raises a struct of :kind and :message, where "
+     ":kind is :ended when the form ended before the user answered it, or :not-found for a handle "
+     "that is not open."},
+    {"discard-form", cfun_discard_form,
+     "(uniterm/discard-form form)\n\nFrees a form's handle. A form still open closes as ended, "
+     "and a wait on it fails as :ended."},
     {NULL, NULL, NULL}};
 
 const char *uniterm_janet_module_function(size_t index) {

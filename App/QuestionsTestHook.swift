@@ -2,12 +2,18 @@
   import AppKit
   import Foundation
   import QuestionForm
+  import PaneModel
   import QuestionsApplet
+  import ScriptHost
   import ScriptWire
   import WindowKit
 
-  /// Opens forms in the Questions pane from files, so a UI test can ask one without the wire. Only
+  /// Opens forms in the Questions pane from files, so a UI test can ask one without a script. Only
   /// a debug build compiles it, and it runs only when `UNITERM_TEST_QUESTIONS_DIR` names a folder.
+  ///
+  /// A form opens through the window layer's own entry, the one the host calls for a script's
+  /// `open-form`. The placement, the focus, and the badge are the real ones. Only the call's path
+  /// to the window layer is skipped, which the package tests and `ScriptRunUITests` cover.
   ///
   /// A request is a `*.json` file the test writes into the folder. The hook takes it, renames it to
   /// `*.json.taken`, and writes what happened beside it.
@@ -17,19 +23,22 @@
   ///     {"command": "discard", "requester": "build"}
   ///     {"command": "pane-closed", "requester": "build"}
   ///
+  /// The `pane` is the pane the form is asked from, by its label. Without one, the first pane in
+  /// the window asks.
+  ///
   /// `NAME.opened` holds `opened`, `reused`, or the busy reason. `NAME.outcome.json` holds the
   /// outcome the script would receive. A refused spec writes `NAME.error`.
   @MainActor
   final class QuestionsTestHook {
     private let directory: URL
     private let windows: WindowSet
-    private weak var applet: QuestionsApplet?
+    private let scripting: WindowScripting
     private var timer: Timer?
-    private var forms: [String: FormSpec] = [:]
 
     init(directory: URL, windows: WindowSet) {
       self.directory = directory
       self.windows = windows
+      scripting = WindowScripting(windows: windows)
     }
 
     func start() {
@@ -75,13 +84,18 @@
     }
 
     private func run(_ command: String, requester: String) throws {
-      guard let applet else { throw HookError.message("no Questions pane is open") }
+      guard let controller = windows.activeController else { throw HookError.message("no window") }
 
       switch command {
-      case "end": applet.end(requester: requester)
+      case "end": scripting.endForms(requester: requester, window: controller.scriptWindowID)
       case "discard":
-        if let tab = applet.tab(forRequester: requester) { applet.discard(tab: tab) }
-      case "pane-closed": applet.askingPaneDidClose(forRequester: requester)
+        scripting.discardForm(requester: requester, window: controller.scriptWindowID)
+      case "pane-closed":
+        guard let applet = controller.questionsApplet else {
+          throw HookError.message("no Questions pane is open")
+        }
+
+        applet.askingPaneDidClose(forRequester: requester)
       default: throw HookError.message("unknown command \(command)")
       }
     }
@@ -91,37 +105,39 @@
         throw HookError.message("the request needs a name and a spec")
       }
 
+      guard let controller = windows.activeController else { throw HookError.message("no window") }
+
       let spec = try FormSpecReader.decode(try JSONSerialization.data(withJSONObject: object))
-      let pane = (request["pane"] as? String).map { QuestionsRequester.AskingPane.open(label: $0) }
-      let requester = QuestionsRequester(key: key, name: name, askingPane: pane ?? .none)
+      guard let asker = Self.pane(labeled: request["pane"] as? String) ?? controller.paneIDs.first
+      else { throw HookError.message("the window has no pane") }
 
-      guard let pane = try questionsPane() else { throw HookError.message("no window") }
+      let caller = ScriptCaller(
+        connection: 0, window: controller.scriptWindowID, pane: asker)
 
-      let result = pane.open(spec, for: requester) { [weak self] outcome in
-        self?.write(outcome, spec: spec, to: base + ".outcome.json")
+      let existing = controller.questionsApplet
+      let reused = existing?.tab(forRequester: key) != nil
+
+      do {
+        try scripting.openForm(
+          spec, requester: FormRequester(key: key, name: name), caller: caller
+        ) { [weak self] outcome in
+          self?.write(outcome, spec: spec, to: base + ".outcome.json")
+        }
+      } catch let error as ScriptCallError {
+        write("busy \(error.text)", to: base + ".opened")
+
+        return
       }
 
-      switch result {
-      case .opened(_, let reused): write(reused ? "reused" : "opened", to: base + ".opened")
-      case .busy(let reason): write("busy \(reason)", to: base + ".opened")
-      }
+      write(reused ? "reused" : "opened", to: base + ".opened")
     }
 
-    /// The Questions pane the hook last used, or a new one beside the largest pane.
-    private func questionsPane() throws -> QuestionsApplet? {
-      if let applet, !applet.isClosed { return applet }
-
-      guard let controller = windows.activeController else { return nil }
-
-      let created = QuestionsApplet()
-
-      guard controller.placeRoutedInLargestPane(created) != nil else {
-        throw HookError.message("the window has no room for a Questions pane")
+    private static func pane(labeled label: String?) -> NodeID? {
+      guard let label, label.hasPrefix("Pane "), let number = UInt64(label.dropFirst(5)) else {
+        return nil
       }
 
-      applet = created
-
-      return created
+      return NodeID(rawValue: number)
     }
 
     private func write(_ outcome: FormOutcome, spec: FormSpec, to name: String) {

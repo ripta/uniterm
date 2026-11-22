@@ -70,6 +70,10 @@ public enum ScriptEvent: Sendable {
 
   /// A helper declared the connection a `uniterm open`. It makes no calls.
   case openBegun(ScriptConnection, OpenBegin)
+
+  /// The bundled command declared the connection a question-only session. It makes no script
+  /// calls beyond the form calls.
+  case questionBegun(ScriptConnection)
   case request(ScriptConnection, id: UInt32, call: ScriptCall)
 
   /// A REPL's helper presented its token. It is the first message of the connection.

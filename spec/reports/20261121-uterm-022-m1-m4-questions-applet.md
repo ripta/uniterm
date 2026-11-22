@@ -28,7 +28,7 @@ uncommitted.
 |---|---|---|
 | UTERM-022 M1: Form spec and validation | DONE | "Read and check script-asked form specs" |
 | UTERM-022 M2: Questions applet UI | DONE | "Show script-asked forms in a Questions pane" |
-| UTERM-022 M3: The ask power and the form calls | QUEUED | |
+| UTERM-022 M3: The ask power and the form calls | DONE | "Let scripts ask the user a form and wait for the answer" |
 | UTERM-022 M4: `uniterm ask` and Janet helpers | QUEUED | |
 
 ## Commands that leave the sandbox
@@ -217,3 +217,107 @@ working tree by another session. The run leaves it alone.
 
 Bugs found: two in the milestone's own new code, both fixed before commit and covered by tests that failed first. ADR
 candidates: none.
+
+### M3: The ask power and the form calls
+
+Commits:
+
+- "Pin the bound on calls held during a peer's full check", a separate bug triage that lands before M3.
+- "Let scripts ask the user a form and wait for the answer", which carries the code, the proposal's DONE status and As
+  built block, and this report.
+
+M3 adds the `ask-user` permission kind and the `open-form`, `wait-form`, and `discard-form` host calls. It adds the
+question-only begin and bumps ScriptWire to version 14. A host-side handle table holds each form's result, as ADR-11
+requires. The header names each requester as the transport established it. The window opens the form in its Questions
+pane, or in a split beside the asker. The asking pane shows a badge until the form resolves.
+
+Other sessions committed these on the branch between M2 and M3. They are not part of this run: "Schedule UTERM-041,
+UTERM-042, and UTERM-019", "Resume UTERM-043 now that its revisit hook fired", "Schedule UTERM-032 and the presentation
+chain", and "File the bug where calls held during a peer's full check grow without bound".
+
+Checks: `make fmt-check`, `make lint`, `make check`, `scripts/swiftpm-offline-check.sh`, `make build`,
+`make test-helper-sandbox`, the UI test build, and a scoped address-sanitizer fuzz of the wire, controller, policy, and
+declaration readers pass. `caffeinate -dimsu make test-package` last ran 3150 tests with 0 failures and 10 existing
+skips. `proposals.py check` is clean.
+
+The coordinator ran `QuestionsUITests` and `QuestionsWireUITests` five times:
+
+1. The first run stopped at start, because the Automation Mode prompt was cancelled while the user needed the screen.
+   It ran again once the user was done.
+2. 24 of 25 passed. `testAnErrorShowsOnLeavingTheFieldAndClearsAtOnce` failed, because a second focus call ended a
+   field's editing.
+3. With a guard in place, `testEveryAnswerTypeReturnsItsShape` failed, and it failed again alone. The open panel showed
+   its go-to field somewhere the test did not look. The keyboard sat in the panel's own `PathTextField`.
+4. After the root fix in the applet, the same file-panel failure remained.
+5. After the test's file picker was fixed, all 25 passed.
+
+No crash report came from the UI runs. The wire test proves the real path: a declared script asks, the review is
+answered, a split opens beside the asker and takes focus, the badge shows and clears, and the answer prints.
+
+Test cost: the 53 new M3 package tests run in about 1.5 seconds together. The two UI classes run in about 128 seconds
+for 25 tests.
+
+Best guesses, all in the proposal's Decision Log. The first two deserve the user's review.
+
+1. Every connection that is not a declared or package run may ask without a prompt. That covers a bare terminal
+   session, a REPL, a granted connection, and an unsafe undeclared run. A declared run must declare `ask-user`. The M3
+   checks need a REPL and an unsafe run to ask, so this is the reading that meets them. "The ask power" named only the
+   bare terminal-session caller, and it is amended in place. `adr-impact` names this tier choice as an ADR candidate.
+   See "ADR candidates" below.
+2. A Questions pane split beside a member of an owned group joins that group's content but not its members. The
+   owner's next layout of the group is then refused whole, until the Questions pane closes. A split the user makes
+   there gets the same refusal, and ADR-15 says a program's operation behaves as the user's. The refusal outlasts the
+   answer: a run's resolved tab stays until the run ends. The refusal message names the Questions pane and says what to
+   do. The M3 check on owned groups was reworded to match, as a run best guess. If the user wants the owner's layout to
+   proceed around the pane, the layout engine needs a rule for it.
+3. `ScriptFailureKind.ended` is a new wire failure kind, 8. M4's exit code 4 needs it.
+4. `uniterm/open-form`, `uniterm/wait-form`, and `uniterm/discard-form` join the Janet module now, with the spec as JSON
+   text. M4 wraps them.
+5. Header names: a package shows its verified ID. A declared file shows "<id> (declared file)". An unsafe undeclared
+   run shows "<file> (unverified script)". A REPL shows "REPL in Pane N", a granted connection shows "<exe> (PID n),
+   granted Pane N", and a bare caller shows "Terminal session in Pane N".
+6. Each connection holds 32 result slots, the text viewer's cap. A new slot drops the oldest settled one, and handles
+   are never reused.
+7. A terminal session's resolved tab stays until its shell ends. A run's or a connection's tab closes when it ends.
+8. A REPL stop fails only the pending wait. The form stays open until the helper discards it. M4's Janet wrapper must
+   discard on unwind.
+9. The question-only session is admitted after the full check, with no review. Any call but a form call ends the
+   connection as a protocol violation.
+
+Review findings:
+
+- The proposal text was narrower than the code on the ask power, the question-only session, and the REPL stop. Fixed:
+  amended in place.
+- The owned-group refusal blamed "a pane the user split off". Fixed: it names the Questions pane. Traced: it outlasts
+  the answer. Recorded for the user.
+- `wait-form`'s recheck skipped the ancestry check (PLAUSIBLE). The trace confirmed it. Fixed, with a test.
+- Stopping the host left forms on screen with no one to answer them (PLAUSIBLE). Fixed: `stop()` ends them as authority
+  ending does. A test covers it.
+- The triage test could pass with the in-flight wait removed. Fixed, and a mutation run showed the test fails without
+  it.
+- Comment-craft and test-naming findings. Fixed.
+- A REPL's form can be left open after a stop. Noted for M4.
+
+`adr-impact` found no conflict it could confirm.
+
+- It flagged that ADR-11 names a completion event, which M3 does not send. The proposal already settles this: "wait-form
+  is the form's completion mechanism", and ADR-11's event serves event-stream callers. Recorded as advisory.
+- It noted that the proposal still cites ADR-09, which ADR-14 supersedes. This is advisory.
+- It rated the owned-group refusal as plausible friction with ADR-15, which is only proposed. This is advisory, and
+  best guess 2 covers it.
+
+ADR candidates:
+
+1. Which callers a new power that controls no pane, such as `ask-user`, passes without a prompt. `adr-impact` says this
+   sets a tier that later powers will copy. Against the bar, it cuts across the system and would be hard to reverse once
+   scripts rely on it. ADR-14 says separate powers need explicit grants, but it does not say what a user's own session
+   may do without one. It is recorded as `Undecided` in UTERM-022's Decision Log.
+2. `adr-impact` also named two weaker candidates. One is an ask that narrows an owner's later layout. The other is the
+   `ended` failure kind. Both are specific to this applet, or already covered by ADR-11 and ADR-15. They fail the bar.
+
+Bug triage: "Calls held during a peer's full check grow without bound" does not occur. The connection stops reading
+once 8 calls wait for an answer, and held calls have no answer, so the in-flight limit bounds the held list. The bug
+file is `not-reproducible`, and a flood test pins the bound.
+
+Bugs found in M3's own work: two, both fixed before commit. One is the ancestry gap in the wait recheck. The other is
+the non-idempotent focus that showed an error before the user typed. A test covers each.

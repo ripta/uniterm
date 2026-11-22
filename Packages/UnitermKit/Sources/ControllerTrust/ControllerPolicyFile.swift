@@ -236,6 +236,9 @@ public enum ControllerPolicyFile {
     case "browser-read":
       permission = .browserRead
 
+    case "ask-user":
+      permission = .askUser
+
     case "capability":
       let name = try fields["name"]!.string("a capability's name")
 
@@ -325,7 +328,8 @@ public enum ControllerPolicyFile {
     var members: [(String, JSONText)] = [("kind", .string(permission.kindName))]
 
     switch permission.kind {
-    case .paneControl, .clipboardRead, .clipboardWrite, .browserNavigation, .browserRead:
+    case .paneControl, .clipboardRead, .clipboardWrite, .browserNavigation, .browserRead,
+      .askUser:
       break
 
     case .capability(let name):

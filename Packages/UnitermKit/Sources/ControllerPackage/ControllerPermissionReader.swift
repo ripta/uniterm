@@ -98,6 +98,9 @@ public enum ControllerPermissionReader {
       case "browser-read":
         permissionValue = .browserRead
 
+      case "ask-user":
+        permissionValue = .askUser
+
       case "host-launch":
         guard let executable = fields["executable"], let directory = fields["directory"],
           let environment = fields["environment"]

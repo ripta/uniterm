@@ -67,8 +67,9 @@ Decision: uniterm draws a header on every form. The script cannot style it, hide
 form's title, which appears below it.
 
 - The header names exactly what the transport established, per ADR-09. A controller package or declared file shows
-  its verified name. A bare terminal-session caller shows "Terminal session in <pane>". The header never implies a
-  specific script for a caller that could not be identified.
+  its verified ID, since the descriptor's display name proves nothing. A bare terminal-session caller shows "Terminal
+  session in <pane>". The header never implies a specific script for a caller that could not be identified. Amended
+  2026-11-21; see Decision Log.
 - The header and the form body look clearly different from uniterm's permission prompts and the Pending Requests
   window. A form can ask a permission-style question, but it cannot pass for uniterm asking.
 - Question text and content blocks are plain text. They hold no links.
@@ -254,8 +255,10 @@ Decision: sending a form and waiting for its answer are two calls, per ADR-11.
 - `wait-form` is the form's completion mechanism. ADR-11's completion event serves callers that read an event stream,
   and a form's caller waits on its handle instead.
 - A run end, a revocation, or a closed connection closes the form, fails a pending wait as ended, and frees the
-  handle. Since the form had no effect beyond showing, "ended" truthfully means nothing was submitted.
-- Result slots have the same caps and lifetimes as other ADR-11 handles.
+  handle. Since the form had no effect beyond showing, "ended" truthfully means nothing was submitted. The wire spells
+  it as its own failure kind, `ended`. Amended 2026-11-21; see Decision Log.
+- Result slots have the same caps and lifetimes as other ADR-11 handles. A connection holds at most 32, and a new one
+  drops its oldest settled one. Amended 2026-11-21; see Decision Log.
 
 Rationale: a handle keeps the first answer honest at once. A script that is interrupted still gets a clear outcome.
 
@@ -281,8 +284,10 @@ Decision: asking the user is a permission kind, `ask-user`, version 1.
 - The power has no scope fields. It covers opening a Questions pane in the caller's own window, beside the caller's
   own pane, and showing forms in it. It grants no other pane action, so asking needs no pane-control grant, and
   holding `ask-user` gives no pane control.
-- A bare terminal-session caller, such as bash running `uniterm ask`, may ask without a prompt for forms that name its
-  own pane as the asker, as `post-status` works today. The one-form rule and the open-form cap limit spam.
+- Every caller that is not a declared run may ask without a prompt, for forms that name its own pane as the asker, as
+  `post-status` works today. That covers a bare terminal-session caller such as bash running `uniterm ask`, a REPL, a
+  connection the user granted a pane, and an unsafe undeclared run. The one-form rule and the open-form cap limit
+  spam. Amended 2026-11-21; see Decision Log.
 - A package or declared file that does not declare `ask-user` is refused, with a message that names the missing kind.
 
 Rationale: the bash case is the main use, and a prompt before every `uniterm ask confirm` defeats it. Declared callers
@@ -363,7 +368,8 @@ Decision: `uniterm ask` opens a question-only session. (autonomous)
 
 - The session opens with a new message, the question-only begin. It says the bundled command runs no script code.
   The app admits it in strict and unsafe mode as a terminal-session caller.
-- The app refuses every call on a question-only session except `open-form`, `wait-form`, and `discard-form`.
+- A call on a question-only session other than `open-form`, `wait-form`, or `discard-form` ends the connection as a
+  protocol violation. The command never sends one, so no reply is owed. Amended 2026-11-21; see Decision Log.
 - The bundled command is authenticated as UTERM-021 requires, so a generic peer cannot send the question-only begin.
 
 Rationale: strict mode is the default, and the undeclared begin refuses every `uniterm ask` there. In unsafe mode it
@@ -416,7 +422,8 @@ Decision: free the wait with `discard-form`. `wait-form` has no deadline. (auton
   closes the form as ended and fails the wait.
 - The helper's wait wakes on an interrupt by itself, and the session matches replies by request ID with two calls in
   flight.
-- In a REPL, the app's own stop request fails the connection's pending wait, so the REPL keeps its VM state.
+- In a REPL, the app's own stop request fails the connection's pending wait, so the REPL keeps its VM state. The form
+  stays open until the helper discards it. Amended 2026-11-21; see Decision Log.
 - `uniterm ask` keeps the default SIGINT. Ctrl-C ends it with 130, and the closed connection ends the form.
 
 Rationale: Ctrl-C takes effect at once with no new message and no polling. A capped wait would leave a REPL user's
@@ -662,9 +669,9 @@ Amended 2026-11-21; see Decision Log.
 
 ### M3: The ask power and the form calls
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-20; see Decision Log.
+Amended 2026-11-21; see Decision Log.
 
 - `ask-user` is a permission kind in `controller.json` and in declarations. An undeclared use is refused with the
   kind named
@@ -694,10 +701,56 @@ Amended 2026-11-20; see Decision Log.
 - A bare terminal-session caller asks without a prompt, and its header reads "Terminal session in <pane>"
 - A REPL caller's header names the REPL pane, never a terminal session
 - A caller bound to no pane is refused or granted a pane as other calls are, and its form opens in that pane's window
-- A Questions pane split beside a member of an owned group survives the owner's next layout request, and no form in it
-  is dismissed by that layout
+- A Questions pane split beside a member of an owned group survives the owner's next layout request. The owner's layout
+  of that group is refused whole, as for any pane the user split off, and no form in the Questions pane is dismissed.
+  This is a run best guess. See the Decision Log.
 - A busy refusal reaches the script as the wire's `busy` failure kind
 - An older command and a newer app refuse each other at the hello
+
+**As built:**
+
+- `ask-user` is a permission kind at version 1 in descriptor format 2. It takes no field, joins the policy file as
+  a kind of its own, and covers only itself. The lint maps the three form calls to it. A declared run that lacks it is
+  refused with the kind named, and a declared run holds it as it holds any other power. A bare terminal-session caller,
+  a REPL, a granted connection, and an unsafe undeclared run pass without a prompt, while the same caller's clipboard
+  calls still ask.
+- ScriptWire is at version 14. It adds the three form calls, the question-only begin and its admitted reply, and the
+  `ended` failure kind. The Janet module offers `uniterm/open-form`, `uniterm/wait-form`, and `uniterm/discard-form`
+  as the plain calls. `open-form` takes the spec as JSON text. See the Decision Log entry for this milestone.
+- The host keeps one result slot for each form, in a table with a cap of 32 for a connection. `open-form` answers with
+  the handle at once. `wait-form` holds its reply in the slot, and the answer comes from the slot whatever became of the
+  tab. A wait reads the caller's authority, binding, and pane again before it answers, and a caller that fails any of
+  them gets `ended` and no answers. A REPL's stop request fails the connection's pending wait and keeps its connection.
+  The form stays open until the helper discards it.
+- A requester is a run, a terminal session, or a connection. A run's or a connection's end closes its tab. A terminal
+  session's tab stays when its program ends, and it closes when the shell ends or the user closes it. A program that
+  ends with its form open leaves that tab showing the ended form.
+- The question-only session is admitted in strict and in unsafe mode after the full check of the command, with no
+  review. It allows only the form calls, and any other call ends the connection as a protocol violation. A second begin
+  from one process is refused under the one-run rule, whichever session came first.
+- The window layer opens a form in the window's Questions pane, or splits beside the asker with the placement a routed
+  open uses. The split takes focus, and so does a new tab. The asker shows a badge beside the control badge, and the
+  badge names the Questions pane in its tooltip and accessibility label. The header says so when the asker closes.
+- An owner's layout of a group that holds a Questions pane is refused whole, so a form asked from a member of an owned
+  group stays open. The owner can lay the group out again once the user closes the Questions pane. See the Decision Log
+  entry for this milestone.
+- The debug hook of the UI tests now opens forms through the window layer's own entry, so the placement, the focus,
+  and the badge are the real ones. `QuestionsWireUITests` drives a declared script through the wire and the real app.
+- The found bug [held requests](../bugs/20261121-held-requests-grow-without-bound.md) does not occur. The connection
+  stops reading at its in-flight limit, and a test pins that. The file is `not-reproducible`.
+- For M4: the Janet wrapper must discard the handle on every unwind, or the REPL's next `open-form` is busy, since a
+  requester has one open form at a time.
+- `make test-cost` does not exist in this project. The 52 new package tests run in about 1.5 seconds together.
+- The owned-group refusal outlasts the answer. A resolved tab keeps the Questions pane open, and the pane sits in the
+  group's content until the user closes it or its last tab goes. A run's tab goes when the run ends, and a terminal
+  session's tab stays until the shell ends. The refusal names the Questions pane and says to close it. See the Decision
+  Log entry for the trace.
+- A stopped host ends its open forms through the path a closed connection takes. A form asked from a program that no
+  longer descends from its session root gets `ended` and no answers, since no call passes `authorize` while a wait
+  waits.
+- Residuals: the owned-group refusal above blocks an owner's relayout while a Questions pane sits in its group. A
+  `uniterm ask` run from a pane the user granted shows the program's executable name and PID, which the transport
+  established.
 
 ### M4: `uniterm ask` and Janet helpers
 
@@ -878,6 +931,40 @@ Amended 2026-11-20; see Decision Log.
   carry the terminal's and the browser's titles. An optional pop-up keeps a "Choose…" item beside its default, so
   Clear shows what the script receives. The header's pane line reads "Asked from Pane 3", and "Pane 3 closed, so the pane
   that asked is gone" after the pane closes.
+- 2026-11-21 (autonomous, work-queue best guess): M3 settled what the proposal left open. The wire gains its own
+  failure kind, `ended`, since the command must tell a form that ended from any other failure to exit 4, and no
+  existing kind says it. The three form calls are Janet functions too, `uniterm/open-form`, `uniterm/wait-form`, and
+  `uniterm/discard-form`, because the script lint's table and the module must list the same calls. `open-form` takes
+  the spec as JSON text. M4's `uniterm/ask` converts a Janet struct and wraps them. A requester's header shows its
+  verified ID, `<id> (declared file)` for a declared file, and `<name> (unverified script)` for an unsafe undeclared
+  run. The second names the file the command announced and proves nothing. The descriptor's display name proves
+  nothing either, so it appears nowhere. A REPL is `REPL in <pane>`, and a connection the user granted a pane is
+  `<program> (PID n), granted <pane>`. Result slots hold at most 32 for a connection, the cap the text viewer's handle
+  table keeps. A Questions pane that opens beside an asker in an owned group joins the group's content and not its
+  members, as any pane the user splits there does. So the owner's next layout of that group is refused whole until the
+  user closes the Questions pane, and no form is dismissed. The M3 check said "A Questions pane split beside a member
+  of an owned group survives the owner's next layout request, and no form in it is dismissed by that layout". "Requester
+  chrome" said "A controller package or declared file shows its verified name." "Lifecycle and results" said "Result
+  slots have the same caps and lifetimes as other ADR-11 handles." and named the failed wait only as "ended".
+- 2026-11-21 (autonomous, work-queue best guess): The review of M3 kept four choices and amended the text to match.
+  "The ask power" said "A bare terminal-session caller, such as bash running `uniterm ask`, may ask without a prompt for
+  forms that name its own pane as the asker, as `post-status` works today." Every caller that is not a declared run
+  passes now, since M3's checks need a REPL caller and an unsafe undeclared run to ask. "The question-only session" said
+  "The app refuses every call on a question-only session except `open-form`, `wait-form`, and `discard-form`." The
+  listener ends the connection for such a call, since the command never sends one. "Waiting and Ctrl-C" did not say that
+  a REPL's stop leaves the form open. The helper discards it. The `ended` sentence in "Lifecycle and results" gained its
+  marker.
+- 2026-11-21 (autonomous, work-queue best guess): The refusal of an owner's layout, traced. The Questions pane is in the
+  group's content for as long as it is open, so the refusal outlasts the answer. A resolved tab keeps the pane. A run's
+  tab goes when the run ends, and a terminal session's tab stays until its next form, its shell ending, or the user
+  closing it. The refusal ends when the last tab goes and the pane closes with it. The refusal message now names the
+  Questions pane as the cause and says to close it. A test pins both ends. A split the user makes in an owned group
+  behaves the same way, and ADR-15 says a program's operation behaves as the user's. The user may rule that an owner's
+  layout should go ahead around the pane. That needs a tree rule that this milestone does not change.
+- 2026-11-21: ADR candidate (cuts across the system, hard to reverse): which callers a power that controls no pane
+  passes without a prompt. `ask-user` passes for every connection that is not a declared or package run. Later powers
+  would copy that tier. ADR-14 requires explicit grants for separate powers, but it does not say what a user's own
+  session may do without one. Undecided.
 
 ## References
 

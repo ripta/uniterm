@@ -1,6 +1,7 @@
 import ControllerPackage
 import Foundation
 import PaneModel
+import QuestionForm
 import ScriptWire
 import SourceAccess
 
@@ -52,6 +53,21 @@ public struct ScriptCaller: Sendable, Equatable {
     self.connection = connection
     self.window = window
     self.pane = pane
+  }
+}
+
+/// Who asks a form, as the host established it from the transport. The window layer shows the name
+/// exactly as given and never takes one from a script.
+public struct FormRequester: Equatable, Sendable {
+  /// Tells one requester from another, so a requester's next form reuses its tab.
+  public let key: String
+
+  /// What the form's header and tab title say.
+  public let name: String
+
+  public init(key: String, name: String) {
+    self.key = key
+    self.name = name
   }
 }
 
@@ -137,6 +153,25 @@ public protocol ScriptWindowAPI: AnyObject {
     powers: @escaping @MainActor () -> Set<ControllerPermission>,
     stillAllowed: @escaping @MainActor () throws -> Void
   ) async throws -> ScriptValue
+
+  /// Shows a form in the Questions pane of the caller's own window, in the pane that is open there
+  /// or in a new one beside the caller's pane. The form's tab takes focus as a tab the user opens
+  /// does, and the caller's pane shows a badge until the form resolves.
+  ///
+  /// `resolved` runs once, on the main actor, when the form ends, and never from inside this call.
+  /// A requester that has an open form, and a pane that holds as many forms as it may, throw
+  /// `busy`. Nothing changes then.
+  func openForm(
+    _ spec: FormSpec, requester: FormRequester, caller: ScriptCaller,
+    resolved: @escaping @MainActor (FormOutcome) -> Void
+  ) throws
+
+  /// The requester let go of its form. A form still open ends with nothing submitted, and its tab
+  /// stays and says so until the requester's next form reuses it or the user closes it.
+  func discardForm(requester key: String, window: UInt64)
+
+  /// The requester ended, so its tab goes. A form still open ends with nothing submitted.
+  func endForms(requester key: String, window: UInt64)
 
   /// The power a call needs besides control of panes, or nil when it needs none or its target
   /// cannot be found. The applet's schema names it for a command, and a layout that seeds a

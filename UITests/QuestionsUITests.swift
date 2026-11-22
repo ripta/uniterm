@@ -1,9 +1,11 @@
 import AppKit
 import XCTest
 
-/// Drives the Questions pane in the running app. No wire call opens a form yet, so a debug build
-/// reads request files from the folder `UNITERM_TEST_QUESTIONS_DIR` names. A test writes a file,
-/// the app opens the form, and the form's outcome comes back in a file beside it.
+/// Drives the Questions pane in the running app. A debug build reads request files from the folder
+/// `UNITERM_TEST_QUESTIONS_DIR` names, and opens each form through the window layer's own entry for
+/// a script's form, so the placement, the focus, and the badge are the real ones. A test writes a
+/// file, the app opens the form, and the form's outcome comes back in a file beside it.
+/// `QuestionsWireUITests` drives the same pane from a script through the wire.
 ///
 /// Each test proves a contract that only AppKit's key routing, real controls, and the window
 /// server show: where the keyboard goes, which key reaches which button, and how the pane looks.
@@ -101,31 +103,66 @@ final class QuestionsUITests: UnitermUITestCase {
     return found
   }
 
-  /// Picks a file in the open panel that is showing, by typing its path into the go-to sheet. The
-  /// path is short enough to type, and the test never touches the pasteboard, which may hold
-  /// something private.
+  /// Picks a file in the open panel that is showing, by typing its path into the panel's go-to
+  /// field. The panel runs out of process, and it shows the field as a nested sheet, inline, or in
+  /// a popover, depending on its state. So the test finds the field by what it is, the element with
+  /// keyboard focus after Command-Shift-G, wherever the panel put it. The path is short enough to
+  /// type, and the test never touches the pasteboard, which may hold something private.
+  ///
+  /// A failure attaches a screenshot of the window and the app's element tree, so the next one
+  /// shows where the panel put the field.
   private func pick(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
     let panel = window.sheets.firstMatch
 
-    XCTAssertTrue(panel.appears(timeout: 10), "no open panel")
+    guard panel.appears(timeout: 10) else {
+      return diagnose("no open panel", app, window)
+    }
 
     app.typeKey("g", modifierFlags: [.command, .shift])
 
-    let goTo = panel.sheets.firstMatch
+    let focused = app.descendants(matching: .any)
+      .matching(NSPredicate(format: "hasKeyboardFocus == true")).firstMatch
 
-    XCTAssertTrue(goTo.appears(timeout: 5), "no go-to-folder sheet. \(focusReport(app))")
+    // The go-to field is the focused element once the panel shows it. The panel's own list, which
+    // had the keyboard before, is not a text field.
+    let isField = pollUntil(timeout: 5) {
+      focused.exists && [.textField, .comboBox, .searchField].contains(focused.elementType)
+    }
+
+    guard isField else { return diagnose("no go-to field took the keyboard", app, window) }
 
     app.typeText(file.path)
 
-    XCTAssertTrue(
-      waitFor(goTo.textFields.firstMatch, timeout: 5) { $0 == file.path },
-      "the go-to field holds \(String(describing: goTo.textFields.firstMatch.value))")
+    guard waitFor(focused, timeout: 5, { $0 == file.path }) else {
+      return diagnose("the go-to field holds \(String(describing: focused.value))", app, window)
+    }
 
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(waitUntilGone(goTo, timeout: 5), "the go-to-folder sheet never closed")
+
+    guard pollUntil(timeout: 5, { !(focused.exists && (focused.value as? String) == file.path) })
+    else { return diagnose("the go-to field never closed", app, window) }
 
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")
+
+    if !waitForNoSheet(in: window, timeout: 10) { diagnose("the panel never closed", app, window) }
+  }
+
+  /// Fails the test with `message` and the focus report, and keeps what a person needs to see
+  /// where the panel put its field: the window as it looked and the app's element tree.
+  private func diagnose(_ message: String, _ app: XCUIApplication, _ window: XCUIElement) {
+    XCTFail("\(message). \(focusReport(app))")
+
+    let shot = XCTAttachment(screenshot: window.screenshot())
+
+    shot.name = "open-panel-window"
+    shot.lifetime = .keepAlways
+    add(shot)
+
+    let tree = XCTAttachment(string: app.debugDescription)
+
+    tree.name = "open-panel-element-tree"
+    tree.lifetime = .keepAlways
+    add(tree)
   }
 
   private func attach(_ element: XCUIElement, named name: String) {
@@ -622,6 +659,69 @@ final class QuestionsUITests: UnitermUITestCase {
     app.typeKey(.return, modifierFlags: [])
 
     XCTAssertEqual(answers(outcome(of: request))["first"] as? String, "one")
+  }
+
+  // MARK: Placement
+
+  private func isFocused(_ pane: XCUIElement) -> Bool {
+    (pane.value as? String) == "focused"
+  }
+
+  /// Catches a form that opens in a pane that is not beside its asker, or that leaves the keyboard
+  /// in the asker's terminal. With no Questions pane in the window, a pane opens in a split beside
+  /// the asker and takes focus as a split the user makes does. Typing reaches the form's field, and
+  /// a second requester's form joins that pane, with no third pane.
+  func testAFormOpensInASplitBesideTheAskerAndTakesFocus() throws {
+    let app = launchQuestions()
+    let window = mainWindow(in: app)
+
+    XCTAssertFalse(window.groups["pane-2"].exists, "a pane was open before any form")
+
+    try ask(branch, requester: "a", name: "First script")
+
+    XCTAssertTrue(window.groups["pane-2"].appears(timeout: 10), "no pane opened beside the asker")
+    XCTAssertTrue(window.groups["pane-1"].exists, "the asker's pane went")
+    XCTAssertTrue(
+      waitFor(window.groups["pane-2"], timeout: 10) { $0 == "focused" },
+      "the split did not take focus. \(focusReport(app))")
+    XCTAssertFalse(isFocused(window.groups["pane-1"]), "the asker's pane kept focus")
+
+    app.typeText("main")
+
+    XCTAssertTrue(
+      waitFor(element("question-name", in: app), timeout: 5) { $0 == "main" },
+      "typing never reached the form")
+
+    mainWindow(in: app).textViews["terminal"].click()
+
+    try ask(branch, requester: "b", name: "Second script")
+
+    XCTAssertTrue(element("tab-1", in: app).appears(timeout: 10), "the second form got no tab")
+    XCTAssertFalse(window.groups["pane-3"].exists, "a second requester got a pane of its own")
+  }
+
+  /// Catches an asker that shows nothing while its form waits, a badge that does not name the
+  /// Questions pane, and one that stays after the form resolves. The asking pane shows the badge,
+  /// its label names the Questions pane, and cancelling the form clears it.
+  func testTheAskingPaneShowsABadgeUntilTheFormResolves() throws {
+    let app = launchQuestions()
+    let badge = element("pane-asking-1", in: app)
+
+    XCTAssertFalse(badge.exists, "a badge showed before any form")
+
+    let request = try ask(branch)
+
+    XCTAssertTrue(badge.appears(timeout: 10), "the asking pane showed no badge")
+    XCTAssertTrue(
+      badge.label.contains("Pane 2"), "the badge says \(badge.label), not the Questions pane")
+    XCTAssertFalse(element("pane-asking-2", in: app).exists, "the Questions pane is no asker")
+
+    attach(mainWindow(in: app), named: "questions-asking-badge")
+
+    app.typeKey(.escape, modifierFlags: [])
+
+    XCTAssertEqual(outcome(of: request)?["outcome"] as? String, "cancelled")
+    XCTAssertTrue(waitUntilGone(badge), "the badge stayed after the form resolved")
   }
 
   // MARK: Lifecycle

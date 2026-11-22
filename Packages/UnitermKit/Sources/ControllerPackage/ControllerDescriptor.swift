@@ -79,6 +79,10 @@ public enum ControllerPermissionKind: Hashable, Sendable {
   /// carry a token.
   case browserRead
 
+  /// The controller shows the user forms and reads their answers. The power has no scope. It opens
+  /// no pane of the controller's own and grants no pane control.
+  case askUser
+
   /// The kind as the descriptor and the policy file spell it.
   public var name: String {
     switch self {
@@ -90,6 +94,7 @@ public enum ControllerPermissionKind: Hashable, Sendable {
     case .pathRead: return "path-read"
     case .browserNavigation: return "browser-navigation"
     case .browserRead: return "browser-read"
+    case .askUser: return "ask-user"
     }
   }
 
@@ -99,7 +104,7 @@ public enum ControllerPermissionKind: Hashable, Sendable {
   var scopeName: String {
     switch self {
     case .paneControl, .clipboardRead, .clipboardWrite, .pathRead, .browserNavigation,
-      .browserRead:
+      .browserRead, .askUser:
       return ""
     case .capability(let name): return name
     case .hostLaunch(let scope): return scope.executable
@@ -141,6 +146,7 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
   public static let clipboardWrite = ControllerPermission(.clipboardWrite)
   public static let browserNavigation = ControllerPermission(.browserNavigation)
   public static let browserRead = ControllerPermission(.browserRead)
+  public static let askUser = ControllerPermission(.askUser)
 
   public static func capability(_ name: String) -> ControllerPermission {
     ControllerPermission(.capability(name))
@@ -164,6 +170,7 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
     ControllerPermissionMeaning(kind: "path-read", version: 1, covers: [1], format: 2),
     ControllerPermissionMeaning(kind: "browser-navigation", version: 1, covers: [1], format: 2),
     ControllerPermissionMeaning(kind: "browser-read", version: 1, covers: [1], format: 2),
+    ControllerPermissionMeaning(kind: "ask-user", version: 1, covers: [1], format: 2),
   ]
 
   /// The meaning of a pair, or nil when this build does not know it.
@@ -203,6 +210,7 @@ public struct ControllerPermission: Hashable, Sendable, Comparable {
       return "5" + scope.directories.joined(separator: "\u{0}")
     case .browserNavigation: return "6"
     case .browserRead: return "7"
+    case .askUser: return "8"
     }
   }
 }

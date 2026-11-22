@@ -6,6 +6,7 @@ public enum ScriptCallPower: String, CaseIterable, Sendable {
   case paneControl = "pane-control"
   case clipboardRead = "clipboard-read"
   case clipboardWrite = "clipboard-write"
+  case askUser = "ask-user"
 }
 
 /// One host call a script makes, apart from its arguments.
@@ -24,6 +25,9 @@ public enum ScriptCallKind: CaseIterable, Sendable {
   case requestLayout
   case readClipboard
   case writeClipboard
+  case openForm
+  case waitForm
+  case discardForm
 
   /// The name of the function in the `uniterm` module, without a prefix.
   public var janetName: String {
@@ -38,6 +42,9 @@ public enum ScriptCallKind: CaseIterable, Sendable {
     case .requestLayout: return "request-layout"
     case .readClipboard: return "read-clipboard"
     case .writeClipboard: return "write-clipboard"
+    case .openForm: return "open-form"
+    case .waitForm: return "wait-form"
+    case .discardForm: return "discard-form"
     }
   }
 
@@ -47,6 +54,7 @@ public enum ScriptCallKind: CaseIterable, Sendable {
     case .postStatus: return nil
     case .readClipboard: return .clipboardRead
     case .writeClipboard: return .clipboardWrite
+    case .openForm, .waitForm, .discardForm: return .askUser
     case .listWindows, .listPanes, .openPane, .openTab, .send, .sendCommand, .requestLayout:
       return .paneControl
     }
@@ -71,6 +79,9 @@ extension ScriptCall {
     case .requestLayout: return .requestLayout
     case .readClipboard: return .readClipboard
     case .writeClipboard: return .writeClipboard
+    case .openForm: return .openForm
+    case .waitForm: return .waitForm
+    case .discardForm: return .discardForm
     }
   }
 }

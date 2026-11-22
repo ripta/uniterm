@@ -100,6 +100,27 @@ final class DeclaredScriptTests: XCTestCase {
         "(declare-permissions {:kind :browser-navigation :version 1 :directories [\"/tmp\"]})"))
   }
 
+  /// Catches the ask power refused or changed on the way from Janet: it reads at version 1 and
+  /// takes no field.
+  func testAnAskUserDeclarationIsReadAtVersionOneAndTakesNoField() throws {
+    let declared = try declaration(
+      "(declare-permissions {:kind :pane-control :version 1} {:kind :ask-user :version 1})")
+
+    XCTAssertEqual(declared.permissions, [.paneControl, .askUser])
+
+    for refused in [
+      "(declare-permissions {:kind :ask-user :version 2})",
+      "(declare-permissions {:kind :ask-user :version 1 :name \"x\"})",
+      "(declare-permissions {:kind :ask-user :version 1 :directories [\"/tmp\"]})",
+    ] {
+      switch read(refused) {
+      case .invalid: break
+      case .declared(let json): XCTAssertThrowsError(try FileDeclaration.parse(json), refused)
+      default: XCTFail("\(refused) was read as a valid declaration")
+      }
+    }
+  }
+
   /// Catches an empty declaration being treated as no declaration, and a file with only a header.
   func testAnEmptyDeclarationAndAHeaderOnlyDeclarationAreDeclarations() throws {
     XCTAssertTrue(try declaration("(declare-permissions)").permissions.isEmpty)
