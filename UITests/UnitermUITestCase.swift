@@ -406,14 +406,17 @@ class UnitermUITestCase: XCTestCase {
   /// Chooses a file in the system's open panel that is already showing, by entering its path in
   /// the go-to-folder sheet. The path is pasted, not typed. The field autocompletes a typed path
   /// against sibling folders, which makes the entry slow and can change the path.
+  ///
+  /// Each query while the panel shows takes 1.5 to 5 s, so each wait on the panel allows 20 s. That
+  /// holds several queries, where 5 s held one and failed whenever the first came too early.
   private func chooseInSystemPanel(_ file: URL, in app: XCUIApplication, window: XCUIElement) {
     let panel = window.sheets.firstMatch
-    XCTAssertTrue(panel.appears(timeout: 10), "no open panel")
+    XCTAssertTrue(panel.appears(timeout: 20), "no open panel")
 
     app.typeKey("g", modifierFlags: [.command, .shift])
 
     let goTo = panel.sheets.firstMatch
-    XCTAssertTrue(goTo.appears(timeout: 5), "no go-to-folder sheet. \(focusReport(app))")
+    XCTAssertTrue(goTo.appears(timeout: 20), "no go-to-folder sheet. \(focusReport(app))")
 
     paste(file.path, in: app)
 
@@ -421,12 +424,12 @@ class UnitermUITestCase: XCTestCase {
     // panel nowhere.
     let typed = goTo.textFields.firstMatch
     XCTAssertTrue(
-      waitFor(typed, timeout: 5) { $0 == file.path },
+      waitFor(typed, timeout: 20) { $0 == file.path },
       "the go-to field holds \(String(describing: typed.value)), not \(file.path)")
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(
-      waitUntilGone(goTo, timeout: 5),
+      waitUntilGone(goTo, timeout: 20),
       "the go-to-folder sheet never closed. \(focusReport(app)) "
         + "The sheet: \(goTo.debugDescription)")
 
@@ -438,10 +441,10 @@ class UnitermUITestCase: XCTestCase {
       .matching(NSPredicate(format: "selected == true"))
       .containing(shown).firstMatch
     XCTAssertTrue(
-      selected.appears(timeout: 5), "the panel never selected \(name). \(focusReport(app))")
+      selected.appears(timeout: 20), "the panel never selected \(name). \(focusReport(app))")
 
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")
+    XCTAssertTrue(waitForNoSheet(in: window, timeout: 20), "the panel never closed")
   }
 
   /// Puts `text` in the focused field through the pasteboard, then restores what the pasteboard held.
@@ -454,7 +457,7 @@ class UnitermUITestCase: XCTestCase {
     app.typeKey("v", modifierFlags: .command)
 
     // The paste is read when the key event is handled, so restore only after the field shows it.
-    _ = waitFor(app.sheets.firstMatch.sheets.firstMatch.textFields.firstMatch, timeout: 5) {
+    _ = waitFor(app.sheets.firstMatch.sheets.firstMatch.textFields.firstMatch, timeout: 20) {
       $0 == text
     }
 
