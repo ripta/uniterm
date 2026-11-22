@@ -26,7 +26,7 @@ final class PaneControlUITests: UnitermUITestCase {
     let disconnect = app.menuItems["pane-control-disconnect"]
     let menu = app.menus.containing(.menuItem, identifier: "pane-control-disconnect").firstMatch
 
-    XCTAssertTrue(disconnect.waitForExistence(timeout: 5), "the badge showed no menu")
+    XCTAssertTrue(disconnect.appears(timeout: 5), "the badge showed no menu")
     XCTAssertTrue(hasFrame(menu, timeout: 5), "the badge's menu has no frame")
     keepScreenshot(of: menu, named: "Control badge menu open")
     disconnect.click()

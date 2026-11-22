@@ -61,7 +61,7 @@ final class ExecPaneUITests: UnitermUITestCase {
 
     if let value {
       let field = window.secureTextFields["exec-value-SYNTHETIC_TOKEN"]
-      XCTAssertTrue(field.waitForExistence(timeout: 10), "the values sheet never showed")
+      XCTAssertTrue(field.appears(timeout: 10), "the values sheet never showed")
       act("click the value field", app) { field.click() }
       act("type the value", app) { field.typeText(value) }
       act("click Continue", app) { window.sheets.buttons["Continue"].click() }
@@ -77,20 +77,20 @@ final class ExecPaneUITests: UnitermUITestCase {
     act("open the Window menu", app) { app.menuBars.menuBarItems["Window"].click() }
 
     let item = app.menuBars.menuItems["Pending Requests\u{2026}"]
-    XCTAssertTrue(item.waitForExistence(timeout: 5), "the Window menu has no Pending Requests item")
+    XCTAssertTrue(item.appears(timeout: 5), "the Window menu has no Pending Requests item")
     XCTAssertTrue(item.isEnabled, "the Pending Requests item is disabled")
     act("click Pending Requests", app) { item.click() }
 
     let panel = app.windows["pending-requests-window"]
     XCTAssertTrue(
-      panel.waitForExistence(timeout: 5),
+      panel.appears(timeout: 5),
       "the Pending Requests panel never opened. The windows were: "
         + app.windows.allElementsBoundByIndex.map(\.identifier).joined(separator: ", ")
         + ". The app's state was \(stateBeforeMenu.rawValue) before the menu and "
         + "\(app.state.rawValue) after. The main window can be hit: \(window.isHittable)")
 
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
-    XCTAssertTrue(row.waitForExistence(timeout: 10), "the launch never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 10), "the launch never reached the panel")
     act("select the launch", app) { row.click() }
 
     let detail = panel.staticTexts["pending-requests-detail"]
@@ -119,7 +119,7 @@ final class ExecPaneUITests: UnitermUITestCase {
     let run = window.buttons["pane-exec-run-1"]
     let title = window.staticTexts["fixture-slides-title"]
 
-    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+    XCTAssertTrue(run.appears(timeout: 20), "the restored pane shows no Run")
     XCTAssertEqual(title.value as? String, "No slide", "the restored pane ran its driver")
 
     keepScreenshot(of: window, named: "restored-exec-pane")
@@ -137,7 +137,7 @@ final class ExecPaneUITests: UnitermUITestCase {
     act("open the history", app) { window.groups["status-bar"].click() }
 
     let rows = window.staticTexts.matching(identifier: "history-row")
-    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the history never opened")
+    XCTAssertTrue(rows.firstMatch.appears(timeout: 5), "the history never opened")
 
     let deadline = Date().addingTimeInterval(10)
     var values: [String] = []
@@ -168,7 +168,7 @@ final class ExecPaneUITests: UnitermUITestCase {
     let window = mainWindow(in: app)
     let run = window.buttons["pane-exec-run-1"]
 
-    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+    XCTAssertTrue(run.appears(timeout: 20), "the restored pane shows no Run")
 
     act("click Run", app) { run.click() }
     approveOnce(in: app, value: nil)
@@ -183,7 +183,7 @@ final class ExecPaneUITests: UnitermUITestCase {
     act("press Cmd-D", app) { app.typeKey("d", modifierFlags: .command) }
 
     XCTAssertTrue(
-      launcher(in: window).waitForExistence(timeout: 5),
+      launcher(in: window).appears(timeout: 5),
       "Cmd-D did nothing while the driver stalled. \(focusReport(app))")
   }
 

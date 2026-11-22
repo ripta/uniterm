@@ -167,16 +167,16 @@ final class ImageViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("6", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
 
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 10), "no image viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 10), "no image viewer pane")
 
     let open = window.buttons["image-viewer-open"]
-    XCTAssertTrue(open.waitForExistence(timeout: 5), "an empty viewer has no Open button")
+    XCTAssertTrue(open.appears(timeout: 5), "an empty viewer has no Open button")
     open.click()
 
     choose(file, in: app, window: window)
@@ -203,7 +203,7 @@ final class ImageViewerUITests: UnitermUITestCase {
       environment: ["UNITERM_LAYOUT_DEBOUNCE": "3600"], arguments: closeWindowsOnQuit)
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no image viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no image viewer pane")
     XCTAssertTrue(waitFor(segment(1, in: window), timeout: 20) { $0 == "2 of 3" })
 
     app.typeKey("q", modifierFlags: .command)
@@ -300,7 +300,7 @@ final class ImageViewerUITests: UnitermUITestCase {
     viewer(in: window).click()
 
     let menu = app.menuBars.menuBarItems["Image Viewer"]
-    XCTAssertTrue(menu.waitForExistence(timeout: 5), "no Image Viewer menu")
+    XCTAssertTrue(menu.appears(timeout: 5), "no Image Viewer menu")
 
     menu.click()
     app.menuBars.menuItems["Next Image"].click()
@@ -331,10 +331,10 @@ final class ImageViewerUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "400 \u{00D7} 200" })
 
     app.typeKey("k", modifierFlags: .command)
-    XCTAssertTrue(palette(in: app).waitForExistence(timeout: 5), "the palette never showed")
+    XCTAssertTrue(palette(in: app).appears(timeout: 5), "the palette never showed")
 
     let field = app.descendants(matching: .any)["command-palette-field"]
-    XCTAssertTrue(field.waitForExistence(timeout: 5))
+    XCTAssertTrue(field.appears(timeout: 5))
 
     app.typeText("ab")
     app.typeKey(.leftArrow, modifierFlags: [.command])
@@ -473,9 +473,9 @@ final class ImageViewerUITests: UnitermUITestCase {
     var window = mainWindow(in: app)
     let table = window.tables["data-viewer-table"]
 
-    XCTAssertTrue(table.waitForExistence(timeout: 20), "no table")
+    XCTAssertTrue(table.appears(timeout: 20), "no table")
     XCTAssertTrue(
-      table.staticTexts["r0000"].waitForExistence(timeout: 10), "the table shows no rows")
+      table.staticTexts["r0000"].appears(timeout: 10), "the table shows no rows")
 
     // The first row visible in the table, by the index in its first column. One snapshot reads the
     // whole tree in a single round trip. Querying cells one by one costs about a second each.
@@ -566,7 +566,7 @@ final class ImageViewerUITests: UnitermUITestCase {
 
     app.typeKey("0", modifierFlags: .command)
     XCTAssertFalse(
-      segment(1, in: window).waitForExistence(timeout: 2), "Cmd-0 still zooms the viewer")
+      segment(1, in: window).appears(timeout: 2), "Cmd-0 still zooms the viewer")
 
     app.typeKey("j", modifierFlags: .command)
     XCTAssertTrue(waitFor(segment(1, in: window), timeout: 10) { $0 == "100%" })
@@ -711,7 +711,7 @@ final class ImageViewerUITests: UnitermUITestCase {
     let output = try String(contentsOfFile: status + ".out", encoding: .utf8)
 
     XCTAssertEqual(output, "shown 0 1 2 done\n")
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no image viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no image viewer pane")
 
     // The status bar shows the focused pane, and the script left the keyboard in the terminal.
     viewer(in: window).click()

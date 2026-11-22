@@ -207,16 +207,16 @@ final class TextViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("7", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
 
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 10), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 10), "no text viewer pane")
 
     let open = window.buttons["text-viewer-open"]
-    XCTAssertTrue(open.waitForExistence(timeout: 5), "an empty viewer has no Open button")
+    XCTAssertTrue(open.appears(timeout: 5), "an empty viewer has no Open button")
     attachScreenshot("text viewer, empty state", of: window, in: app)
     open.click()
     choose(file, in: app, window: window)
@@ -238,7 +238,7 @@ final class TextViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(
       waitFor(segment(0, in: window), timeout: 20) { $0.hasSuffix(" characters") },
       "the RTF never showed. The sandboxed helper may not have started.")
@@ -257,7 +257,7 @@ final class TextViewerUITests: UnitermUITestCase {
       environment: ["UNITERM_LAYOUT_DEBOUNCE": "3600"], arguments: closeWindowsOnQuit)
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "Page 2 of 3" })
 
     app.typeKey("q", modifierFlags: .command)
@@ -285,7 +285,7 @@ final class TextViewerUITests: UnitermUITestCase {
       let app = launchApp(settings: ["appearance": appearance])
       let window = mainWindow(in: app)
 
-      XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+      XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
       XCTAssertTrue(
         waitFor(segment(0, in: window), timeout: 30) { $0.hasSuffix(" lines") },
         "the README never rendered in the \(appearance) theme")
@@ -308,7 +308,7 @@ final class TextViewerUITests: UnitermUITestCase {
       environment: ["UNITERM_LAYOUT_DEBOUNCE": "3600"], arguments: closeWindowsOnQuit)
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 30) { $0.hasSuffix(" lines") })
 
     Thread.sleep(forTimeInterval: 1)
@@ -342,13 +342,13 @@ final class TextViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
     app.typeKey("7", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
 
     let open = window.buttons["text-viewer-open"]
-    XCTAssertTrue(open.waitForExistence(timeout: 10))
+    XCTAssertTrue(open.appears(timeout: 10))
     open.click()
     choose(file, in: app, window: window)
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "Page 1 of 1" })
@@ -380,7 +380,7 @@ final class TextViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "Page 1 of 2" })
 
     try FileManager.default.removeItem(at: file)
@@ -414,7 +414,7 @@ final class TextViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
 
     app.typeKey("w", modifierFlags: .command)
 
@@ -434,7 +434,7 @@ final class TextViewerUITests: UnitermUITestCase {
   /// Opens the pane's find bar with Cmd-F and types `query` into it.
   private func find(_ query: String, in app: XCUIApplication, window: XCUIElement) {
     app.typeKey("f", modifierFlags: .command)
-    XCTAssertTrue(findField(in: window).waitForExistence(timeout: 5), "Cmd-F opened no find bar")
+    XCTAssertTrue(findField(in: window).appears(timeout: 5), "Cmd-F opened no find bar")
     app.typeText(query)
   }
 
@@ -458,7 +458,7 @@ final class TextViewerUITests: UnitermUITestCase {
       let app = launchApp()
       let window = mainWindow(in: app)
 
-      XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no pane for \(format)")
+      XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no pane for \(format)")
       XCTAssertTrue(
         waitFor(segment(0, in: window), timeout: 30) { !$0.isEmpty }, "\(format) never loaded")
 
@@ -501,7 +501,7 @@ final class TextViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0.hasSuffix(" characters") })
 
     window.descendants(matching: .any)["text-viewer-text"].click()
@@ -519,7 +519,7 @@ final class TextViewerUITests: UnitermUITestCase {
     XCTAssertTrue(waitUntilGone(findField(in: window), timeout: 5), "Done left the bar")
 
     app.typeKey("f", modifierFlags: .command)
-    XCTAssertTrue(findField(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(findField(in: window).appears(timeout: 5))
     XCTAssertEqual(
       findField(in: window).value as? String, "", "a closed bar keeps no query for the next open")
   }
@@ -572,14 +572,14 @@ final class TextViewerUITests: UnitermUITestCase {
     let window = mainWindow(in: app)
     let entry = window.tables["text-viewer-contents"].staticTexts["End"]
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0 == "Page 1 of 3" })
 
     let toggle = menuItem("Show Contents", under: "View", in: app)
     XCTAssertTrue(toggle.isEnabled, "a PDF with an outline has Show Contents off")
     toggle.click()
 
-    XCTAssertTrue(entry.waitForExistence(timeout: 10), "the sidebar listed no entries")
+    XCTAssertTrue(entry.appears(timeout: 10), "the sidebar listed no entries")
     entry.click()
     XCTAssertTrue(
       waitFor(segment(0, in: window), timeout: 10) { $0 == "Page 3 of 3" },
@@ -592,9 +592,9 @@ final class TextViewerUITests: UnitermUITestCase {
     let relaunched = launchApp(arguments: closeWindowsOnQuit)
     let restored = mainWindow(in: relaunched)
 
-    XCTAssertTrue(viewer(in: restored).waitForExistence(timeout: 20))
+    XCTAssertTrue(viewer(in: restored).appears(timeout: 20))
     XCTAssertTrue(
-      restored.tables["text-viewer-contents"].staticTexts["Intro"].waitForExistence(timeout: 20),
+      restored.tables["text-viewer-contents"].staticTexts["Intro"].appears(timeout: 20),
       "the sidebar did not come back over a relaunch")
   }
 
@@ -608,11 +608,11 @@ final class TextViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 30) { $0.hasSuffix(" lines") })
 
     let last = window.tables["text-viewer-contents"].staticTexts["Section 28"]
-    XCTAssertTrue(last.waitForExistence(timeout: 20), "the sidebar listed no headings")
+    XCTAssertTrue(last.appears(timeout: 20), "the sidebar listed no headings")
     attachScreenshot("text viewer, Markdown with the contents sidebar", of: window, in: app)
 
     last.click()
@@ -630,11 +630,10 @@ final class TextViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(waitFor(segment(0, in: window), timeout: 20) { $0.hasSuffix(" characters") })
     XCTAssertTrue(
-      window.descendants(matching: .any)["text-viewer-contents-empty"].waitForExistence(
-        timeout: 10),
+      window.descendants(matching: .any)["text-viewer-contents-empty"].appears(timeout: 10),
       "the sidebar did not say there are no contents")
     attachScreenshot("text viewer, RTF with no contents", of: window, in: app)
 
@@ -750,9 +749,9 @@ final class TextViewerUITests: UnitermUITestCase {
 
     XCTAssertEqual(output, "loaded done done 40\n")
 
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 20), "no text viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 20), "no text viewer pane")
     XCTAssertTrue(
-      window.descendants(matching: .any)["text-viewer-markdown"].waitForExistence(timeout: 20),
+      window.descendants(matching: .any)["text-viewer-markdown"].appears(timeout: 20),
       "the notes did not render as Markdown")
     let markdown = window.descendants(matching: .any)["text-viewer-markdown"].firstMatch
 

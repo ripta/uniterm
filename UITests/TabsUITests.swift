@@ -16,10 +16,7 @@ final class TabsUITests: UnitermUITestCase {
   }
 
   private func waitForGone(_ element: XCUIElement, timeout: TimeInterval = 15) -> Bool {
-    let gone = NSPredicate(format: "exists == false")
-    return XCTWaiter().wait(
-      for: [XCTNSPredicateExpectation(predicate: gone, object: element)], timeout: timeout)
-      == .completed
+    element.disappears(timeout: timeout)
   }
 
   private func waitForValue(_ value: String, of element: XCUIElement) -> Bool {
@@ -32,7 +29,7 @@ final class TabsUITests: UnitermUITestCase {
     app.typeKey("t", modifierFlags: .command)
 
     let terminal = window.textViews["terminal"]
-    XCTAssertTrue(terminal.waitForExistence(timeout: 15))
+    XCTAssertTrue(terminal.appears(timeout: 15))
     XCTAssertTrue(
       waitFor(terminal, timeout: 40) { $0.contains("% ") }, "the new tab never showed a prompt")
     return terminal
@@ -54,7 +51,7 @@ final class TabsUITests: UnitermUITestCase {
     let first = try XCTUnwrap(firstMatch(pattern, in: terminal.value as? String ?? ""))
 
     let second = openTab(in: app)
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10))
     XCTAssertTrue(waitForValue("selected", of: tab(1, in: app)))
     XCTAssertTrue(waitForValue("unselected", of: tab(0, in: app)))
 
@@ -96,7 +93,7 @@ final class TabsUITests: UnitermUITestCase {
     let app = launchApp()
     _ = waitForTerminal(in: app)
     _ = openTab(in: app)
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10))
 
     app.typeKey("w", modifierFlags: .command)
 
@@ -123,7 +120,7 @@ final class TabsUITests: UnitermUITestCase {
 
     app.typeKey("w", modifierFlags: .command)
     let sheet = window.sheets.firstMatch
-    XCTAssertTrue(sheet.waitForExistence(timeout: 10), "closing a running tab asked nothing")
+    XCTAssertTrue(sheet.appears(timeout: 10), "closing a running tab asked nothing")
     XCTAssertTrue(sheet.buttons["Close Tab"].exists)
 
     sheet.buttons["Cancel"].click()
@@ -131,7 +128,7 @@ final class TabsUITests: UnitermUITestCase {
     XCTAssertTrue(tab(1, in: app).exists, "Cancel still closed the tab")
 
     app.typeKey("w", modifierFlags: .command)
-    XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+    XCTAssertTrue(sheet.appears(timeout: 10))
     sheet.buttons["Close Tab"].click()
 
     XCTAssertTrue(waitForGone(tab(1, in: app)), "confirming left the tab open")
@@ -145,19 +142,19 @@ final class TabsUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("2", modifierFlags: .command)
     app.typeText("sh -c \"echo PU:42:; cat\"")
     app.typeKey(.return, modifierFlags: [])
 
     let pane = window.groups["pane-2"]
-    XCTAssertTrue(pane.waitForExistence(timeout: 20))
+    XCTAssertTrue(pane.appears(timeout: 20))
     XCTAssertTrue(waitFor(pane.textViews["terminal"], timeout: 40) { $0.contains("PU:42:") })
 
     app.menuBars.menuBarItems["File"].click()
     let newTab = app.menuBars.menuItems["New Tab"]
-    XCTAssertTrue(newTab.waitForExistence(timeout: 5))
+    XCTAssertTrue(newTab.appears(timeout: 5))
     XCTAssertFalse(newTab.isEnabled, "New Tab is live in program mode")
     app.typeKey(.escape, modifierFlags: [])
 

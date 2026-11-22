@@ -76,7 +76,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     let panel = app.windows["pending-requests-window"]
 
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+    XCTAssertTrue(panel.appears(timeout: 5), "the Pending Requests panel never opened")
 
     return panel
   }
@@ -89,7 +89,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     let panel = app.windows["pending-requests-window"]
 
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the indicator did not open the panel")
+    XCTAssertTrue(panel.appears(timeout: 5), "the indicator did not open the panel")
 
     return panel
   }
@@ -108,7 +108,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
     let table = panel.tables["pending-requests-table"]
     let row = table.tableRows.firstMatch
 
-    XCTAssertTrue(row.waitForExistence(timeout: 30), "the request never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 30), "the request never reached the panel")
 
     // The one failure here was a bare "Unable to find hit point" from the click. Waiting for the
     // row to take a click first turns that into a failure that says who held the screen.
@@ -133,7 +133,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the request")
+    XCTAssertTrue(indicator.appears(timeout: 30), "the window never showed the request")
     XCTAssertTrue(
       waitFor(indicator, timeout: 30) { $0 == "1 request" },
       "the indicator never counted the one request")
@@ -149,7 +149,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     let sheet = panel.sheets.firstMatch
 
-    XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Grant Access asked nothing")
+    XCTAssertTrue(sheet.appears(timeout: 5), "Grant Access asked nothing")
     XCTAssertTrue(sheet.popUpButtons["pending-requests-pane"].exists, "the sheet names no pane")
 
     sheet.buttons["Grant"].click()
@@ -172,7 +172,7 @@ final class PendingRequestsUITests: UnitermUITestCase {
 
     let indicator = window.descendants(matching: .any)["status-window-pending-permissions"]
 
-    XCTAssertTrue(indicator.waitForExistence(timeout: 30), "the window never showed the request")
+    XCTAssertTrue(indicator.appears(timeout: 30), "the window never showed the request")
 
     let panel = openPendingRequests(in: app)
 

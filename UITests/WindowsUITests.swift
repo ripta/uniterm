@@ -56,7 +56,7 @@ final class WindowsUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app, window: 2)
     let second = mainWindow(2, in: app)
 
-    XCTAssertTrue(second.groups["status-bar"].waitForExistence(timeout: 10))
+    XCTAssertTrue(second.groups["status-bar"].appears(timeout: 10))
     XCTAssertFalse(
       ((second.staticTexts["status-message"].value as? String) ?? "").contains(Self.errorText),
       "the second bar shows the first window's error")

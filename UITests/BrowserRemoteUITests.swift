@@ -172,8 +172,8 @@ final class BrowserRemoteUITests: UnitermUITestCase {
     let browser = window.groups["pane-\(pane)"].descendants(matching: .any)["browser"]
     let profile = browser.buttons["browser-profile"]
 
-    XCTAssertTrue(badge.waitForExistence(timeout: 10), "the browser pane has no control badge")
-    XCTAssertTrue(profile.waitForExistence(timeout: 10), "the browser pane has no profile button")
+    XCTAssertTrue(badge.appears(timeout: 10), "the browser pane has no control badge")
+    XCTAssertTrue(profile.appears(timeout: 10), "the browser pane has no profile button")
     XCTAssertTrue(
       badge.frame.intersection(profile.frame).isNull,
       "the badge \(badge.frame) covers the profile button \(profile.frame)")

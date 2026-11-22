@@ -34,7 +34,7 @@ final class MapViewerUITests: UnitermUITestCase {
     view.click()
 
     let item = view.menus.menuItems[title]
-    XCTAssertTrue(item.waitForExistence(timeout: 5), "the View menu has no \(title)")
+    XCTAssertTrue(item.appears(timeout: 5), "the View menu has no \(title)")
     item.click()
   }
 
@@ -48,13 +48,13 @@ final class MapViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("4", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
 
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(map(in: window).waitForExistence(timeout: 10), "no map pane")
+    XCTAssertTrue(map(in: window).appears(timeout: 10), "no map pane")
     XCTAssertTrue(waitFor(styleText(in: window), timeout: 10) { $0 == "Standard" })
 
     chooseStyle("Satellite Map", in: app)
@@ -84,10 +84,10 @@ final class MapViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
     app.typeKey("4", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(map(in: window).waitForExistence(timeout: 10), "no map pane")
+    XCTAssertTrue(map(in: window).appears(timeout: 10), "no map pane")
 
     let terminalPane = window.groups["pane-1"]
     let mapPane = window.groups["pane-2"]
@@ -110,18 +110,18 @@ final class MapViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
     app.typeKey("4", modifierFlags: .command)
 
     let launcherField = launcher(in: window).textFields["place-search-field"]
-    XCTAssertTrue(launcherField.waitForExistence(timeout: 5), "no place field in the launcher")
+    XCTAssertTrue(launcherField.appears(timeout: 5), "no place field in the launcher")
 
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(map(in: window).waitForExistence(timeout: 10), "no map pane")
+    XCTAssertTrue(map(in: window).appears(timeout: 10), "no map pane")
 
     app.typeKey("l", modifierFlags: .command)
     let search = map(in: window).descendants(matching: .any)["place-search"]
-    XCTAssertTrue(search.waitForExistence(timeout: 5), "Cmd-L showed no place search")
+    XCTAssertTrue(search.appears(timeout: 5), "Cmd-L showed no place search")
 
     app.typeKey(.escape, modifierFlags: [])
     XCTAssertTrue(waitUntilGone(search), "Escape left the place search over the map")
@@ -138,7 +138,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(map(in: window).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(map(in: window).appears(timeout: 20), "no map pane")
     XCTAssertTrue(waitFor(styleText(in: window), timeout: 10) { $0 == "Hybrid" })
     XCTAssertTrue(
       waitFor(map(in: window), timeout: 5) { $0 == "hybrid 37.50,-122.25" },
@@ -154,7 +154,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let first = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
     let firstWindow = mainWindow(in: first)
 
-    XCTAssertTrue(map(in: firstWindow).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(map(in: firstWindow).appears(timeout: 20), "no map pane")
 
     chooseStyle("Satellite Map", in: first)
     XCTAssertTrue(waitFor(styleText(in: firstWindow), timeout: 10) { $0 == "Satellite" })
@@ -170,7 +170,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let second = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
     let secondWindow = mainWindow(in: second)
 
-    XCTAssertTrue(map(in: secondWindow).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(map(in: secondWindow).appears(timeout: 20), "no map pane")
     XCTAssertTrue(waitFor(styleText(in: secondWindow), timeout: 10) { $0 == "Satellite" })
 
     second.typeKey("q", modifierFlags: .command)
@@ -181,7 +181,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let third = launchApp()
     let thirdWindow = mainWindow(in: third)
 
-    XCTAssertTrue(map(in: thirdWindow).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(map(in: thirdWindow).appears(timeout: 20), "no map pane")
     XCTAssertTrue(waitFor(styleText(in: thirdWindow), timeout: 10) { $0 == "Standard" })
   }
 
@@ -220,7 +220,7 @@ final class MapViewerUITests: UnitermUITestCase {
     app.typeKey("o", modifierFlags: .command)
     choose(file, in: app, window: window)
 
-    XCTAssertTrue(map(in: window).waitForExistence(timeout: 15), "no map pane")
+    XCTAssertTrue(map(in: window).appears(timeout: 15), "no map pane")
     XCTAssertTrue(
       waitFor(map(in: window), timeout: 15) { $0.hasSuffix("pins=3") }, "the pins did not load")
     XCTAssertTrue(window.textViews["terminal"].exists, "the terminal went away")
@@ -239,7 +239,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let first = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
     let firstWindow = mainWindow(in: first)
 
-    XCTAssertTrue(map(in: firstWindow).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(map(in: firstWindow).appears(timeout: 20), "no map pane")
     XCTAssertTrue(
       waitFor(map(in: firstWindow), timeout: 15) { $0.hasSuffix("pins=3") },
       "the restored pins did not load")
@@ -248,7 +248,7 @@ final class MapViewerUITests: UnitermUITestCase {
     fileMenu.click()
 
     let clear = fileMenu.menus.menuItems["Clear File Pins"]
-    XCTAssertTrue(clear.waitForExistence(timeout: 5), "the File menu has no Clear File Pins")
+    XCTAssertTrue(clear.appears(timeout: 5), "the File menu has no Clear File Pins")
     clear.click()
 
     XCTAssertTrue(waitFor(map(in: firstWindow), timeout: 10) { !$0.contains("pins=") })
@@ -264,7 +264,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let second = launchApp()
     let secondWindow = mainWindow(in: second)
 
-    XCTAssertTrue(map(in: secondWindow).waitForExistence(timeout: 20), "no map pane")
+    XCTAssertTrue(map(in: secondWindow).appears(timeout: 20), "no map pane")
     XCTAssertTrue(waitFor(map(in: secondWindow), timeout: 5) { !$0.contains("pins=") })
   }
 
@@ -287,7 +287,7 @@ final class MapViewerUITests: UnitermUITestCase {
     func addPin() {
       mapView.rightClick()
       let add = app.menuItems["Add Pin Here"]
-      XCTAssertTrue(add.waitForExistence(timeout: 5), "no Add Pin Here in the context menu")
+      XCTAssertTrue(add.appears(timeout: 5), "no Add Pin Here in the context menu")
       add.click()
     }
 
@@ -305,7 +305,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let question =
       app.dialogs["unsaved-confirmation"].exists
       ? app.dialogs["unsaved-confirmation"] : window.sheets.firstMatch
-    XCTAssertTrue(question.waitForExistence(timeout: 5), "closing an edited map asked nothing")
+    XCTAssertTrue(question.appears(timeout: 5), "closing an edited map asked nothing")
     app.typeKey(.escape, modifierFlags: [])
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 5))
 
@@ -386,14 +386,14 @@ final class MapViewerUITests: UnitermUITestCase {
     app.menuBars.menuBarItems["Window"].click()
 
     let item = app.menuBars.menuItems["Pending Requests\u{2026}"]
-    XCTAssertTrue(item.waitForExistence(timeout: 5), "the Window menu has no Pending Requests item")
+    XCTAssertTrue(item.appears(timeout: 5), "the Window menu has no Pending Requests item")
     item.click()
 
     let panel = app.windows["pending-requests-window"]
-    XCTAssertTrue(panel.waitForExistence(timeout: 5), "the Pending Requests panel never opened")
+    XCTAssertTrue(panel.appears(timeout: 5), "the Pending Requests panel never opened")
 
     let row = panel.tables["pending-requests-table"].tableRows.firstMatch
-    XCTAssertTrue(row.waitForExistence(timeout: 10), "the launch never reached the panel")
+    XCTAssertTrue(row.appears(timeout: 10), "the launch never reached the panel")
     row.click()
     panel.buttons["pending-requests-allow-once"].click()
     panel.buttons[XCUIIdentifierCloseWindow].click()
@@ -408,14 +408,12 @@ final class MapViewerUITests: UnitermUITestCase {
     let rows = window.staticTexts.matching(identifier: "history-row")
     var values: [String] = []
 
-    let predicate = NSPredicate { _, _ in
+    let held = pollUntil(timeout: timeout) {
       values = rows.allElementsBoundByIndex.map { ($0.value as? String) ?? "(no value)" }
       return condition(values)
     }
-    let result = XCTWaiter().wait(
-      for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: timeout)
 
-    return (result == .completed, values)
+    return (held, values)
   }
 
   private func statusSegment(_ index: Int, in window: XCUIElement) -> XCUIElement {
@@ -442,7 +440,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let window = mainWindow(in: app)
     let run = window.buttons["pane-exec-run-1"]
 
-    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+    XCTAssertTrue(run.appears(timeout: 20), "the restored pane shows no Run")
     XCTAssertFalse(
       (map(in: window).value as? String)?.contains("program-pins") == true,
       "the restored map ran its driver")
@@ -481,7 +479,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let firstWindow = mainWindow(in: first)
     let run = firstWindow.buttons["pane-exec-run-1"]
 
-    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+    XCTAssertTrue(run.appears(timeout: 20), "the restored pane shows no Run")
 
     approveRun(of: run, in: first, window: firstWindow)
 
@@ -497,7 +495,7 @@ final class MapViewerUITests: UnitermUITestCase {
       waitUntilGone(map(in: firstWindow), timeout: 15), "Cmd-W did not close the map pane")
 
     first.typeKey("t", modifierFlags: [.command, .shift])
-    XCTAssertTrue(map(in: firstWindow).waitForExistence(timeout: 15), "Cmd-Shift-T brought no map")
+    XCTAssertTrue(map(in: firstWindow).appears(timeout: 15), "Cmd-Shift-T brought no map")
     XCTAssertTrue(
       waitFor(map(in: firstWindow), timeout: 20) { $0.contains("program-pins=2") },
       "the reopened map lost the program pins")
@@ -516,10 +514,10 @@ final class MapViewerUITests: UnitermUITestCase {
     let second = launchApp()
     let secondWindow = mainWindow(in: second)
 
-    XCTAssertTrue(map(in: secondWindow).waitForExistence(timeout: 20), "no map pane after relaunch")
+    XCTAssertTrue(map(in: secondWindow).appears(timeout: 20), "no map pane after relaunch")
     XCTAssertTrue(
       secondWindow.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pane-exec-run-'"))
-        .firstMatch.waitForExistence(timeout: 20),
+        .firstMatch.appears(timeout: 20),
       "the relaunched map shows no Run")
     XCTAssertFalse(
       (map(in: secondWindow).value as? String)?.contains("program-pins") == true,
@@ -528,7 +526,7 @@ final class MapViewerUITests: UnitermUITestCase {
     secondWindow.groups["status-bar"].click()
 
     let rows = secondWindow.staticTexts.matching(identifier: "history-row")
-    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the history never opened")
+    XCTAssertTrue(rows.firstMatch.appears(timeout: 5), "the history never opened")
 
     let notice = "held pins last session"
     let history = historyRows(in: secondWindow) { $0.filter { $0.contains(notice) }.count >= 1 }
@@ -566,7 +564,7 @@ final class MapViewerUITests: UnitermUITestCase {
     let window = mainWindow(in: app)
     let run = window.buttons["pane-exec-run-1"]
 
-    XCTAssertTrue(run.waitForExistence(timeout: 20), "the restored pane shows no Run")
+    XCTAssertTrue(run.appears(timeout: 20), "the restored pane shows no Run")
 
     approveRun(of: run, in: app, window: window)
 
@@ -581,7 +579,7 @@ final class MapViewerUITests: UnitermUITestCase {
     window.groups["status-bar"].click()
 
     let rows = window.staticTexts.matching(identifier: "history-row")
-    XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the history never opened")
+    XCTAssertTrue(rows.firstMatch.appears(timeout: 5), "the history never opened")
 
     let history = historyRows(in: window) { $0.contains { $0.contains("got event map-clicked") } }
     let found = history.matched

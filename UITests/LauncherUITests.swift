@@ -26,14 +26,14 @@ final class LauncherUITests: UnitermUITestCase {
     let (app, window) = startedWindow()
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5), "Cmd-D showed no launcher")
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5), "Cmd-D showed no launcher")
     XCTAssertFalse(window.sheets.firstMatch.exists, "a dialog opened")
 
     app.typeKey(.return, modifierFlags: [])
 
     let pane = window.groups["pane-2"]
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(pane.textViews["terminal"].waitForExistence(timeout: 20))
+    XCTAssertTrue(pane.textViews["terminal"].appears(timeout: 20))
     XCTAssertTrue(
       waitFor(pane.textViews["terminal"], timeout: 40) { $0.contains("% ") },
       "the new pane never showed a prompt")
@@ -53,12 +53,12 @@ final class LauncherUITests: UnitermUITestCase {
       "the status bar never showed the new directory")
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey(.return, modifierFlags: [])
 
     let terminal = window.groups["pane-2"].textViews["terminal"]
-    XCTAssertTrue(terminal.waitForExistence(timeout: 20))
+    XCTAssertTrue(terminal.appears(timeout: 20))
     XCTAssertTrue(waitFor(terminal, timeout: 40) { $0.contains("% ") })
 
     app.typeText("echo \"D:$(pwd -P):\"\n")
@@ -75,7 +75,7 @@ final class LauncherUITests: UnitermUITestCase {
     let (app, window) = startedWindow()
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey(.downArrow, modifierFlags: [])
     app.typeText("sleep 300")
@@ -83,11 +83,11 @@ final class LauncherUITests: UnitermUITestCase {
 
     let pane = window.groups["pane-2"]
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(pane.textViews["terminal"].waitForExistence(timeout: 20))
+    XCTAssertTrue(pane.textViews["terminal"].appears(timeout: 20))
 
     app.menuBars.menuBarItems["File"].click()
     let newTab = app.menuBars.menuItems["New Tab"]
-    XCTAssertTrue(newTab.waitForExistence(timeout: 5))
+    XCTAssertTrue(newTab.appears(timeout: 5))
     XCTAssertFalse(newTab.isEnabled, "the pane opened as a shell, not as a program")
     app.typeKey(.escape, modifierFlags: [])
   }
@@ -97,7 +97,7 @@ final class LauncherUITests: UnitermUITestCase {
     let (app, window) = startedWindow()
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey(.escape, modifierFlags: [])
 
@@ -112,12 +112,12 @@ final class LauncherUITests: UnitermUITestCase {
     let (app, window) = startedWindow()
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("2", modifierFlags: .command)
 
     let command = window.textFields["launcher-command"]
-    XCTAssertTrue(command.waitForExistence(timeout: 5), "Cmd-2 showed no command field")
+    XCTAssertTrue(command.appears(timeout: 5), "Cmd-2 showed no command field")
 
     app.typeText("htop")
     XCTAssertEqual(command.value as? String, "htop", "the keyboard was not in the command field")
@@ -145,18 +145,18 @@ final class LauncherUITests: UnitermUITestCase {
     for (name, button) in [("light", "Light"), ("dark", "Dark")] {
       app.typeKey(",", modifierFlags: .command)
       let settings = app.windows["settings-window"]
-      XCTAssertTrue(settings.waitForExistence(timeout: 5))
+      XCTAssertTrue(settings.appears(timeout: 5))
       settings.radioGroups["appearance-control"].radioButtons[button].click()
       app.typeKey("w", modifierFlags: .command)
       XCTAssertTrue(waitUntilGone(settings, timeout: 5))
 
       app.typeKey("d", modifierFlags: .command)
-      XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+      XCTAssertTrue(launcher(in: window).appears(timeout: 5))
       Thread.sleep(forTimeInterval: 0.5)
       attach(window, named: "launcher-\(name)")
 
       app.typeKey("2", modifierFlags: .command)
-      XCTAssertTrue(window.textFields["launcher-command"].waitForExistence(timeout: 5))
+      XCTAssertTrue(window.textFields["launcher-command"].appears(timeout: 5))
       app.typeText("htop")
       Thread.sleep(forTimeInterval: 0.5)
       attach(window, named: "launcher-program-\(name)")
@@ -176,7 +176,7 @@ final class LauncherUITests: UnitermUITestCase {
 
     app.typeKey("d", modifierFlags: [.command, .shift])
     XCTAssertTrue(
-      launcher(in: window).waitForExistence(timeout: 5), "Cmd-Shift-D showed no launcher")
+      launcher(in: window).appears(timeout: 5), "Cmd-Shift-D showed no launcher")
     Thread.sleep(forTimeInterval: 0.5)
     attach(window, named: "launcher-half-height")
 
@@ -187,7 +187,7 @@ final class LauncherUITests: UnitermUITestCase {
     ).firstMatch
     let filter = pane.textFields["launcher-filter"]
 
-    XCTAssertTrue(filter.waitForExistence(timeout: 5), "the second split showed no launcher")
+    XCTAssertTrue(filter.appears(timeout: 5), "the second split showed no launcher")
     XCTAssertTrue(filter.isHittable, "the filter box is off screen")
     Thread.sleep(forTimeInterval: 0.5)
     attach(window, named: "launcher-quarter-height")

@@ -34,10 +34,7 @@ final class BrowserUITests: UnitermUITestCase {
   }
 
   private func waitForGone(_ element: XCUIElement, timeout: TimeInterval = 15) -> Bool {
-    let gone = NSPredicate(format: "exists == false")
-    return XCTWaiter().wait(
-      for: [XCTNSPredicateExpectation(predicate: gone, object: element)], timeout: timeout)
-      == .completed
+    element.disappears(timeout: timeout)
   }
 
   private func isSelected(_ element: XCUIElement) -> Bool {
@@ -50,13 +47,13 @@ final class BrowserUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("5", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
 
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 10), "no browser pane")
+    XCTAssertTrue(browser(in: window).appears(timeout: 10), "no browser pane")
 
     return window
   }
@@ -70,16 +67,16 @@ final class BrowserUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
     XCTAssertTrue(
-      window.descendants(matching: .any)["launcher-browser"].waitForExistence(timeout: 5),
+      window.descendants(matching: .any)["launcher-browser"].appears(timeout: 5),
       "the launcher has no browser row")
 
     app.typeKey("5", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
 
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 10), "no browser pane")
+    XCTAssertTrue(browser(in: window).appears(timeout: 10), "no browser pane")
 
     let toolbar = browser(in: window)
 
@@ -101,7 +98,7 @@ final class BrowserUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 15), "no browser pane restored")
+    XCTAssertTrue(browser(in: window).appears(timeout: 15), "no browser pane restored")
     XCTAssertTrue(addressField(in: window).exists)
     XCTAssertEqual(addressField(in: window).value as? String ?? "", "")
   }
@@ -115,8 +112,8 @@ final class BrowserUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(window.waitForExistence(timeout: 15))
-    XCTAssertFalse(browser(in: window).waitForExistence(timeout: 3))
+    XCTAssertTrue(window.appears(timeout: 15))
+    XCTAssertFalse(browser(in: window).appears(timeout: 3))
   }
 
   /// Catches a tab bar that shows for one tab, and tab keys that do not reach the browser through
@@ -130,7 +127,7 @@ final class BrowserUITests: UnitermUITestCase {
 
     app.typeKey("t", modifierFlags: .command)
 
-    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10), "Cmd-T opened no tab")
+    XCTAssertTrue(tab(1, in: window).appears(timeout: 10), "Cmd-T opened no tab")
     XCTAssertTrue(isSelected(tab(1, in: window)))
 
     app.typeKey(.tab, modifierFlags: [.control, .shift])
@@ -153,7 +150,7 @@ final class BrowserUITests: UnitermUITestCase {
     let window = openBrowser(in: app)
 
     app.typeKey("t", modifierFlags: .command)
-    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: window).appears(timeout: 10))
 
     app.typeKey("w", modifierFlags: .command)
 
@@ -163,7 +160,7 @@ final class BrowserUITests: UnitermUITestCase {
 
     app.typeKey("t", modifierFlags: [.command, .shift])
 
-    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10), "Cmd-Shift-T brought no tab")
+    XCTAssertTrue(tab(1, in: window).appears(timeout: 10), "Cmd-Shift-T brought no tab")
     XCTAssertTrue(isSelected(tab(1, in: window)))
   }
 
@@ -174,7 +171,7 @@ final class BrowserUITests: UnitermUITestCase {
     let window = openBrowser(in: app)
 
     app.typeKey("t", modifierFlags: .command)
-    XCTAssertTrue(tab(1, in: window).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: window).appears(timeout: 10))
 
     app.typeKey("l", modifierFlags: .command)
     app.typeText("about:blank")
@@ -189,19 +186,19 @@ final class BrowserUITests: UnitermUITestCase {
   /// selects DuckDuckGo and says the stored one was replaced, and choosing an engine clears that.
   func testSettingsShowsAStoredSearchEngineThatLeftTheListAsReplaced() {
     let app = launchApp(settings: ["searchEngine": "altavista"])
-    XCTAssertTrue(app.windows["main-window"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.windows["main-window"].appears(timeout: 10))
 
     app.typeKey(",", modifierFlags: .command)
     let settings = app.windows["settings-window"]
-    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+    XCTAssertTrue(settings.appears(timeout: 5))
 
     let control = settings.radioGroups["search-engine-control"]
-    XCTAssertTrue(control.waitForExistence(timeout: 5))
+    XCTAssertTrue(control.appears(timeout: 5))
     XCTAssertEqual(control.radioButtons.count, 5)
     XCTAssertEqual(control.radioButtons["DuckDuckGo"].value as? Int, 1)
 
     let note = settings.staticTexts["search-engine-control-note"]
-    XCTAssertTrue(note.waitForExistence(timeout: 5), "no note about the replaced engine")
+    XCTAssertTrue(note.appears(timeout: 5), "no note about the replaced engine")
     XCTAssertTrue((note.value as? String ?? "").contains("altavista"))
     XCTAssertTrue((note.value as? String ?? "").contains("DuckDuckGo"))
 
@@ -220,13 +217,13 @@ final class BrowserUITests: UnitermUITestCase {
     let button = window.descendants(matching: .any)["browser-profile"]
     let name = app.descendants(matching: .any)["browser-profile-name"]
 
-    XCTAssertTrue(button.waitForExistence(timeout: 10), "the pane shows no profile button")
+    XCTAssertTrue(button.appears(timeout: 10), "the pane shows no profile button")
     XCTAssertEqual(button.label, "Profile: Default Profile")
     XCTAssertFalse(name.exists, "the profile popover shows before the click")
 
     button.click()
 
-    XCTAssertTrue(name.waitForExistence(timeout: 5), "the click shows no profile name")
+    XCTAssertTrue(name.appears(timeout: 5), "the click shows no profile name")
     XCTAssertEqual(name.value as? String, "Default Profile")
 
     app.typeKey(.escape, modifierFlags: [])
@@ -243,7 +240,7 @@ final class BrowserUITests: UnitermUITestCase {
     let toolbar = window.descendants(matching: .any)["browser-toolbar"]
     let field = addressField(in: window)
 
-    XCTAssertTrue(toolbar.waitForExistence(timeout: 10), "the pane has no toolbar")
+    XCTAssertTrue(toolbar.appears(timeout: 10), "the pane has no toolbar")
 
     let attachment = XCTAttachment(screenshot: window.screenshot())
 
@@ -273,8 +270,8 @@ final class BrowserUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(browser(in: window).waitForExistence(timeout: 15), "no browser pane restored")
-    XCTAssertTrue(tab(2, in: window).waitForExistence(timeout: 10), "the third tab is missing")
+    XCTAssertTrue(browser(in: window).appears(timeout: 15), "no browser pane restored")
+    XCTAssertTrue(tab(2, in: window).appears(timeout: 10), "the third tab is missing")
     XCTAssertTrue(isSelected(tab(1, in: window)), "the saved selection was lost")
     XCTAssertFalse(waitFor(tab(0, in: window), timeout: 1) { $0 == "selected" })
   }
@@ -286,24 +283,24 @@ final class BrowserUITests: UnitermUITestCase {
   /// package tests prove what clearing removes.
   func testSettingsClearsWebsiteDataAndSaysOpenTabsKeepTheirSession() {
     let app = launchApp()
-    XCTAssertTrue(app.windows["main-window"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.windows["main-window"].appears(timeout: 10))
 
     app.typeKey(",", modifierFlags: .command)
     let settings = app.windows["settings-window"]
-    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+    XCTAssertTrue(settings.appears(timeout: 5))
 
     let button = settings.buttons["clear-website-data-button"]
-    XCTAssertTrue(button.waitForExistence(timeout: 5), "no Clear Website Data button")
+    XCTAssertTrue(button.appears(timeout: 5), "no Clear Website Data button")
 
     let note = settings.staticTexts["clear-website-data-note"]
-    XCTAssertTrue(note.waitForExistence(timeout: 5))
+    XCTAssertTrue(note.appears(timeout: 5))
     XCTAssertTrue((note.value as? String ?? "").contains("keep their current session"))
 
     button.click()
 
     let status = settings.staticTexts["clear-website-data-status"]
 
-    XCTAssertTrue(status.waitForExistence(timeout: 10), "the click reported nothing")
+    XCTAssertTrue(status.appears(timeout: 10), "the click reported nothing")
     XCTAssertTrue(
       waitFor(status, timeout: 10) { $0.contains("Cleared") }, "the status never said cleared")
     XCTAssertTrue(button.isEnabled)
@@ -321,7 +318,7 @@ final class BrowserUITests: UnitermUITestCase {
 
     let reveal = app.menuBars.menuItems["Reveal Latest Download"]
 
-    XCTAssertTrue(reveal.waitForExistence(timeout: 5), "the Browser menu has no Reveal item")
+    XCTAssertTrue(reveal.appears(timeout: 5), "the Browser menu has no Reveal item")
     XCTAssertFalse(reveal.isEnabled, "Reveal was offered with nothing downloaded")
 
     app.typeKey(.escape, modifierFlags: [])

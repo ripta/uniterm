@@ -1298,15 +1298,28 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     // sysctl.
     var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, identity.pid]
     var info = kinfo_proc()
-    var size = MemoryLayout<kinfo_proc>.size
+    var command = ""
 
-    XCTAssertEqual(
-      sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0), 0, "no process info", file: file,
-      line: line)
+    // processStarted can arrive between the fork and the child's exec of login. Until that exec,
+    // the child still carries this process's name, so the read waits for it. A child that is not
+    // login never takes the name, and still fails below.
+    let deadline = ContinuousClock.now + .seconds(10)
 
-    let command = withUnsafeBytes(of: info.kp_proc.p_comm) { bytes in
-      String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
-    }
+    repeat {
+      var size = MemoryLayout<kinfo_proc>.size
+
+      guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0 else {
+        return XCTFail("no process info", file: file, line: line)
+      }
+
+      command = withUnsafeBytes(of: info.kp_proc.p_comm) { bytes in
+        String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+      }
+
+      if command == "login" { break }
+
+      try await Task.sleep(for: .milliseconds(10))
+    } while ContinuousClock.now < deadline
 
     XCTAssertEqual(command, "login", "the direct child is not login", file: file, line: line)
     XCTAssertEqual(

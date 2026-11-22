@@ -67,18 +67,18 @@ final class TerminalUITests: UnitermUITestCase {
 
     app.typeKey("t", modifierFlags: .command)
     XCTAssertTrue(
-      app.descendants(matching: .any)["tab-1"].waitForExistence(timeout: 10),
+      app.descendants(matching: .any)["tab-1"].appears(timeout: 10),
       "Cmd-T never opened a tab")
 
     app.typeKey("d", modifierFlags: .command)
     XCTAssertTrue(
-      launcher(in: window).waitForExistence(timeout: 5), "Cmd-D never opened the launcher")
+      launcher(in: window).appears(timeout: 5), "Cmd-D never opened the launcher")
     app.typeKey(.escape, modifierFlags: [])
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
 
     app.typeKey("d", modifierFlags: [.command, .shift])
     XCTAssertTrue(
-      launcher(in: window).waitForExistence(timeout: 5),
+      launcher(in: window).appears(timeout: 5),
       "Cmd-Shift-D never opened the launcher")
     app.typeKey(.escape, modifierFlags: [])
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
@@ -118,7 +118,7 @@ final class TerminalUITests: UnitermUITestCase {
 
     app.typeKey("q", modifierFlags: .command)
     let sheet = window.sheets.firstMatch
-    XCTAssertTrue(sheet.waitForExistence(timeout: 10), "quit never asked")
+    XCTAssertTrue(sheet.appears(timeout: 10), "quit never asked")
     XCTAssertEqual(app.state, .runningForeground)
 
     app.typeKey("q", modifierFlags: .command)
@@ -130,7 +130,7 @@ final class TerminalUITests: UnitermUITestCase {
     XCTAssertTrue(terminal.exists)
 
     app.typeKey("q", modifierFlags: .command)
-    XCTAssertTrue(window.sheets.firstMatch.waitForExistence(timeout: 10))
+    XCTAssertTrue(window.sheets.firstMatch.appears(timeout: 10))
     window.sheets.firstMatch.buttons["Quit"].click()
 
     XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
@@ -159,16 +159,16 @@ final class TerminalUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5), "Cmd-D showed no launcher")
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5), "Cmd-D showed no launcher")
 
     app.typeKey("2", modifierFlags: .command)
-    XCTAssertTrue(window.textFields["launcher-command"].waitForExistence(timeout: 5))
+    XCTAssertTrue(window.textFields["launcher-command"].appears(timeout: 5))
     app.typeText("sleep 3")
     app.typeKey(.return, modifierFlags: [])
 
     let pane = window.groups["pane-2"]
 
-    XCTAssertTrue(pane.textViews["terminal"].waitForExistence(timeout: 20), "no program pane")
+    XCTAssertTrue(pane.textViews["terminal"].appears(timeout: 20), "no program pane")
     XCTAssertTrue(waitUntilGone(pane, timeout: 20), "the program pane stayed after sleep ended")
     XCTAssertTrue(window.groups["pane-1"].exists, "the first pane went away too")
   }

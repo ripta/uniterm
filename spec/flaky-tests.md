@@ -164,6 +164,16 @@ fixed ones.
   The class then passed 9 of 9 alone on the same tree. That tree changed only which exec driver requests need a
   remote-controlled pane, which this script path does not reach. The partial fix above does not cover it. The typed
   shell line never ran, so no status file appeared.
+- Seen again: 2026-11-21, locally, in a run of `ControllerConsentUITests` alone on a tree that changes no app or UI
+  test code. `testThePanelTrustsAVersionThatThenRunsWithoutAsking` ran past its 1-minute allowance.
+  The trust, the close of Pending Requests, and the click on the terminal all passed. The test then typed its second
+  `sh` line at 20.7 s, and no UI step followed for the remaining 40 s. The other 8 tests of the class passed.
+- Seen again: 2026-11-21, locally, in the next run of `ControllerConsentUITests` alone.
+  `testAnUnsafeReviewOffersThreeChoicesAndNoTrust` failed at `ControllerConsentUITests.swift:414` with "the review
+  never reached the panel". The pending-permissions indicator showed at 3.7 s, so the script ran and asked. Pending
+  Requests then opened, and its first row never appeared in 30 s. The test passed 3 of 3 alone right after, on the
+  same tree. That run typed script paths through a `.zshrc` variable. This class keeps the fixture's `.zshrc`, so the
+  variable was set, as the indicator shows.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
@@ -216,15 +226,6 @@ fixed ones.
 - Status: unresolved. The app was slow before the hang, much like the `ExecPaneUITests` entry above. No crash report
   from uniterm appeared in that window.
 - Next sighting: note what ran just before it, and whether the app was slow in earlier tests of that run.
-
-### `MarkdownViewTests.testATwentyMegabyteDocumentNeverStallsTheMainThread`
-
-- Seen: 2026-11-18, once, in the CI `package` rerun of PR #68. That PR changes only the CI cache step.
-- Evidence: the longest gap between main run loop turns was 0.54 s, against the test's 0.5 s bound. The first
-  `package` run of the same head passed this test.
-- Suspected cause: a loaded runner delaying the test's 20 ms sleeps, or a real main-thread stall during the 20 MB
-  render. Not confirmed. The test does not tell the two apart.
-- Status: unresolved.
 
 ### `ScriptHostAPITests.testOpenTabCarriesItsArgumentsToTheApp`
 
@@ -288,22 +289,22 @@ fixed ones.
   closed. Not confirmed.
 - Status: unresolved.
 
-### `TerminalSessionIntegrationTests.testProcessStartedEventReportsTheDirectChildInProgramMode`
+### `TerminalSessionIntegrationTests.testShellSeesTheNewSize`
 
-- Seen: 2026-11-21, once, in the first CI `package` run of PR #79, which changes no terminal code.
-- Evidence: `TerminalSessionIntegrationTests.swift:1064` failed with "the direct child is not login". The child's
-  name read as `xctest`. The rerun passed.
-- Suspected cause: the test reads the child's name with `sysctl` as soon as `processStarted` arrives. A child that has
-  forked but not yet run `exec` on `login` still carries `xctest`'s name. Not confirmed.
+- Seen: 2026-11-06, twice in CI's `build` job, on PRs #21 and #29. Neither PR changes terminal code. Found later by
+  reading CI logs, not at the time.
+- Evidence: both runs failed with "timed out waiting for stty to report S:11x49" after about 20 s. The rerun of each
+  failed job passed on the same head.
+- Suspected cause: unknown. No CI run since 2026-11-06 has failed it.
 - Status: unresolved.
 
-### `ExecDriverChannelTests.testAStalledStdinFailsWithoutBlockingTheEmitter`
+### `BrowserUnsentInputTests.testEditsInASubframeMarkTheTabAndOnlyThatFrameClearsIt`
 
-- Seen: 2026-11-21, once, in the first CI `package` run of PR #81, which changes no exec driver code.
-- Evidence: `ExecDriverChannelTests.swift:349` failed with "emitting blocked the main thread". 40,000 emits took
-  5.15 s against the test's 5 s wall-clock bound. The rerun passed this test.
-- Suspected cause: a loaded runner slowing the emit loop, or a real stall while the queue fills. Not confirmed. The
-  test does not tell the two apart.
+- Seen: 2026-11-08, once in CI's `build` job, on PR #34, which changes only the palette. Found later by reading CI logs,
+  not at the time.
+- Evidence: it failed with "timed out waiting until the main frame reported its edit" after 16 s. The rerun of the
+  failed job passed on the same head.
+- Suspected cause: unknown. No CI run since 2026-11-08 has failed it.
 - Status: unresolved.
 
 ### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
@@ -341,7 +342,66 @@ fixed ones.
   is wrong.
 - Status: unresolved until CI runs show the change holds.
 
+### `WindowsUITests.testCommandNOpensASecondWindowWithItsOwnShell`
+
+- Seen: 2026-11-21, once, in a full local `make test-app` run of 176 tests, the run that moved UI test waits to
+  quarter-second polling. It was the only failure.
+- Evidence: `UnitermUITestCase.swift:118` failed when the second window's terminal never appeared. Synthesizing Cmd-N
+  took 20 s, from 0.51 s to 20.73 s, and no second window opened in the 15 s after. With the faster waits, Cmd-N went
+  out about half a second after launch, once the first prompt showed and the app was frontmost. `WindowsUITests` then
+  passed 30 of 30, each test 5 times, on the same tree.
+- Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
+  `ControllerRunUITests`, `ExecPaneUITests`, and `StatusBarUITests` entries above. Whether a key sent that soon after
+  launch makes it likelier is not known.
+
 ## Fixed
+
+### `MarkdownViewTests.testATwentyMegabyteDocumentNeverStallsTheMainThread`
+
+Fixed by: "Prove the Markdown parse stays in the page by the bytes the host serves"
+
+- Seen: 2026-11-18, once, in the CI `package` rerun of PR #68. That PR changes only the CI cache step.
+- Evidence: the longest gap between main run loop turns was 0.54 s, against the test's 0.5 s bound. The first
+  `package` run of the same head passed this test. Locally the longest gap is about 25 ms.
+- Cause: a runner pause, most likely. The host hands the page the whole 20 MB in one `didReceive`, and that costs well
+  under the 25 ms local gap, so the handoff does not explain 540 ms. The test timed run loop turns, which a paused
+  runner stretches. It could not tell that from a parse on the main thread.
+- Fix: the test drives the scheme handler with a recording task and requires the exact document bytes. A host that
+  served anything it had parsed or changed fails it, as a handler made to append a comment did. The gap bound stays,
+  at 5 s, to catch a gross stall such as a host-side parse of the whole document.
+
+### `TerminalSessionIntegrationTests.testProcessStartedEventReportsTheDirectChildInProgramMode`
+
+Fixed by: "Wait for the child's exec of login before reading its name"
+
+- Seen: 2026-11-21, once, in the first CI `package` run of PR #79, which changes no terminal code. Its shell-mode twin
+  `testProcessStartedEventReportsTheDirectChild` failed once on main's CI on 2026-11-18, found later in CI's logs.
+  Both read the name through the same helper.
+- Evidence: `TerminalSessionIntegrationTests.swift:1064` failed with "the direct child is not login". The child's
+  name read as `xctest`. The rerun passed.
+- Cause: the test read the child's name with `sysctl` as soon as `processStarted` arrived. A child that has forked but
+  not yet run `exec` on `login` still carries `xctest`'s name. The event was right to name that child.
+- Fix: the test reads the name until it turns to `login`, within 10 s, then asserts it. A child that is not `login`
+  never takes the name, so it still fails. The race did not reproduce locally, so the test pins the fix, not the
+  failure. Both `processStarted` tests passed after the change.
+
+### `ExecDriverChannelTests.testAStalledStdinFailsWithoutBlockingTheEmitter`
+
+Fixed by: "Measure stalled emits against the same emits to a reading driver"
+
+- Seen: 2026-11-21, once, in the first CI `package` run of PR #81, which changes no exec driver code.
+- Evidence: `ExecDriverChannelTests.swift:349` failed with "emitting blocked the main thread". 40,000 emits took
+  5.15 s against the test's 5 s wall-clock bound. The rerun passed this test. Locally the same emits take about 0.5 s.
+- Cause: the bound timed the emits themselves, which include encoding every event. A loaded runner slows that, so
+  the bound tracked the runner's speed. The transport was right: its writes run on their own thread.
+- Fix: the test times 10,000 emits to a driver that reads them, then 10,000 to the stalled one, and requires the
+  stalled median cost per emit, over chunks of 1,000, to stay under twice the healthy one. Both runs' 2.6 MB stay
+  under the 4 MiB retained bound. So a reader that falls behind cannot get the healthy driver cut off, and the stalled
+  run is measured before it fails, while emits still take the backed-up path. Unmeasured emits then pass the bound
+  for the failure check. The median keeps one runner pause from counting: a 1 s sleep in each run passed. A send made
+  to sleep 200 µs while more than 64 KiB waited fails it, at 344 µs per emit against 13.5 µs. The test passed 30 of 30
+  with a busy loop on each of 14 cores. The new `drain` driver mode reads and discards stdin. The stall's failure is
+  found among the channel ends, so the healthy channel's close cannot stand in for it.
 
 ### `ExecDriverChannelTests.testAnOversizeClipboardWriteIsRefusedAloneAndOneAtTheBoundArrives`
 

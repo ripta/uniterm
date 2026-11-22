@@ -14,7 +14,7 @@ final class WindowChromeUITests: UnitermUITestCase {
   func testTrafficLightsStayVisibleClickableAndUncovered() {
     let app = launchApp()
     let window = app.windows["main-window"]
-    XCTAssertTrue(window.waitForExistence(timeout: 10))
+    XCTAssertTrue(window.appears(timeout: 10))
 
     let close = window.buttons[XCUIIdentifierCloseWindow]
     let minimize = window.buttons[XCUIIdentifierMinimizeWindow]
@@ -25,7 +25,7 @@ final class WindowChromeUITests: UnitermUITestCase {
     }
 
     let terminal = window.textViews["terminal"]
-    XCTAssertTrue(terminal.waitForExistence(timeout: 10))
+    XCTAssertTrue(terminal.appears(timeout: 10))
     for button in [close, minimize, zoom] {
       XCTAssertFalse(terminal.frame.intersects(button.frame), "content overlaps a traffic light")
     }
@@ -38,7 +38,7 @@ final class WindowChromeUITests: UnitermUITestCase {
   func testWindowDragsByTopEdge() {
     let app = launchApp()
     let window = app.windows["main-window"]
-    XCTAssertTrue(window.waitForExistence(timeout: 10))
+    XCTAssertTrue(window.appears(timeout: 10))
 
     let before = window.frame
     let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(
@@ -57,15 +57,15 @@ final class WindowChromeUITests: UnitermUITestCase {
   func testCommandCommaOpensSettingsAndChangesAppearanceLive() {
     let app = launchApp()
     let window = app.windows["main-window"]
-    XCTAssertTrue(window.waitForExistence(timeout: 10))
+    XCTAssertTrue(window.appears(timeout: 10))
     let content = window.groups["content-area"]
 
     app.typeKey(",", modifierFlags: .command)
     let settings = app.windows["settings-window"]
-    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+    XCTAssertTrue(settings.appears(timeout: 5))
 
     let control = settings.radioGroups["appearance-control"]
-    XCTAssertTrue(control.waitForExistence(timeout: 5))
+    XCTAssertTrue(control.appears(timeout: 5))
 
     control.radioButtons["Dark"].click()
     XCTAssertTrue(waitForValue("mocha", of: content))
@@ -82,25 +82,19 @@ final class WindowChromeUITests: UnitermUITestCase {
   func testCommandWClosesTheSettingsWindowAndNotTheMainWindow() {
     let app = launchApp()
     let window = app.windows["main-window"]
-    XCTAssertTrue(window.waitForExistence(timeout: 10))
+    XCTAssertTrue(window.appears(timeout: 10))
 
     app.typeKey(",", modifierFlags: .command)
     let settings = app.windows["settings-window"]
-    XCTAssertTrue(settings.waitForExistence(timeout: 5))
+    XCTAssertTrue(settings.appears(timeout: 5))
 
     app.typeKey("w", modifierFlags: .command)
 
-    let gone = NSPredicate(format: "exists == false")
-    XCTAssertEqual(
-      XCTWaiter().wait(
-        for: [XCTNSPredicateExpectation(predicate: gone, object: settings)], timeout: 5),
-      .completed)
+    XCTAssertTrue(settings.disappears(timeout: 5))
     XCTAssertTrue(window.exists)
   }
 
   private func waitForValue(_ expected: String, of element: XCUIElement) -> Bool {
-    let predicate = NSPredicate(format: "value == %@", expected)
-    let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
-    return XCTWaiter().wait(for: [expectation], timeout: 5) == .completed
+    pollUntil(timeout: 5) { (element.value as? String) == expected }
   }
 }

@@ -827,7 +827,12 @@ final class MarkdownViewTests: XCTestCase {
   // MARK: Size
 
   /// Catches a parse that runs on the main thread. A 20 MB document renders in WebKit's content
-  /// process while the main run loop keeps turning, so no gap between turns passes half a second.
+  /// process while the main run loop keeps turning.
+  ///
+  /// The proof that the parse stays in the page is that the host serves the document's exact bytes,
+  /// so it has nothing it could have parsed them into. The gap bound only catches a gross stall, such
+  /// as a host-side parse of the whole document. It sits far above a CI runner's pauses: locally the
+  /// longest gap is about 25 ms, and a runner once paused for 540 ms with nothing wrong.
   func testATwentyMegabyteDocumentNeverStallsTheMainThread() async throws {
     let rig = try await MarkdownRig.make()
     defer { rig.close() }
@@ -859,6 +864,37 @@ final class MarkdownViewTests: XCTestCase {
     print("20 MB Markdown: rendered in \(elapsed), longest main-thread gap \(longest)")
 
     XCTAssertGreaterThan(rig.renders, before, "the page rendered")
-    XCTAssertLessThan(longest, .milliseconds(500))
+    XCTAssertLessThan(longest, .seconds(5), "the main thread stalled while the document rendered")
+
+    let task = RecordingSchemeTask(url: URL(string: "\(MarkdownScheme.name)://app/document")!)
+    rig.view.scheme.webView(rig.view.webView, start: task)
+
+    XCTAssertTrue(task.finished, "the document request never finished")
+    XCTAssertTrue(
+      task.body == Data(text.utf8), "the host served something other than the raw document")
   }
+}
+
+/// A scheme task that keeps what the handler sends it, so a test reads the exact bytes served.
+@MainActor
+private final class RecordingSchemeTask: NSObject, @MainActor WKURLSchemeTask {
+  let request: URLRequest
+  private(set) var body = Data()
+  private(set) var finished = false
+
+  init(url: URL) {
+    request = URLRequest(url: url)
+  }
+
+  func didReceive(_ response: URLResponse) {}
+
+  func didReceive(_ data: Data) {
+    body.append(data)
+  }
+
+  func didFinish() {
+    finished = true
+  }
+
+  func didFailWithError(_ error: any Error) {}
 }

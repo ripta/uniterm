@@ -52,21 +52,21 @@ final class DataViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("3", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
 
     XCTAssertTrue(waitUntilGone(launcher(in: window)))
-    XCTAssertTrue(viewer(in: window).waitForExistence(timeout: 10), "no data viewer pane")
+    XCTAssertTrue(viewer(in: window).appears(timeout: 10), "no data viewer pane")
 
     let open = window.buttons["data-viewer-open"]
-    XCTAssertTrue(open.waitForExistence(timeout: 5), "an empty viewer has no Open button")
+    XCTAssertTrue(open.appears(timeout: 5), "an empty viewer has no Open button")
     open.click()
 
     choose(file, in: app, window: window)
 
-    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 10), "no table")
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 10), "no table")
     XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "3 rows" })
   }
 
@@ -81,7 +81,7 @@ final class DataViewerUITests: UnitermUITestCase {
     app.typeKey("o", modifierFlags: .command)
     choose(file, in: app, window: window)
 
-    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 15), "no table")
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 15), "no table")
     XCTAssertTrue(window.textViews["terminal"].exists, "the terminal went away")
   }
 
@@ -100,11 +100,11 @@ final class DataViewerUITests: UnitermUITestCase {
     let app = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 20), "no table")
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 20), "no table")
     XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "3 of 4 rows" })
 
     let first = window.tables["data-viewer-table"].cells.element(boundBy: 0)
-    XCTAssertTrue(first.staticTexts["dx"].waitForExistence(timeout: 5), "the sort did not apply")
+    XCTAssertTrue(first.staticTexts["dx"].appears(timeout: 5), "the sort did not apply")
 
     app.typeKey("q", modifierFlags: .command)
     XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
@@ -136,19 +136,19 @@ final class DataViewerUITests: UnitermUITestCase {
     let window = mainWindow(in: app)
     let table = window.tables["data-viewer-table"]
 
-    XCTAssertTrue(table.waitForExistence(timeout: 20), "no table")
+    XCTAssertTrue(table.appears(timeout: 20), "no table")
 
     let nestedCell = table.staticTexts.matching(
       NSPredicate(format: "value BEGINSWITH %@", "\u{25B8} ")
     ).firstMatch
 
-    XCTAssertTrue(nestedCell.waitForExistence(timeout: 10), "no nested cell")
+    XCTAssertTrue(nestedCell.appears(timeout: 10), "no nested cell")
     nestedCell.doubleClick()
 
     let nested = app.descendants(matching: .any)["data-viewer-table-nested"]
 
-    XCTAssertTrue(nested.waitForExistence(timeout: 10), "the nested table never opened")
-    XCTAssertTrue(nested.staticTexts["alpha"].waitForExistence(timeout: 5), "no nested row")
+    XCTAssertTrue(nested.appears(timeout: 10), "the nested table never opened")
+    XCTAssertTrue(nested.staticTexts["alpha"].appears(timeout: 5), "no nested row")
     XCTAssertTrue(nested.staticTexts["beta"].exists, "no second nested row")
   }
 
@@ -162,7 +162,7 @@ final class DataViewerUITests: UnitermUITestCase {
     let message = window.descendants(matching: .any).matching(identifier: "data-viewer-message")
       .firstMatch
 
-    XCTAssertTrue(message.waitForExistence(timeout: 20), "no message")
+    XCTAssertTrue(message.appears(timeout: 20), "no message")
     XCTAssertTrue(
       waitFor(message, timeout: 5) { $0.contains("missing") }, "the message does not say missing")
   }
@@ -264,18 +264,18 @@ final class DataViewerUITests: UnitermUITestCase {
     app.typeKey("o", modifierFlags: .command)
     choose(file, in: app, window: window)
 
-    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 15), "no table")
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 15), "no table")
     XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "2 rows" })
 
     let picker = window.popUpButtons["data-viewer-sheets"]
-    XCTAssertTrue(picker.waitForExistence(timeout: 5), "no sheet picker")
+    XCTAssertTrue(picker.appears(timeout: 5), "no sheet picker")
 
     picker.click()
     window.menuItems["Costs"].click()
 
     XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "1 rows" })
     XCTAssertTrue(
-      window.tables["data-viewer-table"].staticTexts["rent"].waitForExistence(timeout: 5),
+      window.tables["data-viewer-table"].staticTexts["rent"].appears(timeout: 5),
       "the second sheet's row is not shown")
   }
 
@@ -289,10 +289,10 @@ final class DataViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 20), "no table")
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 20), "no table")
     XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "1 rows" })
     XCTAssertTrue(
-      window.tables["data-viewer-table"].staticTexts["rent"].waitForExistence(timeout: 5),
+      window.tables["data-viewer-table"].staticTexts["rent"].appears(timeout: 5),
       "the stored sheet did not load")
     XCTAssertTrue(
       waitFor(window.popUpButtons["data-viewer-sheets"], timeout: 5) { $0 == "Costs" },
@@ -313,7 +313,7 @@ final class DataViewerUITests: UnitermUITestCase {
     let app = launchApp()
     let window = mainWindow(in: app)
 
-    XCTAssertTrue(window.tables["data-viewer-table"].waitForExistence(timeout: 20), "no table")
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 20), "no table")
     return (app, window)
   }
 
@@ -325,11 +325,11 @@ final class DataViewerUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5))
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5))
 
     app.typeKey("3", modifierFlags: .command)
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(window.buttons["data-viewer-open"].waitForExistence(timeout: 10))
+    XCTAssertTrue(window.buttons["data-viewer-open"].appears(timeout: 10))
 
     let bar = app.menuBars
     bar.menuBarItems["Edit"].click()
@@ -342,7 +342,7 @@ final class DataViewerUITests: UnitermUITestCase {
 
     for title in ["Find\u{2026}", "Find Next", "Find Previous", "Focus Filter"] {
       let item = bar.menuItems[title]
-      XCTAssertTrue(item.waitForExistence(timeout: 5), "no \(title) item")
+      XCTAssertTrue(item.appears(timeout: 5), "no \(title) item")
       XCTAssertFalse(item.isEnabled, "\(title) is on with no file")
     }
 
@@ -360,7 +360,7 @@ final class DataViewerUITests: UnitermUITestCase {
     app.typeKey("f", modifierFlags: .command)
 
     let field = window.searchFields["data-viewer-find"]
-    XCTAssertTrue(field.waitForExistence(timeout: 5), "Cmd-F did not open the find bar")
+    XCTAssertTrue(field.appears(timeout: 5), "Cmd-F did not open the find bar")
 
     app.typeText("rom")
 

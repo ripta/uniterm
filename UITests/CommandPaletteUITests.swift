@@ -25,7 +25,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
   ) {
     app.typeKey("k", modifierFlags: .command)
     XCTAssertTrue(
-      palette(in: app).waitForExistence(timeout: 5), "the palette never showed", file: file,
+      palette(in: app).appears(timeout: 5), "the palette never showed", file: file,
       line: line)
   }
 
@@ -62,7 +62,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     XCTAssertTrue(waitUntilGone(palette(in: app)))
     XCTAssertTrue(
-      launcher(in: mainWindow(in: app)).waitForExistence(timeout: 5),
+      launcher(in: mainWindow(in: app)).appears(timeout: 5),
       "Split Right did not open a pane")
   }
 
@@ -113,7 +113,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
     app.typeKey("t", modifierFlags: .command)
 
     XCTAssertTrue(waitUntilGone(palette(in: app)))
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10), "Cmd-T did not open a tab")
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10), "Cmd-T did not open a tab")
   }
 
   /// Catches File > Close that takes another path than Cmd-W. With two tabs it closes the
@@ -123,7 +123,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("t", modifierFlags: .command)
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10))
     XCTAssertTrue(
       waitFor(mainWindow(in: app).textViews["terminal"], timeout: 40) { $0.contains("% ") })
 
@@ -145,7 +145,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     app.typeKey("t", modifierFlags: .command)
 
-    XCTAssertTrue(palette(in: app).waitForExistence(timeout: 5), "the remapped key did not win")
+    XCTAssertTrue(palette(in: app).appears(timeout: 5), "the remapped key did not win")
     XCTAssertFalse(tab(1, in: app).exists, "New Tab ran instead")
   }
 
@@ -156,7 +156,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     app.typeKey("g", modifierFlags: .control)
 
-    XCTAssertTrue(palette(in: app).waitForExistence(timeout: 5), "the terminal took the key")
+    XCTAssertTrue(palette(in: app).appears(timeout: 5), "the terminal took the key")
   }
 
   // MARK: Filter chips
@@ -193,7 +193,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     showPalette(in: app)
     app.typeText("ap")
-    XCTAssertTrue(row("applet:", kind: "Tab to complete", in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(row("applet:", kind: "Tab to complete", in: app).appears(timeout: 5))
     keepScreenshot("1-hint", of: app)
 
     app.typeKey(.tab, modifierFlags: [])
@@ -204,9 +204,9 @@ final class CommandPaletteUITests: UnitermUITestCase {
     app.typeText("ter")
     app.typeKey(.tab, modifierFlags: [])
 
-    XCTAssertTrue(chip(in: app).waitForExistence(timeout: 5), "Tab did not make a chip")
+    XCTAssertTrue(chip(in: app).appears(timeout: 5), "Tab did not make a chip")
     XCTAssertEqual(chip(in: app).label, "Terminal")
-    XCTAssertTrue(rows(in: app).firstMatch.waitForExistence(timeout: 5))
+    XCTAssertTrue(rows(in: app).firstMatch.appears(timeout: 5))
 
     for index in 0..<rows(in: app).count {
       XCTAssertEqual(rows(in: app).element(boundBy: index).value as? String, "Terminal, enabled")
@@ -220,7 +220,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     app.typeText("kind:co")
     app.typeKey(.return, modifierFlags: [])
-    XCTAssertTrue(chip(in: app).waitForExistence(timeout: 5))
+    XCTAssertTrue(chip(in: app).appears(timeout: 5))
     XCTAssertEqual(chip(in: app).label, "Commands")
     keepScreenshot("4-commands", of: app)
   }
@@ -240,7 +240,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
     app.typeKey("t", modifierFlags: .command)
 
     let terminal = mainWindow(in: app).textViews["terminal"]
-    XCTAssertTrue(terminal.waitForExistence(timeout: 15))
+    XCTAssertTrue(terminal.appears(timeout: 15))
     XCTAssertTrue(
       waitFor(terminal, timeout: 40) { $0.contains("% ") }, "the new tab never showed a prompt")
   }
@@ -255,13 +255,13 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     app.typeText("printf \"\\033]0;zzq-title\\007\"; sleep 600\n")
     openTab(in: app)
-    XCTAssertTrue(tab(1, in: app).waitForExistence(timeout: 10))
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10))
 
     showPalette(in: app)
     app.typeText("zzq")
 
     let entry = row("zzq-title", in: app)
-    XCTAssertTrue(entry.waitForExistence(timeout: 10), "the background tab was not listed")
+    XCTAssertTrue(entry.appears(timeout: 10), "the background tab was not listed")
     XCTAssertEqual(entry.value as? String, "Terminal, enabled")
 
     app.typeKey(.return, modifierFlags: [])
@@ -291,7 +291,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
     app.typeText("new w")
 
     let entry = row("New Window", in: app)
-    XCTAssertTrue(entry.waitForExistence(timeout: 10), "the title was not neutralized")
+    XCTAssertTrue(entry.appears(timeout: 10), "the title was not neutralized")
     XCTAssertEqual(entry.value as? String, "Terminal, enabled")
     XCTAssertTrue(
       row("New Window", kind: "Command", in: app).exists,
@@ -311,7 +311,7 @@ final class CommandPaletteUITests: UnitermUITestCase {
 
     showPalette(in: app)
     app.typeText("yyq")
-    XCTAssertTrue(row("yyq-title", in: app).waitForExistence(timeout: 10))
+    XCTAssertTrue(row("yyq-title", in: app).appears(timeout: 10))
 
     XCTAssertTrue(
       waitUntilGone(row("yyq-title", in: app), timeout: 30),

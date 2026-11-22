@@ -257,6 +257,11 @@ if ($mode eq "script") {
     read_app_hello();
     hello($protocol, $schema);
     exit($rest[0] // 0);
+} elsif ($mode eq "drain") {
+    # A healthy driver that reads everything and answers nothing, the baseline for the stall.
+    read_app_hello();
+    hello($protocol, $schema);
+    1 while <STDIN>;
 } elsif ($mode eq "silent") {
     1 while <STDIN>;
 } else {

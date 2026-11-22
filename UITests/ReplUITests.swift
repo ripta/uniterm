@@ -16,7 +16,7 @@ final class ReplUITests: UnitermUITestCase {
     _ = waitForTerminal(in: app)
 
     app.typeKey("d", modifierFlags: .command)
-    XCTAssertTrue(launcher(in: window).waitForExistence(timeout: 5), "Cmd-D showed no launcher")
+    XCTAssertTrue(launcher(in: window).appears(timeout: 5), "Cmd-D showed no launcher")
 
     app.typeText("repl")
     app.typeKey(.return, modifierFlags: [])
@@ -24,7 +24,7 @@ final class ReplUITests: UnitermUITestCase {
 
     let terminal = window.groups["pane-2"].textViews["terminal"]
 
-    XCTAssertTrue(terminal.waitForExistence(timeout: 20), "the REPL pane never showed a terminal")
+    XCTAssertTrue(terminal.appears(timeout: 20), "the REPL pane never showed a terminal")
     XCTAssertTrue(
       waitFor(terminal, timeout: 40) { $0.contains("repl:1:> ") },
       "the REPL never showed its prompt")
@@ -107,7 +107,7 @@ final class ReplUITests: UnitermUITestCase {
 
     app.typeKey("w", modifierFlags: .command)
 
-    XCTAssertFalse(window.sheets.firstMatch.waitForExistence(timeout: 2), "closing asked")
+    XCTAssertFalse(window.sheets.firstMatch.appears(timeout: 2), "closing asked")
     XCTAssertTrue(waitUntilGone(window.groups["pane-2"], timeout: 15), "the pane never closed")
   }
 
@@ -130,7 +130,7 @@ final class ReplUITests: UnitermUITestCase {
     app.typeKey("w", modifierFlags: .command)
 
     XCTAssertTrue(
-      window.sheets.firstMatch.waitForExistence(timeout: 10),
+      window.sheets.firstMatch.appears(timeout: 10),
       "closing a running evaluation did not ask")
 
     let cancel = window.sheets.firstMatch.buttons["Cancel"]
@@ -154,7 +154,7 @@ final class ReplUITests: UnitermUITestCase {
 
     app.typeKey("w", modifierFlags: .command)
 
-    XCTAssertFalse(window.sheets.firstMatch.waitForExistence(timeout: 2), "an idle close asked")
+    XCTAssertFalse(window.sheets.firstMatch.appears(timeout: 2), "an idle close asked")
     XCTAssertTrue(waitUntilGone(window.groups["pane-2"], timeout: 15))
   }
 
@@ -181,7 +181,7 @@ final class ReplUITests: UnitermUITestCase {
 
     app.typeKey("c", modifierFlags: .control)
 
-    XCTAssertTrue(message.waitForExistence(timeout: 20), "the second Ctrl-C did not end the REPL")
+    XCTAssertTrue(message.appears(timeout: 20), "the second Ctrl-C did not end the REPL")
     XCTAssertTrue(
       waitFor(message, timeout: 5) { $0.contains("Ctrl-C twice") },
       "the pane gave another reason: \(message.value as? String ?? "")")
@@ -234,7 +234,7 @@ final class ReplUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(terminal, timeout: 20) { self.hasLine("42", in: $0) })
 
     app.typeKey("w", modifierFlags: .command)
-    XCTAssertFalse(window.sheets.firstMatch.waitForExistence(timeout: 2), "closing asked")
+    XCTAssertFalse(window.sheets.firstMatch.appears(timeout: 2), "closing asked")
     XCTAssertTrue(waitForPaneCount(2, in: window), "the REPL pane never closed")
 
     app.typeKey("t", modifierFlags: [.command, .shift])
