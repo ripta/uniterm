@@ -205,7 +205,10 @@ fixed ones.
   `ScriptHostAPITests.testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem` ran past its 120 s limit. The
   sample showed `ScriptFixtures.finish` blocked in `waitUntilExit`, and no child of `xctest` was still alive. So the
   helper had exited, and its exit was never seen. The first `package` run of the same head passed this test.
-- Status: unresolved.
+- Seen again: 2026-11-21, in a local `make ci` of a landing batch that changes no script host code.
+  `ScriptLintCommandTests.testUsageMistakesAreRefusedWithTheUsageStatus` ran past its 120 s limit, with the sample
+  again showing `ScriptFixtures.finish` blocked in `waitUntilExit`. A rerun of the same tree passed its package tests.
+- Status: unresolved. UTERM-046 proposes replacing `waitUntilExit` in `finish`.
 
 ### `ExecPaneUITests.testARestoredExecPaneRunsOnlyAfterValuesAndApprovalThenDrivesTheApplet`
 
@@ -346,6 +349,16 @@ fixed ones.
   in the background. The next two passes of the same classes passed 98 of 98.
 - Suspected cause: another app took the front during the test. Not confirmed.
 - Status: unresolved.
+
+### `BrowserHungProcessTests.testClosingASpinningTabEndsItsProcessWhenTheBoundRunsOut`
+
+- Seen: 2026-11-21, once, in the first CI `package` run of #91, which changes only a UI test and this file.
+- Evidence: it failed at `BrowserHungProcessTests.swift:178`, "timed out waiting until the closed tab's process ends",
+  and at line 294, where the signal log was empty: `[] is not equal to [12101]`. So the watch sent no signal.
+- Suspected cause: the test gives the spinning page 0.3 s of real time, and the watch signals only a page that used at
+  least half a core over it. On a loaded runner the page can get less, and the watch then rightly sends nothing. Not
+  confirmed.
+- Status: unresolved. UTERM-046 proposes a fix.
 
 ## Fixed
 
