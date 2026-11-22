@@ -51,6 +51,37 @@ final class CommandPaletteUITests: UnitermUITestCase {
       "the terminal did not get the keyboard back")
   }
 
+  /// Catches Control-K that the palette takes from the shell while it is closed, or one that does
+  /// not fill in the kind keyword while it is open. The shell's Control-K kills the rest of the
+  /// line, so the half-typed word after the caret must never run.
+  func testControlKFillsInTheKindKeywordOnlyWhileThePaletteIsOpen() {
+    let app = launchApp(settings: ["appearance": "light"])
+    let terminal = waitForTerminal(in: app)
+
+    app.typeText("echo kept-word dropped-word")
+    for _ in 0..<"dropped-word".count {
+      app.typeKey(.leftArrow, modifierFlags: [])
+    }
+
+    app.typeKey("k", modifierFlags: .control)
+    app.typeText("\n")
+    XCTAssertTrue(
+      waitFor(terminal, timeout: 20) { $0.contains("\nkept-word") },
+      "the shell did not get Control-K")
+    XCTAssertFalse(terminal.value.map { "\($0)".contains("\nkept-word dropped-word") } ?? true)
+
+    showPalette(in: app)
+    app.typeText("zsh")
+    app.typeKey("k", modifierFlags: .control)
+
+    XCTAssertTrue(
+      waitFor(field(in: app), timeout: 5) { $0 == "kind:" }, "Control-K did not fill in kind:")
+    let tabs = app.descendants(matching: .any).matching(identifier: "command-palette-row")
+      .element(matching: NSPredicate(format: "label == %@", "Tabs"))
+    XCTAssertTrue(tabs.appears(timeout: 5), "kind: did not list its values")
+    keepScreenshot("kind-keyword", of: app)
+  }
+
   /// Catches a palette command that does not run on Enter.
   func testTypingFiltersAndEnterRunsTheCommand() {
     let app = launchApp()

@@ -327,6 +327,27 @@ final class CommandPaletteTests: XCTestCase {
     XCTAssertEqual(catcher.keysSeen, 1)
   }
 
+  /// Catches Control-K that does not fill in the kind keyword while the palette is open, or one that
+  /// the palette takes from the focused view while it is closed.
+  func testControlKFillsInTheKindKeywordOnlyWhileThePaletteIsOpen() throws {
+    let window = try XCTUnwrap(controller.window)
+    let catcher = KeyCatcher()
+    try applet(controller.focusedPane).view.addSubview(catcher)
+    XCTAssertTrue(window.makeFirstResponder(catcher))
+
+    XCTAssertTrue(window.performKeyEquivalent(with: try key("k", .control)))
+    XCTAssertEqual(catcher.keysSeen, 1, "a closed palette took Control-K")
+    XCTAssertEqual(palette.query, "")
+
+    controller.showCommandPalette()
+    type("zsh")
+
+    XCTAssertTrue(window.performKeyEquivalent(with: try key("k", .control)))
+    XCTAssertEqual(catcher.keysSeen, 1)
+    XCTAssertEqual(palette.query, "kind:")
+    XCTAssertEqual(palette.entries.map(\.title), ["Tabs", "Commands"])
+  }
+
   // MARK: Filter chips
 
   @discardableResult
