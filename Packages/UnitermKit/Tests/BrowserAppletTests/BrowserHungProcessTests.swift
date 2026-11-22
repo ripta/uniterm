@@ -295,9 +295,9 @@ final class BrowserHungProcessTests: XCTestCase {
   }
 
   /// Catches a live sample in the wrong units. The kernel reports processor time in Mach ticks, so
-  /// a missed conversion makes a spinning page read about 41 times faster than real time on Apple
-  /// silicon. A spinning page reads at least the watch's share of a core and at most about one
-  /// core, and the same page idle reads under the share.
+  /// a missed conversion makes a spinning page read about 41 times slower than real time on Apple
+  /// silicon, under the watch's share. A spinning page reads at least that share of a core and at
+  /// most about one core, and the same page idle reads under the share.
   func testTheLiveSampleReadsASpinningPageAsBusyAndAnIdleOneAsNot() async throws {
     let harness = try await make(hang: policy(ManualHangTimer()))
     defer { harness.stop() }
