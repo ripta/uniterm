@@ -382,6 +382,16 @@ class UnitermUITestCase: XCTestCase {
       "the go-to-folder sheet never closed. \(focusReport(app)) "
         + "The sheet: \(goTo.debugDescription)")
 
+    // The go-to sheet closes before the panel moves its selection to the file. A Return in that gap
+    // closes the panel without opening the file, so wait for the file's row to show as selected.
+    let name = file.lastPathComponent
+    let shown = NSPredicate(format: "value == %@ OR label == %@ OR title == %@", name, name, name)
+    let selected = panel.descendants(matching: .any)
+      .matching(NSPredicate(format: "selected == true"))
+      .containing(shown).firstMatch
+    XCTAssertTrue(
+      selected.appears(timeout: 5), "the panel never selected \(name). \(focusReport(app))")
+
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 10), "the panel never closed")
   }
