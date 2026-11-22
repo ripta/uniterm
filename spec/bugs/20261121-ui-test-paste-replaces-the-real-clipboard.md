@@ -1,8 +1,8 @@
 # The UI tests' open-panel paste replaces the real clipboard and restores only its text
 
-**Status:** open
-**Validation:** found by reading the code, not reproduced. `clearContents()` drops every item on the pasteboard, and
-the helper puts back only a plain string.
+**Status:** fixed 2026-11-22
+**Estimate:** small; one design decision, settled by the user: type the path, leave the clipboard alone.
+**Fixed:** 2026-11-22
 **Found:** 2026-11-21, while speeding up UI test waits
 
 ## Observed
@@ -41,3 +41,17 @@ This needs a design call. Candidates:
 ## Workarounds
 
 Copy nothing worth keeping before a local UI test run.
+
+## Fix
+
+Triage run on 2026-11-22. The helper in `UITests/UnitermUITestCase.swift` now types the path into the go-to field. It
+no longer touches the general pasteboard, and the `paste` helper is gone.
+
+- The regression check sits in `chooseInSystemPanel`. It compares the pasteboard's change count before and after the
+  path is entered. It never reads the clipboard's contents.
+- Before the fix, `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile` failed on it: the count
+  went from 9356 to 9358.
+- After the fix, that test passed twice, and `OpenPanelUITests` passed once with it.
+- Typing lets the field autocomplete against sibling folders again. That was the reason for the paste. The helper still
+  checks the field's value before it confirms. If the autocomplete rewrite comes back, the failure will name the path
+  the field held, and `spec/flaky-tests.md` records the earlier case.
