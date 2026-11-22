@@ -1,10 +1,8 @@
 # UTERM-043: Pause Controllers
 
-**Status:** deferred
+**Status:** designing
 **Created:** 2026-11-21
 **Updated:** 2026-11-21
-**Revisit:** when UTERM-019 M6 "Trusted input" is scheduled or starts, since controllers then send keystrokes and
-clicks
 
 ## Dependencies
 
@@ -75,6 +73,9 @@ Rationale: the user wants a short, uninterrupted stretch, not the cost of a new 
 
 Decision: this proposal stays `deferred` for as long as controllers cannot send keystrokes or clicks. Its revisit hook
 is UTERM-019 M6. Chosen by the user on 2026-11-21.
+
+- The hook fired on 2026-11-21, when UTERM-019 M6 was scheduled. The user chose to resume the design, so it is
+  settled before M6 starts.
 
 Rationale: without synthesized input, no controller can type into the tab the user types in.
 
@@ -255,6 +256,9 @@ from that. A pause that survives would be new stored state.
   called an open question. UTERM-042 also renames the pane-wide revoke "Revoke All Controllers" and adds one revoke
   item per controller to the badge. This proposal's Motivation still names "Revoke Controller", since it describes
   today's command.
+- 2026-11-21: Revisit audit: act. The hook "when UTERM-019 M6 'Trusted input' is scheduled or starts" fired when
+  UTERM-019 M4-M6 was scheduled. The user chose to resume the design before M6 starts. The status moved from deferred
+  to designing, and the `**Revisit:**` line was removed.
 
 ## References
 
