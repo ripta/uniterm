@@ -15,10 +15,15 @@ final class FileWatcherTests: XCTestCase {
     var waiter: XCTestExpectation?
     var target = 0
 
+    /// Fulfills the wait once, at the target. A later delivery before the next wait finds no
+    /// waiter, since one write can raise two deliveries.
     func record(_ signature: FileSignature) {
       signatures.append(signature)
 
-      if signatures.count >= target { waiter?.fulfill() }
+      guard signatures.count >= target, let waiter else { return }
+
+      self.waiter = nil
+      waiter.fulfill()
     }
   }
 
@@ -181,6 +186,21 @@ final class FileWatcherTests: XCTestCase {
     let (_, log) = await watch(file, policy: .fileOnly)
 
     try await next(log, count: 1) { try Data("two two".utf8).write(to: file) }
+  }
+
+  /// Catches a log that fulfills its wait again on a delivery past the target. One write can raise
+  /// two deliveries, and a second fulfill aborts the whole test process, not just this test.
+  func testADeliveryPastTheTargetDoesNotFulfillTheWaitAgain() {
+    let log = Log()
+    let waiter = expectation(description: "delivery 1")
+    log.waiter = waiter
+    log.target = 1
+
+    log.record(.missing)
+    log.record(.missing)
+
+    wait(for: [waiter], timeout: 1)
+    XCTAssertEqual(log.signatures.count, 2)
   }
 
   /// Catches a watch that blocks the main thread on a named pipe. Opening a pipe for reading waits
