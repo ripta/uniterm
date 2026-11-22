@@ -1,6 +1,6 @@
 # UTERM-045: Settle Input Before UI Tests Send It
 
-**Status:** designing
+**Status:** accepted
 **Created:** 2026-11-21
 **Updated:** 2026-11-22
 
@@ -36,15 +36,16 @@ person moved the real mouse during a local run. The PaneTree entry's own check r
 
 ### Test code only
 
-Decision: the change lives in the UI test target. No product code changes.
+Decision: no product code changes. The change lives in the UI test target, a check script, the Makefile, and
+`spec/flaky-tests.md`.
 
 Rationale: the events are synthesized by the test, and the race is between the test and the window server.
 
 ### No retries and no longer timeouts
 
 Decision: a settle waits for a stated precondition, such as the pointer inside the target's frame, and fails with a
-report when it never holds. It never resends an event or widens a timeout. It never waits for the app's response to an
-event.
+report when it never holds. It never resends an event or widens a timeout. It never waits on the outcome of the event it
+comes before.
 
 Rationale: the flaky-test rule forbids fixing a flake with retries, longer timeouts, or weaker assertions. A wait for
 the test's own precondition removes the race, and its failure names which precondition did not hold.
@@ -370,6 +371,10 @@ None.
   partial start is neutral only when each test that started passed, and a test that did not finish breaks the streak.
   M2's count equals M1's only while the window from the pointer change holds no failure. M1 also states the attempts
   that N counts and how a cancellation by a newer push counts. (autonomous; depends on the 95% target)
+- 2026-11-22: Review gate: kept all. M2 and the 95% closing target stay, so the entries that depend on them stand.
+  The carve-out for failures logged under another entry, the coordinate aim, and the additions stand. "Test code only"
+  now reads "no product code changes", and the settle never waits on the outcome of the event it comes before. No
+  decision gets an ADR. Status set to accepted.
 
 ## References
 

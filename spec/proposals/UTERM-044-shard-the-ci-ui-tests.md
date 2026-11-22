@@ -1,6 +1,6 @@
 # UTERM-044: Shard CI's UI Tests Across macOS Runners
 
-**Status:** designing
+**Status:** accepted
 **Created:** 2026-11-21
 **Updated:** 2026-11-22
 
@@ -351,6 +351,9 @@ None.
   (autonomous, addition)
 - 2026-11-22: Coherence and risk review converged in 2 passes: one full pass and one re-check. Added the risk that
   sharding moves the launcher test next to a cold start during UTERM-045's recount. (autonomous)
+- 2026-11-22: Review gate: kept all. The split by contiguous ranges of sorted class names, the matrix job, the helper
+  sandbox checks in `package`, three shards, and the flaky-log fields for first-in-shard and selection all stand. No
+  decision gets an ADR. Status set to accepted.
 
 ## References
 
