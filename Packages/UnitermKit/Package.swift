@@ -210,6 +210,10 @@ let package = Package(
     // one reading of the file.
     .target(
       name: "ControllerTrust", dependencies: ["AtomicFile", "ControllerPackage", "SourceAccess"]),
+    // The Questions applet's form: the spec a script sends, its strict reader and caps, the
+    // validation of answers, the `pattern` dialect, and the result shapes. It has no AppKit and
+    // no Janet, so the app, the helper, and the fuzzers read one meaning from the same bytes.
+    .target(name: "QuestionForm", dependencies: ["ControllerPackage", "ScriptWire"]),
     // The helper side of scripting. It owns the one Janet VM of its process, on its main thread.
     .target(name: "ScriptRuntime", dependencies: ["CJanet", "ControllerPackage", "ScriptWire"]),
     // A thin main over ScriptRuntime, so tests can run a helper without the hardened runtime. The
@@ -293,6 +297,12 @@ let package = Package(
         "AtomicFile", "ControllerPackage", "ControllerTrust", "ControllerTestSupport",
         "SourceAccess", "TableTestSupport",
       ]),
+    // JavaScriptCore is linked here only. It is the reference the pattern translator is
+    // compared against, and the app never loads it.
+    .testTarget(
+      name: "QuestionFormTests",
+      dependencies: ["ControllerPackage", "QuestionForm", "ScriptWire", "TableTestSupport"],
+      linkerSettings: [.linkedFramework("JavaScriptCore")]),
     .testTarget(name: "TableDataTests", dependencies: ["TableData", "TableTestSupport"]),
     .testTarget(
       name: "DataViewerAppletTests",

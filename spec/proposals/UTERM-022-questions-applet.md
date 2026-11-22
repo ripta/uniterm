@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-14
-**Updated:** 2026-11-14
+**Updated:** 2026-11-21
 
 ## Dependencies
 
@@ -181,7 +181,8 @@ appear anywhere among the questions.
 - `paragraph`: plain text.
 - `list`: an array of strings, shown as a bulleted list.
 - `code`: monospaced text, such as a command preview.
-- `table`: key and value pairs, such as a summary.
+- `table`: key and value pairs, such as a summary. The pairs are an object under `rows`, in the order the spec
+  gives them. Amended 2026-11-21; see Decision Log.
 - `notice`: text with `level` `info`, `warning`, or `danger`.
 
 Rationale: question text belongs to its question. A form that shows what it will do before it asks needs structure
@@ -198,6 +199,8 @@ Decision: buttons belong to the form. Each has an `id`, an optional `label`, and
 - `validates` defaults to true, except for `cancel`. A button with `validates: false` submits whatever is filled in,
   unchecked.
 - A form with no `actions` gets OK as `primary` and Cancel as `cancel`.
+- A form whose buttons are all `cancel` is refused, since the user could not submit it. Amended 2026-11-21; see
+  Decision Log.
 - Choices such as "Yes to all" are plain buttons. The script gives them their meaning.
 
 Return inserts a newline in a multiline field. Escape first closes an open color picker, file panel, or popup. These
@@ -454,7 +457,9 @@ Decision: ECMA-262 with the `u` flag, translated onto NSRegularExpression. (auto
 - It rebuilds each accepted pattern as ICU syntax from the parse tree, rewriting every token whose ICU meaning differs.
   Examples are `\d` as `[0-9]`, `\w`, `\s`, `\b`, `.`, and `$` as end of input. Source text never passes through.
 - A construct with no proven translation refuses the spec, with a message naming the construct and the field. Every
-  backreference refuses. The documentation lists the accepted grammar.
+  backreference refuses, and so does every lookbehind. A `\p{...}` name outside the supported table refuses, and the
+  table holds the general categories, ECMA-262's binary properties, and a curated list of scripts. The documentation
+  lists the accepted grammar. Amended 2026-11-21; see Decision Log.
 - Widening the accepted set later is additive, since a refused pattern had no meaning before.
 
 Rationale: JSON Schema 2020-12 says `pattern` SHOULD be ECMA-262 with Unicode support, so a pattern copied from a
@@ -532,7 +537,7 @@ None.
 
 ### M1: Form spec and validation
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The strict reader refuses every unknown key, a misapplied keyword, a bad pattern, and each cap, with a message
   that names the field
@@ -553,8 +558,46 @@ None.
 - A differential test runs translated patterns against JavaScriptCore with the `u` flag. It covers `\d` against
   Arabic-Indic digits, `$` before a trailing newline, `.` against U+0085, `\w` against "café", `\s` against U+FEFF, and
   a class containing `&&`
-- Every backreference, and every `\p{...}` name outside ECMA-262's table, refuses the spec with a message naming the
-  construct and the field
+- Every backreference, every lookbehind, and every `\p{...}` name outside the supported table refuses the spec with a
+  message naming the construct and the field
+
+**As built:**
+
+- The form model, strict reader, validation, and `pattern` engine are a new pure target, `QuestionForm`, with
+  `QuestionFormTests`. It depends on `ControllerPackage` and `ScriptWire` and links no AppKit and no Janet. The tests
+  link JavaScriptCore, and the app does not.
+- The reader widening was already built by "Keep a newer policy file that holds a boolean, null, or fraction", which
+  fixes [the policy-file bug](../bugs/20261114-policy-file-newer-format-read-as-broken.md). This milestone only
+  verified it. `ControllerPolicyTests`, `ControllerDescriptorTests`, and the fuzzers pass unchanged in the full package
+  run. The spec reader uses `StrictJSONReader` and the `StrictJSON` cases directly. It does not use `members`, since
+  that throws a `controller.json` error. Its own field helper names the spec field instead.
+- The caps are in `FormLimits`. The spec is at most 32 KiB, with at most 64 items, 8 buttons, and 64 choices a
+  question. Ids are 1 to 32 visible ASCII bytes. A `string` answer is at most 1024 bytes, a `text` answer at most 4096,
+  a choice's free-text entry at most 256, a path at most 1024, and a `file` answer at most 16 paths. Number literals
+  have at most 20 digits and an exponent within 20. A `maxLength` below the type's cap lowers the answer cap, at four
+  bytes a character. The reader refuses a spec whose worst-case answers exceed one reply payload, and names the first
+  item that tips it over. It measures the worst case with the reply encoder itself. Fifteen `text` questions with no
+  `maxLength` fit, and the sixteenth is refused. Widgets read each question's `answerByteLimit` and
+  `answerEntryLimit`.
+- A field's check is `FormChecker.verdict`, which runs every keyword but `pattern` in linear time. `FieldValidator`
+  runs `pattern` on the field's own serial queue, and it reports `checking`, then `valid`, `invalid`, or `couldNotCheck`.
+  A match has a 0.5 second limit and a 4096-unit input cap. A newer value stops the older match at its next progress
+  report, and the older result is never reported. A match that ICU cannot finish, such as when its backtracking stack
+  runs out, is `couldNotCheck`, never a no match. The error shape is `FormErrors`. The result shapes are
+  `FormOutcome`. Its `ended` case has no script value, since M3 delivers ended as a failed wait. Every cap also holds
+  in the result itself: a string is cut at its byte limit, a list keeps its first entries up to the limit, and a
+  color or number that does not read becomes `null`.
+- The `pattern` parser refuses lookbehind and every backreference. Its property table holds the general categories,
+  ECMA-262's binary properties, and 13 common scripts. A test compiles every emitted name in ICU. The differential
+  test compares about 100 pattern and input pairs with JavaScriptCore, including every case the check lists.
+- The spec defines what the proposal left open. A `table` block's pairs are an object under `rows`. A `notice` has
+  `level` `info` by default. A `text` question is single-line unless `multiline` is true. A `choice` takes `other`, and
+  a `multi` does not. A default must pass its question's own rules, except `pattern`. A form needs a button that is not
+  `cancel`. See the Decision Log.
+- A fuzz test for the spec reader and the pattern parser is in `make fuzz`'s filter list. A scoped run of 20,000
+  mutations under the address sanitizer passes.
+- `make test-cost` does not exist in this project. The new test files run in about 1.2 seconds together. Most of that
+  is the catastrophic-pattern test, which waits in real time to prove the stopped match uses no CPU.
 
 ### M2: Questions applet UI
 
@@ -770,6 +813,21 @@ Amended 2026-11-20; see Decision Log.
 - 2026-11-20: Settled "Reusing a requester's tab". A requester's next form that reuses its own tab selects it and
   takes focus, as a newly opened tab does. "Focus when a form arrives" said whether the reuse selects the tab or moves
   focus was open. M2's reuse check now pins the selection and the focus. The open question is removed.
+- 2026-11-21 (autonomous): M1 settled what the spec left open. A `table` block's pairs are an object under `rows`,
+  since the Janet rule says a table's pair keys are display strings. A `notice` defaults to `info`. A `text` question
+  is single-line unless `multiline` is true. `other` applies to `choice` only. A default must pass its own rules. A form
+  with only `cancel` buttons is refused. Empty answers are `null`. The caps are 32 KiB for the spec, 64 items, 8
+  buttons, and 64 choices of at most 256 bytes. A `string` answer is at most 1024 bytes and a `text` answer at most
+  4096. A path is at most 1024 bytes, with at most 16 paths. A number literal has at most 20 digits and an exponent
+  within 20. A `pattern` is at most 512 bytes, with at most 2048 parse nodes, 16 levels of groups, and repeat counts of
+  at most 1000. A pattern check runs for at most 0.5 seconds on at most 4096 UTF-16 units. The reader reads
+  through `StrictJSONReader` and the `StrictJSON` cases directly, not `StrictJSON.members`, since that throws a
+  `controller.json` error. `ended` has no script value, and M3 delivers it as a failed wait. The `pattern` table
+  narrowed: it refuses lookbehind, since ICU supports only
+  bounded lookbehind, and it accepts general categories, ECMA-262's binary properties, and 13 common scripts. The
+  Content blocks, Buttons, and `pattern` dialect text changed in place. "Content blocks" said "`table`: key and value
+  pairs, such as a summary." "The `pattern` dialect" said "Every backreference refuses. The documentation lists the
+  accepted grammar." "Buttons" had no rule for a form with only cancel buttons.
 
 ## References
 
