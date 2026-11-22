@@ -537,6 +537,43 @@ final class BrowserRemoteTests: XCTestCase {
     await harness.eventually("the app opens on yes") { opener.opened == [mail, ssh] }
   }
 
+  /// Catches a layout seed that loads search text as an address, or one that opens another app
+  /// without the user's question. A seed runs the typed-address path in the first tab.
+  func testASeedOfSearchTextSearchesAndAnAppAddressAsks() async throws {
+    let server = try await FixtureServer.start(handler: Self.pages)
+    defer { server.stop() }
+
+    let searching = BrowserApplet(
+      dataStore: .nonPersistent(), services: .testing(), seed: "swift concurrency")
+    let searchHarness = BrowserHarness(server: server, applet: searching, starting: false)
+    let spy = NavigationSpy()
+
+    searching.tab.webView.navigationDelegate = spy
+    searching.start(origin: .user)
+    await spy.until(count: 1)
+
+    XCTAssertEqual(
+      spy.urls.map(\.absoluteString), ["https://duckduckgo.com/?q=swift%20concurrency"])
+    searchHarness.stop()
+
+    let opener = FakeOpener()
+    let asking = BrowserApplet(
+      dataStore: .nonPersistent(), services: .testing(opener: opener), seed: "ssh://host.example")
+    let askHarness = BrowserHarness(server: server, applet: asking, starting: false)
+
+    defer { askHarness.stop() }
+
+    askHarness.host.recording.answer = true
+    asking.start(origin: .user)
+
+    await askHarness.host.until("the question is asked") {
+      askHarness.host.recording.confirmations.count == 1
+    }
+    await askHarness.eventually("the app opens on yes") {
+      opener.opened == [URL(string: "ssh://host.example")!]
+    }
+  }
+
   /// Catches an app handoff from a tab that is not on screen. The user's own rule lets only the
   /// page on screen ask, so the controller's tab behind another one opens nothing.
   func testAnAppAddressInATabBehindAnotherOpensNothing() async throws {
@@ -654,7 +691,7 @@ final class BrowserRemoteTests: XCTestCase {
     defer { server.stop() }
 
     let seeded = BrowserApplet(
-      dataStore: .nonPersistent(), services: .testing(), seed: server.url("/seed"))
+      dataStore: .nonPersistent(), services: .testing(), seed: server.url("/seed").absoluteString)
     let host = EventHost()
 
     seeded.host = host

@@ -60,6 +60,7 @@ controller.
   page's first downloads start without asking, as in the user's tabs.
 - A browser pane that a layout seeds with a `url` resolves it by the rule for a typed address. A seed is an address,
   so text that would search, and an address for another app, are refused.
+  Superseded in part by UTERM-038; see Decision Log.
 - `read` is unchanged. It has no user action to match.
 
 Rationale: a program's operation behaves as the user's. Each special case M8 built treated a program's action
@@ -137,11 +138,15 @@ None.
   seed open. It now resolves by the typed rule and still refuses search text and app addresses, since a seed is stored
   as an address and has no search engine or handoff to run. If wrong, a tab behind another could be selected before
   it navigates, and a seed could search. (autonomous)
+  Superseded in part by UTERM-038; see Decision Log.
 - 2026-11-21: An open in a detached pane loads at once and no longer waits for the pane to come back (work-queue best
   guess). The tab opens selected, so the user's rule for a selected, never-loaded tab applies, and navigate always
   loaded in a detached pane. Media stays suspended. The owned-tab load on reattach is removed, because an unselected
   owned tab is always one that already began loading. If wrong, a detached pane loads a page nobody sees, which the
   deferred load avoided. (autonomous)
+- 2026-11-21: Superseded in part by UTERM-038. A layout's browser `url` seed now runs the user's typed-address path, so
+  search text searches and an app address asks. Parse time still refuses the schemes no source loads and text that
+  cannot resolve.
 
 ## References
 
@@ -149,3 +154,4 @@ None.
 - UTERM-036: a program's opens and layouts take focus as the user's do
 - [ADR-12](../adr/ADR-12-unchosen-changes-never-move-focus-or-arm-input.md): retracted
 - [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): authority, which this proposal leaves unchanged
+- [ADR-15](../adr/ADR-15-a-programs-operation-is-the-users.md): "What stays" rests on its authority carve-out

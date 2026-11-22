@@ -445,7 +445,7 @@ None.
   text takes the pin's coordinate. A glyph that is neither one or two characters nor shaped like an SF Symbol name is a
   bad argument. A well-formed name the system lacks is kept, and the marker draws the default glyph. `set-region`
   takes a `center` and a `span` of `latitude-delta` and `longitude-delta`, runs `GeoRegion`'s checks, and is not saved
-  with the pane, since a program's move is not the user's.
+  with the pane, since a program's move is not the user's. Superseded in part by UTERM-038; see Decision Log.
 - The pure rules live in `GeoData`: the text caps, the sanitizer, the layer store, the undo-only snapshot, and the
   sizing rule. All text caps count UTF-8 bytes: 64 for an ID, a layer name, and a glyph, and 128 for a label. A pane
   holds at most 13 layers, empty ones included, and 2,500 pins. The file layer takes the first accent of the layer
@@ -642,6 +642,8 @@ None.
   which empties every command layer at once and keeps their accents. File > Clear File Pins clears the file layer. A
   per-layer clear for program layers arrives with the pin list in UTERM-016 M4, which shows program layers read-only
   with their Clear action. The bullet now says that.
+- 2026-11-21: Superseded in part by UTERM-038. `set-region` now saves its region with the pane, through the path Go to
+  Place uses. A program's move is the user's move.
 
 ## References
 

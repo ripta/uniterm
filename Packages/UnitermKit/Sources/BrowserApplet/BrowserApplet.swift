@@ -76,6 +76,9 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
   }
   private(set) var started = false
   private(set) var closed = false
+
+  /// The typed text the first tab takes at `start`, and nothing after.
+  private var pendingSeed: String?
   private var lastShown: Shown?
 
   /// The tabs controllers opened, by the grant that opened each. A tab a page opened, a tab
@@ -122,19 +125,22 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
   /// app-wide store by accident. The host passes the same store and the same `services` to every
   /// pane it builds, new or restored.
   ///
-  /// `seed` is an address that already passed the rule for a typed address. The first tab loads it at
-  /// `start`. Without one the pane starts at `about:blank`.
+  /// `seed` is text the user could have typed in the address bar. The first tab takes it at `start`
+  /// as typed input, so search text searches and an app address asks. Without one the pane starts
+  /// at `about:blank`.
   public convenience init(
-    dataStore: WKWebsiteDataStore, services: BrowserServices, seed: URL? = nil
+    dataStore: WKWebsiteDataStore, services: BrowserServices, seed: String? = nil
   ) {
     self.init(
       dataStore: dataStore, services: services,
       tabs: [
         BrowserTab(
-          id: .make(), record: BrowserDescription.Tab(url: seed?.absoluteString),
+          id: .make(), record: BrowserDescription.Tab(),
           dataStore: dataStore, hsts: services.hsts, clock: services.clock, hang: services.hang)
       ],
       selected: 0, closed: [])
+
+    pendingSeed = seed
   }
 
   /// Restores a pane from its description. Nothing loads until `start`, and then only the selected
@@ -277,6 +283,11 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     started = true
 
     for tab in tabs { tab.loadOrigin = origin.loadOrigin }
+
+    if let seed = pendingSeed {
+      pendingSeed = nil
+      commit(address: seed, in: tab)
+    }
 
     loadIfNeverLoaded()
   }

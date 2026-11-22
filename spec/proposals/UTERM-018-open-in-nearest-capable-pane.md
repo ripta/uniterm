@@ -202,6 +202,10 @@ browser pane. A new open power, or browser navigation with a widened target scop
 pane the user made. UTERM-004 settles that geometry alone grants nothing, and its nearest rule filters by authority
 first so proximity never becomes authority.
 
+The user's own open makes a pane or hands off to macOS when no pane fits, and a script's open does neither. That is
+ADR-15's carve-out for authority, not a change in how the open behaves. Making a pane and launching another app are
+powers of their own under ADR-14, and a script holds neither through an open.
+
 ### The tie rule
 
 "Several capable panes" settles that ties take a fixed pick. Which one is open: reading order, the most recently
@@ -647,6 +651,12 @@ and the path-reading power.
   opens its tab unselected, per UTERM-005. ADR-12 was retracted on 2026-11-20, and UTERM-037 applied that to the
   browser's remote commands. A script's URL open now lands as the user's open does, selected and taking focus. That
   matches "What a pane does with an open", which says a browser opens the tab selected. (work-queue best guess)
+- 2026-11-21: The user weighed "Scripts and controllers" after ADR-12's retraction and kept it. A script's open that
+  finds no capable pane fails with a structured not-found error. It never creates a pane and never hands off to macOS,
+  though the user's own open would. The user ruled that this is authority under ADR-14, since creating a pane or
+  launching another app is a separate power. No decision text changes.
+- 2026-11-21: "Scripts and controllers" now cites ADR-15 for its no-pane rule. The rule keeps its meaning. ADR-15
+  names authority as the one thing kept apart from the user's behavior, and this rule rests on it.
 
 ## References
 
@@ -655,3 +665,5 @@ and the path-reading power.
 - ADR-03: restored state never runs a program the user did not ask for
 - ADR-04: applets declare their own keys and never take window keys
 - ADR-09: control authority needs an authenticated requester and an explicit, scoped grant
+- ADR-14: a controller controls what it opened, and each power is its own
+- ADR-15: a program's operation is the user's; authority is its carve-out

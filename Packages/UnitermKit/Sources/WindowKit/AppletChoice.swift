@@ -28,10 +28,10 @@ public enum AppletChoice: Sendable, Equatable {
   /// A browser with no page loaded. It has no directory, so the pane's directory goes unused.
   case browser
 
-  /// A browser whose first tab loads this address when the pane starts. The address already
-  /// passed the controller rule for addresses, so the browser loads it as it is. Only a layout
-  /// request makes one.
-  case browserPage(URL)
+  /// A browser whose first tab takes this text as the user's typed address when the pane starts.
+  /// The text is not resolved here. The browser resolves it, so search text searches with the
+  /// engine chosen then and an app address asks. Only a layout request makes one.
+  case browserPage(String)
 
   /// An applet type the window declares beyond the built-in choices, such as a hosted fixture in
   /// a debug build. The app's factory decides whether it can make one, and throws when it cannot.

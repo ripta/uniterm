@@ -244,7 +244,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   // MARK: Region
 
-  private func regionSettled(_ region: GeoRegion) {
+  /// Saves a region the pane was told to show. A program's move and the user's go through here
+  /// alike. MapKit's own report after a set never reaches it, since only a user gesture lets one
+  /// through the map's gate.
+  func regionSettled(_ region: GeoRegion) {
     if let stored = record.region, stored.isIndistinguishable(from: region) { return }
 
     record.region = region
