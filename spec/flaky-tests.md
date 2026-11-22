@@ -139,6 +139,9 @@ fixed ones.
   Requests then opened, and its first row never appeared in 30 s. The test passed 3 of 3 alone right after, on the
   same tree. That run typed script paths through a `.zshrc` variable. This class keeps the fixture's `.zshrc`, so the
   variable was set, as the indicator shows.
+- Seen again: 2026-11-22, locally on main, in a run of the five classes up to `DataViewerUITests`.
+  `testAPaneCallQuestionShowsTheRunsPID` failed at `ControllerConsentUITests.swift:139` with "the terminal did not
+  take the keys, so typing would beep". That run made three passes, and the class failed once.
 - Status: unresolved.
 
 ### `PendingRequestsUITests.testADenialReachesTheProgramAndClearsTheIndicator`
@@ -318,6 +321,31 @@ fixed ones.
 - Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
   `ControllerRunUITests`, `ExecPaneUITests`, and `StatusBarUITests` entries above. Whether a key sent that soon after
   launch makes it likelier is not known.
+
+### `CommandPaletteUITests.testATabThatClosesWhileThePaletteShowsDisappearsFromTheList`
+
+- Seen: 2026-11-22, once, in a full local `make ci` run on a tree that adds the Questions applet and changes no
+  palette code. It was one of 5 failures of 203 UI tests.
+- Evidence: `CommandPaletteUITests.swift:319` failed a bare `XCTAssertTrue`. The test passed alone right after, on the
+  same tree.
+- Status: unresolved.
+
+### `MapViewerUITests.testProgramPinsReturnOnReopenAndAreAnnouncedAfterARelaunch`
+
+- Seen: 2026-11-22, once, in the same full local run as the `CommandPaletteUITests` entry above.
+- Evidence: `MapViewerUITests.swift:489` failed with "a live run shows the earlier-run segment". The test passed alone
+  right after, on the same tree.
+- Status: unresolved.
+
+### `MapViewerUITests.testTheStyleSurvivesARelaunchAndAnUnknownStyleShowsStandard`
+
+- Seen: 2026-11-22, once, in a local run of the four viewer classes and `OpenPanelUITests`.
+- Evidence: `MapViewerUITests.swift:160` failed a bare `XCTAssertTrue`. Apple's TV app had started 9 s before the
+  first test, from outside the run. In the same run,
+  `DataViewerUITests.testLauncherOpensAnEmptyViewerAndItsOpenButtonLoadsAFile` failed with TV frontmost and uniterm
+  in the background. The next two passes of the same classes passed 98 of 98.
+- Suspected cause: another app took the front during the test. Not confirmed.
+- Status: unresolved.
 
 ## Fixed
 
