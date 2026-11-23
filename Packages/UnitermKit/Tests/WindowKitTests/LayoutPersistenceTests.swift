@@ -482,6 +482,7 @@ final class LayoutPersistenceTests: XCTestCase {
     XCTAssertTrue(fixture.scheduler.pending.values.contains { $0.delay == 1 })
 
     fixture.scheduler.fire()
+    fixture.persistence.waitForWrites()
 
     let saved = try LayoutCodec.decode(try Data(contentsOf: layoutFile))
     XCTAssertEqual(saved.windows[0].tree.paneIDs.count, 2)
@@ -546,6 +547,7 @@ final class LayoutPersistenceTests: XCTestCase {
     let (first, _) = try launch()
     first.first.openPane(.terminalShell, axis: .row)
     first.scheduler.fire()
+    first.persistence.waitForWrites()
 
     let written = try Data(contentsOf: layoutFile)
 

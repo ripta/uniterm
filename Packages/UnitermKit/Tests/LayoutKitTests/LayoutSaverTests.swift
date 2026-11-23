@@ -1,4 +1,5 @@
 import Foundation
+import PaneModel
 import XCTest
 
 @testable import LayoutKit
@@ -44,7 +45,7 @@ final class LayoutSaverTests: XCTestCase {
       debounce: 1, scheduler: scheduler.schedule,
       snapshot: { SavedLayout(windows: []) },
       write: { _ in
-        writes.value += 1
+        writes.increment()
 
         if fails { throw Boom(description: "disk full") }
       },
@@ -65,6 +66,7 @@ final class LayoutSaverTests: XCTestCase {
     XCTAssertEqual(writes.value, 0)
 
     scheduler.fire()
+    saver.waitForWrites()
     XCTAssertEqual(writes.value, 1)
     XCTAssertTrue(scheduler.pending.isEmpty, "a save drops the maximum wait too")
   }
@@ -85,6 +87,7 @@ final class LayoutSaverTests: XCTestCase {
     let deadline = scheduler.pending.first { $0.delay == 10 }
     XCTAssertNotNil(deadline, "no maximum wait was scheduled")
     deadline?.action()
+    saver.waitForWrites()
 
     XCTAssertEqual(writes.value, 1)
     XCTAssertTrue(scheduler.pending.isEmpty)
@@ -103,6 +106,7 @@ final class LayoutSaverTests: XCTestCase {
 
     saver.layoutDidChange()
     saver.saveNow()
+    saver.waitForWrites()
 
     XCTAssertEqual(writes.value, 1)
     XCTAssertTrue(scheduler.pending.isEmpty)
@@ -138,14 +142,202 @@ final class LayoutSaverTests: XCTestCase {
     saver.enable()
 
     saver.saveNow()
+    saver.waitForWrites()
     saver.saveNow()
+    saver.waitForWrites()
 
     XCTAssertEqual(writes.value, 2)
     XCTAssertEqual(failures.value, 1)
   }
+
+  /// Catches a quit that returns while the last write is still running. The write is held open,
+  /// and `waitForWrites` must not return until it ends.
+  func testWaitForWritesBlocksUntilTheWriteEnds() {
+    let log = WriteLog()
+    let release = DispatchSemaphore(value: 0)
+    let ended = Counter()
+
+    let saver = LayoutSaver(
+      debounce: 1, scheduler: ManualScheduler().schedule,
+      snapshot: { SavedLayout(windows: []) },
+      write: { _ in
+        log.record(onMainThread: Thread.isMainThread)
+        _ = release.wait(timeout: .now() + 10)
+        ended.increment()
+      },
+      onFailure: { _ in })
+    saver.enable()
+
+    saver.saveNow()
+    XCTAssertTrue(log.waitForWrite(timeout: 10), "the write never started")
+
+    DispatchQueue.global().async { release.signal() }
+    saver.waitForWrites()
+
+    XCTAssertEqual(ended.value, 1, "waitForWrites returned before the write ended")
+  }
+
+  /// Catches a pile of writes behind a slow one, or a newest layout that is dropped. Three saves
+  /// arrive while the first write is held open. The first and only the newest of the rest may run.
+  func testOnlyTheNewestLayoutWaitsBehindAWriteInFlight() {
+    let log = WriteLog()
+    let release = DispatchSemaphore(value: 0)
+    let titles = TitleLog()
+    let next = Counter()
+
+    let saver = LayoutSaver(
+      debounce: 1, scheduler: ManualScheduler().schedule,
+      snapshot: {
+        next.increment()
+        return SavedLayout(windows: [window(tree: pane(UInt64(next.value)))])
+      },
+      write: { layout in
+        titles.record(layout.windows[0].tree.paneIDs[0].rawValue)
+        log.record(onMainThread: Thread.isMainThread)
+        _ = release.wait(timeout: .now() + 10)
+      },
+      onFailure: { _ in })
+    saver.enable()
+
+    saver.saveNow()
+    XCTAssertTrue(log.waitForWrite(timeout: 10), "the first write never started")
+
+    saver.saveNow()
+    saver.saveNow()
+    saver.saveNow()
+
+    release.signal()
+    release.signal()
+    release.signal()
+    saver.waitForWrites()
+
+    XCTAssertEqual(titles.values, [1, 4])
+  }
+
+  /// Catches a layout written after saving was turned off. A second save waits behind a write held
+  /// open. Turning saving off must drop it, while the write already running still finishes.
+  func testDisablingDropsTheLayoutWaitingBehindAWrite() {
+    let log = WriteLog()
+    let release = DispatchSemaphore(value: 0)
+    let titles = TitleLog()
+    let next = Counter()
+
+    let saver = LayoutSaver(
+      debounce: 1, scheduler: ManualScheduler().schedule,
+      snapshot: {
+        next.increment()
+        return SavedLayout(windows: [window(tree: pane(UInt64(next.value)))])
+      },
+      write: { layout in
+        titles.record(layout.windows[0].tree.paneIDs[0].rawValue)
+        log.record(onMainThread: Thread.isMainThread)
+        _ = release.wait(timeout: .now() + 10)
+      },
+      onFailure: { _ in })
+    saver.enable()
+
+    saver.saveNow()
+    XCTAssertTrue(log.waitForWrite(timeout: 10), "the first write never started")
+
+    saver.saveNow()
+    saver.disable()
+
+    release.signal()
+    release.signal()
+    saver.waitForWrites()
+
+    XCTAssertEqual(titles.values, [1])
+  }
+
+  /// Catches a save that encodes and writes on the main thread. A layout of tens of thousands of
+  /// tabs would stall every window for each debounced change. It cannot show the stall itself,
+  /// only that the write runs elsewhere.
+  func testTheWriteRunsOffTheMainThread() {
+    let scheduler = ManualScheduler()
+    let log = WriteLog()
+
+    let saver = LayoutSaver(
+      debounce: 1, scheduler: scheduler.schedule,
+      snapshot: { SavedLayout(windows: []) },
+      write: { _ in log.record(onMainThread: Thread.isMainThread) },
+      onFailure: { _ in })
+    saver.enable()
+
+    saver.layoutDidChange()
+    scheduler.fire()
+
+    XCTAssertTrue(log.waitForWrite(timeout: 10), "no write happened")
+    XCTAssertEqual(log.onMainThread, [false])
+  }
 }
 
-@MainActor
-final class Counter {
-  var value = 0
+final class TitleLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var recorded: [UInt64] = []
+
+  var values: [UInt64] {
+    lock.lock()
+    defer { lock.unlock() }
+
+    return recorded
+  }
+
+  func record(_ value: UInt64) {
+    lock.lock()
+    recorded.append(value)
+    lock.unlock()
+  }
+}
+
+/// Records where each write ran. A semaphore lets the test wait without spinning, whether the
+/// write ran before the wait or after it.
+final class WriteLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private let signal = DispatchSemaphore(value: 0)
+  private var threads: [Bool] = []
+
+  var onMainThread: [Bool] {
+    lock.lock()
+    defer { lock.unlock() }
+
+    return threads
+  }
+
+  func record(onMainThread: Bool) {
+    lock.lock()
+    threads.append(onMainThread)
+    lock.unlock()
+
+    signal.signal()
+  }
+
+  func waitForWrite(timeout: TimeInterval) -> Bool {
+    signal.wait(timeout: .now() + timeout) == .success
+  }
+}
+
+/// A count that a write thread and the test both touch.
+final class Counter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+
+  var value: Int {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+
+      return count
+    }
+    set {
+      lock.lock()
+      count = newValue
+      lock.unlock()
+    }
+  }
+
+  func increment() {
+    lock.lock()
+    count += 1
+    lock.unlock()
+  }
 }
