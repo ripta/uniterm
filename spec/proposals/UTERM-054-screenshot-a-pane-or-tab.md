@@ -753,6 +753,9 @@ Lands before UTERM-019 M1 ships, and does not wait for M1 to M5 here.
   M6 now moves the exec snapshot to UTERM-055 instead of dropping it.
 - 2026-11-22: The user accepted the proposal. No decision earns an ADR: program reach and authority are ADR-14's and
   ADR-15's, and the rest is scoped to this feature.
+- 2026-11-22: Correction of fact for the growth question entry. It gave "since no proposal plans an exec-capable
+  applet" as the reason for dropping exec capture. The map viewer and image viewer accept exec drivers today. The
+  outcome stands, since exec capture returned as UTERM-055.
 
 ## References
 

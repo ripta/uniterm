@@ -34,8 +34,9 @@ UTERM-019 planned a browser snapshot for exec drivers that command browser membe
 that snapshot into its host capture, so exec drivers would lose it. The user chose to keep exec capture as its own
 proposal instead.
 
-No exec-capable applet ships today, and the exec fixtures run only in debug builds. So no deployed driver uses capture
-yet. The version this proposal adds is a published contract once it ships, under ADR-13.
+The map viewer and the image viewer accept exec drivers today, and UTERM-054 makes both capture-capable. So a driver
+capturing its own pane is a live case, and deployed drivers may exist. The version this proposal adds is a published
+contract once it ships, under ADR-13.
 
 ## Design Decisions (Settled)
 
@@ -82,7 +83,9 @@ Decision: the deploy units are the app and external exec drivers.
 - Old driver, new app: a driver offered the new version answers with the version it knows. A version 5 driver ignores
   the longer list, by UTERM-028's hello rule. A version 4 driver ignores the unknown `versions` field, as UTERM-028
   assumes.
-- A grant stored before the capture power existed covers none of it, under ADR-14 P10.
+- A newer app can send a reason kind that a driver's version has never seen, since UTERM-054's reason kinds are
+  append-only. A driver treats an unknown reason as a refusal in which nothing was captured, as UTERM-019 states for
+  `unsupported-capability`. The version's documentation states this rule.
 - A capture frame sent at an earlier version ends the driver as malformed. A driver avoids that by sending capture only
   at the version it negotiated.
 
@@ -90,14 +93,26 @@ Decision: the deploy units are the app and external exec drivers.
 
 ### Which grant and targets an exec driver captures under
 
-A controller's layout declares the exec driver for a pane, and the driver commands browser members of groups its
-controller owns. UTERM-054's pane capture power and tab scope belong to a program's grant. Candidates:
+An exec driver has no verified identity, so ADR-14 P9 lets it keep no remembered approval. Each run gets its own group
+owner, and member commands check ownership against that driver owner. A driver's browser and clipboard powers are per
+run: it asks for them in Pending Requests, and Revoke and run end clear them. UTERM-028 rejects inheriting a
+controller's approval, since nothing links a driver to the run that covered its launch. A driver the user starts with
+Run has no controller at all. So every candidate that needs a controller's descriptor grant cannot be built for a
+driver. Candidates:
 
-- The driver captures under its controller's grant. It needs the pane capture power in the controller's descriptor,
-  and its targets are the panes of the group the controller owns, under UTERM-054's tab scope.
-- The driver's own pane only, under the controller's grant. Leaves undone: the browser snapshot UTERM-019 planned for
-  browser members of the group.
+- A per-run capture power the driver asks for in Pending Requests, as its browser powers are, with Allow Once and Allow
+  for This Run, held on the attachment. Its targets are the driver's anchor, its source pane under ADR-14 P2, plus
+  remote-controlled members of groups this run owns. The tab scope uses the driver's owner as the caller. Revoke and
+  run end end the power.
+- The driver captures under its controller's grant, with the pane capture power in the controller's descriptor.
+  Needs a descriptor that a user-launched driver lacks, and contradicts UTERM-028's rationale.
 - A separate exec capture power in the descriptor, so a controller can grant capture to scripts and not to its driver.
+  Same flaw as the controller's grant, and no one is named who would set it.
+- The driver's own pane only. Same flaw, and it drops the browser snapshot the user chose to keep.
+
+Whichever is chosen must also settle two cases. Does capturing the driver's own anchor need the power too? And can the
+driver still capture its anchor after Revoke, since UTERM-028 leaves a driver its own applet commands and events after
+a revoke?
 
 ### How a capture's held reply reaches a driver
 
@@ -110,19 +125,50 @@ do. Candidates:
 - The capture frame replies at once with a handle, and a completion event on the driver's pane event stream names it.
   A capture only reads, so ADR-11 does not require this.
 
+### The frames' fields
+
+M1 must not invent a permanent contract, as UTERM-028 settled its version 5 JSON for the same reason. The frames need
+these fields settled:
+
+- Capture: the target pane, which capture of content, pane, or full page, and which tab.
+- The capture reply: the handle, the byte size, whether the image was clamped, and its density.
+- Read-result: the handle, and an offset in raw bytes rather than base64 characters. The reply's chunk carries bytes as
+  a base64 string, as UTERM-019 does.
+- The chunk size, and the discard reply.
+- Where the reason kind goes. The exec error frame carries only `code` and `message` today.
+
+Candidates: mirror the ScriptWire capture calls' fields one for one, so both transports name the same things, or give
+the exec frames their own field set in the version 5 style.
+
+### How the app bounds reads in flight
+
+Retained outbound bytes are capped at 4 MiB and a frame at 1 MiB, and an overflow ends the driver. Pushed applet events
+share that queue. A driver that sends five read-results before it reads its input can be ended, and its capture lost.
+Candidates:
+
+- The app bounds read replies in flight per driver, and refuses the next read with `busy` past the bound.
+- The chunk size is fixed small enough that a stated count of reads fits beside events.
+- The version's documentation says how many reads may be in flight, and nothing in the app enforces it. Leaves undone:
+  a driver that misreads it is ended.
+
 ## Risks
 
 - **The exec capture version becomes a published contract** — likelihood: high, impact: medium.
   Mitigation: it is a new version in UTERM-028's offer, so no earlier meaning changes, under ADR-13. Its frames are
   settled here before M1 builds them.
-- **A deployed version 4 driver rejects the longer hello** — likelihood: low, impact: medium.
+- **A deployed version 4 driver rejects the longer hello** — likelihood: medium, impact: medium.
   Accepted: this is UTERM-028's own assumption that a version 4 driver ignores an unknown hello field. This proposal
-  adds a value to a list UTERM-028 already adds, and no new field.
+  adds a value to a list UTERM-028 already adds, and no new field. Rated medium, since map viewer and image viewer
+  drivers may already be deployed.
 - **Large reads in flight end the driver** — likelihood: medium, impact: medium.
-  Mitigation: chunks are sized against the frame cap, and the driver guide says how many reads may be in flight
-  within the outbound bound.
-- **The design rests on two unbuilt proposals** — likelihood: high, impact: medium.
-  Mitigation: M1 waits for UTERM-028 M1 and UTERM-054 M5. A change to either one's capture or version shape reopens
+  Mitigation: chunks are sized against the frame cap, and "How the app bounds reads in flight" settles the bound. The
+  version's documentation lives with UTERM-028 M1's version 5 documentation.
+- **A driver with no verified identity reads what a pane shows** — likelihood: medium, impact: high.
+  Mitigation: capture needs a power and follows UTERM-054's tab scope, so a driver's reach is bounded. "Which grant and
+  targets an exec driver captures under" settles the power and its targets.
+- **The design rests on three unbuilt proposals and a proposed ADR** — likelihood: high, impact: medium.
+  Mitigation: M1 waits for UTERM-028 M1 and UTERM-054 M5, which reaches UTERM-019's byte type and exec base64. Following
+  UTERM-054's rules also rests on ADR-15, which is proposed. A change to either one's capture or version shape reopens
   the matching decision here.
 
 ## Milestones
@@ -140,13 +186,26 @@ Waits for UTERM-028 M1 and UTERM-054 M5.
 - An exec driver's browser full-page capture works for a browser member of its controller's group, or is refused by
   the rule "Which grant and targets an exec driver captures under" settles
 - Revocation, run end, and pane close fail a pending capture and free its handle, under ADR-11
-- The driver guide documents the version, the frames, their errors, and how many reads may be in flight
+- The version's documentation, beside UTERM-028's version 5 documentation, covers the frames, their errors, the rule
+  for unknown reason kinds, and the bound on reads in flight
+- The new version includes every version 5 frame
+- A held capture counts toward the driver's bound on waiting requests, and past the bound it gets `busy`
+- A driver's failure notice names the driver as pane chrome does, by executable and process ID
+- A capture of a member pane needs the member to be remote-controlled and owned by this run
 
 ## Decision Log
 
 - 2026-11-22: Filed from the UTERM-054 review. The user dropped exec capture from UTERM-054, then chose to bring it back
   as its own proposal when the review found that UTERM-019's exec browser snapshot would be lost. The frame list,
   base64 shape, and skew analysis come from that review's critique.
+
+- 2026-11-22: Revised after the draft's design critique. Motivation said no exec-capable applet ships. The map viewer
+  and image viewer accept exec drivers today, so it now says deployed drivers may exist. "Which grant and targets an
+  exec driver captures under" rested on a controller's grant that drivers never hold. It now states the per-run power
+  model, adds a per-run capture power candidate, and names the two anchor cases. Added the open questions "The frames'
+  fields" and "How the app bounds reads in flight". "Version skew" replaced its stored-grant bullet, since driver
+  grants are never stored, with the rule for unknown reason kinds. Risks gained a driver's read of a pane and the
+  proposed ADR, and the version 4 risk is now rated medium.
 
 ## References
 
