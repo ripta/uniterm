@@ -20,9 +20,9 @@
 
 - ADR-08 "The main thread may do local work whose duration uniterm bounds", no carve-out. A pane has no tab cap, so
   the launch restore and an undo reopen each build their applets on the main thread in time linear in the tab count.
-  For the browser that is one tab object and one adopted record per tab; UTERM-053 owns it and records its own
-  deviation. The terminal makes one tab per stored tab in its restoring init. The user accepted the restore's linear
-  build on 2026-11-22, in UTERM-053's review.
+  For the browser that is one tab object, one adopted record, and one cleaned title per tab. UTERM-053 owns it and
+  records its own deviation, which the user accepted on 2026-11-22. The terminal makes one tab per stored tab in its
+  restoring init. UTERM-053 left the terminal out of scope, so its acceptance does not cover that part.
 - ADR-08 "The main thread never waits on work whose duration uniterm does not bound" and "A design that must wait on
   the main thread names the bound that keeps the wait short", no carve-out. An undo reopen typed before its pane's
   preparation finishes blocks the main thread on that step, which runs on another thread. The wait is bounded only by
@@ -199,14 +199,14 @@ waits for it on the main thread, then builds. No pending pane exists. Amended 20
 - The off-main step is the same one the launch uses, extended to the undo state, so undo reopen and the launch share one
   decode path.
 
-Rationale: the early reopen is the only case that waits. It is a reopen typed during the close's own main-thread
-freeze, such as a Cmd-Shift-T right after an accidental close of a large pane. Any later reopen finds its value ready
-and decodes nothing on the main thread. A pending pane for the early case needed about ten new rules. It had to carry
+Rationale: only a reopen typed before the step finishes waits. That is most likely a Cmd-Shift-T right after an
+accidental close of a large pane, typed during the close's own freeze or just after it. A reopen once the step has
+finished decodes nothing on the main thread. A pending pane for the early case needed about ten new rules. It had to carry
 the exec declaration, expose its closed tabs to keep undo order, report unsaved work, and define what keys, scripts,
-and focus get. Each rule was a new way to lose data. It would cover the decode, about 32 ms of payload round trip at
-10,000 tabs, with the undo state's decode unmeasured. That is most of a large reopen's remaining cost, since the build
-under UTERM-052 and UTERM-053 adopts each record's tree and makes about 7 ms of tab objects. The user kept the wait
-with those numbers in view. The typed handoff at close adds a third member to every applet
+and focus get. Each rule was a new way to lose data. It would cover only the decode, about 32 ms of payload round
+trip at 10,000 tabs, with the undo state's decode unmeasured. The build that follows stays on the main thread: about
+7 ms of tab objects and about 99 ms of title cleaning at the same count, with each record's tree adopted under
+UTERM-052. Which side is larger is not measured. The typed handoff at close adds a third member to every applet
 type that can drift from the normal decode, and it reopens from a value instead of from the description, against
 ADR-05's "Undo reopens a closed pane from its description". No addition leaves the decode on every large reopen.
 
@@ -215,7 +215,7 @@ payload alone is about 160 ms of off-main work. The undo state, one WebKit histo
 decode. The ledger holds at most 20 entries per window, and each one gains its prepared value.
 
 Leaves undone: an early reopen waits for the decode on the main thread. Reopen is still linear on the main thread after
-the decode, in the tab objects and their adopted records. UTERM-053 owns that. The close
+the decode, in the tab objects, their adopted records, and their cleaned titles. UTERM-053 owns that. The close
 that comes first is linear on the main thread too. Bug `20261122-browser-close-encodes-every-tab-history-on-main-thread`
 tracks it. See ADR Deviations.
 
@@ -255,6 +255,10 @@ None.
   in `applicationDidFinishLaunching`.
   Mitigation: M2 moves each one to the completion, and the `LayoutPersistence` tests move to the async API.
 
+- **UTERM-052 M2 lands after M2** — likelihood: medium, impact: low.
+  M2's restore value carries each browser record's tree for UTERM-052 M2 to adopt. Before UTERM-052 M2 lands, the
+  browser keeps no encoded record, so nothing adopts the tree.
+  Mitigation: M2's tree check applies once UTERM-052 M2 has landed. Either may land first.
 - **An early undo reopen deadlocks on its own step** — likelihood: low, impact: high.
   An early reopen waits for the pane's preparation on the main thread. A step that ever hops to the main actor, or runs
   on a pool the waiting thread starves, never finishes, and the app hangs.
@@ -294,14 +298,16 @@ early, and the deferral is inert in the app.
 
 - `beginLaunch`'s read and file decode, and each applet's typed decode, run off the main thread. No `LayoutCodec.decode`
   or `decoded(as:)` runs on the main thread at launch. No successfully prepared restore value holds a `JSONValue` that
-  the build decodes. A restored browser adopts each stored record's tree as its encoded form, with no encode, as
-  UTERM-052 M2 requires. A description whose off-main step failed reaches the main thread as itself, for its placeholder. The main thread only
-  builds applets from their restore values and opens the windows
+  the build decodes. Once UTERM-052 M2 has landed, a restored browser takes each record's encoded form as UTERM-052
+  M2's restore check states, and this milestone's restore value carries the tree it needs. A description whose
+  off-main step failed reaches the main thread as itself, for its placeholder. The main thread only builds applets from
+  their restore values and opens the windows
 - The launch marker is written before the applets' typed decodes run. A layout at the codec's deepest nesting decodes on
   the thread the launch uses
 - Each applet type registers its off-main step and its main-thread build as one pair. The launcher and the debug
   fixtures follow the same contract. A type with only one of the two cannot be registered, and the step's type is a
-  synchronous, nonisolated, `Sendable` function, so an `async` step does not compile
+  synchronous, nonisolated, `Sendable` function, so an `async` step does not compile. Review of each registered step
+  finds no synchronous hop to the main thread, such as `DispatchQueue.main.sync`
 - A description whose off-main step throws, and one whose main-thread build throws, each restore as a placeholder that
   keeps its exact bytes. A save then writes those bytes back unchanged
 - The terminal's off-main step does no filesystem check
@@ -333,8 +339,9 @@ It builds on M2's off-main step and main-thread build pair.
   includes a pane closed because its applet ended. No prepared value holds a `JSONValue` the build decodes, the undo
   state included. The map viewer's base64 document decode is part of the step
 - The preparation starts on a non-main executor at user-initiated priority or above, and captures no controller. A
-  package test counts the main thread's decodes through a test hook: a close runs none, and a reopen whose step has
-  finished runs none and never waits
+  package test counts the main thread's typed decodes, `decoded(as:)` and the step, through a test hook. The close's
+  own `describe()` encode is not counted. A close runs none, and a reopen whose step has finished runs none and never
+  waits
 - The prepared result sits behind a lock in a reference type, so a copy of the ledger's entries reads the live result
 - A reopen whose step is held open blocks until it finishes, then builds the applet in the closed pane's place, with
   focus on it, as today. The test holds the step through the production spawn path. It releases the hold off the main
@@ -352,7 +359,7 @@ It builds on M2's off-main step and main-thread build pair.
 - A step or build that throws during an undo reopen gives a placeholder that keeps the description's exact bytes, and
   posts the restore warning
 - An entry evicted past the ledger's depth, and the entries of a closed window, drop their prepared values. A test
-  holding a weak reference sees the value freed once its step ends
+  holding a weak reference to the entry's result box sees it freed once its step ends
 - The main thread's decode time for an undo reopen whose step has finished does not grow between a 5,000-tab and a
   50,000-tab browser pane with history. The timings, the step's off-main time per close, and the undo state's decode
   time are recorded in the As built block
@@ -474,6 +481,16 @@ It builds on M2's off-main step and main-thread build pair.
   "already requires" a nonisolated step, which M2 did not say. M2 now checks it. Routed the re-check's implementation
   findings to M3: the executor and priority, the locked result, the true block, the fit check, non-fatal undo-state
   failures, panes closed when their applet ends, unregistered types, focus, and release through a weak reference.
+- 2026-11-22: The second re-check converged, with no design-level finding. Correction of fact: the entry above said
+  the claim "After UTERM-053, the decode is the largest cost left in reopen" "was right once the tree is reused". That
+  is not shown. The same measurement put title cleaning at about 99 ms at 10,000 tabs, and the undo state's decode is
+  unmeasured. The rationale's "That is most of a large reopen's remaining cost" was struck for the same reason. The
+  user's choice to keep the wait does not depend on it. Correction of fact: the ADR-08 deviation said "The user accepted
+  the restore's linear build on 2026-11-22, in UTERM-053's review" for the terminal too. UTERM-053's acceptance covers
+  only the browser, and it left the terminal out of scope. The rationale now says a reopen typed before the step
+  finishes waits, not only one typed during the close's freeze. Routed four checks: M2's tree reuse waits on UTERM-052
+  M2 and defers to its wording, review finds no synchronous main hop in a step, M3's hook counts only typed decodes,
+  and the weak reference holds the result box.
 
 ## References
 
