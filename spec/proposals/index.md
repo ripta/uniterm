@@ -51,6 +51,7 @@
 | [UTERM-047](UTERM-047-rate-limit-status-per-source.md) | Rate-limit status posts per source, with a fair bar and session-keyed sources | draft |
 | [UTERM-048](UTERM-048-pane-inspector.md) | A floating Pane Inspector that shows a pane's and its tabs' state, hidden state included | accepted |
 | [UTERM-049](UTERM-049-save-and-open-browser-tab-sets.md) | Save a browser pane's tabs as uniterm JSON, uri-list, or bookmark HTML, and open them back | accepted |
+| [UTERM-050](UTERM-050-current-directory-never-blocks-the-main-thread.md) | An applet's current directory never checks the file system on the main thread | draft |
 
 ## Dependency Graph
 
@@ -98,6 +99,7 @@ UTERM-043 ← UTERM-004, UTERM-019
 UTERM-047 ← UTERM-001, UTERM-003, UTERM-004, UTERM-017, UTERM-022
 UTERM-048 ← UTERM-003, UTERM-004, UTERM-013, UTERM-041
 UTERM-049 ← UTERM-004, UTERM-005, UTERM-015, UTERM-018, UTERM-021
+UTERM-050 ← UTERM-001, UTERM-004
 ```
 
 ## Not Yet Filed
