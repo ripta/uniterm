@@ -1,6 +1,6 @@
 # Undo reopen of a closed pane decodes its description on the main thread
 
-**Status:** open
+**Status:** proposed, UTERM-051 M3
 **Triaged:** 2026-11-22 (still reproduces by trace; design question opened in UTERM-051)
 **Estimate:** large; one non-trivial design decision. Reopen becomes asynchronous, so the window must say what it shows and accepts while the reopen is pending.
 **Found:** 2026-11-22, during the UTERM-051 review
