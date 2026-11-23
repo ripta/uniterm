@@ -60,9 +60,9 @@ that turns its description into a typed, `Sendable` restore value off the main t
 the `JSONValue` tree. The main thread then only builds the applet from that value. The launcher and the debug fixtures
 follow the same contract.
 
-Rationale: it is the only candidate that leaves no decode on the main thread, so it alone meets ADR-08 for the decode.
-It keeps one decode path. Most applets already decode in a pure static function, such as `TerminalDescription.decode`,
-so the step reuses it. Decoding from bytes saves only off-main time, since the codec still builds the tree, and it adds
+Rationale: it leaves no decode on the main thread, so it meets ADR-08 for the decode, and it keeps one decode path.
+The straight-from-bytes variant also leaves no decode on the main thread, but it adds a second path. Most applets
+already decode in a pure static function, such as `TerminalDescription.decode`, so the step reuses it. Decoding from bytes saves only off-main time, since the codec still builds the tree, and it adds
 a second decode path that undo reopen would not share. The other candidates leave a decode that grows with the tab
 count on the main thread. The cap does not bound the file.
 
@@ -72,7 +72,8 @@ count on the main thread. The cap does not bound the file.
   ADR-06.
 - The terminal's off-main step does no filesystem check. UTERM-050 moves the directory check into the session start.
 - Undo reopen of a closed pane runs both steps synchronously on the main thread. Its decode stays there and grows with
-  the pane's tab count. Undo reopen is outside this proposal, which covers the launch.
+  the pane's tab count. Undo reopen is outside this proposal, which covers the launch. Bug
+  `20261122-undo-reopen-decodes-pane-on-main-thread` tracks it.
 
 ### The restore's view building stays outside this proposal
 
@@ -98,7 +99,8 @@ placeholder window that is a real controller, a placeholder window outside the w
 progress on the Dock tile.
 
 Decision: no window opens until the layout is ready. The completion opens the saved windows on the main thread as soon
-as the restore value arrives. This is today's behavior, with the menu bar and the Dock now responsive during the read.
+as the restore value arrives. This is today's behavior, except that the menus now open and Quit works during the read.
+Every other command waits; see "User commands during the read replay as today's launch runs them".
 
 Rationale: it is the plain behavior and adds no state. A message posted with no window open already waits and goes to
 the first window shown, so nothing is lost. A placeholder that is a real controller would take those messages and any
@@ -166,7 +168,7 @@ None.
   An applet's off-main step could leave part of its decode in the main-thread build.
   Mitigation: M2 times the main thread's share of the read and the decodes at two tab counts, apart from view building.
   A release build of the package crashed the compiler during the review, so the review's numbers are from a debug
-  build.
+  build. Bug `20261122-optimized-build-crashes-compiler-in-status-queue` tracks the crash.
 - **Quitting during the read** — likelihood: low, impact: medium.
   `beginLaunch` writes the launch marker after the file decode. A quit that ends the process between that write and the
   completion counts as a launch that never finished. `applicationWillTerminate` would also release the store on the main
@@ -222,7 +224,8 @@ early, and the deferral is inert in the app.
 **Status:** NOT STARTED
 
 - `beginLaunch`'s read and file decode, and each applet's typed decode, run off the main thread. No `LayoutCodec.decode`
-  or `decoded(as:)` runs on the main thread at launch, and no restore value holds a `JSONValue`. The main thread only
+  or `decoded(as:)` runs on the main thread at launch, and no successfully prepared restore value holds a `JSONValue`.
+  A description whose off-main step failed reaches the main thread as itself, for its placeholder. The main thread only
   builds applets from their restore values and opens the windows
 - The launch marker is written before the applets' typed decodes run. A layout at the codec's deepest nesting decodes on
   the thread the launch uses
@@ -312,8 +315,15 @@ early, and the deferral is inert in the app.
 - 2026-11-22: ADR candidate (cuts across the system): restoring a pane decodes its saved description off the main
   thread, and the main thread only builds from typed values. Declined: applies ADR-08 "The main thread never waits on
   work whose duration uniterm does not bound."
-- 2026-11-22: Review gate: kept all. No decision was contested, and no addition was kept.
+- 2026-11-22: Review gate: nothing was asked. No decision was contested, and no addition was kept.
 - 2026-11-22: Accepted.
+- 2026-11-22: Wording corrections after acceptance, with no change in behavior. "No window shows while the read runs"
+  said "with the menu bar and the Dock now responsive during the read". A Dock click now waits with the other commands.
+  "Where the typed decode runs" said it is "the only candidate that leaves no decode on the main thread". The
+  straight-from-bytes variant leaves none too. M2's check said "no restore value holds a `JSONValue`". A failed
+  description reaches its placeholder as itself. The gate entry said "kept all", though no gate question was asked.
+  Linked bugs `20261122-undo-reopen-decodes-pane-on-main-thread` and
+  `20261122-optimized-build-crashes-compiler-in-status-queue`.
 
 ## References
 
@@ -322,3 +332,5 @@ early, and the deferral is inert in the app.
 - Bug `20261122-layout-save-runs-on-main-thread`, fixed
 - Bug `20261122-browser-describe-reencodes-tabs-on-main-thread`
 - Bug `20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread`
+- Bug `20261122-undo-reopen-decodes-pane-on-main-thread`
+- Bug `20261122-optimized-build-crashes-compiler-in-status-queue`
