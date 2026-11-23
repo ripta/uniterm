@@ -115,6 +115,15 @@ size limits, and how callers handle history changing or being cleared.
 This also extends UTERM-003's host API. A proposal would settle authorization
 and the distinction between access to the current screen and retained history.
 
+## Scripting: write images and other types to the clipboard
+
+Let a script or controller write more than plain text to the clipboard. The first
+example is an image, such as a pane screenshot that UTERM-054 captures for a
+program. Today the clipboard-write power writes plain text only, on ScriptWire and
+on the exec wire. Still open: which types beyond images, whether an image is passed
+as bytes or by a capture's result handle, and whether each type needs its own
+power or the clipboard-write power covers them all.
+
 ## Terminal: Kitty clipboard protocol
 
 Support the Kitty clipboard protocol, OSC 5522, which libghostty handles from
