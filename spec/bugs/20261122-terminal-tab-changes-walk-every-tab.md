@@ -2,6 +2,7 @@
 
 **Status:** open
 **Validation:** not confirmed; traced by reading the code during the UTERM-053 review. The cost was not measured.
+**Estimate:** small to medium; one non-trivial design decision. See "Estimate notes".
 
 ## Observed
 
@@ -34,3 +35,24 @@ UTERM-053 changes the shared tab bar's input, which removes the per-change title
 out of its scope. The rest needs a design call: cache the published list and update it per change, or keep it computed
 and accept a cheap walk. Keeping the hidden sessions' visibility untouched on a switch means tracking the previous
 selection.
+
+## Estimate notes
+
+Traced on 2026-11-23 by reading the code. Nothing was run, and the cost was not measured.
+
+UTERM-053 is accepted and its M1 is not started. It owns the title array in the title-change handler and the computed
+published list. It publishes a read-through list instead. This bug owns only the other two walks.
+
+- `refreshTabs` calls `setVisible`, `setFocused(false)`, and clears `hoveredLink` on every tab. `setVisible` already
+  returns early when the state is unchanged. A tab with no session, which is every waiting tab of a restored
+  program-mode pane, costs one nil check. The walk could cover only the previous and the new selection. That needs the
+  previous selection tracked, and it is not a design call.
+- `layoutContents` sets a frame on every session view, hidden ones included. Bounding it to the selected session
+  changes behavior a user can see. A hidden shell tab would keep its old size through a window resize. Its program
+  would learn the new size only when the tab is shown again, or the show path would set the frame. Equally correct
+  options exist: keep sizing hidden sessions, or size a session when it is shown.
+
+Non-trivial decision: whether hidden sessions track the pane's size while hidden.
+
+The fix would touch `Packages/UnitermKit/Sources/TerminalApplet/TerminalApplet.swift` and its tests. It should wait for
+UTERM-053 M1, which edits the same functions.
