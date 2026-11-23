@@ -501,6 +501,7 @@ gone.
   waiting tab, Reopen and `open-tab`, and the panels. M3 is the libghostty patch. No check was dropped. M1 gained one
   check: a new tab still falls back to home rather than hand libghostty the raw path, so M1 alone does not regress the
   fallback.
+- 2026-11-22: Scheduled as UTERM-050 M1-M3 in queue.md.
 
 ## References
 

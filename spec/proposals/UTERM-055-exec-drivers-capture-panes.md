@@ -439,6 +439,7 @@ Waits for UTERM-028 M1, for UTERM-054 M2, M3, and M5, and for UTERM-054's resolu
   the UTERM-028 documentation rule that a driver picks a version it knows from the offered list.
 - 2026-11-22: The user accepted the proposal. No decision earns an ADR: the driver's grant and targets are ADR-14's,
   wire compatibility is ADR-13's, and the frames, the held reply, and the read hold are scoped to this exec version.
+- 2026-11-22: Scheduled as UTERM-055 M1 in queue.md.
 
 ## References
 

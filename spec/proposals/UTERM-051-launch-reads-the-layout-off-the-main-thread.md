@@ -497,6 +497,7 @@ It builds on M2's off-main step and main-thread build pair.
 - 2026-11-22: Review gate: the user narrowed undo reopen to an early wait with no pending pane, narrowed the restore
   value's rule to keep UTERM-052 M2's tree reuse, kept the early wait after the corrected numbers, and accepted the
   terminal's deviation. Status stays accepted.
+- 2026-11-22: Scheduled as UTERM-051 M1-M3 in queue.md.
 
 ## References
 

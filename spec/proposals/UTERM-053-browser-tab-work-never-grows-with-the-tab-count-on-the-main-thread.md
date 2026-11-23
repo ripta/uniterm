@@ -463,6 +463,8 @@ Waits on UTERM-041 M1 and UTERM-052 M2.
 - 2026-11-22: ADR candidate "Tab actions name a tab by ID, resolved when they run": Declined. ADR-02 states the
   principle for pane nodes, and this proposal applies it.
 - 2026-11-22: Accepted by the user after the review.
+- 2026-11-22: Scheduled as UTERM-053 M1 in queue.md.
+
 ## References
 
 - ADR-08: UI responsiveness

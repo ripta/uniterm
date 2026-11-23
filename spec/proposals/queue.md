@@ -9,9 +9,13 @@
 | UTERM-043 M1 | None | Split from M2: M1 builds only on today's control code. M2 checks it against newer features |
 | UTERM-041 M1-M2 | None | |
 | UTERM-042 M1-M3 | UTERM-041 M2 | M2 builds on UTERM-041 M1's tab bar and markers. M3 builds on its chip. M1 needs neither |
+| UTERM-054 M6 | None | Split from M1-M5: M6 amends UTERM-019 and must land before UTERM-019 M1 ships |
+| UTERM-054 M1-M4 | None | Split from M5 and M6: M1-M4 need nothing from UTERM-019. M2 builds the full-page route if UTERM-019 M4 has not |
 | UTERM-019 M1-M2 | None | Split from M3: M1-M2 need nothing from UTERM-041 or UTERM-042 |
 | UTERM-019 M3 | UTERM-041 M1, UTERM-042 M2 | Split from M1-M2: M3 publishes the run-end marker. It needs UTERM-041 M1's slot and UTERM-042 M2's "Rebuild Tab" menu, so the marker never ships without a way to rebuild the tab |
+| UTERM-054 M5 | UTERM-019 M3 | Split from M1-M4: M5 needs UTERM-019 M3's handles, read-result, and byte type |
 | UTERM-019 M4-M6 | None | Split after M3: these follow M3 in order and need nothing more from these proposals |
+| UTERM-020 M1-M9 | UTERM-019 M6 | Its Dependencies name UTERM-019 whole, including trusted input. M1 starts after UTERM-019 M1 |
 | UTERM-032 M1-M2 | None | |
 | UTERM-034 M1 | UTERM-032 | M1 amends UTERM-032's input-file sections and moves its input-file mark onto the bytes the command reads |
 | UTERM-024 M1-M2 | UTERM-032 | New permission kinds follow UTERM-032's rule on where a kind may appear |
@@ -19,6 +23,7 @@
 | UTERM-025 M1 | UTERM-024, UTERM-030, UTERM-032 | The presenter needs UTERM-024's commands and keys, UTERM-030's slides, and UTERM-032's deck argument |
 | UTERM-026 M1-M4 | UTERM-024, UTERM-025, UTERM-032 | The presenter view extends UTERM-025's controller across two windows |
 | UTERM-028 M1 | UTERM-024 | Exec drivers gain UTERM-024's commands, keys, and events |
+| UTERM-055 M1 | UTERM-028 M1, UTERM-054 M5, UTERM-019 M3 | Needs UTERM-028 M1's version negotiation and UTERM-054's capture. UTERM-019 M3 gains the check for the `data` and `offset` keys. Also waits on the open bug `20261122-capture-bypasses-image-viewer-read-scope` |
 | UTERM-029 M1-M3 | UTERM-024 M2, UTERM-025, UTERM-026, UTERM-030 M2, UTERM-032 M1 | Extends the presenter with UTERM-026's notes window, UTERM-030 M2's slide images, and UTERM-032 M1's input file |
 | UTERM-043 M2 | UTERM-019 M6, UTERM-024, UTERM-028, UTERM-041, UTERM-042 | Split from M1: each check runs when the feature it names has landed. UTERM-019 M3 precedes M6 in its rows |
 | UTERM-018 M1-M5 | None | |
@@ -26,5 +31,9 @@
 | UTERM-039 M1 | None | |
 | UTERM-033 M1 | None | |
 | UTERM-048 M1 | None | Split from M2-M5: the shared snapshot needs nothing from UTERM-041 or the open bugs |
+| UTERM-050 M1-M3 | None | Fixes `20261122-terminal-directory-check-blocks-main-thread.md`, which holds UTERM-048 M2 |
 | UTERM-048 M2-M5 | UTERM-041 M1 | Split from M1: M3's tab IDs and M5's markers need UTERM-041 M1. M2 is also blocked until `bugs/20261122-terminal-directory-check-blocks-main-thread.md` and `bugs/20261122-approval-text-leaves-zero-width-scalars-raw.md` are fixed. The directory-check fix still needs a design call |
 | UTERM-049 M1-M3 | UTERM-018 M5 | M2 routes through UTERM-018's walk when no pane takes a tab file in place. M3's program open uses UTERM-018 M5's script file open |
+| UTERM-051 M1-M3 | None | |
+| UTERM-052 M1-M2 | None | |
+| UTERM-053 M1 | UTERM-041 M1, UTERM-052 M2 | Needs UTERM-041 M1's scrolling tab bar and UTERM-052 M2's record choke point |

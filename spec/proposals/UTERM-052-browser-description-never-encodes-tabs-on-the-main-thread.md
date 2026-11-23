@@ -326,6 +326,8 @@ The scratch measurement covered the encode alone.
 - 2026-11-22: Followed UTERM-053's re-check. A restore gives each tab its encoded record once, about 20 µs per tab, so
   the Summary names it and M2 reuses the stored payload's tree for a record validation leaves unchanged. M1 measures
   the pass over the kept records instead of the removed array's copy.
+- 2026-11-22: Scheduled as UTERM-052 M1-M2 in queue.md.
+
 ## References
 
 - ADR-08: UI responsiveness

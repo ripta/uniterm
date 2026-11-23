@@ -756,6 +756,7 @@ Lands before UTERM-019 M1 ships, and does not wait for M1 to M5 here.
 - 2026-11-22: Correction of fact for the growth question entry. It gave "since no proposal plans an exec-capable
   applet" as the reason for dropping exec capture. The map viewer and image viewer accept exec drivers today. The
   outcome stands, since exec capture returned as UTERM-055.
+- 2026-11-22: Scheduled as UTERM-054 M6, UTERM-054 M1-M4, and UTERM-054 M5 in queue.md.
 
 ## References
 
