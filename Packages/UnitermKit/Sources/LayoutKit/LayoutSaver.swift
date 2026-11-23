@@ -17,8 +17,9 @@ public typealias LayoutScheduler =
 /// Saving stays off until the caller turns it on, so a half-restored layout never replaces the
 /// file.
 ///
-/// The snapshot is taken on the main actor, where the layout lives. The write encodes and stores
-/// it on a background queue, so a layout with tens of thousands of tabs never stalls the windows.
+/// The snapshot is taken on the main actor, where the layout lives, so each applet builds its
+/// description there. The write encodes and stores the snapshot on a background queue, so the
+/// file's size never stalls the windows.
 /// One write runs at a time. A snapshot taken while a write runs replaces the one waiting behind
 /// it, so only the newest waits. Quit calls `waitForWrites` to be sure the last layout is on disk.
 @MainActor
