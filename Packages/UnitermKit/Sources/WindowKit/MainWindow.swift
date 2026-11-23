@@ -14,6 +14,9 @@ import AppletKit
 /// menu goes to that menu item before any view in the window sees it. The menu is read live, so a
 /// user's remap of an item in System Settings > Keyboard > App Shortcuts applies. A remap onto a
 /// Control or Option chord therefore wins over a terminal that would take the key as input.
+///
+/// One thing goes before the menu: a key of the command palette, such as Control-K, while the
+/// palette's field holds the keyboard.
 public final class MainWindow: NSWindow {
   /// Whether AppKit keeps the window on the screen it is shown on. Tests turn it off. Their frames
   /// come from screens they inject, and the display of the machine running them must not move a
@@ -88,6 +91,14 @@ public final class MainWindow: NSWindow {
   // MARK: Key route
 
   public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    // A focused palette's own keys win over the menu, and they bind nothing while it is closed.
+    let controller = windowController as? MainWindowController
+
+    if event.type == .keyDown, controller?.contentController.commandPalette.handleKey(event) == true
+    {
+      return true
+    }
+
     if routeToMenu(event) {
       return true
     }

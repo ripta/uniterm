@@ -1,4 +1,5 @@
 import AppKit
+import AppletKit
 import Theme
 
 /// The command palette's search field and the list of results under it.
@@ -316,6 +317,26 @@ final class CommandPaletteView: NSView, NSTextFieldDelegate, NSTableViewDataSour
 
     selection = nil
     onQueryChange?(field.stringValue)
+  }
+
+  /// The keys that fill in a category's keyword, such as Control-K for `kind:`. They belong to the
+  /// palette only while its field holds the keyboard. Otherwise the key goes on, so a closed
+  /// palette or an inactive docked one binds nothing.
+  static let keywordKeys: [KeyChord: PaletteFilter.Category] = [
+    KeyChord("a", .control): .applet,
+    KeyChord("k", .control): .kind,
+  ]
+
+  /// Takes a key that belongs to the palette while its field holds the keyboard. The window asks
+  /// before any view, so a terminal that takes Control chords as input never sees it.
+  func handleKey(_ event: NSEvent) -> Bool {
+    guard isActive, let editor = field.currentEditor(), window?.firstResponder === editor,
+      let category = Self.keywordKeys[
+        KeyChord(event.charactersIgnoringModifiers ?? "", event.modifierFlags)]
+    else { return false }
+
+    setText(category.keyword)
+    return true
   }
 
   /// Tab completes a keyword hint, or turns the highlighted suggestion into the chip. It never

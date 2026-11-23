@@ -16,6 +16,19 @@ private final class PressRecorder: NSView {
   }
 }
 
+/// A pane view that takes every key chord, as a terminal would take Control-K as input.
+@MainActor
+private final class KeyRecorder: NSView {
+  var keysSeen = 0
+
+  override var acceptsFirstResponder: Bool { true }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    keysSeen += 1
+    return true
+  }
+}
+
 /// The docked palette in a window with fake applets: where it sits, what it takes, and what its
 /// overlay does. The live field editor, the real menu remap, and a real mouse-reporting terminal
 /// need the app, so the UI tests cover them.
@@ -64,6 +77,14 @@ final class DockedPaletteTests: XCTestCase {
         with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
         windowNumber: fixture.controller.window?.windowNumber ?? 0, context: nil, eventNumber: 0,
         clickCount: 1, pressure: 1))
+  }
+
+  private func controlK(_ fixture: WindowFixture) throws -> NSEvent {
+    try XCTUnwrap(
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: .control, timestamp: 0,
+        windowNumber: fixture.controller.window?.windowNumber ?? 0, context: nil,
+        characters: "\u{0B}", charactersIgnoringModifiers: "k", isARepeat: false, keyCode: 40))
   }
 
   // MARK: Placement
@@ -198,6 +219,28 @@ final class DockedPaletteTests: XCTestCase {
     XCTAssertNil(field.currentEditor(), "the field never began editing")
     XCTAssertFalse(window.firstResponder === field)
     XCTAssertFalse(fixture.controller.isPaletteVisible)
+  }
+
+  /// Catches an inactive docked palette that takes Control-K, which only an open palette binds, or
+  /// an active one that does not fill in the kind keyword.
+  func testControlKFillsInTheKindKeywordOnlyWhileTheDockedPaletteIsActive() throws {
+    let fixture = try makeFixture()
+    let controller = fixture.controller
+    let window = try XCTUnwrap(controller.window)
+    let applet = try XCTUnwrap(controller.paneArea.applet(for: controller.focusedPane))
+    let catcher = KeyRecorder()
+    applet.view.addSubview(catcher)
+    XCTAssertTrue(window.makeFirstResponder(catcher))
+
+    XCTAssertTrue(window.performKeyEquivalent(with: try controlK(fixture)))
+    XCTAssertEqual(catcher.keysSeen, 1, "an inactive docked palette took Control-K")
+    XCTAssertEqual(palette(fixture).query, "")
+
+    controller.dispatch(.showCommandPalette)
+
+    XCTAssertTrue(window.performKeyEquivalent(with: try controlK(fixture)))
+    XCTAssertEqual(catcher.keysSeen, 1)
+    XCTAssertEqual(palette(fixture).query, "kind:")
   }
 
   /// Catches a click that does not activate, or one that activates without the keyboard.
