@@ -1,7 +1,12 @@
 # Saving a map reads its file on the main thread
 
 **Status:** open
-**Estimate:** small; no open design decisions. Traced, not reproduced: the hang needs a mount that stops answering. The code path is confirmed. `performSave` is `async` but runs on the main actor, and `resolvingSymlinksInPath()` and `Data(contentsOf:)` run inline before the conflict check. No accepted proposal owns the fix. UTERM-050 and UTERM-051 cover other reads.
+**Estimate:** small; one non-trivial design decision, found by the design review on 2026-11-23: what Save does when the
+pane changes during the off-main read. The read adds an unbounded wait between the decision to save and the conflict
+check. During it the user can open another file, clear the file, or close the pane with Don't Save. "Abandon" returns
+false without asking or writing when the open generation, the path, or `closed` changed. "Finish" captures
+`savedDocument`, the name, and the target before the read and compares against the capture, as a write in flight
+finishes today. Both are defensible, and they differ in what the user sees. Traced, not reproduced: the hang needs a mount that stops answering. The code path is confirmed. `performSave` is `async` but runs on the main actor, and `resolvingSymlinksInPath()` and `Data(contentsOf:)` run inline before the conflict check. No accepted proposal owns the fix. UTERM-050 and UTERM-051 cover other reads.
 **Validation:** not confirmed; found by reading the code during the UTERM-050 review. The hang needs a mount that stops
 answering.
 
