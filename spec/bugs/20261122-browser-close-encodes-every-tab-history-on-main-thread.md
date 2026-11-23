@@ -2,7 +2,14 @@
 
 **Status:** open
 **Found:** 2026-11-22, during the design review of UTERM-052
-**Validation:** mechanism confirmed by reading the code. Cost not measured.
+**Estimate:** medium; two non-trivial design decisions. First, keep each tab's encoded undo entry current at each history
+change, or capture the history data before the close and encode it off the main thread. The first adds a WebKit read and
+an encode at a rate a page chooses, and an index alignment. The second changes the close from a synchronous push to the
+ledger to an asynchronous one, so a quit or an immediate undo reopen needs the payload at once. Second, whether the
+close may wait on the first, since UTERM-052 leaves this bug open on purpose and no accepted proposal owns the fix. The
+fix would touch `BrowserApplet.swift`, `BrowserTab.swift`, and possibly `MainWindowController.swift` and the ledger.
+Re-triaged 2026-11-23: traced against the current code, where `undoPart()` still maps every tab's `interactionData` and
+encodes the whole state at a close. The cost is not measured. UTERM-052 M1 records it.
 
 ## Observed
 
