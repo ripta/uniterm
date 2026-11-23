@@ -33,7 +33,9 @@ extension TabOpening {
 /// pane's control.
 @MainActor
 public protocol CallerOwning: Applet {
-  /// A pane the caller's layout created starts with its first tab owned by the caller.
+  /// A pane a program opens starts with its first tab owned by that program. This covers a pane
+  /// its layout created and a pane it opened by itself. The applet adopts the tab after it learns
+  /// the pane's control, since a new control generation clears every owner.
   func adoptFirstTab(for caller: AppletCaller)
 
   /// The grant ended: the controller was revoked, its run ended, or it disconnected. The applet

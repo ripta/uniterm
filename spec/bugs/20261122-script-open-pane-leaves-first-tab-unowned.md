@@ -1,6 +1,7 @@
 # A pane a script opens with open-pane leaves its first tab unowned
 
-**Status:** open
+**Status:** fixed 2026-11-23
+**Fixed:** 2026-11-23
 **Found:** 2026-11-22, during the UTERM-054 review
 **Estimate:** small; no open design decisions. Two files: `MainWindowController.swift` and `AppletKit/TabOpening.swift`.
 
@@ -36,10 +37,21 @@ the first tab. If it is not, the doc comment should say why the two paths differ
 
 ## Estimate
 
-Small. The intent is settled. The screenshot proposal's As built block says a pane any program opens with `open-pane` starts with its first tab owned by that program, through the shared open-pane path, and names this bug as closed by that.
+Small. The intent is settled. The UTERM-054 "M4: Terminal and REPL" milestone has a check that a pane any program opens with `open-pane` starts with its first tab owned by that program, through the shared open-pane path. It names this bug. That milestone is not started, so the check is a plan and not an As built record.
 
 The fix touches:
 
 - `Packages/UnitermKit/Sources/WindowKit/MainWindowController.swift`: in `openPane(_:typeID:axis:from:directory:owner:access:)`, inside the `access != .disconnected` branch, call `(applet as? any CallerOwning)?.adoptFirstTab(for: AppletCaller(grant: owner.description))`, as `stageLayout` does.
 - `Packages/UnitermKit/Sources/AppletKit/TabOpening.swift`: widen the `adoptFirstTab` doc comment to every pane a program opens.
 - `Packages/UnitermKit/Tests/WindowKitTests/BrowserWindowTests.swift`: a test that opens a browser pane through `openPane` and asserts one `tabOwners` entry for the connection's grant, and none for a disconnected pane.
+
+## Fix note
+
+`MainWindowController.openPane` now calls `adoptFirstTab` after `controlDidChange` when the pane starts with control, as
+`publish` does for a layout. The order matters, since a new control generation clears the owners. The `adoptFirstTab`
+doc comment now covers every pane a program opens. A pane opened with `open-pane` and remote control now owns its first
+tab for the opener. A disconnected pane still owns none.
+
+Regression test: `BrowserWindowTests.testAnOpenedBrowserPaneStartsWithItsFirstTabOwnedByTheOpener`. It failed before the
+fix with 0 owners. The existing grant-end test now counts only the second connection's tab, since the first connection
+owns the pane's first tab.
