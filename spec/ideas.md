@@ -482,3 +482,35 @@ into the palette entry and show it, perhaps as the target pane's applet name for
 show. The wording should follow UTERM-042's convention. The scope enum has no tab level, so "Close Tab or Pane" may need
 a more honest label than its scope gives. Still open: whether the scope replaces the "Command" word or goes in a second
 field or detail line.
+
+## Browser: suspend background tabs
+
+A browser tab that has loaded and then lost selection keeps its web view, its content process, its scripts and timers,
+and its memory for as long as the pane lives. Selecting another tab only takes the old web view out of the view
+hierarchy (`show(page:)` in `BrowserView.swift`). The tab still holds it. Many tabs add up, and UTERM-039 leaves a
+controller's tab count uncapped. Its Revisit line already names "unloading of background tabs" as a trigger.
+
+UTERM-005 covers part of this. A restored tab nobody has looked at loads only when it is first selected, and only while
+the pane is attached (`loadIfNeverLoaded` in `BrowserApplet.swift`). Detach pauses and suspends media in every tab
+(`setMediaSuspended` in `BrowserTab.swift`), and reattach lifts it. This idea covers the rest: a tab that has loaded
+and then gone to the background, in an attached pane.
+
+The idea has two readings. Freeze keeps the web view and throttles or suspends its activity. WebKit's public API reaches
+only media this way, through `pauseAllMediaPlayback` and `setAllMediaPlaybackSuspended`. Occlusion control is private
+API, and an off-window web view is throttled but not frozen. That WebKit behavior has not been measured here. Discard
+drops the web view and its content process, and rebuilds the tab when it is selected again, as Chrome and Safari do.
+Only discard frees the memory.
+
+The code is close to discard already. `BrowserTab` builds its web view on first use (`webView` and `isMaterialized`).
+It already drops and rebuilds the web view after a content process ends or hangs (`replaceWebView`). It rebuilds from
+`interactionState`, which keeps the back and forward history, the URL, and often the scroll and form state. A discarded
+tab still loses its in-page script state and its media position. UTERM-005's recovery rationale warns against reloading
+tabs nobody is looking at, which fits a reload on selection.
+
+UTERM-052 and UTERM-053 address main-thread cost that grows with the tab count. Discarding would lower that cost, but
+neither proposes it.
+
+Still open: freeze or discard, and what triggers it, such as deselection, an idle delay, or memory pressure. Also open:
+which tabs are exempt, such as one playing media, one with a download in flight, one holding unsent form input, one
+waiting on a dialog, or one a controller is driving. Hidden panes in a background uniterm tab or window need the same
+answer.
