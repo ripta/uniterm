@@ -28,11 +28,11 @@
 
 ## Summary
 
-The browser applet stops encoding every tab record on the main thread each time the window asks for a description.
-A change costs the description one tab's work on the main thread, and a save encodes nothing there. Two costs still
-grow with the tab count: one pointer-sized pass over the kept records at each save, and a pane close's read and encode
-of every loaded tab's history. The close's cost is new for a pane that sat quiet before it closed, since a save no
-longer prepares it.
+The browser applet stops encoding every tab record on the main thread each time the window asks for a description. A
+change costs the description one tab's work on the main thread, and a save encodes nothing there. Two costs still grow
+with the tab count: one pointer-sized pass over the kept records at each save, and a pane close's read and encode of
+every loaded tab's history. A restore also gives each tab its encoded record once. The close's cost is new for a pane
+that sat quiet before it closed, since a save no longer prepares it.
 
 ## Motivation
 
@@ -204,7 +204,8 @@ None.
 The scratch measurement covered the encode alone.
 
 - The cost of a full `describe()` is recorded for 1,000, 10,000, and 50,000 tabs, in the As built block
-- The cost of copying a kept tab array of 50,000 encoded records is recorded in the As built block
+- The cost of the pass over 50,000 kept encoded records, as each save and `describe()` makes it, is recorded in the
+  As built block
 - The cost of a pane close's `describe()` with 1,000 and 10,000 loaded tabs is recorded in the As built block. Today's
   close after a quiet second is recorded beside it, split into the record encode and the undo part, so the two can be
   compared
@@ -217,8 +218,9 @@ The scratch measurement covered the encode alone.
   10 tabs. `describe()` and a save are timed apart, since each pays the accepted pass over the kept records. `refresh`
   and the tab bar are timed apart too, since UTERM-053 owns them. A record change rebuilds only its own tab's encoded
   record, with no search through the tabs
-- A test shows that the restoring init builds each tab's encoded record once, and that the first save after a restore
-  encodes nothing. The restore's time with the encode is recorded in the As built block
+- A test shows that the restoring init gives each tab its encoded record once, and that the first save after a restore
+  encodes nothing. A stored record that validation leaves unchanged takes its encoded form from the stored payload's
+  tree, with no encode. The restore's time is recorded in the As built block
 - A test closes a pane right after a page finishes loading in a background tab, with no other history change. An undo
   reopen brings back the history as it stood after the finish
 - A test replaces a pane's applet, and runs a window that has never saved, as a second instance does. A change report
@@ -321,6 +323,9 @@ The scratch measurement covered the encode alone.
   Summary, Leaves undone, and the stale-revision risk. Dropped "moved" from the checks, since the browser has no tab
   move. The burst check now times only the window's change check, since `describe()` pays the array pass. Added a check
   that a restore builds each encoded record once and the first save encodes nothing.
+- 2026-11-22: Followed UTERM-053's re-check. A restore gives each tab its encoded record once, about 20 µs per tab, so
+  the Summary names it and M2 reuses the stored payload's tree for a record validation leaves unchanged. M1 measures
+  the pass over the kept records instead of the removed array's copy.
 ## References
 
 - ADR-08: UI responsiveness
