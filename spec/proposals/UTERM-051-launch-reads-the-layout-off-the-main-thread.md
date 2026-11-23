@@ -161,7 +161,54 @@ thread.
 
 ## Design Decisions (Open)
 
-None.
+### Whether undo reopen of a closed pane also leaves the main thread
+
+This is a scope addition. "Where the typed decode runs" leaves undo reopen outside this proposal. Bug
+`20261122-undo-reopen-decodes-pane-on-main-thread` tracks it. Bringing it in removes that statement.
+
+`MainWindowController.reopenPane` calls `PaneRestoration.applet(for:restorer:)` synchronously. The restoring init
+decodes the payload and the undo state, then builds the applet. A pane has no tab cap. The decode grows with the tab
+count, and ADR-08 allows only bounded local work on the main thread.
+
+The ledger already holds the payload's `JSONValue` tree, so reopen pays no tree build. It pays only the `decoded(as:)`
+round trip: about 32 ms at 10,000 tabs and about 160 ms at 50,000 tabs in a debug build, per the Decision Log. The undo
+state adds its own decode, which has not been timed. It holds each tab's history as base64 text, so it grows with
+history size as well as tab count.
+
+No candidate makes reopen bounded. The build that follows stays linear on the main thread: the tab objects, the tab bar,
+and the refresh. Bug `20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread` and UTERM-053 own that. After
+UTERM-053, the decode is the largest cost left in reopen. The close that comes first is also linear on the main thread.
+Bug `20261122-browser-close-encodes-every-tab-history-on-main-thread` tracks it.
+
+Candidates:
+
+- No addition. Undo reopen stays synchronous, and the bug stays open until a later proposal takes it. Leaves undone: a
+  main-thread decode of about 32 ms at 10,000 tabs and 160 ms at 50,000, plus the untimed undo decode. No ADR
+  Deviations entry records it, so this candidate adds one.
+- Prepare the typed restore value when the pane closes, and show a pending pane for an early reopen. The ledger entry
+  holds the preparation's task, run off the main thread, beside the description. The description stays, because a
+  build that throws becomes a placeholder that keeps it. A reopen after the task finishes builds at once. A reopen
+  before it finishes inserts a pending pane, which keeps the description and returns it from `describe()`, then swaps
+  in the built applet when the value arrives. An early reopen is reachable: a Cmd-Shift-T typed during the close's
+  freeze arrives as the preparation starts. Costs: the ledger holds at most 20 entries per window, and each entry gains
+  a typed value of about the size of the tree it already holds. The swap needs rules: focus moves only if the pending
+  pane still has it, and a result for a closed pane, a closed window, or an evicted entry is discarded.
+- Hand over the typed restore value at close, straight from the applet's live state. The browser already holds typed
+  records. Nothing encodes or decodes, so nothing is pending. Costs: each applet type gains a third member beside the
+  off-main step and the main-thread build. That member can drift from describe-then-decode with no error, so each type
+  needs a test that the two agree. It gives up this proposal's reason for one decode path, that undo reopen shares it.
+- Run the off-main step at every reopen, and show a pending pane until the value arrives. The pending pane is the same
+  as in the second candidate, so a save writes its description and a close pushes it back onto the ledger. Costs: every
+  reopen shows a pending frame, a one-tab terminal included.
+- Run the off-main step at reopen time, and defer the window's commands the way the launch does. Costs: keystrokes are
+  not commands, so typing during the decode reaches the focused pane. The reopened pane then takes focus partway
+  through the input. That is the wrong-shell hazard the launch's deferral exists to prevent.
+- Cap the tabs a pane may hold. Rejected, for the reason in UTERM-052 and UTERM-053's "No tab cap": a pane over the cap
+  loses tabs or needs a deferred-tab state, and a cap refuses the user's own New Tab.
+
+The pending-pane candidates must say why a pending pane fits here when "No window shows while the read runs" ruled out a
+pending window. That decision read ADR-08 as asking for a pending state only for results that depend on outside work.
+A local decode is not outside work.
 
 ## Risks
 
@@ -325,6 +372,13 @@ early, and the deferral is inert in the app.
   description reaches its placeholder as itself. The gate entry said "kept all", though no gate question was asked.
   Linked bugs `20261122-undo-reopen-decodes-pane-on-main-thread` and
   `20261122-optimized-build-crashes-compiler-in-status-queue`.
+- 2026-11-22: Opened the question of whether undo reopen also leaves the main thread, at the user's request after bug
+  triage found no proposal that owns it. It is a scope addition. "Where the typed decode runs" still says undo reopen is
+  outside this proposal, and stays as written until the user settles the question. Candidates only so far.
+- 2026-11-22: Revised the undo reopen question after design critique. Struck the claim that UTERM-052 changes when the
+  payload is ready; it keeps `describe()` synchronous. The cap's stated reason was the launch's, "a cap does not bound
+  the file", and reopen reads no file. Preparing at close now says what an early reopen does. Added the typed handoff at
+  close. Stated that reopen stays linear on the main thread under every candidate, and what no addition leaves undone.
 
 ## References
 

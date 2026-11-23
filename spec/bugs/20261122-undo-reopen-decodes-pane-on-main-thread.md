@@ -1,6 +1,8 @@
 # Undo reopen of a closed pane decodes its description on the main thread
 
 **Status:** open
+**Triaged:** 2026-11-22 (still reproduces by trace; design question opened in UTERM-051)
+**Estimate:** large; one non-trivial design decision. Reopen becomes asynchronous, so the window must say what it shows and accepts while the reopen is pending.
 **Found:** 2026-11-22, during the UTERM-051 review
 **Validation:** mechanism confirmed by reading the code; cost measured only through the launch restore
 
@@ -30,3 +32,6 @@ Not settled. UTERM-051 gives each applet type an off-main step and a main-thread
 the main thread. Running the off-main step off the main thread for undo too makes reopen asynchronous. The design call
 is what the window shows and accepts while the reopen is pending. The view-building part belongs to bug
 `20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread`.
+
+UTERM-051 now carries the question as an open scope addition, "Whether undo reopen of a closed pane also leaves the main
+thread". Triage on 2026-11-22 confirmed the call path at `reopenPane` is unchanged. It was not timed as an undo.
