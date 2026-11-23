@@ -1,6 +1,7 @@
 # Saving a map reads its file on the main thread
 
 **Status:** open
+**Estimate:** small; no open design decisions. Traced, not reproduced: the hang needs a mount that stops answering. The code path is confirmed. `performSave` is `async` but runs on the main actor, and `resolvingSymlinksInPath()` and `Data(contentsOf:)` run inline before the conflict check. No accepted proposal owns the fix. UTERM-050 and UTERM-051 cover other reads.
 **Validation:** not confirmed; found by reading the code during the UTERM-050 review. The hang needs a mount that stops
 answering.
 
