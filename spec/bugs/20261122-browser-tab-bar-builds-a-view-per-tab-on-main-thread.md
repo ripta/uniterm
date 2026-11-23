@@ -19,7 +19,8 @@ chooses how often its title changes.
 `AppletTabBar.update` (`Packages/UnitermKit/Sources/AppletKit/AppletTabBar.swift:164`) keeps one `AppletTabItem` view
 per title. It creates the missing ones, then sets the index, title, selection, and both closures on every item.
 `BrowserApplet.refresh` (`Packages/UnitermKit/Sources/BrowserApplet/BrowserApplet.swift:1434`) computes every tab's
-title and calls it on each refresh. The restoring init runs `wire` and `refresh`, so each title is cleaned twice.
+title and calls it on each refresh. The private init cleans every title for `publishedTabs`, then calls `refresh`,
+which cleans them all again.
 
 ADR-08 allows only local work whose duration uniterm bounds on the main thread. A pane has no tab cap, so this work has
 no bound.
