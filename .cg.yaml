@@ -9,6 +9,8 @@ allow:
   - prefix: [/usr/bin/lldb, --batch]
   - prefix: [/usr/bin/sed]
   - prefix: [/usr/bin/swift, format]
+  - prefix: [/usr/bin/tar, -xzOf, .cache/ghostty/dl/83fb95624b0439ee660c2679b43b38c8b63769cd.tar.gz]
+  - prefix: [/usr/bin/tar, -xzf, /Users/ripta/projects/uniterm/.cache/ghostty/dl/83fb95624b0439ee660c2679b43b38c8b63769cd.tar.gz]
   - prefix: [actionlint]
   - wrapper: [caffeinate, -dimsu]
   - prefix: [caffeinate, -dimsu, ./scripts/run-ui-tests.sh]
