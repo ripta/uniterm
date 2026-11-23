@@ -19,8 +19,10 @@ and parses the result back.
 ADR-08 allows only local work whose duration uniterm bounds on the main thread. A pane has no tab cap, so this work has
 no bound.
 
-UTERM-052 makes the save ask for the saved description alone. The close then becomes the only caller of the undo part.
-It also takes on the live WebKit reads that saves pay today, for each tab whose history changed since its last read.
+Today a save fills the applet's undo cache and each tab's kept history read. So a pane that sat quiet for a second
+closes without reading or encoding any history. UTERM-052 makes the save ask for the saved description alone. The close
+then becomes the only caller of the undo part, and nothing fills either cache before it. A quiet pane's close then reads
+and encodes every loaded tab's history, so it gets slower than today.
 
 ## Repro
 
