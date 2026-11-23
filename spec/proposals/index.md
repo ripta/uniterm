@@ -54,7 +54,7 @@
 | [UTERM-050](UTERM-050-current-directory-never-blocks-the-main-thread.md) | An applet's current directory never checks the file system on the main thread | accepted |
 | [UTERM-051](UTERM-051-launch-reads-the-layout-off-the-main-thread.md) | The launch reads and decodes the layout file off the main thread | accepted |
 | [UTERM-052](UTERM-052-browser-description-never-encodes-tabs-on-the-main-thread.md) | The browser's description never encodes every tab on the main thread | accepted |
-| [UTERM-053](UTERM-053-browser-tab-work-never-grows-with-the-tab-count-on-the-main-thread.md) | The browser's per-tab work never grows with the tab count on the main thread | draft |
+| [UTERM-053](UTERM-053-browser-tab-work-never-grows-with-the-tab-count-on-the-main-thread.md) | The browser's per-tab work never grows with the tab count on the main thread | accepted |
 | [UTERM-054](UTERM-054-screenshot-a-pane-or-tab.md) | Copy or save a screenshot of the current pane or tab, for the user and for programs | draft |
 
 ## Dependency Graph
@@ -106,7 +106,7 @@ UTERM-049 ← UTERM-004, UTERM-005, UTERM-015, UTERM-018, UTERM-021
 UTERM-050 ← UTERM-001, UTERM-004
 UTERM-051 ← UTERM-001, UTERM-004
 UTERM-052 ← UTERM-005
-UTERM-053 ← UTERM-005
+UTERM-053 ← UTERM-005, UTERM-041, UTERM-052
 UTERM-054 ← UTERM-004, UTERM-005, UTERM-019
 ```
 
