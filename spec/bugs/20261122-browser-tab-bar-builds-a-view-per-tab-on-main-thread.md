@@ -31,10 +31,15 @@ cost does not grow with the tab count.
 
 ## Fix
 
-Not settled. The design call is how the bar bounds its work:
+Not settled. The bar is one of three per-tab costs on the main thread. `refresh` also cleans every title and rebuilds
+the published tab list and its change snapshot from every tab. The restoring init also makes one tab object per
+record, which is cheap at 7 ms for 10,000 tabs. A fix that bounds only the bar leaves `refresh`'s walk unbounded.
+
+The design call is how the pane bounds its per-tab work:
 
 - Show only the items that fit, and reuse them as the user scrolls or the selection moves. The bar already caps each
-  item's width at a narrowest size, so only a bounded number can be visible.
+  item's width at a narrowest size, so only a bounded number can be visible. `refresh` then also needs to update only
+  the tabs that changed, and to clean titles once per change instead of once per refresh.
 - Cap the tabs per pane. That brings in a product limit and a rule for stored panes over the cap.
 
 Bug `20261121-tab-bar-overflow-hides-tabs` changes the same bar's layout, so the two fixes bear on each other.
