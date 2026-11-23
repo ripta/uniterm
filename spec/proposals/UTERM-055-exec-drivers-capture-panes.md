@@ -108,11 +108,15 @@ driver. Candidates:
   Needs a descriptor that a user-launched driver lacks, and contradicts UTERM-028's rationale.
 - A separate exec capture power in the descriptor, so a controller can grant capture to scripts and not to its driver.
   Same flaw as the controller's grant, and no one is named who would set it.
-- The driver's own pane only. Same flaw, and it drops the browser snapshot the user chose to keep.
+- The driver's own pane only, under the per-run power or under none. Leaves undone: the browser snapshot the user chose
+  to keep, since a driver's browser panes are group members, not its anchor.
 
 Whichever is chosen must also settle two cases. Does capturing the driver's own anchor need the power too? And can the
 driver still capture its anchor after Revoke, since UTERM-028 leaves a driver its own applet commands and events after
-a revoke?
+a revoke? The image viewer promises that nothing from a file the caller may not read leaves the pane, and an exec
+driver holds no path-reading power. A driver that captures an anchor showing a user-opened image would get pixels its
+events withhold. Filed for UTERM-054 as
+[20261122-capture-bypasses-image-viewer-read-scope](../bugs/20261122-capture-bypasses-image-viewer-read-scope.md).
 
 ### How a capture's held reply reaches a driver
 
@@ -146,8 +150,12 @@ Retained outbound bytes are capped at 4 MiB and a frame at 1 MiB, and an overflo
 share that queue. A driver that sends five read-results before it reads its input can be ended, and its capture lost.
 Candidates:
 
-- The app bounds read replies in flight per driver, and refuses the next read with `busy` past the bound.
-- The chunk size is fixed small enough that a stated count of reads fits beside events.
+- The app refuses a read with `busy` when the retained outbound bytes plus the chunk would pass the cap. The bound
+  accounts for pushed events.
+- The app bounds read replies in flight per driver, and refuses the next read with `busy` past the bound. Leaves
+  undone: events share the queue, so a count alone can still overflow.
+- The chunk size is fixed small enough that a stated count of reads fits beside events. Leaves undone: a burst of
+  events can still overflow.
 - The version's documentation says how many reads may be in flight, and nothing in the app enforces it. Leaves undone:
   a driver that misreads it is ended.
 
@@ -164,11 +172,12 @@ Candidates:
   Mitigation: chunks are sized against the frame cap, and "How the app bounds reads in flight" settles the bound. The
   version's documentation lives with UTERM-028 M1's version 5 documentation.
 - **A driver with no verified identity reads what a pane shows** — likelihood: medium, impact: high.
-  Mitigation: capture needs a power and follows UTERM-054's tab scope, so a driver's reach is bounded. "Which grant and
+  Mitigation: capture follows UTERM-054's tab scope, and needs a power for at least every pane besides the anchor, so
+  a driver's reach is bounded. "Which grant and
   targets an exec driver captures under" settles the power and its targets.
 - **The design rests on three unbuilt proposals and a proposed ADR** — likelihood: high, impact: medium.
   Mitigation: M1 waits for UTERM-028 M1 and UTERM-054 M5, which reaches UTERM-019's byte type and exec base64. Following
-  UTERM-054's rules also rests on ADR-15, which is proposed. A change to either one's capture or version shape reopens
+  UTERM-054's rules also rests on ADR-15, which is proposed. A change to any of their capture or version shapes reopens
   the matching decision here.
 
 ## Milestones
@@ -183,13 +192,14 @@ Waits for UTERM-028 M1 and UTERM-054 M5.
 - A driver that answers an earlier version gets none of these frames, and an older app's offer leaves the version out
 - A capture from an exec driver follows UTERM-054's tab scope, target states, notice bound, time bound, and caps
 - A read-result chunk fits the frame cap after base64, in UTERM-019's field shape
-- An exec driver's browser full-page capture works for a browser member of its controller's group, or is refused by
-  the rule "Which grant and targets an exec driver captures under" settles
+- An exec driver's browser full-page capture works for a remote-controlled browser member of a group this run owns,
+  or is refused by the rule "Which grant and targets an exec driver captures under" settles
 - Revocation, run end, and pane close fail a pending capture and free its handle, under ADR-11
 - The version's documentation, beside UTERM-028's version 5 documentation, covers the frames, their errors, the rule
   for unknown reason kinds, and the bound on reads in flight
-- The new version includes every version 5 frame
-- A held capture counts toward the driver's bound on waiting requests, and past the bound it gets `busy`
+- The new version includes every frame of the version it follows
+- A second capture of a pane with a pending capture is refused, as UTERM-054's one pending capture per pane settles,
+  and held captures never count against the Pending Requests panel's rows
 - A driver's failure notice names the driver as pane chrome does, by executable and process ID
 - A capture of a member pane needs the member to be remote-controlled and owned by this run
 
@@ -206,6 +216,9 @@ Waits for UTERM-028 M1 and UTERM-054 M5.
   fields" and "How the app bounds reads in flight". "Version skew" replaced its stored-grant bullet, since driver
   grants are never stored, with the rule for unknown reason kinds. Risks gained a driver's read of a pane and the
   proposed ADR, and the version 4 risk is now rated medium.
+
+- 2026-11-22: The re-check converged. Routed three checks and folded its notes into the grant and read-bound
+  questions, including the image viewer read-scope gap, filed for UTERM-054.
 
 ## References
 
