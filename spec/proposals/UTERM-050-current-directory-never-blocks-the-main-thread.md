@@ -11,7 +11,7 @@
 
 ## Impacts
 
-- UTERM-048 — M2 waits on this fix. Its settled decision "The current directory in the polled snapshot" names this
+- UTERM-048 — M2 waits on this proposal's M1. Its settled decision "The current directory in the polled snapshot" names this
   work as its dependency. The panel shows whatever the fixed property returns. Under "How an applet meets the rule" that
   is the path as held, with no unknown state.
 - UTERM-051 — its restore decode and this proposal's "How an applet meets the rule" both touch the terminal's restore.
@@ -327,12 +327,26 @@ None.
 
 ## Milestones
 
-### M1: Remove the main-thread check
+### M1: The property does no file-system work
 
 **Status:** NOT STARTED
 
+The property returns the path as held. The Pane Inspector and `list-panes` stop freezing. Until M2 lands, a new pane
+or a panel still checks the same path on the main thread, as it does today.
+
 - No applet's `currentDirectory` does file-system work on the main thread
-- The contract's doc comment on `currentDirectory` states the rule
+- The contract's doc comment on `currentDirectory` states the rule, and says the path may be gone or unreachable
+- A contract test over the built-in applet catalog builds each applet over a path that does not exist and expects
+  `currentDirectory` to return the raw path or nil. Its table's keys equal the catalog's type IDs
+- `uniterm/api-version` is bumped, and the `list-panes` doc and the scripting docs say `:directory` may be gone or
+  unreachable
+- A new tab with no directory named still falls back to the starting directory, then home, when the reported one is
+  gone. It never hands libghostty a raw path the property returned
+
+### M2: One resolver checks a directory off the main thread before use
+
+**Status:** NOT STARTED
+
 - The terminal's two directory initializers, its restore, and `reopenTab` check no directory on the main thread
 - The open panel's start folder and the map's save panel resolve off the main thread. When the check has not answered
   in two seconds, the panel opens in home and a status message names the folder, cleaned
@@ -358,7 +372,8 @@ None.
 - The resolver answers a live local check while checks on a dead path are parked, and its cap on parked checks is
   stated
 - A missing directory named by a layout or by script `open-pane` is still refused, and is checked once
-- The catalog contract test injects the resolver, so its expected values do not depend on timing
+- The catalog contract test injects the resolver once the terminal starts through it, so its expected values do not
+  depend on timing
 - A reopen that completes after its check waited takes focus and selection only when focus has not moved since the
   press
 - After a reopen's check answers, the walk collects the closes again and checks that pane actions are still enabled. A
@@ -371,6 +386,19 @@ None.
 - The doc states what a check beyond the resolver's cap does, and a live local check still answers within the cap
 - A panel's start-folder check that answers after the panel opened in home neither moves that panel nor opens another
 - The view a waiting tab shows accepts first responder, so keys typed while it waits reach no other pane's shell
+- The panel's start-folder resolve takes an injected existence check. Each blocking-check test blocks on a semaphore,
+  not a sleep
+- The waiting view names its folder, bounded and cleaned as the status bar cleans program-chosen text
+- The waiting view's "Start in Home Folder" button starts the shell in home only on an explicit press. A typed key does
+  not press it
+
+### M3: libghostty no longer touches the start directory on the main thread
+
+**Status:** NOT STARTED
+
+The fourth libghostty patch. It needs M2, since only the resolver hands a directory to libghostty once the open is
+gone.
+
 - The libghostty patch removes the open and stat at surface creation, and a test or trace shows nothing else in surface
   creation touches the directory on the main thread
 - When libghostty's IO-thread access check fails, the patched fallback starts the shell in the home uniterm passed with
@@ -381,15 +409,6 @@ None.
 - The passed home travels in its own surface config field. It does not appear in the child's environment, does not
   change the child's `HOME`, and is not a user config key
 - The doc states what the child does when the passed home itself cannot be entered
-- `uniterm/api-version` is bumped, and the `list-panes` doc and the scripting docs say `:directory` may be gone or
-  unreachable
-- A contract test over the built-in applet catalog builds each applet over a path that does not exist and expects
-  `currentDirectory` to return the raw path or nil. Its table's keys equal the catalog's type IDs
-- The panel's start-folder resolve takes an injected existence check. Each blocking-check test blocks on a semaphore,
-  not a sleep
-- The waiting view names its folder, bounded and cleaned as the status bar cleans program-chosen text
-- The waiting view's "Start in Home Folder" button starts the shell in home only on an explicit press. A typed key does
-  not press it
 
 ## Decision Log
 
@@ -477,6 +496,11 @@ None.
   a directory removed after the access check still started the shell in the app's directory. The patch now covers that
   site too, and sets `PWD` to the directory the shell starts in. Routed to M1: the carrier field, `PWD`, and what
   happens when the passed home fails. This was the proposal loop's third pass, so the fix was not re-checked.
+- 2026-11-22: Split the one milestone into three, at the user's choice. M1 makes the property do no file-system work,
+  with the catalog test and the `api-version` bump, which unblocks UTERM-048 M2. M2 adds the shared resolver, the
+  waiting tab, Reopen and `open-tab`, and the panels. M3 is the libghostty patch. No check was dropped. M1 gained one
+  check: a new tab still falls back to home rather than hand libghostty the raw path, so M1 alone does not regress the
+  fallback.
 
 ## References
 
