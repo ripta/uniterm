@@ -33,3 +33,4 @@
 | [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | open |
 | [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
 | [20261122-declared-file-watchdog-may-signal-reused-pid](20261122-declared-file-watchdog-may-signal-reused-pid.md) | The declared-file test watchdog may signal a process id that was already reused | open |
+| [20261122-picked-file-start-directory-stat-on-main-thread](20261122-picked-file-start-directory-stat-on-main-thread.md) | A viewer stats a picked or dropped file on the main thread | open |
