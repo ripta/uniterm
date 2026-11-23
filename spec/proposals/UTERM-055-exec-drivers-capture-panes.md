@@ -1,6 +1,6 @@
 # UTERM-055: Exec Drivers Capture Panes
 
-**Status:** draft
+**Status:** accepted
 **Created:** 2026-11-22
 **Updated:** 2026-11-22
 
@@ -15,8 +15,11 @@
 - UTERM-054 — "Where a program's capture command lives" and M6. This proposal is where exec drivers' capture lands,
   including the browser snapshot UTERM-019 planned for them.
 - UTERM-019 — "Full-page snapshot", the exec skew statement, and its result chunks reaching drivers as base64. Exec
-  drivers' browser snapshot moves here.
-- UTERM-028 — "Version skew". This proposal adds a version to the hello's offer after UTERM-028's.
+  drivers' browser snapshot moves here. "The frames' fields" binds the `data` and `offset` keys of UTERM-019's exec
+  read-result chunks, and UTERM-019 M3 gains a check for them.
+- UTERM-028 — "Version skew". This proposal adds a version to the hello's offer after UTERM-028's. UTERM-028 M1's
+  version 5 documentation says a driver picks a version it knows from the list and ignores the others, and its M1
+  gains a fixture for an unknown value.
 
 ## Summary
 
@@ -80,18 +83,19 @@ Decision: the deploy units are the app and external exec drivers.
 
 - New driver, old app: an older app does not offer the new version, so the driver answers an earlier one and sends no
   capture frames.
-- Old driver, new app: a driver offered the new version answers with the version it knows. A version 5 driver ignores
-  the longer list, by UTERM-028's hello rule. A version 4 driver ignores the unknown `versions` field, as UTERM-028
-  assumes.
+- Old driver, new app: a driver offered the new version answers with the version it knows. A version 5 driver picks a
+  version it knows from the list and ignores the others. UTERM-028's hello rule covers unknown fields, not unknown
+  values in `versions`, so UTERM-028 M1's version 5 documentation states this rule too, and its fixture checks it. A
+  version 4 driver ignores the unknown `versions` field, as UTERM-028 assumes. Amended 2026-11-22; see Decision Log.
 - A newer app can send a reason kind that a driver's version has never seen, since UTERM-054's reason kinds are
-  append-only. A driver treats an unknown reason as a refusal in which nothing was captured, as UTERM-019 states for
-  `unsupported-capability`. The version's documentation states this rule.
+  append-only. A driver that does not know a reason acts on the error's `code`, and every capture error means nothing
+  was captured. The version's documentation states this rule.
 - A capture frame sent at an earlier version ends the driver as malformed. A driver avoids that by sending capture only
   at the version it negotiated.
 
-## Design Decisions (Open)
-
 ### Which grant and targets an exec driver captures under
+
+Original question:
 
 An exec driver has no verified identity, so ADR-14 P9 lets it keep no remembered approval. Each run gets its own group
 owner, and member commands check ownership against that driver owner. A driver's browser and clipboard powers are per
@@ -118,7 +122,36 @@ driver holds no path-reading power. A driver that captures an anchor showing a u
 events withhold. Filed for UTERM-054 as
 [20261122-capture-bypasses-image-viewer-read-scope](../bugs/20261122-capture-bypasses-image-viewer-read-scope.md).
 
+Decision: a per-run capture power, which the driver asks for through the Pending Requests route its clipboard and
+browser powers use. The panel offers Allow Once and Allow for This Run, and the power is held on the run's attachment.
+Its targets are the driver's anchor and the remote-controlled members of groups this run owns. The tab scope uses the
+driver's group owner as the caller. (autonomous)
+
+- A capture of the anchor needs the power too. Nothing about a capture is free because the pane is the driver's own.
+- Revoke and run end end the power everywhere, the anchor included, and fail every pending capture. The driver keeps
+  its own applet commands and events after a revoke, as UTERM-028 settles.
+- A driver's caller holds no file read scope. A driver's capture follows whatever UTERM-054 settles for the read-scope
+  bug, which covers the image viewer and the map viewer's file layer. If that resolution refuses a capture outside the
+  caller's read scope, a driver's capture of a pane showing a user-opened file is refused.
+- The power's panel text says a capture reads whatever the pane shows.
+- The power's bound under ADR-14 P15 is its targets, the run, and UTERM-054's per-result and per-run caps, one pending
+  capture per pane, and time bound.
+
+- M1 waits for UTERM-054's resolution of the read-scope bug, so no driver capture ships while the image viewer's
+  contract says nothing from such a file leaves the pane. Amended 2026-11-22; see Decision Log.
+
+Rationale: this is the only candidate that keeps the browser full-page snapshot the user chose and also meets
+UTERM-054's rule that a capture needs an explicit, revocable grant, even of the source pane. Both exec-capable applets
+can show a user-opened file their events withhold from a driver, so a free anchor capture would read it without
+consent. It would also leave a read standing at the badge where the user chose Revoke, against UTERM-028's rule that
+revocation ends a power everywhere, the anchor included. Capturing only the anchor drops the browser snapshot, since a
+browser reaches a driver only as a group member. A controller's descriptor grant cannot be built for a driver started
+with Run, and UTERM-028 rejects handing one requester's grant to another process. A separate descriptor power has the
+same flaw, and no one is named who would set it. Converged in 1 pass.
+
 ### How a capture's held reply reaches a driver
+
+Original question:
 
 UTERM-054's ScriptWire capture holds its reply until the PNG is ready, which ADR-11 allows for a command that only
 reads. UTERM-019's exec skew statement says a deferred reply reaches a driver matched by request ID, as layout replies
@@ -129,7 +162,25 @@ do. Candidates:
 - The capture frame replies at once with a handle, and a completion event on the driver's pane event stream names it.
   A capture only reads, so ADR-11 does not require this.
 
+Decision: the capture frame's reply is held and matched by request ID, as layout replies are since version 4. It
+carries a result handle once the PNG is ready. The driver reads chunks with read-result and frees the handle with
+discard. Revocation, run end, pane close, the user's cancel, and the time bound fail the held reply with a structured
+error. (autonomous)
+
+- The host holds the reply, not the applet's dispatcher, so the host re-checks authority at completion itself.
+- A driver cannot cancel its own pending capture. The user's cancel and the time bound bound it, as for ScriptWire. The
+  version's documentation says so.
+
+Rationale: the held reply needs no new mechanism. Version 4 already matches out-of-order replies by request ID, and
+layout and Pending Requests replies already wait. It keeps the three frames the version settles, and it has the same
+shape as UTERM-054's ScriptWire capture. A pushed completion adds a fourth published frame for no effect ADR-11 needs.
+The driver's event stream cannot carry it for members, since only the anchor's applet feeds that stream. Replying at
+once and then waiting or reading "not ready" also adds a frame or a state, and it is ADR-11's shape for effects, which a
+capture has none of. Converged in 1 pass.
+
 ### The frames' fields
+
+Original question:
 
 M1 must not invent a permanent contract, as UTERM-028 settled its version 5 JSON for the same reason. The frames need
 these fields settled:
@@ -144,7 +195,42 @@ these fields settled:
 Candidates: mirror the ScriptWire capture calls' fields one for one, so both transports name the same things, or give
 the exec frames their own field set in the version 5 style.
 
+Decision: the exec frames are settled here as concrete JSON, in the style of UTERM-028's version 5 frames. Their chunk
+keys are the exec spelling of every byte chunk, so UTERM-019's browser read-result uses them on the exec wire too.
+(autonomous, addition)
+
+- Capture: `{"type":"capture","id":n,"pane":p,"of":"content","tab":t}`. `pane` is a node ID, and leaving it out
+  names the anchor. `of` is `"content"`, `"pane"`, or `"full-page"`. `tab` is the string tab reference the applet's
+  own commands answer, and leaving it out names the selected tab.
+- The held reply's result: `{"handle":h,"size":n,"clamped":false,"scale":2}`. `handle` is a string. `size` is the
+  PNG's byte count. `scale` is the delivered image's pixels per point after any clamp, which is the density the PNG
+  records. So `clamped` with `scale` tells a cropped image from a scaled one.
+- Read-result: `{"type":"read-result","id":n,"handle":h,"offset":o}`, where `offset` counts raw bytes. Its result is
+  `{"data":d,"offset":o}`. `data` is the chunk's bytes as a base64 string, and `offset` echoes the read, since replies
+  arrive in any order.
+- A chunk holds at most 512 KiB of raw bytes, which fits the frame cap after base64 and the envelope. The ceiling is
+  not an exact size. The app may return fewer bytes before the end, so a driver advances by the decoded length, and a
+  read is complete when the offset plus its length reaches `size`.
+- Discard: `{"type":"discard","id":n,"handle":h}`. Its result is an empty object.
+- At this version, the error object gains an optional `reason` key beside `code` and `message`, carrying UTERM-054's
+  reason kind. Each reason rides one fixed `code` from the existing set. A driver that does not know a reason still
+  acts on its code, so it can tell `busy` from a refusal.
+- UTERM-019's browser read-result reaches a driver as a member command at version 4. Its exec result carries a chunk
+  under the same `data` and `offset` keys. That binds a key UTERM-019 leaves unnamed, before UTERM-019 M3 first ships
+  exec base64.
+
+Rationale: an exec version keeps one fixed meaning under ADR-13, so the JSON is settled before M1 builds it, as
+UTERM-028 settled its version 5 frames. The settled base64 decision promises a driver one byte encoding. UTERM-019
+names no key for its exec chunks, and its M3 ships them before M1 here can start, so binding the keys here is the only
+way that promise holds. Mirroring ScriptWire has little to mirror: ScriptWire is positional binary, with no field names,
+no reason slot, and a numeric tab ID. A ceiling keeps a smaller chunk open to a later app at the same version, where an
+exact size would let a driver that reads in parallel join chunks wrongly. A driver-chosen length was left out, since no
+caller needs it and a later version can add it. A reason inside `code` would lose the class an unknown reason rides on.
+Converged in 1 pass.
+
 ### How the app bounds reads in flight
+
+Original question:
 
 Retained outbound bytes are capped at 4 MiB and a frame at 1 MiB, and an overflow ends the driver. Pushed applet events
 share that queue. A driver that sends five read-results before it reads its input can be ended, and its capture lost.
@@ -159,6 +245,43 @@ Candidates:
 - The version's documentation says how many reads may be in flight, and nothing in the app enforces it. Leaves undone:
   a driver that misreads it is ended.
 
+Decision: the app holds a read-result's reply until the outbound queue has room for it below a threshold that keeps
+headroom for pushed events and other replies. Then it sends it. Holding is allowed, since a read only reads. Held reads
+per driver are bounded by a count, and a read past the count is refused with `busy`. (autonomous) Amended
+2026-11-22; see Decision Log.
+
+- The stdin writer signals the channel each time it frees room, and that signal releases held reads in order. Without
+  it, a driver that drains its stdin while no event arrives would wait forever.
+- The count is at least the per-run retained result cap divided by the 512 KiB chunk ceiling, with a margin for repeat
+  reads. A driver that sends every read for all its handles at once is never refused.
+- The version's documentation promises a floor on held reads, never an exact count. It says a read past the bound is
+  refused with `busy`, and is safe to send again after the driver reads its replies. The threshold is not published.
+- Revoke, run end, and pane close fail every held read. A read-result reply the app queued and has not yet written is
+  dropped at Revoke, and an error reply for its request ID takes its place, in order. That is queued work under ADR-14
+  P11, as UTERM-028 drops queued invocation frames.
+- The hold covers capture reads only. UTERM-019's browser read-result on the exec wire has the same overflow at version
+  4, and UTERM-019 settles its own fix. Filed as
+  [20261122-exec-browser-read-result-burst-ends-driver](../bugs/20261122-exec-browser-read-result-burst-ends-driver.md).
+
+Leaves undone: pushed events alone still end a driver that never reads its stdin, as UTERM-028 accepts. Until UTERM-019
+fixes its own reads, a browser driver that sends its browser reads in a burst can be ended.
+
+Rationale: a driver that sends every read of a capture before reading its stdin is the obvious pattern, since `offset`
+is echoed for replies in any order. Five chunks of about 683 KiB fill the 4 MiB queue, so it is the common case for a
+large capture. Holding the read makes that driver work with no wire change, and leaves `busy` as an abuse limit. A
+refusal by byte count would make `busy` the normal path for any capture over about 3 MiB, timed by the pipe, so every
+driver needs retry logic and a driver that passes its tests can fail in the field. Shrinking chunks to the room left
+still needs `busy`, and splits a capture into many small frames under load. A count of replies alone, or a small fixed
+chunk, can still overflow beside events. Documentation alone ends the obvious driver. Pausing the driver's inbound
+frames moves the overflow to the inbound buffer, or deadlocks a single-threaded driver. Covering UTERM-019's version 4
+reads from here would give version 4 drivers a new `busy` refusal, against ADR-13. It would also bind UTERM-019's chunk
+size and size the count across its result pools. UTERM-019 M3 is not started, so it can take the same hold in its own
+design, from its first release. Converged in 1 pass.
+
+## Design Decisions (Open)
+
+None.
+
 ## Risks
 
 - **The exec capture version becomes a published contract** — likelihood: high, impact: medium.
@@ -169,16 +292,29 @@ Candidates:
   adds a value to a list UTERM-028 already adds, and no new field. Rated medium, since map viewer and image viewer
   drivers may already be deployed.
 - **Large reads in flight end the driver** — likelihood: medium, impact: medium.
-  Mitigation: chunks are sized against the frame cap, and "How the app bounds reads in flight" settles the bound. The
-  version's documentation lives with UTERM-028 M1's version 5 documentation.
+  Mitigation: chunks are sized against the frame cap, and the app holds a read until the outbound queue has room, per
+  "How the app bounds reads in flight". The version's documentation lives with UTERM-028 M1's version 5 documentation.
+  UTERM-019's exec read-result has no hold until UTERM-019 settles its own, so a browser driver that sends its browser
+  reads in a burst can still be ended. Filed against UTERM-019.
 - **A driver with no verified identity reads what a pane shows** — likelihood: medium, impact: high.
-  Mitigation: capture follows UTERM-054's tab scope, and needs a power for at least every pane besides the anchor, so
-  a driver's reach is bounded. "Which grant and
-  targets an exec driver captures under" settles the power and its targets.
+  Mitigation: capture follows UTERM-054's tab scope, and needs a per-run power for every target, the anchor included,
+  so a driver's reach is bounded. "Which grant and targets an exec driver captures under" settles the power and its
+  targets.
+- **A driver's capture reads a user-opened file its events withhold** — likelihood: medium, impact: high.
+  Mitigation: a capture needs the per-run power, whose panel text says a capture reads whatever the pane shows. A
+  driver's caller holds no read scope, so UTERM-054's resolution of
+  [20261122-capture-bypasses-image-viewer-read-scope](../bugs/20261122-capture-bypasses-image-viewer-read-scope.md)
+  applies to drivers as written, and M1 waits for that resolution. If it refuses captures outside the read scope, image
+  viewer anchor captures by drivers are refused, and the live case narrows to the driver's own map pins and browser
+  members.
 - **The design rests on three unbuilt proposals and a proposed ADR** — likelihood: high, impact: medium.
-  Mitigation: M1 waits for UTERM-028 M1 and UTERM-054 M5, which reaches UTERM-019's byte type and exec base64. Following
-  UTERM-054's rules also rests on ADR-15, which is proposed. A change to any of their capture or version shapes reopens
-  the matching decision here.
+  Mitigation: M1 waits for UTERM-028 M1 and UTERM-054 M2, M3, and M5. M5 reaches UTERM-019's byte type and exec
+  base64. Following UTERM-054's rules also rests on ADR-15, which is proposed. A change to any of their capture or
+  version shapes reopens the matching decision here.
+- **M1 waits on a bug no proposal schedules** — likelihood: medium, impact: medium.
+  Mitigation: the read-scope bug names this gate, so its triage sees that exec capture waits on it. Its fix is a design
+  call in UTERM-054, and UTERM-054 does not reference it yet. Until it is settled, M1 cannot be scheduled. The revoke
+  drop of queued replies also rests on UTERM-028 M1's queued-frame drop, which M1 already waits for.
 
 ## Milestones
 
@@ -186,14 +322,15 @@ Candidates:
 
 **Status:** NOT STARTED
 
-Waits for UTERM-028 M1 and UTERM-054 M5.
+Waits for UTERM-028 M1, for UTERM-054 M2, M3, and M5, and for UTERM-054's resolution of
+[20261122-capture-bypasses-image-viewer-read-scope](../bugs/20261122-capture-bypasses-image-viewer-read-scope.md).
 
 - The app offers the new version in its hello, and a driver that answers it gets capture, read-result, and discard
 - A driver that answers an earlier version gets none of these frames, and an older app's offer leaves the version out
 - A capture from an exec driver follows UTERM-054's tab scope, target states, notice bound, time bound, and caps
-- A read-result chunk fits the frame cap after base64, in UTERM-019's field shape
-- An exec driver's browser full-page capture works for a remote-controlled browser member of a group this run owns,
-  or is refused by the rule "Which grant and targets an exec driver captures under" settles
+- A read-result chunk fits the frame cap after base64, under the `data` and `offset` keys "The frames' fields" settles
+- An exec driver's browser full-page capture of a tab its layout opened, in a remote-controlled browser member of a
+  group this run owns, returns the image. A capture of a tab the user owns in that member is refused
 - Revocation, run end, and pane close fail a pending capture and free its handle, under ADR-11
 - The version's documentation, beside UTERM-028's version 5 documentation, covers the frames, their errors, the rule
   for unknown reason kinds, and the bound on reads in flight
@@ -202,6 +339,48 @@ Waits for UTERM-028 M1 and UTERM-054 M5.
   and held captures never count against the Pending Requests panel's rows
 - A driver's failure notice names the driver as pane chrome does, by executable and process ID
 - A capture of a member pane needs the member to be remote-controlled and owned by this run
+- A capture of the anchor needs the capture power, and is refused after Revoke while the driver's own applet commands
+  and events keep working
+- A driver holding only the capture power is listed at its anchor, Revoke ends the power, and run start and run end
+  clear it
+- Each capture's Pending Requests detail names its target pane and whether it captures content, the pane, or the full
+  page
+- A pending driver capture fails and frees its slot when, before completion, the run is revoked or ends or the target
+  closes. A member's capture also fails when the member loses remote control, its group's owner changes, or its control
+  generation changes. The anchor's capture does not fail on a mode change, since the anchor counts whatever its mode
+- Encoding a chunk reply stays within ADR-08's main-thread budget, or runs off the main thread
+- The Pending Requests row offers Allow Once and Allow for This Run, and its text says a capture reads whatever the
+  pane shows
+- Allow Once covers one capture, whose completion re-check passes and whose handle still reads
+- A capture of `"of":"full-page"` on a pane that is not a browser is refused with a named reason, and a `tab` on an
+  applet with no tabs is refused the same way
+- The version's documentation says a driver cannot cancel its own pending capture
+- After a clamp, `scale` equals the density the PNG records
+- A version 5 driver fixture runs against an app whose offer includes the new version
+- A capture that finishes after its run ended frees its slot and sends nothing
+- The frames match "The frames' fields" exactly, and every reply the app writes fits the 1 MiB frame cap
+- `tab` takes the string tab reference the applet's commands answer, and a capture of `"of":"pane"` that names an
+  unselected tab is refused, never selected
+- A `pane` set to the anchor's node ID captures the anchor, as leaving it out does
+- The version's documentation lists the fixed `code` each reason rides on, and a test pins the pairs
+- A handle is scoped to the run's attachment. Reading or discarding another driver's handle, an unknown handle, or one
+  already freed is refused alike, and the documentation says a handle freed by pane close answers the same way
+- A test reads a capture whose chunks come back shorter than the ceiling, and joins them by decoded length
+- A driver that sends every read of a capture at the per-result cap before reading its stdin receives every chunk and is
+  not ended
+- A read past the held count is refused with `busy`, the driver is not ended, and the same read works once the driver
+  reads its replies
+- Run end and pane close fail held reads, as Revoke does
+- A held read is released when the writer frees room, with no event needed to wake it
+- A held read resolves its handle when it is sent, so a handle freed meanwhile answers as a freed handle does
+- Revoke fails every held read, and drops every read-result reply queued and not yet written, sending an error reply
+  for each dropped request ID in order. A frame being written when the revoke lands is neither cut short nor sent twice
+- Revoke drops only capture read-result replies. Other queued replies, held capture replies, discard and layout
+  replies, and events stay queued in order, and each replacing error carries a fixed `code` and `reason`
+- The version's documentation limits "nothing was captured" to errors on the capture frame. It says a read-result
+  `busy` leaves the handle readable, and that a read-result error after Revoke means chunks already received are partial
+- UTERM-054's time bound starts when the capture starts, not when the power is asked for, and a denied or withdrawn
+  ask fails the held reply with a structured reason
 
 ## Decision Log
 
@@ -219,6 +398,47 @@ Waits for UTERM-028 M1 and UTERM-054 M5.
 
 - 2026-11-22: The re-check converged. Routed three checks and folded its notes into the grant and read-bound
   questions, including the image viewer read-scope gap, filed for UTERM-054.
+
+- 2026-11-22: Review start: 1 milestone, 4 settled decisions, 5 risks, no `**Live after:**` lines or row gates, at
+  commit "Fold UTERM-055's re-check notes into its open questions". One out-of-scope statement: a program never copies
+  a capture to the clipboard. The user asked for an autonomous review of all 4 open questions.
+- 2026-11-22: (autonomous) An exec driver captures under a per-run capture power from Pending Requests, with Allow
+  Once and Allow for This Run. Its targets are the anchor and the remote-controlled members of groups the run owns. The
+  anchor needs the power too, and Revoke ends it there. A driver's caller holds no read scope, so UTERM-054's read-scope
+  resolution applies to drivers. Converged in 1 pass.
+- 2026-11-22: (autonomous) A capture's reply is held and matched by request ID, and carries a handle once the PNG is
+  ready. Converged in 1 pass. A reply at once with a later wait frame was ranked and could not win, since it adds a
+  frame.
+- 2026-11-22: (autonomous, addition) The exec frames are settled as concrete JSON. Capture names `pane`, `of`, and
+  `tab`. Its reply gives `handle`, `size`, `clamped`, and `scale`. Read-result returns `data` and `offset`, with a 512
+  KiB ceiling per chunk. The error object gains `reason`. The addition: UTERM-019's exec read-result chunks use the same
+  `data` and `offset` keys, which UTERM-019 left unnamed. UTERM-019 M3 gains a check for them. Converged in 1 pass.
+- 2026-11-22: (autonomous, addition) The app holds a read-result reply until the outbound queue has room, released by
+  a drain signal from the writer. Held reads are bounded by a count of at least the per-run cap over the chunk ceiling,
+  with `busy` past it. The addition: the hold covers UTERM-019's exec read-result replies too, built in M1. Converged
+  in 1 pass. The recommendation moved from a byte-count refusal, since that makes `busy` the timing-dependent normal
+  path for any large capture.
+- 2026-11-22: Growth question. The coherence pass found that covering UTERM-019's browser reads with the hold forced a
+  version 4 skew case, a chunk ceiling bound into UTERM-019, and a count sized across two result pools. The user
+  narrowed the hold to capture reads. Amended "How the app bounds reads in flight": it said the hold covers UTERM-019's
+  browser read-result replies on the exec wire too, and that M1 builds it for both. UTERM-019's overflow is filed
+  against it as 20261122-exec-browser-read-result-burst-ends-driver.
+- 2026-11-22: (autonomous) Coherence review fixes. Amended "Which grant and targets an exec driver captures under":
+  its Leaves undone line said what a driver may capture of a user-opened file waits on UTERM-054's read-scope
+  resolution, with no gate. M1 now waits for that resolution, and for UTERM-054 M2 and M3, which build the browser full
+  page and map capture. Amended "How the app bounds reads in flight": it said Revoke, run end, and pane close fail held
+  reads. Queued, unwritten read-result replies are now also dropped at Revoke, with an error reply in their place,
+  under ADR-14 P11. Amended "Version skew": it said a driver treats an unknown reason as a refusal, which disagreed with
+  "The frames' fields". It now says a driver acts on the code. M1 gained checks routed from the review.
+- 2026-11-22: (autonomous, addition) Amended "Version skew": it said a version 5 driver ignores the longer list by
+  UTERM-028's hello rule. That rule covers unknown fields, not unknown values. UTERM-028 M1's documentation now says a
+  driver picks a version it knows and ignores the others, and its M1 gains a fixture for it.
+- 2026-11-22: (autonomous) Risk review. Added "M1 waits on a bug no proposal schedules", mitigated by the bug naming
+  the gate. No risk is rated high likelihood and high impact. The proposal loop converged in 2 passes.
+- 2026-11-22: Review gate: kept all. The user kept UTERM-019's exec chunks on the same `data` and `offset` keys, and
+  the UTERM-028 documentation rule that a driver picks a version it knows from the offered list.
+- 2026-11-22: The user accepted the proposal. No decision earns an ADR: the driver's grant and targets are ADR-14's,
+  wire compatibility is ADR-13's, and the frames, the held reply, and the read hold are scoped to this exec version.
 
 ## References
 

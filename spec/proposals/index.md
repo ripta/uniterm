@@ -56,7 +56,7 @@
 | [UTERM-052](UTERM-052-browser-description-never-encodes-tabs-on-the-main-thread.md) | The browser's description never encodes every tab on the main thread | accepted |
 | [UTERM-053](UTERM-053-browser-tab-work-never-grows-with-the-tab-count-on-the-main-thread.md) | The browser's per-tab work never grows with the tab count on the main thread | accepted |
 | [UTERM-054](UTERM-054-screenshot-a-pane-or-tab.md) | Copy or save a screenshot of the current pane or tab, for the user and for programs | accepted |
-| [UTERM-055](UTERM-055-exec-drivers-capture-panes.md) | External exec drivers capture panes through a new exec protocol version | draft |
+| [UTERM-055](UTERM-055-exec-drivers-capture-panes.md) | External exec drivers capture panes through a new exec protocol version | accepted |
 
 ## Dependency Graph
 
