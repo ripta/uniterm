@@ -1,6 +1,14 @@
 # A viewer stats a picked or dropped file on the main thread
 
 **Status:** open
+**Estimate:** medium; one non-trivial design decision. Four drop handlers and the shared Open path change, and ten tests that
+call `handleDrop` and expect the swap to have happened on return must wait for it. The decision is what a drop answers
+before the stat returns. `handleDrop` returns `Bool` today, so a failed open rejects the drop. With an off-thread
+stat the handler must answer `true` first. A failed open then shows only the status-bar alert, with no rejected-drop
+animation. Whether that change is acceptable, or a drop shows a pending state, is a judgment call. Two smaller points
+look trivial: a later drop on the same pane wins over an earlier pending one, and a closed pane drops the reply, as the
+router's callers do. No open proposal owns this. The accepted proposal for current directories leaves this path out on
+purpose. Triage traced the code and did not reproduce it, since a hung mount is not cheap to build.
 **Validation:** not confirmed; found by reading the code during the UTERM-050 review. The hang needs a mount that stops
 answering.
 
