@@ -28,6 +28,13 @@ The cost of a description stops growing with the tab count on the main thread.
 decodes the bytes back into a `JSONValue` tree. The window asks for a description at every change the applet reports.
 A page chooses how often its title changes. So each title change re-encodes the whole pane.
 
+The path runs on the main thread. WebKit reports the new title through key-value observing. The applet's refresh sees
+a changed title and reports a change to the window. The window calls `describe()` and compares the result with the
+last saved description, so that a change the layout file does not hold is not a layout change. Each tab record holds
+the tab's title, so the comparison usually finds a real change. The window then reports a layout change, and the save
+calls `describe()` again. The comparison needs to know only whether one tab's record changed. It rebuilds and
+re-encodes every tab to find out.
+
 The cost is linear and was measured on 2026-11-22 in a debug build. It is about 20 microseconds per tab.
 
 | Tabs | Encode time |
@@ -68,6 +75,10 @@ Candidates:
   cache is kept per tab. Per-tab caching makes the cost one tab's, not the pane's. The cost stays on the main thread.
 - Build the payload off the main thread from copied records. The main thread pays only for the copy.
 - Do both. The copy is cheap, and the encode is off the main thread and per tab.
+- Compare one tab, not the pane. The applet reports which tab's record changed, or keeps each tab's encoded record.
+  The window's check compares that one record with the saved one. This changes the window's side of the applet
+  contract, and every applet's report would carry the change. The save still needs the whole payload, so this pairs
+  with one of the candidates above for the save path.
 
 The copy of `tabs.count` records is still linear in the main thread. Whether that is bounded enough is part of this
 question. The user decides what counts as bounded under ADR-08.
@@ -113,6 +124,8 @@ Waits on the open questions above.
 
 - 2026-11-22: Filed as a draft from bug `20261122-browser-describe-reencodes-tabs-on-main-thread`. The user asked for a
   proposal, and said it need not wait for UTERM-051's review.
+- 2026-11-22: Traced why every title change pays the encode, and added the one-tab comparison as a candidate under
+  "Where the tab records get encoded".
 
 ## References
 
