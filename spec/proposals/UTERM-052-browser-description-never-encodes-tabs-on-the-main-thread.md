@@ -19,10 +19,11 @@
 
 ## ADR Deviations
 
-- ADR-08 "The main thread may do local work whose duration uniterm bounds", no carve-out: at the first change after
-  each save, the browser copies its kept tab array once on the main thread. The copy is pointer-sized per tab, encodes
-  nothing, and happens at most once per save. A pane has no tab cap, so the copy's size has no bound. The user accepted
-  it on 2026-11-22. See "The applet keeps each tab's encoded record and counts its saved changes".
+- ADR-08 "The main thread may do local work whose duration uniterm bounds", no carve-out: each save, and each
+  `describe()`, builds the browser's tab array once on the main thread from each tab's kept record. The pass is
+  pointer-sized per tab and encodes nothing. A pane has no tab cap, so the pass's size has no bound. The user accepted
+  the copy this replaces on 2026-11-22, and chose this pass on 2026-11-22 in the UTERM-053 review. See "The applet
+  keeps each tab's encoded record and counts its saved changes".
 
 ## Summary
 
@@ -105,21 +106,25 @@ rule that a description equal to the saved one is not a layout change.
 Decision: the browser keeps each tab's encoded record, and the window learns of a saved change from a counter instead of
 a comparison.
 
-- Each tab keeps its record's encoded `JSONValue`, rebuilt only when that tab's record changes. The applet keeps the
-  assembled tab array and replaces one element per change. `describe()` wraps the kept array. It stays synchronous, and
-  its payload stays the `JSONValue` tree that UTERM-051 reads, so UTERM-051 is not amended.
+- Each tab keeps its record's encoded `JSONValue`. The tab's record setter acts only on a real change. On that change
+  it rebuilds the tab's encoded record and moves the applet's saved-state revision at once. `describe()` and the saved
+  description build the tab array from each tab's kept record when asked, in one pointer-sized pass. They stay
+  synchronous, and the payload stays the `JSONValue` tree that UTERM-051 reads, so UTERM-051 is not amended. Amended
+  2026-11-22, with UTERM-053; see Decision Log.
 - The undo part's cache is removed. Once the save asks for the saved description alone, only a pane close builds the
   undo part, once per applet. See "The save asks for the saved description alone". Amended 2026-11-22; see Decision
   Log.
 - The applet contract gains an optional saved-state revision, which is nil by default. The browser moves its revision
-  when `refresh` sees a record, the selection, or the tab order change. That is the same comparison that decides today
-  whether it reports a change.
+  at each tab's record change, from the record setter, and at a selection change, an insert, or a remove, from the
+  declared change that UTERM-053's refresh takes. Unsent-input marks, dialogs, and loading segments do not move it.
+  Amended 2026-11-22, with UTERM-053; see Decision Log.
 - The window records each pane's revision when it takes the save snapshot. At a change report it compares the pane's
   revision with the recorded one, and skips `describe()`. An applet with no revision keeps today's comparison of
   descriptions.
-- A title change costs the description one tab's encode. At the first change after each save, the kept array is copied
-  once, since the save still holds the old one. The copy is pointer-sized per tab and encodes nothing. The user
-  accepted that copy on the main thread. See ADR Deviations.
+- A title change costs the description one tab's encode. Each save or `describe()` builds the tab array once, from the
+  kept records. The pass is pointer-sized per tab and encodes nothing. It replaces the copy of a kept array at the
+  first change after each save, which the user accepted on the main thread. See ADR Deviations. Amended 2026-11-22,
+  with UTERM-053; see Decision Log.
 
 Rationale: it is the only candidate whose per-change cost does not grow with the tab count and whose `describe()` stays
 synchronous. The revision is compared with the one at the last save, not the last report. A report that reached no
@@ -142,8 +147,8 @@ description's undo part lazy; and accepting one undo encode per save. The review
 `describe()` returns only the saved part and the close composes the undo part, and keeping the undo entries current at
 each change.
 
-Decision: the applet contract gains a call for the saved description alone. Its default returns `describe()` without
-the undo part. The browser answers it from the kept tab array and builds no undo part. The save calls it. The window's
+Decision: the applet contract gains a call for the saved description alone. Its default returns `describe()` without the
+undo part. The browser answers it from each tab's kept record and builds no undo part. The save calls it. The window's
 change check calls it for an applet with no saved-state revision. A pane close keeps calling `describe()`.
 
 Rationale: it removes the undo encode from every save and adds no scope. With the save and the change check moved off
@@ -180,13 +185,12 @@ None.
   Mitigation: the revision moves from the same comparison in `refresh` that decides whether to report a change, not
   from each mutation site. An M2 test changes a background tab's title and URL, the selection, and the tab order, and
   checks that each reaches the next saved layout.
-- **UTERM-053 reshapes `refresh`'s comparison, and the revision stops moving** — likelihood: medium, impact: medium.
-  UTERM-053 is a draft. Its candidates drop or reshape the change snapshot in `refresh`, and one per-tab change
-  mechanism could serve the refresh and this description. The revision moves from that snapshot's comparison. If it
-  goes, a saved change stays out of the layout file until quit, and a crash loses it.
-  Mitigation: M2's revision test guards the rule that every saved change moves the revision, whatever `refresh` does.
-  Records change at only two sites, the title and the committed URL, so the revision can move there if the snapshot
-  goes. UTERM-053's Impacts should name this when it is reviewed.
+- **A record change that bypasses the record setter leaves the revision unmoved** — likelihood: low, impact: medium.
+  UTERM-053 drops `refresh`'s comparison, so the record setter is the revision's only source for record changes.
+  Records change at two sites today: the title and the committed URL. The commit sets the record without notifying
+  the applet until a later state change.
+  Mitigation: the record is `private(set)` on the tab, so every change goes through the setter. M2's revision test
+  covers a commit with no later title event, and an equal title moves nothing.
 
 ## Milestones
 
@@ -208,8 +212,8 @@ The scratch measurement covered the encode alone.
 
 - A test shows that a burst of title changes costs the description path, `describe()` and the window's change check,
   no more per change at 10,000 tabs than at 10 tabs. `refresh` and the tab bar are timed apart, since UTERM-053 owns
-  them. The first change after a save is timed apart too, since it pays the accepted copy. Replacing a kept record
-  finds its slot without a search through the tabs
+  them. A save is timed apart too, since it pays the accepted pass over the kept records. A record change rebuilds
+  only its own tab's encoded record, with no search through the tabs
 - A test closes a pane right after a page finishes loading in a background tab, with no other history change. An undo
   reopen brings back the history as it stood after the finish
 - A test replaces a pane's applet, and runs a window that has never saved, as a second instance does. A change report
@@ -225,6 +229,8 @@ The scratch measurement covered the encode alone.
   tab's history
 - A test shows that the saved description alone equals `describe()` without its undo part, after each kind of change
   in the payload test above
+- A test shows that a commit with no later title event moves the revision, and that assigning an equal title moves
+  nothing
 - The call for the saved description alone is a requirement of the applet protocol, with a default. A test shows that
   the window's save, through the applet type it holds, reaches the browser's own answer
 - The kept history read on each tab, and the doc comment that says the applet keys a kept description on
@@ -299,6 +305,12 @@ The scratch measurement covered the encode alone.
   and only the browser adopts the revision.
 - 2026-11-22: Accepted.
 
+- 2026-11-22: Amended with UTERM-053, by the user's choice in that proposal's review. UTERM-053 drops `refresh`'s
+  comparison, which this proposal's revision moved from. Each tab's record setter now rebuilds that tab's encoded record
+  and moves the revision on a real change. Selection, inserts, and removes move it through UTERM-053's declared change.
+  The kept assembled array is gone: finding a changed tab's element in it needs a scan of every tab, since a change
+  names a tab, not an index. The description builds the array from the kept records at each call instead. The ADR-08
+  deviation, the risk on UTERM-053's reshape, and M2's checks are updated to match.
 ## References
 
 - ADR-08: UI responsiveness
