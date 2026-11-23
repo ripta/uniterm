@@ -2,7 +2,7 @@
 
 **Status:** open
 **Found:** 2026-11-22, during the UTERM-054 review
-**Validation:** confirmed by reading the code; not run against a built native controller
+**Estimate:** large; three non-trivial design decisions. Whether native controllers are an outside wire under ADR-13, whether to add a version offer or keep exact match with an amended ADR, and whether to drop `native` entries. Each changes behavior users and controller authors can observe, and the first two change an ADR.
 
 ## Observed
 
@@ -43,3 +43,7 @@ This needs a design call, and a change to ADR-13 is the user's to make:
 - Drop `native` entries and run controllers only through uniterm's own helper.
 
 UTERM-054's capture calls change ScriptWire, so they hit this, as every ScriptWire change does today.
+
+## Triage Notes
+
+Checked 2026-11-23 against the current tree. The build passes. `ScriptProtocol.version` is 14, and both `validateHello` overloads at `ScriptProtocol.swift:947` and `:1202` still refuse any version but the exact one. `adoptNativeRun` adopts the native executable's own connection, so the refusal applies to it. `mismatchText` still tells the user to relaunch. No regression test exists. No native controller was built and run, so the repro is confirmed by tracing the code only.
