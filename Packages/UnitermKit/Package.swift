@@ -437,3 +437,16 @@ let package = Package(
   swiftLanguageModes: [.v6],
   cLanguageStandard: .c99
 )
+
+// The Swift 6.3.3 optimizer aborts in its CopyPropagation pass on some functions, such as
+// StatusQueue.present and HistoryPanelView.tableView(_:viewFor:row:). Which functions trip it is not
+// predictable, so the pass is off for every Swift target in an optimized build. Remove this once
+// the toolchain no longer crashes. `swift build -c release` is the check.
+for target in package.targets where target.type != .binary {
+  target.swiftSettings =
+    (target.swiftSettings ?? [])
+    + [
+      .unsafeFlags(
+        ["-Xllvm", "-sil-disable-pass=copy-propagation"], .when(configuration: .release))
+    ]
+}
