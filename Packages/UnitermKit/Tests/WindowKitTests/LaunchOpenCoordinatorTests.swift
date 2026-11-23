@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import FileRouting
 import PaneModel
 import Preferences
@@ -41,7 +42,7 @@ private final class WatchedTypes: ContentTypeSystem, @unchecked Sendable {
 
 @MainActor
 private final class OpenFixture {
-  let suite = "uniterm-launch-open-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-launch-open")
   let defaults: UserDefaults
   let windows: WindowSet
   let coordinator: LaunchOpenCoordinator
@@ -54,7 +55,7 @@ private final class OpenFixture {
       .resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-    defaults = UserDefaults(suiteName: suite)!
+    defaults = testDefaults.defaults
 
     let store = SettingsStore(defaults: defaults)
     let appearance = AppearanceController(store: store)
@@ -119,7 +120,7 @@ private final class OpenFixture {
   func cleanUp() {
     for controller in windows.controllers { controller.window?.close() }
 
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
     try? FileManager.default.removeItem(at: directory)
   }
 

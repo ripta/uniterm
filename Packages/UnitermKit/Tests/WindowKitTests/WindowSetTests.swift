@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import PaneModel
 import Preferences
 import StatusKit
@@ -11,7 +12,7 @@ import XCTest
 /// Several windows over one settings store and one appearance controller, as the app has them.
 @MainActor
 private final class WindowSetFixture {
-  let suite = "uniterm-windowset-test-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-windowset-test")
   let defaults: UserDefaults
   let store: SettingsStore
   let appearance: AppearanceController
@@ -19,7 +20,7 @@ private final class WindowSetFixture {
   let windows: WindowSet
 
   init(visibleFrame: NSRect? = NSRect(x: 0, y: 0, width: 4000, height: 3000)) {
-    let defaults = UserDefaults(suiteName: suite)!
+    let defaults = testDefaults.defaults
     let store = SettingsStore(defaults: defaults)
     let appearance = AppearanceController(store: store)
     let log = log
@@ -52,7 +53,7 @@ private final class WindowSetFixture {
     }
 
     store.set(.system, for: .appearance)
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   func edge(_ controller: MainWindowController) -> DockEdge? {

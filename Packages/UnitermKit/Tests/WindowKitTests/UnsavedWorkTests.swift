@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import Preferences
 import XCTest
 
@@ -9,7 +10,7 @@ import XCTest
 /// and only a save that worked, or the user letting the work go, lets the close go on.
 @MainActor
 final class UnsavedWorkTests: XCTestCase {
-  private let suite = "uniterm-unsaved-test-\(UUID().uuidString)"
+  private let testDefaults = TestDefaults(prefix: "uniterm-unsaved-test")
   private var windows: WindowSet?
   private var asked: [UnsavedQuestion] = []
   private var answer = UnsavedAnswer.cancel
@@ -22,11 +23,11 @@ final class UnsavedWorkTests: XCTestCase {
     }
 
     windows = nil
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   private func makeWindows() -> WindowSet {
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let appearance = AppearanceController(store: store)
     let log = log
 

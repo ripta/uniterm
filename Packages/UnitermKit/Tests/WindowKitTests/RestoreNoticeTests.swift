@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import LayoutKit
 import PaneModel
 import Preferences
@@ -47,16 +48,16 @@ private final class LoadingApplet: Applet {
 /// A launch that restores many panes, through the real window, host, and status center.
 @MainActor
 final class RestoreNoticeTests: XCTestCase {
-  private let suite = "uniterm-restore-notice-\(UUID().uuidString)"
+  private let testDefaults = TestDefaults(prefix: "uniterm-restore-notice")
 
   override func tearDown() async throws {
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   private func controller(
     panes: Int, center: StatusCenter = StatusCenter()
   ) throws -> MainWindowController {
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
 
     let children = (1...panes).map {
       (

@@ -2,6 +2,7 @@ import AppKit
 import AppletKit
 import BrowserApplet
 import BrowserTestSupport
+import DefaultsTestSupport
 import Preferences
 import WebKit
 import XCTest
@@ -58,9 +59,9 @@ final class BrowserLayoutChangeTests: XCTestCase {
   /// new address stored, so the saved description is the same and the window raises nothing. A
   /// title change is the control: it changes the description, and the window does raise one.
   func testAHistoryOnlyChangeRaisesNoLayoutChangeAndATitleChangeDoes() async throws {
-    let suite = "uniterm-browser-layout-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let testDefaults = TestDefaults(prefix: "uniterm-browser-layout")
+    let defaults = testDefaults.defaults
+    defer { testDefaults.discard() }
 
     let store = SettingsStore(defaults: defaults)
     let services = BrowserServices.live(

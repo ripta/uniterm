@@ -1,6 +1,7 @@
 import AppKit
 import AppletKit
 import BrowserApplet
+import DefaultsTestSupport
 import Preferences
 import XCTest
 
@@ -14,9 +15,9 @@ final class BrowserSplitDirectoryTests: XCTestCase {
   /// in one the browser invented. The browser reports none, so the factory is asked to start in the
   /// launcher's default. The factory must have run, or the test proves nothing.
   func testAPaneSplitFromABrowserAsksTheFactoryForNoDirectory() throws {
-    let suite = "uniterm-browser-split-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let testDefaults = TestDefaults(prefix: "uniterm-browser-split")
+    let defaults = testDefaults.defaults
+    defer { testDefaults.discard() }
 
     let store = SettingsStore(defaults: defaults)
     let services = BrowserServices.live(

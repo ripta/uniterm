@@ -2,6 +2,7 @@ import AppKit
 import AppletKit
 import AppletTestSupport
 import Darwin
+import DefaultsTestSupport
 import Preferences
 import ScriptTestSupport
 import ScriptWire
@@ -74,7 +75,7 @@ final class ReplAppletTests: XCTestCase {
   private var engine: ReplFakeEngine!
   private var applets: [ReplApplet] = []
   private var peers: [FramedSocket] = []
-  private var suite = ""
+  private let testDefaults = TestDefaults(prefix: "uniterm-repl-test")
   private var windows: WindowSet?
   private let killed = Killed()
   private var extraHosts: [(host: ScriptHost, directory: URL)] = []
@@ -120,7 +121,7 @@ final class ReplAppletTests: XCTestCase {
       try? FileManager.default.removeItem(at: extra.directory)
     }
 
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   private var services: ReplServices {
@@ -653,9 +654,7 @@ final class ReplAppletTests: XCTestCase {
   // MARK: Window
 
   private func makeWindows() throws -> (WindowSet, MainWindowController) {
-    suite = "uniterm-repl-test-\(UUID().uuidString)"
-
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let appearance = AppearanceController(store: store)
     let services = services
     let engine = engine!

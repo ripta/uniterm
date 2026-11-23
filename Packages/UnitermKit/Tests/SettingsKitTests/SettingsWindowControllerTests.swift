@@ -1,4 +1,5 @@
 import AppKit
+import DefaultsTestSupport
 import Preferences
 import XCTest
 
@@ -6,21 +7,21 @@ import XCTest
 
 @MainActor
 final class SettingsWindowControllerTests: XCTestCase {
-  private var suites: [String] = []
+  private var suites: [TestDefaults] = []
 
   override func tearDown() async throws {
     for suite in suites {
-      UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+      suite.discard()
     }
 
     suites = []
   }
 
   private func makeStore(seed: [String: String] = [:]) -> SettingsStore {
-    let suite = "uniterm-settings-\(UUID())"
+    let suite = TestDefaults(prefix: "uniterm-settings")
     suites.append(suite)
 
-    let defaults = UserDefaults(suiteName: suite)!
+    let defaults = suite.defaults
     for (key, value) in seed {
       defaults.set(value, forKey: key)
     }

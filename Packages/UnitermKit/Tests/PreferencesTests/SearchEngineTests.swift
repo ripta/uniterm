@@ -1,3 +1,4 @@
+import DefaultsTestSupport
 import Foundation
 import XCTest
 
@@ -5,16 +6,16 @@ import XCTest
 
 @MainActor
 final class SearchEngineTests: XCTestCase {
-  private var suiteName = ""
+  private var testDefaults: TestDefaults!
   private var defaults: UserDefaults!
 
   override func setUp() async throws {
-    suiteName = "uniterm.tests.\(UUID().uuidString)"
-    defaults = UserDefaults(suiteName: suiteName)
+    testDefaults = TestDefaults()
+    defaults = testDefaults.defaults
   }
 
   override func tearDown() async throws {
-    defaults.removePersistentDomain(forName: suiteName)
+    testDefaults.discard()
   }
 
   /// Catches a list that drifts from the settled one, or a default that is not DuckDuckGo.

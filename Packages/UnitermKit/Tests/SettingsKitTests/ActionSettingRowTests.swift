@@ -1,4 +1,5 @@
 import AppKit
+import DefaultsTestSupport
 import Preferences
 import XCTest
 
@@ -95,10 +96,10 @@ final class ActionSettingRowTests: XCTestCase {
   /// Catches a Settings window with no Clear Website Data button, a button wired to nothing, or a
   /// note that leaves out what an open tab keeps. A click reaches the host's closure.
   func testTheSettingsWindowOffersClearWebsiteDataAndSaysOpenTabsKeepTheirSession() async throws {
-    let suite = "uniterm-settings-\(UUID())"
-    defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+    let testDefaults = TestDefaults(prefix: "uniterm-settings")
+    defer { testDefaults.discard() }
 
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let called = expectation(description: "the host's closure ran")
     let controller = SettingsWindowController(
       store: store, clearWebsiteData: { called.fulfill() })

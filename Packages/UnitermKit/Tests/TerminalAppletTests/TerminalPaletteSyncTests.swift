@@ -1,4 +1,5 @@
 import AppKit
+import DefaultsTestSupport
 import Preferences
 import TerminalSurface
 import Theme
@@ -37,7 +38,10 @@ final class TerminalPaletteSyncTests: XCTestCase {
   /// controller and settings store drive the sync, as the app wires them. Flipping the setting
   /// calls `apply(palette:)` with the Mocha and then the Latte palette.
   func testAppearanceSettingDrivesTheEngine() async {
-    let store = SettingsStore(defaults: UserDefaults(suiteName: "uniterm-sync-\(UUID())")!)
+    let testDefaults = TestDefaults(prefix: "uniterm-sync")
+    defer { testDefaults.discard() }
+
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let appearance = AppearanceController(store: store)
     let engine = RecordingEngine()
     let sync = TerminalPaletteSync(engine: engine) { _ in XCTFail("the engine did not fail") }

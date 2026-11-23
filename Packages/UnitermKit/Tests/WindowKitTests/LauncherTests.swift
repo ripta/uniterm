@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import GeoData
 import LayoutKit
 import PaneModel
@@ -182,15 +183,14 @@ final class LauncherModelTests: XCTestCase {
 final class LauncherTests: XCTestCase {
   private var controller: MainWindowController!
   private var made: [FakeApplet] = []
-  private var suite = ""
+  private let testDefaults = TestDefaults(prefix: "uniterm-launcher-test")
   private var layoutChanges = 0
 
   /// The choice and directory each new applet was asked for, oldest first.
   private var requests: [(choice: AppletChoice, directory: String?)] = []
 
   override func setUp() async throws {
-    suite = "uniterm-launcher-test-\(UUID().uuidString)"
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
 
     controller = try MainWindowController(
       appearance: AppearanceController(store: store), settings: store
@@ -215,7 +215,7 @@ final class LauncherTests: XCTestCase {
   override func tearDown() async throws {
     controller.window?.close()
     controller = nil
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   private func openLauncher() throws -> (pane: NodeID, launcher: LauncherApplet) {
@@ -820,7 +820,7 @@ final class LauncherTests: XCTestCase {
 
   /// Builds a window that restores `launcher` beside a fake pane, as a relaunch does.
   private func restoredController(launcher: AppletDescription) throws -> MainWindowController {
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
 
     let saved = savedWindow(
       tree: savedSplit(

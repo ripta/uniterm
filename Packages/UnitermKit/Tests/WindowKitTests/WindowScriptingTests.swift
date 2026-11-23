@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import PaneModel
 import Preferences
 import ScriptHost
@@ -16,7 +17,7 @@ import XCTest
 /// so a test can make any of its panes a source or a member.
 @MainActor
 final class ScriptingFixture {
-  let suite = "uniterm-scripting-test-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-scripting-test")
   let defaults: UserDefaults
   let store: SettingsStore
   let windows: WindowSet
@@ -62,7 +63,7 @@ final class ScriptingFixture {
     directoryExists: @escaping @Sendable (String) -> Bool = { _ in true },
     declarations: [AppletTypeDeclaration] = ScriptingFixture.declarations
   ) {
-    let defaults = UserDefaults(suiteName: suite)!
+    let defaults = testDefaults.defaults
     let store = SettingsStore(defaults: defaults)
     let appearance = AppearanceController(store: store)
 
@@ -110,7 +111,7 @@ final class ScriptingFixture {
       controller.window?.close()
     }
 
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   /// Opens a window and returns its controller and a reference to its first pane. The first

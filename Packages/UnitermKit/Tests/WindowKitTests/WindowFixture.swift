@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import PaneModel
 import Preferences
 import StatusKit
@@ -80,7 +81,7 @@ final class AppletLog {
 /// is the first pane's.
 @MainActor
 final class WindowFixture {
-  let suite = "uniterm-window-test-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-window-test")
   let defaults: UserDefaults
   let store: SettingsStore
   let clock = TestClock()
@@ -98,7 +99,7 @@ final class WindowFixture {
     commands: CommandRegistry = .testing(),
     appletTypes: [AppletTypeDeclaration] = [WindowFixture.fakeType]
   ) throws {
-    let defaults = UserDefaults(suiteName: suite)!
+    let defaults = testDefaults.defaults
     if let storedPosition {
       defaults.set(storedPosition, forKey: "statusBarPosition")
     }
@@ -132,8 +133,10 @@ final class WindowFixture {
   }
 
   func cleanUp() {
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
+
+  var suite: String { testDefaults.suite }
 
   var bar: StatusBarView { controller.contentController.statusBar }
   var paneArea: PaneAreaView { controller.paneArea }

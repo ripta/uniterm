@@ -1,3 +1,4 @@
+import DefaultsTestSupport
 import Foundation
 import XCTest
 
@@ -5,16 +6,16 @@ import XCTest
 
 @MainActor
 final class SettingsStoreTests: XCTestCase {
-  private var suiteName = ""
+  private var testDefaults: TestDefaults!
   private var defaults: UserDefaults!
 
   override func setUp() async throws {
-    suiteName = "uniterm.tests.\(UUID().uuidString)"
-    defaults = UserDefaults(suiteName: suiteName)
+    testDefaults = TestDefaults()
+    defaults = testDefaults.defaults
   }
 
   override func tearDown() async throws {
-    defaults.removePersistentDomain(forName: suiteName)
+    testDefaults.discard()
   }
 
   func testDefaultsToSystemWhenUnset() {
@@ -58,7 +59,7 @@ final class SettingsStoreTests: XCTestCase {
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-    process.arguments = ["write", suiteName, "appearance", "-string", "light"]
+    process.arguments = ["write", testDefaults.suite, "appearance", "-string", "light"]
     try process.run()
     process.waitUntilExit()
     XCTAssertEqual(process.terminationStatus, 0)
@@ -83,7 +84,7 @@ final class SettingsStoreTests: XCTestCase {
       first.fulfill()
     }
 
-    UserDefaults(suiteName: suiteName)?.set("light", forKey: "appearance")
+    testDefaults.reopen().set("light", forKey: "appearance")
     await fulfillment(of: [first], timeout: 10)
     try await Task.sleep(for: .milliseconds(300))
 

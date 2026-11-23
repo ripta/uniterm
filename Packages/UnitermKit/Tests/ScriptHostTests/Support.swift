@@ -1,5 +1,6 @@
 import ControllerPackage
 import Darwin
+import DefaultsTestSupport
 import FileRouting
 import Foundation
 import Preferences
@@ -24,10 +25,10 @@ struct HelperRun {
 final class TestScriptSettings {
   let store: SettingsStore
   let defaults: UserDefaults
-  private let suite = "dev.uniterm.tests.\(UUID().uuidString)"
+  private let testDefaults = TestDefaults(prefix: "dev.uniterm.tests")
 
   init(mode: ScriptFileMode? = nil) {
-    defaults = UserDefaults(suiteName: suite)!
+    defaults = testDefaults.defaults
     store = SettingsStore(defaults: defaults)
 
     if let mode { set(mode) }
@@ -38,7 +39,7 @@ final class TestScriptSettings {
   }
 
   func remove() {
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 }
 

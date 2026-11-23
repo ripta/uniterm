@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import FileRouting
 import PaneModel
 import Preferences
@@ -30,7 +31,7 @@ final class PathSpy: @unchecked Sendable {
 /// fixture terminal. Types come from the real type database, so the fixtures use real files.
 @MainActor
 final class RoutingFixture {
-  let suite = "uniterm-routing-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-routing")
   let defaults: UserDefaults
   let log = AppletLog()
   let windows: WindowSet
@@ -50,7 +51,7 @@ final class RoutingFixture {
       .resolvingSymlinksInPath()
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-    defaults = UserDefaults(suiteName: suite)!
+    defaults = testDefaults.defaults
 
     let store = SettingsStore(defaults: defaults)
     let appearance = AppearanceController(store: store)
@@ -120,7 +121,7 @@ final class RoutingFixture {
   func cleanUp() {
     for controller in windows.controllers { controller.window?.close() }
 
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
     try? FileManager.default.removeItem(at: directory)
   }
 
