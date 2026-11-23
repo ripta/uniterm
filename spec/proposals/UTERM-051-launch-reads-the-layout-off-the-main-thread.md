@@ -62,9 +62,10 @@ follow the same contract.
 
 Rationale: it leaves no decode on the main thread, so it meets ADR-08 for the decode, and it keeps one decode path.
 The straight-from-bytes variant also leaves no decode on the main thread, but it adds a second path. Most applets
-already decode in a pure static function, such as `TerminalDescription.decode`, so the step reuses it. Decoding from bytes saves only off-main time, since the codec still builds the tree, and it adds
-a second decode path that undo reopen would not share. The other candidates leave a decode that grows with the tab
-count on the main thread. The cap does not bound the file.
+already decode in a pure static function, such as `TerminalDescription.decode`, so the step reuses it. Decoding from
+bytes saves only off-main time, since the codec still builds the tree. Its second path is one that undo reopen would
+not share. The other candidates leave a decode that grows with the tab count on the main thread. The cap does not bound
+the file.
 
 - The off-main step and the main-thread build are registered as one pair per applet type, so a type cannot have one
   without the other. The restorer closure captures main-actor services, so the off-main step cannot live in it.
