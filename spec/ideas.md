@@ -415,3 +415,70 @@ stepping wait on this, as would any applet whose driver reads. A proposal would 
 scope, how the user approves it beside the run's launch approval, and how a revoked or ended grant stops queued reads.
 It would reuse UTERM-015's scope rules, which apply to a controller and have no driver form. Still open: whether the
 scope belongs in the driver's declaration, so a layout saves it, or only to a run.
+
+## Browser: save tab URLs to a file
+
+Write the URLs of a browser pane's tabs to a file, so a set of open pages can be kept, shared, or reopened later. No
+command copies or exports tab URLs today. The browser's commands in `BrowserCommands.swift` are open location, reload,
+back, forward, new tab, tab selection, and reveal latest download. A saved layout already records each tab's committed
+URL and title and the selected tab, per UTERM-005. That record lives inside the layout file, so it cannot be saved or
+opened on its own.
+
+No standard covers a set of tabs fully. `text/uri-list` from RFC 2483 is registered with IANA and suggests `.uris` or
+`.uri`. It holds one URL per line with `#` comments, and has no titles or selected tab. The Netscape Bookmark File
+Format is HTML that every browser imports. It carries titles and folders, but it is a bookmark format with a plain
+`.html` extension. Firefox's session files and OneTab's export are tied to one product. A uniterm JSON format with its
+own extension, as GeoJSON has `.geojson`, would give a lossless round trip that keeps titles and the selected tab.
+
+Export would be a browser command with a save panel, as the map viewer's GeoJSON save does in `MapViewerApplet.swift`.
+It could filter schemes as the layout code does. Opening a file back needs a declared file type and a UTERM-015 router
+entry, so the browser claims it, and would reuse the new-tab path. Two concerns carry over. Tab URLs can hold tokens,
+as UTERM-005's risks note for the layout file. A file with many URLs opens many tabs at once.
+
+Chosen so far. The export defaults to a uniterm JSON format with its own extension. It also offers `text/uri-list` and
+Netscape bookmark HTML. The save panel's own format control picks among the three: `showsContentTypes` with
+`allowedContentTypes`, read back through `currentContentType`, both from macOS 15. Each format needs a declared
+`UTType`, since the system has none for `text/uri-list`.
+
+The JSON format carries both an extension and an in-file tag, as GeoJSON does. The extension and its `UTType` are
+what macOS uses: Finder, the save panel's format control, and UTERM-015's router. The type conforms to `public.json`,
+so editors and `jq` still read it. The file opens with a tag and a version, such as
+`{"type": "uniterm.tabs", "version": 1, "tabs": [...]}`. The tag lets a renamed file, a piped script output, or a
+pasted text still say what it is. When the extension and the tag disagree, the tag wins. An unknown version is a clear
+error. The format holds tab sets only. A shared envelope for other uniterm data waits for a second payload, and the tag
+leaves room for one. The extension is uniterm-specific, such as `.unitabs`, to avoid colliding with a generic name like
+`.urljson`, and its identifier sits under `dev.uniterm`.
+
+Still open: the extension's name, the JSON format's fields, and which of the three formats open back into tabs.
+
+## Palette: show a command's shortcut
+
+Show a command's keyboard shortcut on its palette row, so running it from the palette teaches the faster key. A row
+draws an icon, the title, and a right-hand kind label, and nothing more (`PaletteRowView` in
+`CommandPaletteView.swift`). Command rows are built from the command's ID and title only, in
+`MainWindowController+Palette.swift`.
+
+The row must show the key that is live now, not the declared default. A user's remap replaces the default, and a
+reserved key drops it for an applet's command. `CommandMenu.keyEquivalent(of:)` already reads the live key from the
+menu, and `KeyEquivalentText.spell` already renders it. The docked palette's placeholder uses both for its own hotkey.
+The row view needs a trailing key label, and the title's constraint against the kind label has to make room for it.
+Hints need to refresh when the menu's keys change.
+
+Still open: an applet's command may hold its key only while that applet's pane has focus, so which key does its row
+show? Controller commands from UTERM-024 and UTERM-027 bind keys outside the menu, so their live key needs another
+source.
+
+## Palette: show what a command acts on
+
+Every command row's right-hand label reads "Command", whatever the command acts on. The user cannot tell whether a
+command hits one pane, the window, or the whole app. The label comes from `PaletteEntry.Kind.label` in
+`PaletteRanking.swift`. The model already knows the answer: each command has a `CommandScope` of app, window, or pane in
+`Command.swift`, and an owner. The palette uses the scope only to decide availability. A pane command runs against the
+pane that had focus before the palette opened, per UTERM-002, and the row gives no hint of that either.
+
+UTERM-042 covers part of this. Its "Palette commands: wording and target" section gives its own controller and tab
+entries a detail line that states their reach. This idea covers every other command row. The work would pass the scope
+into the palette entry and show it, perhaps as the target pane's applet name for pane commands, as tab rows already
+show. The wording should follow UTERM-042's convention. The scope enum has no tab level, so "Close Tab or Pane" may need
+a more honest label than its scope gives. Still open: whether the scope replaces the "Command" word or goes in a second
+field or detail line.

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-08
-**Updated:** 2026-11-21
+**Updated:** 2026-11-22
 
 ## Dependencies
 
@@ -101,8 +101,8 @@ does nothing, so the user can open a suitable pane and try again. For a web link
 
 This holds for URLs the user opened, except `mailto:`, which opens the mail app without asking. A file opens in a new
 pane instead, by "The prompt when nothing opens a file". A
-script or controller open with no capable pane fails with an error and asks nothing. See "Scripts and controllers".
-Amended 2026-11-09; see Decision Log.
+script or controller open with no capable pane fails with an error and asks nothing, unless it may make a pane. See
+"Scripts and controllers". Amended 2026-11-22; see Decision Log.
 
 ### Several capable panes
 
@@ -189,8 +189,8 @@ path, and lands only in a pane the requester may address. The path-reading power
 
 The walk filters by the requester's authority before it ranks by distance, as UTERM-004's nearest rule does. Its
 origin is the requester's source pane, and an unbound caller's origin is the source pane the user granted it. With no
-capable pane it may address, the request fails with a structured not-found error. It never asks the user and never
-hands off to macOS. The permissions keep UTERM-004's versioned meanings and admission, which carry their skew rules.
+capable pane it may address, the request fails with a structured not-found error, unless the open may make a pane as
+described below. It never hands off to macOS, and it asks the user only what the user's own open of that file asks. The permissions keep UTERM-004's versioned meanings and admission, which carry their skew rules.
 
 This leaves one thing undone: a REPL script cannot open a link in the user's own browser pane beside it. Doing that
 would need a new power and would reverse UTERM-005's settled conclusion that program opens reach "a program's own
@@ -202,9 +202,14 @@ browser pane. A new open power, or browser navigation with a widened target scop
 pane the user made. UTERM-004 settles that geometry alone grants nothing, and its nearest rule filters by authority
 first so proximity never becomes authority.
 
-The user's own open makes a pane or hands off to macOS when no pane fits, and a script's open does neither. That is
+The user's own open makes a pane or hands off to macOS when no pane fits. A script's open never hands off to macOS. It
+makes a pane only for a file whose winning applet never takes a file in place, such as the terminal for a folder or the
+browser for a tab file, and only when the script holds pane control. The new pane goes beside the script's source
+pane, as the user's goes beside the origin. Without pane control, the open fails with the not-found error. A pane
+that would load a page, such as a browser pane for a tab file, also needs browser navigation, whatever the file holds,
+as a seeded layout URL does under UTERM-005. Without it, the open is refused before any question or pane. That is
 ADR-15's carve-out for authority, not a change in how the open behaves. Making a pane and launching another app are
-powers of their own under ADR-14, and a script holds neither through an open.
+powers of their own under ADR-14, and an open grants neither. Amended 2026-11-22; see Decision Log.
 
 ### The tie rule
 
@@ -367,11 +372,12 @@ Decision: for a file target, a pane is capable in place only when its applet can
 applet contract already says through `SourceReplacing`. A URL target is capable in any pane whose applet declares its
 scheme, since the browser opens a URL as a new tab, not by replacing a source. No declaration field is added. The terminal's panes are therefore never candidates. A
 folder whose winning applet is the terminal takes the file no-capable-pane path, a new terminal pane beside the
-origin, as UTERM-015 builds today. A script folder open of that kind fails, since a script open never creates a pane.
+origin, as UTERM-015 builds today. A script folder open of that kind makes a new terminal pane beside the script's
+source pane when the script holds pane control, and fails otherwise. Amended 2026-11-22; see Decision Log.
 
 Rationale: UTERM-015 settles that a routed folder "is never handed to a running terminal". Deriving the test from the
 contract keeps one source of truth, so no flag can drift from the conformance. Counting terminal panes as capable
-would make a script folder open create a pane, which UTERM-004 forbids. Placing beside the capable terminal would move
+would hand a folder to a running terminal, which UTERM-015 rules out. Placing beside the capable terminal would move
 the pane away from the user's origin with no reason.
 
 ### Loopback and private addresses from remote output
@@ -552,12 +558,19 @@ and the path-reading power.
 - The walk considers only panes the requester may address, and a URL open reaches only browser panes it created
 - An open from a script starts at its source pane, or at the source pane the user granted an unbound caller, never at
   the focused pane
-- With no capable pane the requester may address, the request fails with a structured not-found error, asks nothing,
-  and hands nothing to macOS
+- With no capable pane the requester may address, and no pane it may make, the request fails with a structured
+  not-found error, asks nothing, and hands nothing to macOS
 - A request without the power is refused before any pane is touched
 - A script open of a type with several winning applets fails with the structured error and asks nothing
 - A script open whose source pane closes in flight fails, and never falls back to the focused pane
-- A script open never creates a pane
+- A script open makes a pane only for a file whose winning applet never takes a file in place, only under pane
+  control, and beside its source pane. Without pane control it fails with the not-found error
+- A pane a script open makes joins the run's owned group, as a pane from `open-pane` does
+- With no room beside the source pane, a script open that may make a pane fails with an error before any question,
+  and opens no window
+- A script open that would make a browser pane, without browser navigation, is refused before any question or pane,
+  with an error naming the power. When M5 lands before the browser declares file types, the check uses a test applet
+  that declares a type and never takes a file in place
 - A URL a script opens lands as the user's open does, selected and taking focus, per UTERM-037
 - The open request travels in a versioned schema under UTERM-004's admission, so an unsupported version is refused
   before any effect
@@ -657,6 +670,24 @@ and the path-reading power.
   launching another app is a separate power. No decision text changes.
 - 2026-11-21: "Scripts and controllers" now cites ADR-15 for its no-pane rule. The rule keeps its meaning. ADR-15
   names authority as the one thing kept apart from the user's behavior, and this rule rests on it.
+- 2026-11-22 (addition): During the UTERM-049 review, the user chose that a script's file open may make a pane. It does so
+  only for a file whose winning applet never takes a file in place, only under pane control, and beside the script's
+  source pane. Pane creation stays its own power, as the 2026-11-21 ruling requires. "Scripts and controllers" said
+  "a script's open does neither" and "a script holds neither through an open". "Applets whose open makes a new pane"
+  said "A script folder open of that kind fails, since a script open never creates a pane", and its rationale said
+  "which UTERM-004 forbids". M5's check said "A script open never creates a pane". UTERM-049 needs this so a script
+  can open a tab file, which always opens in a new pane.
+- 2026-11-22 (autonomous): The 2026-11-22 amendment missed three passages that still said a script open with no capable
+  pane "fails with an error and asks nothing" and "never asks the user". They now allow the pane the amendment makes,
+  and the question the user's own open of that file would show. A pane a script open makes joins the run's owned group.
+  With no room, the open fails and opens no window, since a window is its own power. A cancelled question replies with
+  a distinct result. M5's check on tab files moved to UTERM-049 M3, which owns that contract. The passages said "A
+  script or controller open with no capable pane fails with an error and asks nothing" and "It never asks the user and
+  never hands off to macOS".
+- 2026-11-22 (autonomous): A script open that would make a browser pane needs browser navigation, whatever the file
+  holds. That gate now lives here in M5, not only in UTERM-049 M3, so no build between the two milestones lets a script
+  denied network access load a URL it wrote into a tab file. M5's check on a cancelled question moved to UTERM-049 M3,
+  since only a tab file shows one.
 
 ## References
 
