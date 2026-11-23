@@ -22,7 +22,8 @@
   the launch restore and an undo reopen each build their applets on the main thread in time linear in the tab count.
   For the browser that is one tab object, one adopted record, and one cleaned title per tab. UTERM-053 owns it and
   records its own deviation, which the user accepted on 2026-11-22. The terminal makes one tab per stored tab in its
-  restoring init. UTERM-053 left the terminal out of scope, so its acceptance does not cover that part.
+  restoring init. UTERM-053 left the terminal out of scope. The user accepted the terminal's part on 2026-11-22, in
+  this proposal's review.
 - ADR-08 "The main thread never waits on work whose duration uniterm does not bound" and "A design that must wait on
   the main thread names the bound that keeps the wait short", no carve-out. An undo reopen typed before its pane's
   preparation finishes blocks the main thread on that step, which runs on another thread. The wait is bounded only by
@@ -491,6 +492,11 @@ It builds on M2's off-main step and main-thread build pair.
   finishes waits, not only one typed during the close's freeze. Routed four checks: M2's tree reuse waits on UTERM-052
   M2 and defers to its wording, review finds no synchronous main hop in a step, M3's hook counts only typed decodes,
   and the weak reference holds the result box.
+- 2026-11-22: The user accepted the ADR-08 deviation for the terminal's restore, which makes one tab per stored tab on
+  the main thread at launch and at undo reopen. It is today's behavior.
+- 2026-11-22: Review gate: the user narrowed undo reopen to an early wait with no pending pane, narrowed the restore
+  value's rule to keep UTERM-052 M2's tree reuse, kept the early wait after the corrected numbers, and accepted the
+  terminal's deviation. Status stays accepted.
 
 ## References
 
