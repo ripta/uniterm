@@ -53,7 +53,7 @@
 | [UTERM-049](UTERM-049-save-and-open-browser-tab-sets.md) | Save a browser pane's tabs as uniterm JSON, uri-list, or bookmark HTML, and open them back | accepted |
 | [UTERM-050](UTERM-050-current-directory-never-blocks-the-main-thread.md) | An applet's current directory never checks the file system on the main thread | accepted |
 | [UTERM-051](UTERM-051-launch-reads-the-layout-off-the-main-thread.md) | The launch reads and decodes the layout file off the main thread | accepted |
-| [UTERM-052](UTERM-052-browser-description-never-encodes-tabs-on-the-main-thread.md) | The browser's description never encodes every tab on the main thread | draft |
+| [UTERM-052](UTERM-052-browser-description-never-encodes-tabs-on-the-main-thread.md) | The browser's description never encodes every tab on the main thread | accepted |
 | [UTERM-053](UTERM-053-browser-tab-work-never-grows-with-the-tab-count-on-the-main-thread.md) | The browser's per-tab work never grows with the tab count on the main thread | draft |
 
 ## Dependency Graph
