@@ -2,6 +2,7 @@
 
 **Status:** open
 **Validation:** not confirmed; traced by reading the code and UTERM-041 during the UTERM-053 review. Nothing was run.
+**Estimate:** small to medium; one non-trivial design decision. The code is traced, not run. The shared hide rule is UTERM-041 M1, which is accepted and not built, so the disagreement cannot occur yet. Today `QuestionsView` pins `AppletTabBar.height` and `QuestionsApplet.refresh` feeds it names and publishes one placeholder tab for an empty book, as described above. Decision: whether the questions applet follows the shared hide rule (view drops the fixed height) or keeps its always-shown bar as a named exception in UTERM-041. Both are equally correct. Each changes what the user sees for one pending question, and the exception adds a special case to the rule. A second decision follows from the first: what the empty book's placeholder tab does under a bar that reads the published list. The fix lands after UTERM-041 M1.
 
 ## Observed
 
