@@ -30,7 +30,7 @@
 | [20261122-layout-save-runs-on-main-thread](20261122-layout-save-runs-on-main-thread.md) | The layout save encodes and writes every tab on the main thread | fixed |
 | [20261122-layout-launch-read-runs-on-main-thread](20261122-layout-launch-read-runs-on-main-thread.md) | The launch reads and decodes the whole layout file on the main thread | proposed |
 | [20261122-browser-describe-reencodes-tabs-on-main-thread](20261122-browser-describe-reencodes-tabs-on-main-thread.md) | The browser re-encodes every tab record on the main thread at each change | proposed |
-| [20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread](20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread.md) | The browser's tab bar builds and updates one view per tab on the main thread | open |
+| [20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread](20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread.md) | The browser's tab bar builds and updates one view per tab on the main thread | proposed |
 | [20261122-optimized-build-crashes-compiler-in-status-queue](20261122-optimized-build-crashes-compiler-in-status-queue.md) | An optimized build of the package crashes the Swift compiler in StatusKit | open |
 | [20261122-undo-reopen-decodes-pane-on-main-thread](20261122-undo-reopen-decodes-pane-on-main-thread.md) | Undo reopen of a closed pane decodes its description on the main thread | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | open |

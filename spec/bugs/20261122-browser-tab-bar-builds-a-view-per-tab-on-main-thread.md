@@ -1,7 +1,9 @@
 # The browser's tab bar builds and updates one view per tab on the main thread
 
-**Status:** open
+**Status:** proposed, see [UTERM-053](../proposals/UTERM-053-browser-tab-work-never-grows-with-the-tab-count-on-the-main-thread.md)
+**Triaged:** 2026-11-22 (still reproduces; proposal filed)
 **Found:** 2026-11-22, while measuring the restore for the UTERM-051 review
+**Estimate:** large; two non-trivial decisions, how the bar bounds its items versus a tab cap, and how `refresh` updates only changed tabs. See "Fix".
 
 ## Observed
 
@@ -45,3 +47,11 @@ The design call is how the pane bounds its per-tab work:
 Bug `20261121-tab-bar-overflow-hides-tabs` changes the same bar's layout, so the two fixes bear on each other.
 
 UTERM-051 moves the layout decode off the main thread. That leaves this cost on the main thread at launch.
+
+## Investigation notes
+
+Triage run on 2026-11-22.
+
+- The code still matches the cause above.
+- A throwaway package test with 10,000 tabs in a debug build measured 1.17 s for the bar's first update, 61 ms for a
+  selection-only update, and 1.63 s for the restoring init. The report's numbers hold. The test was not kept.
