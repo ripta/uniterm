@@ -1,6 +1,7 @@
 # The palette rebuilds and filters every tab of every pane while it shows
 
 **Status:** open
+**Estimate:** large; two non-trivial design decisions. See "Estimate notes".
 **Validation:** not confirmed; traced by reading the code during the UTERM-053 review. The cost was not measured.
 
 ## Observed
@@ -30,3 +31,22 @@ Suspected actual: up to 10 full rebuilds a second, and a linear filter per keyst
 
 UTERM-053 keeps this out of its scope. A fix needs a design call: an incremental palette index fed by per-tab change
 reports from every applet, which adds a host contract, or a bound on how many candidates a rebuild and a filter visit.
+
+## Estimate notes
+
+Traced on 2026-11-23 against the current code. `tabCandidates(target:)` loops over every pane and every tab of
+`publishedTabs.all`. It neutralizes each title and detail and builds a `PaletteEntry` for each. It then builds a `Set`
+of keys and runs `firstIndex` on the recency list for each tab. `schedulePaletteRefresh` bounds the rebuilds to one per
+interval, not the work in each. The cost was not measured.
+
+No accepted proposal owns the fix. The browser tab-count proposal rules the palette out of its scope and points at this
+bug.
+
+Decisions that are not trivial:
+
+- Whether to bound the candidates a rebuild and a filter visit, which changes what the palette lists for a pane with
+  many tabs, or to keep every tab listed and add an incremental index.
+- For an incremental index, the per-tab change report is a new host contract that every applet must implement.
+
+The fix would touch `MainWindowController+Palette.swift`, `PaletteListing`, the applet tab-list contract, and every
+applet that publishes tabs.
