@@ -117,16 +117,22 @@ Rationale: the user added this to the scope. One capture path serves the user an
 
 ### Version skew
 
-Decision: the deploy units are the app, external exec drivers and controllers, and controller descriptors. Scripts ship
-in the app bundle, so they are not skewed.
+Decision: the deploy units are the app, external exec drivers and controllers, controller descriptors, and the
+controller policy file. The Janet helper and ScriptWire ship together in the app bundle, so they are not skewed. A
+newer user script on an older app gets an unbound-symbol error.
 
-- New driver, old app: the capture command is unknown, and the old app returns its error for an unknown command, under
-  ADR-13.
+- New driver, old app: the capture command rides the existing `command` or `paneCommand` frame, so the old app answers
+  with its error for an unknown command or `unsupported-version` for a newer schema, under ADR-13. A new frame type
+  would end the driver on an older app, since the exec protocol treats an unknown type as malformed. So a new frame
+  type waits for UTERM-028's version negotiation.
 - Old driver, new app: no earlier command changes meaning.
 - New descriptor, old app: a descriptor that names the capture power is refused at load, as UTERM-004 format 2 refuses
   every unknown kind. A controller that needs capture states it, and runs only on an app that knows it.
 - Old descriptor, new app: a descriptor without the capture power gets none. A grant stored before the power existed
   covers none of it, under ADR-14 P10.
+- New policy file, old app: once the user approves the capture power, the policy file holds a kind the older app lacks.
+  An older uniterm then loads no policies, marks the file read-only, and remembers no trust until the user upgrades.
+  This is UTERM-004's designed behavior for every new kind, and UTERM-019 states the same direction. Accepted.
 
 ## Design Decisions (Open)
 
@@ -174,7 +180,8 @@ and the terminal may have no current frame. Candidates:
   applet's milestone records which cases work.
 - Refuse every capture that is not of a selected tab in a showing pane.
 - A program's capture always takes the pane's selected tab, as the user's command does. A program that wants another tab
-  selects it first with the existing select command, under pane control.
+  selects it first with the existing select command, under pane control. Leaves undone: in a browser pane that mixes
+  owners, that select switches the tab the user is looking at.
 - Make the tab show itself before the capture. One call then silently does two operations, a select and a capture.
 
 UTERM-019 M4 requires a snapshot of an unselected tab or a tab in a detached pane to work or return a structured error.
@@ -185,9 +192,10 @@ The answer here must agree with it. A stale frame that reports success is a risk
 UTERM-019 adds a typed "browser capture" permission for a controller's own browser tabs. It also covers PDF output and
 find in page. It has not shipped, so no descriptor names it yet. Candidates:
 
-- One pane capture power covers every applet. UTERM-019 is amended before its M4 ships, so browser capture never exists
-  as a separate kind. The amendment says where PDF output and find in page go.
-- One pane capture power covers every applet, and UTERM-019 M4 ships browser capture first. A grant stored for browser
+- One pane capture power covers every applet. UTERM-019 is amended before its M1 ships, since M1 creates the browser
+  capture kind. Browser capture then never exists as a separate kind. The amendment says where PDF output and find in
+  page go.
+- One pane capture power covers every applet, and UTERM-019 M1 ships browser capture first. A grant stored for browser
   capture must not carry over to other applets, under ADR-14 P10, so the user approves the new power again.
 - A new pane capture power for every applet besides the browser, and browser capture stays as UTERM-019 defines it.
   Two powers for one operation.
@@ -226,15 +234,21 @@ Candidates:
 Everything the program decision borrows from UTERM-019 is scoped to a browser tab: its commands are named per applet
 type, its event buffer is per tab, and its handle cap is per tab. A terminal pane has none of these. Candidates:
 
-- A host-level pane command, such as `capture-pane`, that works for every capable applet. The handle lives on the pane,
-  and the completion event rides the program's existing control event stream. One command name, one schema.
+- A host-level pane command, such as `capture-pane`, that works for every capable applet. The handle lives on the pane.
+  One command name, one schema. Remote callers receive no applet events under UTERM-004, and exec drivers get events
+  only from the pane they drive. So this candidate names its carrier for the completion event: a new push stream, which
+  amends UTERM-004 and the wire, or a host-level next-events buffer.
+- A capture that only reads holds a pending reply under ADR-11, and the reply carries the handle once the PNG is ready.
+  No completion event is needed. A capture that also copies to the clipboard has an effect, so it keeps the
+  handle-plus-event shape.
 - Per-applet commands, such as `:terminal/capture`, each added to that applet's command schema with a schema minor bump.
   Each applet then needs its own handle slot and event delivery, which the terminal lacks.
 - The browser keeps UTERM-019's per-tab snapshot, and every other applet uses a host-level command. Two shapes for one
   operation.
 
-The PNG bytes read back in chunks under a byte type. UTERM-019's "Large results" defines that type, and it has not been
-built.
+Every candidate rides the existing `command` or `paneCommand` frame, or waits for UTERM-028's version negotiation. See
+"Version skew". The PNG bytes read back in chunks under a byte type. UTERM-019's "Result encoding" defines that type,
+and it has not been built.
 
 ### How the map viewer captures
 
@@ -282,7 +296,7 @@ takes it from every web page and terminal program.
   power.
 - **The browser and program milestones rest on UTERM-019, which has built nothing** — likelihood: high, impact: medium.
   Mitigation: the full-page route, the clamp, handles, and the byte type are all UTERM-019's. M2 builds the full-page
-  route and its clamp if UTERM-019 M4 has not, and UTERM-019 reuses them. M5 waits for UTERM-019's "Large results".
+  route and its clamp if UTERM-019 M4 has not, and UTERM-019 reuses them. M5 waits for UTERM-019 M3 and its byte type.
 - **The program decisions rest on ADR-15, which is proposed** — likelihood: medium, impact: medium.
   Mitigation: a capture's authority stays under ADR-14, which is accepted. Only the rule that a program's capture behaves
   as the user's rests on ADR-15. If ADR-15 changes, that decision is revisited before M5.
@@ -300,7 +314,11 @@ takes it from every web page and terminal program.
 - Copy Screenshot puts a PNG on the pasteboard, and a test checks it through an injected private pasteboard, never the
   general one
 - Save Screenshot As… writes a PNG atomically, off the main thread, and a failed write alerts and keeps the earlier file
-- Replacing an existing file keeps its permissions, and two saves to one path at once each report their own result
+- Replacing an existing file keeps its permissions, and two saves to one path at once each report their own result,
+  including when neither found a file there
+- A completion that arrives after the time bound or a cancel is dropped, and never reaches the pasteboard, a file, or a
+  later capture's result
+- A capture of a hidden or minimized pane returns a current frame or a structured error, never a stale frame as success
 - A pane capture leaves out the host's gutter, focus border, badges, and exec strip
 - A pending capture shows its state, refuses a second capture of the same pane, and never moves focus
 - The pending state never appears in the captured image
@@ -323,6 +341,7 @@ takes it from every web page and terminal program.
 - A clamped image tells the user it was cut or scaled, and never reports a plain success
 - A capture while the error page or a page dialog shows gives the image the screen shows
 - A WebKit snapshot that never completes ends at the time bound, and a later capture of the pane works
+- A capture of a hidden or minimized browser pane returns a current frame or a structured error
 - The text viewer's Markdown, which renders in a web view, captures through the same route
 - The user takes a viewport and a full-page screenshot of a long page in the real app and confirms both
 
@@ -333,6 +352,7 @@ takes it from every web page and terminal program.
 - The map viewer's capture shows its tiles and pins as the screen does, by the route "How the map viewer captures"
   settles
 - The pin list appears in the pane capture
+- A capture of a hidden or minimized map pane returns a current frame or a structured error
 
 ### M4: Terminal and REPL
 
@@ -341,6 +361,7 @@ takes it from every web page and terminal program.
 - A spike on the pinned libghostty records what each route in "How the terminal captures" produces, in the Decision Log,
   and the user picks the route from that record
 - A capture taken while the terminal redraws shows no tearing
+- A capture of a hidden or minimized terminal returns a current frame or a structured error
 - A terminal capture matches what is on screen, including colors and a terminal-drawn image, and a test catches a blank
   capture
 - No libghostty type appears outside the terminal surface module
@@ -350,7 +371,11 @@ takes it from every web page and terminal program.
 
 **Status:** NOT STARTED
 
-Waits for UTERM-019's "Large results", which defines the byte type the PNG reads back under.
+Waits for UTERM-019 M3, which builds handles and read-result, and for the byte type that UTERM-019's "Result encoding"
+adds.
+
+- A user's cancel or a time-out of a program's pending capture ends its handle with a structured error, and a
+  revocation mid-capture frees the handle
 
 - A capture without the capture grant returns a structured error that names the power
 - A capture of a tab the program does not own, or of a pane that mixes owners, follows "Which panes a program may
@@ -378,6 +403,11 @@ Waits for UTERM-019's "Large results", which defines the byte type the PNG reads
   follow the tab bar, a capture of the selected tab, owner-level tab scope, and an amendment to UTERM-019 before its M4
   ships. "Or a setting" was dropped from output scale. Risks were added for UTERM-019's unbuilt parts, ADR-15's status,
   and stale frames.
+- 2026-11-22: Revised after the re-check. "Version skew" said a new driver on an old app gets an unknown-command error.
+  That holds only on the existing `command` or `paneCommand` frame, since an unknown frame type ends the driver, so the
+  bullet now says so. It gained the policy file direction. The host-level capture candidate now names its event
+  carrier, and a pending-reply candidate was added. The browser capture amendment's gate moved from UTERM-019 M4 to M1,
+  which creates the kind.
 
 ## References
 
