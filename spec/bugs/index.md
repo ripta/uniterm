@@ -36,6 +36,7 @@
 | [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | open |
 | [20261122-native-controller-refused-after-scriptwire-change](20261122-native-controller-refused-after-scriptwire-change.md) | A native controller is refused at hello after any ScriptWire change | open |
 | [20261122-script-open-pane-leaves-first-tab-unowned](20261122-script-open-pane-leaves-first-tab-unowned.md) | A pane a script opens with open-pane leaves its first tab unowned | open |
+| [20261122-uterm-028-says-no-exec-capable-applet-ships](20261122-uterm-028-says-no-exec-capable-applet-ships.md) | UTERM-028 says no exec-capable applet ships, but two do | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | fixed |
 | [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | open |
 | [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
