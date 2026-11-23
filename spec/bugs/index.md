@@ -43,7 +43,7 @@
 | [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
 | [20261122-declared-file-watchdog-may-signal-reused-pid](20261122-declared-file-watchdog-may-signal-reused-pid.md) | The declared-file test watchdog may signal a process id that was already reused | open |
 | [20261122-picked-file-start-directory-stat-on-main-thread](20261122-picked-file-start-directory-stat-on-main-thread.md) | A viewer stats a picked or dropped file on the main thread | open |
-| [20261122-quit-skips-unsaved-work-when-nothing-runs](20261122-quit-skips-unsaved-work-when-nothing-runs.md) | Quitting loses unsaved work when nothing is running | open |
+| [20261122-quit-skips-unsaved-work-when-nothing-runs](20261122-quit-skips-unsaved-work-when-nothing-runs.md) | Quitting loses unsaved work when nothing is running | fixed |
 | [20261122-map-save-reads-file-on-main-thread](20261122-map-save-reads-file-on-main-thread.md) | Saving a map reads its file on the main thread | open |
 | [20261122-closing-pane-on-dead-mount-may-join-io-thread](20261122-closing-pane-on-dead-mount-may-join-io-thread.md) | Closing a pane whose shell is stuck on a dead mount may freeze the app | open |
 | [20261122-terminal-tab-changes-walk-every-tab](20261122-terminal-tab-changes-walk-every-tab.md) | A terminal pane walks every tab at each title change and tab switch | open |

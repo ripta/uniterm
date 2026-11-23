@@ -1,8 +1,8 @@
 # Quitting loses unsaved work when nothing is running
 
-**Status:** open
-**Estimate:** small; no open design decisions. Traced the code path, did not run it. The fix adds a `WindowSet` property that is true when anything runs or holds unsaved work, and the delegate guard reads it. `AppDelegate` is in the app target, so no package test can drive it. The regression test sets the property on `WindowSet` in `UnsavedWorkTests`, with an idle terminal and an unsaved map.
-**Validation:** not confirmed in the app; found by reading the code during the UTERM-050 review. The trace is direct.
+**Status:** fixed 2026-11-23
+**Fixed:** 2026-11-23
+**Estimate:** small; no open design decisions. Traced the code path, did not run it. The fix removes the `runningTabLabels` check from `applicationShouldTerminate` and keeps only the `windowSet` guard, so `WindowSet.shouldQuit()` owns the rule. It already returns true at once when nothing is unsaved and nothing runs. The change is `App/AppDelegate.swift` plus one UI test, since the delegate is in the app target and no package test can drive it.
 
 ## Observed
 
@@ -28,3 +28,13 @@ asks whether to save changes before quitting. Suspected actual: the app quits an
 
 Let the delegate's guard pass to `shouldQuit()` when any window holds unsaved work, as well as when something runs. A
 regression test drives the delegate, not `shouldQuit()` alone. No design call is known.
+
+## Fix note
+
+`applicationShouldTerminate` in `App/AppDelegate.swift` now guards only on the window set, so `WindowSet.shouldQuit()`
+decides every quit. Cmd-Q with an edited map and nothing running now asks "Save changes before quitting?". A quit with
+nothing to ask still ends at once.
+
+Regression test: `MapViewerUITests.testQuittingAnEditedMapAsksEvenWhenNothingRuns`. Without the fix it failed with
+"quitting an edited map asked nothing". With the fix, it and every UI class that presses Cmd-Q pass. That is 91 UI tests
+in the Map, Data, Image, Text, Questions, Layout, and Terminal classes. The package suite passes too.
