@@ -211,6 +211,10 @@ fixed ones.
 - Seen again: 2026-11-21, in a local `make ci` of a landing batch that changes no script host code.
   `ScriptLintCommandTests.testUsageMistakesAreRefusedWithTheUsageStatus` ran past its 120 s limit, with the sample
   again showing `ScriptFixtures.finish` blocked in `waitUntilExit`. A rerun of the same tree passed its package tests.
+- Seen again: 2026-11-23, in a local `make test-package` during a bug sweep, checking a fix that changes only WindowKit
+  and an AppletKit doc comment. `ScriptHostAPITests.testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem` ran
+  past its 120 s limit. The sample again showed `ScriptFixtures.finish` blocked in `waitUntilExit`. `ScriptHostTests`
+  does not depend on WindowKit. The full rerun of the same tree passed all 3214 tests.
 - Status: unresolved. UTERM-046 proposes replacing `waitUntilExit` in `finish`.
 
 ### `ExecPaneUITests.testARestoredExecPaneRunsOnlyAfterValuesAndApprovalThenDrivesTheApplet`
