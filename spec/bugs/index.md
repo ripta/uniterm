@@ -29,6 +29,7 @@
 | [20261122-terminal-directory-check-blocks-main-thread](20261122-terminal-directory-check-blocks-main-thread.md) | An applet's current directory checks the file system on the main thread | proposed |
 | [20261122-layout-save-runs-on-main-thread](20261122-layout-save-runs-on-main-thread.md) | The layout save encodes and writes every tab on the main thread | fixed |
 | [20261122-layout-launch-read-runs-on-main-thread](20261122-layout-launch-read-runs-on-main-thread.md) | The launch reads and decodes the whole layout file on the main thread | proposed |
+| [20261122-browser-describe-reencodes-tabs-on-main-thread](20261122-browser-describe-reencodes-tabs-on-main-thread.md) | The browser re-encodes every tab record on the main thread at each change | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | open |
 | [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | open |
 | [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
