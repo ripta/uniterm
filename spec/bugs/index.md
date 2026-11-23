@@ -33,6 +33,7 @@
 | [20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread](20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread.md) | The browser's tab bar builds and updates one view per tab on the main thread | proposed |
 | [20261122-optimized-build-crashes-compiler-in-status-queue](20261122-optimized-build-crashes-compiler-in-status-queue.md) | An optimized build of the package crashes the Swift compiler in StatusKit | fixed |
 | [20261122-undo-reopen-decodes-pane-on-main-thread](20261122-undo-reopen-decodes-pane-on-main-thread.md) | Undo reopen of a closed pane decodes its description on the main thread | proposed |
+| [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | open |
 | [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | open |
 | [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
