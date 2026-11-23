@@ -107,8 +107,9 @@ capture to that pane.
 
 Decision: a script or controller can capture a pane or tab of any applet that has the capability, and the browser's full
 page. A capture needs an authenticated requester and an explicit, revocable grant under ADR-14 P7. The grant names the
-operation, its targets, and a bound under ADR-14 P15. The reply follows ADR-11: the command replies at once with a
-handle, and a completion event names the handle. Retained results are capped per result and per run. A program's copy
+operation, its targets, and a bound under ADR-14 P15. The reply follows ADR-11, and "Where a program's capture command
+lives" settles its shape: a handle with a completion event, or a pending reply for a capture that only reads. Retained
+results are capped per result and per run. A program's copy
 to the clipboard also needs the clipboard-write power, which is separate under ADR-14 P8. A capture behaves as the
 user's command does, under ADR-15, except for authority. "Where a program's capture command lives" settles the command,
 the handle's home, and the event stream. Amended 2026-11-22; see Decision Log.
@@ -122,7 +123,10 @@ controller policy file. The Janet helper and ScriptWire ship together in the app
 newer user script on an older app gets an unbound-symbol error.
 
 - New driver, old app: the capture command rides the existing `command` or `paneCommand` frame, so the old app answers
-  with its error for an unknown command or `unsupported-version` for a newer schema, under ADR-13. A new frame type
+  with its error for an unknown command or `unsupported-version` for a newer schema, under ADR-13. The terminal, REPL,
+  questions, and data viewer take no commands today, so an older app answers a capture of them with `refused` and "this
+  pane's applet takes no commands". `refused` is also the code for a failed authority check, so the message text is
+  what tells a driver that the app is too old. A new frame type
   would end the driver on an older app, since the exec protocol treats an unknown type as malformed. So a new frame
   type waits for UTERM-028's version negotiation.
 - Old driver, new app: no earlier command changes meaning.
@@ -236,8 +240,9 @@ type, its event buffer is per tab, and its handle cap is per tab. A terminal pan
 
 - A host-level pane command, such as `capture-pane`, that works for every capable applet. The handle lives on the pane.
   One command name, one schema. Remote callers receive no applet events under UTERM-004, and exec drivers get events
-  only from the pane they drive. So this candidate names its carrier for the completion event: a new push stream, which
-  amends UTERM-004 and the wire, or a host-level next-events buffer.
+  only from the pane they drive. So this candidate names its carrier for the completion event: a new push stream, or a
+  host-level next-events buffer. The push stream adds scope: it amends UTERM-004's "remote callers receive no applet
+  events" and the exec and remote wires.
 - A capture that only reads holds a pending reply under ADR-11, and the reply carries the handle once the PNG is ready.
   No completion event is needed. A capture that also copies to the clipboard has an effect, so it keeps the
   handle-plus-event shape.
@@ -318,7 +323,8 @@ takes it from every web page and terminal program.
   including when neither found a file there
 - A completion that arrives after the time bound or a cancel is dropped, and never reaches the pasteboard, a file, or a
   later capture's result
-- A capture of a hidden or minimized pane returns a current frame or a structured error, never a stale frame as success
+- A capture of a hidden or minimized pane returns a current frame or a structured error, never a stale frame as success.
+  The test changes the content after a first capture, then hides the pane, so a stale frame would fail it
 - A pane capture leaves out the host's gutter, focus border, badges, and exec strip
 - A pending capture shows its state, refuses a second capture of the same pane, and never moves focus
 - The pending state never appears in the captured image
@@ -374,17 +380,17 @@ takes it from every web page and terminal program.
 Waits for UTERM-019 M3, which builds handles and read-result, and for the byte type that UTERM-019's "Result encoding"
 adds.
 
-- A user's cancel or a time-out of a program's pending capture ends its handle with a structured error, and a
-  revocation mid-capture frees the handle
-
+- A user's cancel, a time-out, or a revocation of a program's pending capture fails its pending reply or frees its
+  handle with a structured error, under ADR-11
 - A capture without the capture grant returns a structured error that names the power
 - A capture of a tab the program does not own, or of a pane that mixes owners, follows "Which panes a program may
   capture"
-- A capture replies at once with a handle, a completion event names it, and its PNG reads back in chunks
+- A capture replies in the shape "Where a program's capture command lives" settles, and its PNG reads back in chunks
 - Retained results are capped per result and per run, and a result over its cap is refused
 - A program's copy to the clipboard needs the clipboard-write power as well
 - A program's capture of a pane outside its allowed targets is refused
-- A newer driver on an older uniterm gets a clear error for the unknown command, under ADR-13
+- A newer driver on an older uniterm gets a clear error for the unknown command, under ADR-13. A capture of an applet
+  that took no commands gets `refused` with text that lets the driver tell an old app from a denied grant
 
 ## Decision Log
 
@@ -408,6 +414,11 @@ adds.
   bullet now says so. It gained the policy file direction. The host-level capture candidate now names its event
   carrier, and a pending-reply candidate was added. The browser capture amendment's gate moved from UTERM-019 M4 to M1,
   which creates the kind.
+- 2026-11-22: Revised after the third critique pass. "Scripts and controllers capture too" said "the command replies at
+  once with a handle, and a completion event names the handle". That reply shape was this draft's own mechanism, not
+  the user's choice. It contradicted the pending-reply candidate, so the shape moved to "Where a program's capture
+  command lives". "Version skew" now names the `refused` answer an older app gives for an applet that takes no
+  commands. These fixes were not re-checked, since the proposal loop allows three passes.
 
 ## References
 
