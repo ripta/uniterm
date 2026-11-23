@@ -1,7 +1,8 @@
 # The launch reads and decodes the whole layout file on the main thread
 
-**Status:** open
+**Status:** proposed, see [UTERM-051](../proposals/UTERM-051-launch-reads-the-layout-off-the-main-thread.md)
 **Found:** 2026-11-22, while fixing `20261122-layout-save-runs-on-main-thread`
+**Estimate:** large; non-trivial design decisions: (1) async `launch()` versus a per-pane tab cap, (2) what the app shows while the read runs, (3) how routed opens and the launch marker order against an async launch.
 
 ## Observed
 
