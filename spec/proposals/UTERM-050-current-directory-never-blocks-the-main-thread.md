@@ -19,8 +19,12 @@
 
 ## Summary
 
-An applet's `currentDirectory` stops checking the file system on the main thread. The rule goes into the applet
-contract, so no applet can break it later. Each applet meets the rule in the way the design questions below settle.
+An applet's `currentDirectory` stops checking the file system on the main thread, and so does every main-thread check of
+the same directories by the code that uses them. The rule goes into the applet contract, so no applet can break it
+later. The property returns the path as held. One resolver checks a directory off the main thread before a terminal
+starts in it or a panel opens in it. A fourth libghostty patch removes libghostty's own main-thread open of the start
+directory. A terminal tab that waits on its folder shows that it is waiting. `list-panes` reports the path as held, with
+a bump of `uniterm/api-version`.
 
 ## Motivation
 
@@ -29,8 +33,9 @@ directory on a network mount that stopped answering. A viewer can also show a fi
 `currentDirectory` then calls `FileManager.fileExists` on that path, and the call does not return until the mount
 times out.
 
-Every reader of the property runs on the main actor. They are `list-panes`, a new pane or tab beside the applet, the
-terminal's reopened tab and restore, and the open panel's starting folder. Each one can freeze every window.
+Every reader of the property runs on the main actor. They are `list-panes`, a new pane or tab beside the applet, and the
+open panel's starting folder. The terminal's reopened tab and its restore check their saved directories the same way,
+without reading the property. Each one can freeze every window.
 
 ADR-08 says the main thread never waits on work whose duration uniterm does not bound. A check against a path the
 user's shell or file chose has no bound. The terminal already moves its link checks off the main thread for this
@@ -162,9 +167,12 @@ the main-thread open and stat at surface creation. Decided autonomously on 2026-
   mount answers. Amended 2026-11-22; see Decision Log.
 - Every other new tab or pane appears at once and waits for its check. A waiting tab takes first responder.
 - The patch joins the three in `ThirdParty/ghostty-patches/`. libghostty's subprocess access check stays, on its IO
-  thread. The patch also makes that check fall back to the shell's `HOME` when the directory cannot be accessed, instead
-  of inheriting the app's own directory. Every fallback then lands in home, and no library behavior picks the folder out
-  of sight. Amended 2026-11-22; see Decision Log.
+  thread. libghostty falls back silently in two places: its IO-thread access check, and the child's `chdir`, whose
+  result it ignores (`src/Command.zig`, about line 217). The patch makes both fall back to a home directory uniterm
+  passes with the launch, instead of the app's own directory, and sets `PWD` to the directory the shell starts in. The
+  home travels in its own surface config field, never in the child's environment or as a user setting. It is the same
+  home the resolver falls back to, so every fallback lands in one place, and no library behavior picks the folder out of
+  sight. Amended 2026-11-22; see Decision Log.
 - The viewers drop the step from a gone folder to their start directory. A new pane from a viewer whose folder is gone
   starts in home. Keeping that step needs a list in the contract for one rare case, the file a script sent, whose start
   directory is the receiving pane's earlier directory. "Not every attribute needs plumbing" in the project's
@@ -365,8 +373,14 @@ None.
 - The view a waiting tab shows accepts first responder, so keys typed while it waits reach no other pane's shell
 - The libghostty patch removes the open and stat at surface creation, and a test or trace shows nothing else in surface
   creation touches the directory on the main thread
-- When libghostty's IO-thread access check fails, the patched fallback starts the shell in its `HOME`, not in the app's
-  own directory
+- When libghostty's IO-thread access check fails, the patched fallback starts the shell in the home uniterm passed with
+  the launch, not in the app's own directory. A test with an injected home that differs from the process's `HOME` shows
+  the fallback uses uniterm's
+- A failed `chdir` in the child also falls back to the passed home before exec, and `PWD` names the directory the shell
+  starts in
+- The passed home travels in its own surface config field. It does not appear in the child's environment, does not
+  change the child's `HOME`, and is not a user config key
+- The doc states what the child does when the passed home itself cannot be entered
 - `uniterm/api-version` is bumped, and the `list-panes` doc and the scripting docs say `:directory` may be gone or
   unreachable
 - A contract test over the built-in applet catalog builds each applet over a path that does not exist and expects
@@ -453,6 +467,16 @@ None.
 - 2026-11-22: ADR candidate (cuts across the system): every directory handed to libghostty comes from one resolver.
   Declined: lifted to its invariant, it is ADR-08's rule again. The resolver is a mechanism that meets it.
 - 2026-11-22: Accepted.
+- 2026-11-22 (autonomous): After acceptance, checked the gate's fallback change against libghostty. The child's
+  environment comes from the app's own environment, so its `HOME` can differ from the home uniterm's resolver uses.
+  The decision now says the patch falls back to a home uniterm passes with the launch. Before, it said the shell's
+  `HOME`. The user's choice, that every fallback lands in home, is unchanged. Refreshed the Summary to the settled
+  design. Corrected Motivation, which said restore and reopen read the property. They check the same directories
+  without it. Confirmed that the build fails when a patch does not apply, which the patch-bump risk relies on.
+- 2026-11-22 (autonomous): Re-check pass 2 did not converge. The child's `chdir` in libghostty ignores its result, so
+  a directory removed after the access check still started the shell in the app's directory. The patch now covers that
+  site too, and sets `PWD` to the directory the shell starts in. Routed to M1: the carrier field, `PWD`, and what
+  happens when the passed home fails. This was the proposal loop's third pass, so the fix was not re-checked.
 
 ## References
 
