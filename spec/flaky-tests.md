@@ -232,8 +232,21 @@ fixed ones.
 - Seen again: 2026-11-22, in the same full local run as the third `ControllerConsentUITests` sighting of that day.
   It failed at `CommandPaletteUITests.swift:294` with "the title was not neutralized", and passed 3 of 3 alone
   right after.
+- Seen again: 2026-11-22, in a local `make test-app-select UI_TESTS=CommandPaletteUITests` run while landing the
+  palette's Control-K and Control-A keys. It was the class's first test. It failed at `CommandPaletteUITests.swift:353`
+  with "the title was not neutralized", after 10 s of row checks. It passed 3 of 3 alone on the same tree.
 - Status: unresolved. A single keystroke that takes about 20 s also shows in the `ControllerRunUITests` and
   `ExecPaneUITests` entries above. The app may stall now and then in a long run. That is not confirmed.
+
+### `CommandPaletteUITests.testChoosingABackgroundTabSelectsItAndTheKeyboardFollows`
+
+- Seen: 2026-11-22, in the class run right after the sighting above, on the same tree.
+- Evidence: `CommandPaletteUITests.swift:323` failed with "the background tab was not listed", after 10 s of row
+  checks. The test typed its `printf` 1.6 s after launch, before any prompt showed. The class then passed 2 of 2 on
+  that tree and 2 of 2 on upstream main. The change under test reroutes only Control-K and Control-A while the
+  palette's field has the keyboard, and the test sends neither.
+- Status: unresolved. Like the entry above, the row for a tab a program titled never showed. Both tests type the
+  title before the shell is shown to be ready.
 
 ### `DockedPaletteUITests.testTheTopStripSitsInTheTitleBarRowAndTheOverlayOpensAwayFromTheEdge`
 
@@ -391,11 +404,9 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
   moved within the two-second bound. The test then passed 20 of 20 alone on the same tree.
 - Status: unresolved. The earlier fix does not cover this sighting.
 
-## Fixed
-
 ### `PatternTests.testACatastrophicPatternStopsAtItsLimitAndStopsUsingCPU`
 
-Fixed by: "Check the stopped pattern match's CPU per thread"
+Reopened. The earlier fix, "Check the stopped pattern match's CPU per thread", does not cover the sightings below.
 
 - Seen: 2026-11-22, in the first CI `package` run of the PR that added it.
 - Evidence: the process used 0.43 s of CPU in the half second after the match stopped, against a 0.15 s bound. The
@@ -405,6 +416,15 @@ Fixed by: "Check the stopped pattern match's CPU per thread"
 - Fix: the test samples each thread's CPU over a window before the search and an equal one after. It fails when one
   thread uses half the window more than its baseline. A thread left spinning after the check failed it at 0.50 s.
   The fixed test passed 10 of 10 alone.
+- Seen again: 2026-11-23, twice in CI `package` runs of the PR for the palette's Control-K and Control-A keys, on one
+  head. One thread used 0.27 s and then 0.43 s over its baseline, against the 0.25 s bound. That PR touches only the
+  palette's key route. A `workflow_dispatch` run on main passed the same job once.
+- Suspected cause: `search` matches on the calling thread and returns when the match stops. The calling thread then
+  sleeps through the after window. So the after window can only see other threads, such as a background worker that
+  an earlier test left with work. A worker that is idle in the baseline and busy after fails the test.
+- Status: unresolved. The check measures threads the match never runs on.
+
+## Fixed
 
 ### `QuestionsUITests.testEveryAnswerTypeReturnsItsShape`
 
