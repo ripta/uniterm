@@ -42,4 +42,5 @@ This needs a design call in UTERM-054:
   not read, and the image viewer's contract narrows to paths and listings.
 - The text viewer and the data viewer show files too. Whichever rule wins, check them under it.
 - The map viewer's file layer needs the same rule. A refusal there could instead leave the file layer out of the image.
-- UTERM-055 gives exec drivers a caller with no read scope, so the resolution applies to drivers as written.
+- UTERM-055 gives exec drivers a caller with no read scope, so the resolution applies to drivers as written. UTERM-055
+  M1 waits for this bug's resolution. UTERM-054 does not name this bug yet.
