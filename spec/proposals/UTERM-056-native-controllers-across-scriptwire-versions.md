@@ -1,6 +1,6 @@
 # UTERM-056: Native Controllers Across ScriptWire Versions
 
-**Status:** draft
+**Status:** accepted
 **Created:** 2026-11-23
 **Updated:** 2026-11-23
 
@@ -14,11 +14,26 @@
 - UTERM-054 — "Version skew" and the risk "A native controller stops connecting after the capture calls ship". Both
   accept the refusal until this proposal settles what a native controller's wire is.
 - UTERM-019 — "Result encoding", whose skew line says app and helper ship in one bundle and a mismatch is refused at
-  the hello. That holds for the helper and not for a native controller.
+  the hello. That holds for the helper and not for a native controller. Its byte value also becomes a failure on a
+  version 14 connection, per "A value an older version cannot express".
+- UTERM-050 — "What `list-panes` reports for a directory", which says ADR-13 does not apply. A changed `:directory` is a
+  new ScriptWire version, and a version 14 connection keeps today's rule, checked off the main thread.
+- UTERM-029, UTERM-033, and UTERM-034 — checks that a mismatched command is refused at the hello. An older command is
+  now refused at its begin.
+- UTERM-026, UTERM-032, UTERM-043, UTERM-047, and UTERM-048 — skew lines that say ScriptWire matches exactly.
+- UTERM-024 — "Version skew", whose exact-match rule holds for the command and no longer for other programs. Its event
+  and read are in the subset, so each needs an older form or a call new in its version. Its line that an event gains
+  fields only by adding them no longer holds within one version.
+- UTERM-022 — the form result's and the form spec's rules that new keys are additive. On the wire, an added key is a new
+  version.
+- UTERM-021 — its promise that a program other than the command may open an undeclared session. After a version change
+  such a program is refused at that begin until it is rebuilt, as is one that sends an open begin.
+- UTERM-057 — its controller begin is a command message, which stays exact match, per "What a native controller's wire
+  is".
 
 ## ADR Deviations
 
-None yet. Each candidate under "What a native controller's wire is" names the ADR-13 change it would need.
+None. ADR-13's ScriptWire line needs an amendment instead, per "What a native controller's wire is".
 
 ## Summary
 
@@ -52,59 +67,244 @@ run.
 
 ## Design Decisions (Settled)
 
-None.
-
-## Design Decisions (Open)
-
 ### What a native controller's wire is
 
-Whether a native controller's ScriptWire connection is an outside wire, a bundled one, or not offered at all. The rest
-of the design follows from this answer.
+Original question: whether a native controller's ScriptWire connection is an outside wire, a bundled one, or not offered
+at all.
 
-Candidates:
+Decision: an outside wire under ADR-13, on a subset of ScriptWire. The app accepts older versions of the messages a
+program that is not uniterm's own command uses, and the bundled command keeps exact match. (addition)
 
-- An outside wire under ADR-13. The app offers ScriptWire versions at the hello and keeps each version's meaning, as
-  UTERM-028 does for the exec wire. ADR-13's ScriptWire line gains a carve-out: the helper keeps exact match, and a
-  native controller does not. The app carries every version it still accepts, with each version's behavior. That cost
-  grows with each ScriptWire change.
-- A bundled wire, with exact match kept. ADR-13 is amended to say a native controller must be rebuilt for each
-  ScriptWire change. The mismatch text changes so a native controller's user is told to update the controller, not to
-  relaunch. Leaves undone: every ScriptWire change still breaks deployed native controllers.
-- No native entries. Controllers run only through uniterm's own helper, and the `native` entry kind is withdrawn from
-  UTERM-004's descriptor. ADR-13 needs no change. Leaves undone: signed packages with a native entry stop loading, so
-  this needs a migration story for them and is a one-way door.
-- No rule. Today's behavior stays: exact match, and a mismatch text that tells the user to relaunch. This is the bug
-  itself, and it conflicts with ADR-13's rule for separately deployed programs.
+- The subset is what such a program sends and receives: the hello, `begin`, requests with their values, and replies.
+- The command's own messages keep exact match: the controller, file, undeclared, open, and question begins, the REPL
+  attach, and the app's answers to them. An older command that sends one gets an explicit refusal, never admission. The
+  refusal carries the relaunch text, and the app posts the same text, whatever process sent it. It must not pass as an
+  ordinary program, since that would skip the strict-mode refusal.
+- Each accepted version keeps one fixed meaning, and the app writes each reply for the connection's version.
+- The meaning covers what is inside a reply, such as the fields of a listed pane. A change to what a field means is a
+  new ScriptWire version, and the app writes the old meaning for older connections. An added reply field is a new version
+  too, and older connections do not get it. The version alone then says what a program is offered. (addition)
+- A floor names the oldest version accepted. Moving it up needs its own proposal, per ADR-13.
+- Other programs on the socket get the same compatibility as a native controller.
+- A remembered approval's meaning does not depend on the ScriptWire version, per ADR-14.
+
+Rationale: ADR-13 covers any separately deployed program, and a native controller is one. One version number covered two
+contracts, the bundled command's and the outside program's. Splitting them keeps the first simple and the second
+stable. Withdrawing native entries, relaxing ADR-13 for them, and starting the rule only at a published wire were
+offered, and the user kept the rule.
+
+### The version floor
+
+Original question: which ScriptWire version is the oldest the app accepts from a program that is not its own command.
+Candidates were version 8, where native entries began; version 12, accepted when ADR-13 was adopted; version 14; and
+the version this proposal lands as.
+
+Decision: version 14. (autonomous)
+
+- The floor is the number 14, not "the current version", since another ScriptWire change may land first.
+- Version 14's subset includes the three form calls and the `ended` failure kind. This proposal changes no message, so
+  it need not move the version.
+- Versions 8 to 13 stay refused. No program on them is known outside the test fixture.
+- ADR-13's amendment states the floor.
+
+Rationale: 14 is the last wire a build from before this proposal speaks, so the app carries no extra forms. A lower
+floor would carry older call layouts for no named program, and raising it later needs a proposal. A bump would refuse
+a program built at 14 once more. Converged in 1 pass.
 
 ### How the hello agrees on a version
 
-Applies only if a native controller's wire is an outside wire. Candidates include a version list in the app's hello
-that the controller picks from, as UTERM-028 adds for the exec wire, and an app that accepts any version in a fixed
-window. Open: how many earlier versions the app keeps, and what proposal retires one, per ADR-13.
+Original question: how the two sides agree on a version. The client speaks first, with a hello of one version number,
+and checks the app's hello for its own version.
+
+Decision: the app answers with the lower of the two versions, and both sides then use it. (autonomous)
+
+- The hello's shape is unchanged. A client at or below the app's version sees its own number back.
+- A newer client reads the app's number. It continues if it speaks that version, and closes otherwise.
+- A hello below the floor gets the app's own version and is refused, as today.
+- The bundled command compares the answer with its own version, as today, and prints the relaunch text.
+- Skew with an app from before this proposal: it refuses a newer client, which reconnects at the version the refusal
+  carries. The app posts one warning per such connection. This cannot be fixed from the client's side.
+
+Rationale: one exchange agrees on a version without a second hello or a retry. A version list in the app's hello would
+break every existing client, which requires a one-number body. An environment variable from `uniterm controller run`
+would serve only programs it starts, and goes stale if the app is replaced. Converged in 2 passes.
+
+### A value an older version cannot express
+
+Original question: what the app does when a reply, a failure kind, or an event for an older version holds something that
+version has no form for.
+
+Decision: the encoder refuses to write it, and the caller gets the failure the host already gives for a reply it cannot
+send. (autonomous)
+
+- The failure is `replyLost` after a command ran and `failed` for a plain answer. Its text names the version needed and
+  says a retry at this version cannot succeed.
+- A call newer than the connection's version closes the connection, as an app at that version does today.
+- A later proposal that adds a failure kind names the existing kind it is written as for older versions, with the same
+  meaning of whether the call ran. A new kind of event reaches a program only through a call new in its version.
+- Left undone: a caller may start work whose result it cannot then read at its version. It is told the work ran.
+
+Rationale: one point of enforcement, and honest under ADR-11. Refusing a command before its effect would put a
+ScriptWire version in the applet command schema, whose version ADR-13 says keeps its own rule, and the one command that
+needs it has no effect. Dropping or converting a value loses data with no signal. Closing the connection drops calls
+already in flight. Converged in 2 passes.
 
 ### What the user sees on a refused native controller
 
-Every candidate above still refuses some native controller: one too old for the app's window, or one built for a newer
-app. Open: what the error names, such as the controller's package, and what it tells the user to do. The helper's own
-mismatch keeps the relaunch text.
+Original question: the app still refuses some programs: one below the floor, an old command that sends its own messages,
+and a newer program that cannot speak the app's version and closes. What the error names, what it tells the user to do,
+and whether the app reports the program that closes.
+
+Decision: the app gives each refused program the remedy that can work for it, and reports a newer program that closes
+early.
+
+- For a hello below the floor or above the app's version, the app learns who the peer is before it answers: its start
+  time, its running code's hash and path, and whether it is the bundle's command. A refusal then does not race the
+  peer's exit.
+- The bundled command keeps the relaunch text, also when it is a newer command that a running older app meets.
+- A native controller is named by the launch it matches, by the checks that adopt its run. A name is never taken by
+  process ID alone. The text says it was built for an older or newer uniterm, and to update the controller or uniterm.
+- Any other program reads as "A program", with "Update that program" or "Update uniterm".
+- An unreadable identity gets a neutral text that names both versions and both remedies.
+- A newer program that closes before it declares a role is reported once, by the same rule. A connection that declared
+  a role is never reported.
+
+Rationale: a relaunch cannot fix a native controller, and no refusal is silent. Reporting by one neutral text was
+offered, with and without early closers. Option text that claimed the same check as adoption had no connection to check,
+since the refusal comes before one exists. The user chose this one when asked about the special cases it needs.
+
+## Design Decisions (Open)
+
+None.
 
 ## Risks
 
-- **Every queued ScriptWire change breaks deployed native controllers until this settles** — likelihood: high, impact:
-  medium. UTERM-019 and UTERM-054 change ScriptWire. Mitigation: UTERM-054 accepts this in its Risks, and this
-  proposal is where the fix lands. Native controllers are third-party code, so the count deployed is unknown.
-- **Withdrawing native entries strands signed packages** — likelihood: medium, impact: high, if that candidate wins.
-  Mitigation: it is listed as a one-way door, and choosing it needs a migration story first.
+- **A queued ScriptWire change lands before this and breaks deployed native controllers** — likelihood: medium, impact:
+  medium. UTERM-019 and UTERM-054 change ScriptWire. Until this ships, such a change refuses a native controller built
+  at 14. Accepted: the floor stays 14 whatever lands first, so this ends the refusal when it lands, and no native
+  controller outside the test fixture is known.
+- **The floor and each accepted version are a published contract** — likelihood: high, impact: medium. This is a one-way
+  door, since dropping a version breaks programs and needs its own proposal. Mitigation: the floor is a fixed number, 14,
+  with no older form to carry, and each version's subset is fixed by recorded fixtures.
+- **A message or reply changes meaning with no version change** — likelihood: medium, impact: high. A program at 14
+  would then read a new meaning. Recorded frames miss a change above the codec, such as UTERM-050's. Mitigation:
+  recorded replies made by the host itself, for each accepted version, fail when a field's meaning changes.
+- **Every later proposal that changes or adds a reply field carries the old form** — likelihood: high, impact: medium.
+  Accepted: the user kept this promise, and the cost is spread across later proposals.
+- **An older command passes as an ordinary program** — likelihood: medium, impact: high. It would skip the strict-mode
+  refusal. Mitigation: below the current version the command's own messages are refused before their bodies are decoded,
+  and a check covers each.
+- **An in-flight proposal in Impacts changes shape before this lands** — likelihood: medium, impact: medium. UTERM-019,
+  UTERM-024, UTERM-050, and UTERM-054 are accepted and not built. Mitigation: each is listed in Impacts with the section
+  it must update, and M2 records version 14 behavior before any of them changes it.
+- **A program that speaks a newer version starts work it cannot read the result of** — likelihood: low, impact: low.
+  Accepted: the call says the work ran, and its text names the version to update to.
 
 ## Milestones
 
-To be written once the open questions settle.
+### M1: Agree on a version, and keep the command at exact match
+
+**Status:** NOT STARTED
+
+- A program at version 14 runs `begin`, requests, and replies against a newer app, and a newer program runs against an
+  older one that this milestone built
+- A hello below 14 is refused with the app's own version, and posts one warning
+- Below the current version, each command-only frame with a version 14 body is refused before its body is decoded, in
+  a form a version 14 peer can read, and starts no run
+- An older `uniterm command` at an older hello never reaches strict mode's admission
+- A second hello stays a violation
+- A frame of any kind newer than the connection's version closes the connection, as does a call code, an enum member,
+  or a request form above it
+- A newer program continues at the app's version through a check of its own, since the command's hello check is exact
+- The refusal of an old command's frame carries the relaunch text, and the app posts it once
+- A form spec key first accepted at a later version is refused at version 14, as a version 14 app refuses it
+- Nothing lands that lets an old connection in before replies are written for its version, so M1 and M2 ship together
+
+### M2: Write replies for the connection's version
+
+**Status:** NOT STARTED
+
+- A reply, failure kind, or event that the connection's version lacks reaches no version 14 client in any call path,
+  including the form calls and the second connection of one native run
+- A reply that cannot be written is `replyLost` after a command ran and `failed` for a plain answer, and its text names
+  the version needed and says a retry cannot succeed
+- A new failure kind with no older form fails the build until the encoder names one
+- Any call whose effect ran answers `replyLost` when its reply cannot be written, pane and tab opening included
+- Host replies recorded at each accepted version keep exactly their recorded fields, each with its value and meaning, so
+  a changed or added field fails
+- A reply that gains a field at a later version is still written at version 14, without that field
+- The version 14 replies are recorded from version 14 behavior, and any older form that a change landing first needs is
+  carried here
+
+### M3: Say the right thing on a refusal
+
+**Status:** NOT STARTED
+
+- A native controller below the floor is named, and the text tells the user to update it
+- A native controller above the app's version that cannot speak it is named, and the text tells the user to update
+  uniterm, with one report per connection
+- The bundled command, a newer command against an older app included, always reads the relaunch text
+- A process that borrows a launch's ID gets no name, and a controller's descriptor name is bounded and cannot forge
+  uniterm's text
+- A program that exits right after the hello is still named, or gets the neutral text, since the launch is matched from
+  facts captured before the answer
+- The bundle's command is recognized after it is replaced on disk, by the full check and not the cached one
+- A program that closes after the hello for a reason other than its version gets text worded as possible, not certain
+
+### M4: Document the subset and record its fixtures
+
+**Status:** NOT STARTED
+
+- The version 14 subset has a written reference outside the Swift source, and states the rule for each later version
+- The reference says an applet command's reply contents, events included, follow the command schema version, per
+  ADR-13, so the rule for new event kinds does not cover them
+- Recorded version 14 frames for the subset decode and encode unchanged, and fail when one changes
+- A native fixture built only from the recorded frames, not the live `ScriptWire` target, runs against the current app
+- ADR-13's amendment is approved by the user, and covers reply contents and added fields, the ScriptWire line, and the
+  floor named for each wire
+- The code agrees with the amended text
 
 ## Decision Log
 
 - 2026-11-23: Filed as a draft from bug `20261122-native-controller-refused-after-scriptwire-change`. The user asked
   for a proposal at its triage. The bug's three fix options became candidates under "What a native controller's wire
   is". "No rule" was added as the plain behavior. The version agreement and the refusal text became follow-up questions.
+- 2026-11-23: Review start: 0 milestones, 0 settled decisions, 2 risks, no live-after lines, no out-of-scope statements;
+  the user asked to review the whole draft. The baseline is the commit "Draft UTERM-056 for native controllers across
+  ScriptWire versions".
+- 2026-11-23: (addition) The growth question. The requirement was ADR-13's rule for native controllers. The special
+  cases were two version rules on one wire, an explicit refusal for an old command, replies written per version, and a
+  version floor. The user kept the rule and those cases. That settles "What a native controller's wire is", narrows
+  ADR-13's ScriptWire line to the bundled command, and brings in a documented wire with fixtures and the same
+  compatibility for other programs on the socket. The floor and the older-version value became open questions.
+- 2026-11-23: (autonomous) The version floor is 14.
+- 2026-11-23: (autonomous) The app answers with the lower of the two versions.
+- 2026-11-23: (autonomous, addition) A value an older version cannot express becomes a failure of that one call, through the
+  encoder. It puts a rule on later proposals that add a failure kind.
+- 2026-11-23: The growth question for the refusal text. The requirement was that every refused program gets a remedy that
+  can work. The special cases were the bundled command, a native controller named by its package, any other program,
+  and a newer program that closes early. The user chose the right remedy for each, which settles "What the user sees on
+  a refused native controller".
+- 2026-11-23: (addition) The growth question for reply contents, raised by the whole-proposal check. The requirement was
+  ADR-13's fixed meaning. The special case was an old form written for every field whose meaning changes. Promising only
+  message layout, and fields that grow but never change, were the other choices. The user chose to cover reply contents.
+- 2026-11-23: (autonomous) Coherence fixes. The floor is 14 whatever lands first, and a risk that said otherwise was
+  rewritten. A field may be added at any version, replacing a line that dropped fields silently. An older command's
+  refusal at its begin has the relaunch text. Impacts gained the proposals whose skew lines go stale. Two refusal
+  decisions reached earlier in this review are unchanged.
+- 2026-11-23: (autonomous) Re-check converged in 2 passes. Risk review: added the in-flight proposals risk. No risk is
+  high likelihood and high impact.
+- 2026-11-23: Review gate: kept the failure-kind rule on later proposals. The user approved the ADR-13 amendment's
+  direction and text as shown, and it is written into ADR-13 for them to check.
+- 2026-11-23: (addition) An added reply field is a new version. It replaces a line of this review's own that let a field be
+  added at any version. The user said "I want the most correct option". The three options offered first left this one
+  out. ADR-13's Alternatives reject a version whose meaning grows, and a program could not tell from the version whether
+  an added field is offered. ADR-13 P1 carries the rule, and so it reaches the exec wire too.
+- 2026-11-23: (autonomous) Scoped ADR-13 P5 and P6 by message, not by sender, to match "What a native controller's wire
+  is". The proposal loop's third pass found the mismatch. This fix was not re-checked, since three passes are its limit.
+- 2026-11-23: The user checked ADR-13's amended text, kept it, and accepted this proposal. No decision earns an ADR of its
+  own, since each applies ADR-13.
+- 2026-11-23: (autonomous) Corrected the ADR citation for remembered approvals from ADR-09 to ADR-14, which supersedes it.
 
 ## References
 
