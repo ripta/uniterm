@@ -59,7 +59,7 @@
 | [UTERM-055](UTERM-055-exec-drivers-capture-panes.md) | External exec drivers capture panes through a new exec protocol version | accepted |
 | [UTERM-056](UTERM-056-native-controllers-across-scriptwire-versions.md) | What happens to a native controller when ScriptWire's version changes | draft |
 | [UTERM-057](UTERM-057-package-read-by-invoker.md) | Who reads a controller package's files when `uniterm run` starts it | draft |
-| [UTERM-058](UTERM-058-palette-tab-work-on-the-main-thread.md) | The palette lists and filters tabs without main-thread work that grows with the tab count | draft |
+| [UTERM-058](UTERM-058-palette-tab-work-on-the-main-thread.md) | The palette lists and filters tabs without main-thread work that grows with the tab count | accepted |
 
 ## Dependency Graph
 

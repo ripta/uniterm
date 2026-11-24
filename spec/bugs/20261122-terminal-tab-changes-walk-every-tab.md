@@ -23,7 +23,7 @@ waiting tab, so a stored layout can carry any number of them.
 - `layoutContents` (about lines 749-753) sets a frame on every session view.
 - A lookup by tab ID scans the tabs. `selectTab(id:)` (about line 547) runs `firstIndex` over every tab, and the
   published list's `contains` scans it too. The palette's `chooseTab` and scripting's tab lookups in
-  `WindowScripting.swift` reach both. UTERM-058 leaves these lookups to this bug.
+  `WindowScripting.swift` reach both. UTERM-058 M2 fixes these lookups with a map from ID to tab.
 - ADR-08 allows only local work whose duration uniterm bounds on the main thread. The terminal has no tab cap.
 
 ## Repro
@@ -44,9 +44,7 @@ selection.
 Traced on 2026-11-23 by reading the code. Nothing was run, and the cost was not measured.
 
 UTERM-053 is accepted and its M1 is not started. It owns the title array in the title-change handler and the computed
-published list. It publishes a read-through list instead. This bug owns only the other two walks, and the lookups by tab ID.
-
-- A lookup by ID could go through a map from ID to tab, as UTERM-053 gives the browser. That is not a design call.
+published list. It publishes a read-through list instead. This bug owns only the other two walks. UTERM-058 M2 owns the lookups by tab ID.
 
 - `refreshTabs` calls `setVisible`, `setFocused(false)`, and clears `hoveredLink` on every tab. `setVisible` already
   returns early when the state is unchanged. A tab with no session, which is every waiting tab of a restored
