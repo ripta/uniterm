@@ -232,6 +232,8 @@ None.
 
 **Status:** NOT STARTED
 
+Amended 2026-11-23; see Decision Log.
+
 - `ScriptFixtures.finish` returns once its helper exits, without `waitUntilExit`, including for a helper that exited
   before `finish` was called
 - Callers that observe a helper's exit, as `onExit` callers do today, still see it

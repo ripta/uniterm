@@ -219,6 +219,8 @@ The scratch measurement covered the encode alone.
 
 **Status:** NOT STARTED
 
+Amended 2026-11-23; see Decision Log.
+
 - A test shows that a burst of title changes costs the window's change check no more per change at 10,000 tabs than at
   10 tabs. `describe()` and a save are timed apart, since each pays the accepted pass over the kept records. `refresh`
   and the tab bar are timed apart too, since UTERM-053 owns them. A record change rebuilds only its own tab's encoded
