@@ -1,6 +1,6 @@
 # A native controller is refused at hello after any ScriptWire change
 
-**Status:** open
+**Status:** proposed. [UTERM-056](../proposals/UTERM-056-native-controllers-across-scriptwire-versions.md) settles the design.
 **Found:** 2026-11-22, during the UTERM-054 review
 **Estimate:** large; three non-trivial design decisions. Whether native controllers are an outside wire under ADR-13, whether to add a version offer or keep exact match with an amended ADR, and whether to drop `native` entries. Each changes behavior users and controller authors can observe, and the first two change an ADR.
 
