@@ -1,8 +1,8 @@
 # UTERM-046: Make the Logged Package-Test Flakes Deterministic
 
-**Status:** designing
+**Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-23
+**Updated:** 2026-11-24
 
 ## Impacts
 
@@ -220,7 +220,7 @@ the identity the test learned, and refuses a pid it has none for.
   when it gets the other. Leaves undone: a site on the fallback keeps that option's window. `login` is setuid root and
   likely refuses a token. WebContent may too, though it runs as the user. Neither was tested. The call has no
   documentation beyond its header. An OS release that drops it fails at link time. The decision reads the token fresh
-  at each signal instead, since a token read at learn time goes stale on exec. See the Decision Log for 2026-11-23.
+  at each signal instead. A token read at learn time goes stale on exec. See the Decision Log for 2026-11-23.
 - **An identity-checked sender.** The test records the pid and its start time to the microsecond, from
   `sysctl(KERN_PROC_PID)`'s `p_starttime`. `proc_pidinfo` refuses `login`. `ProcessInspection.startTime` keeps seconds
   only, so `ProcessInspection` gains a microsecond reader. The sender reads the start time again right before the
@@ -253,15 +253,19 @@ start time matches, it signals by that token. A process that exec'd before the s
 so it is still reached.
 
 When no token can be read, the call confirms the start time and then signals by pid. A token signal that returns
-ESRCH is retried with a fresh token while the start time still matches a live record, up to three tries. The call
-never signals by pid after ESRCH. When the start time no longer matches, it reports the process gone. After three
-tries it reports the process unreached, never gone.
+ESRCH is retried with a fresh token while the start time still matches a live record, up to three tries in all. The
+call never signals by pid after ESRCH, so a retry that reads no token signals nothing. When the start time no longer
+matches, it reports the process gone. After three tries it reports the process unreached, never gone.
 
 `ProcessInspection` makes this one public call. It takes a pid, a microsecond start time, and a signal number. It
-reports which path it took, or that the process is gone or unreached. It refuses a pid of 1 or below and the caller's
-own pid. It also gains a public microsecond start-time reader, which rejects a zombie as the existing record reader
-does. The token stays inside the call as Darwin's `audit_token_t`. So `ProcessInspection` keeps no dependencies, and
-`FileRouting`'s `AuditToken` is unchanged.
+reports which path it took, or that the process is gone, unreached, or refused. It refuses a pid of 1 or below and
+the caller's own pid, and signals nothing for them. It also gains a public microsecond start-time reader, which rejects
+a zombie as the existing record reader does. The token stays inside the call as Darwin's `audit_token_t`. So
+`ProcessInspection` keeps no dependencies. `FileRouting`'s `AuditToken` is unchanged.
+
+Callers handle each result. The product's two kills treat gone as done, and log unreached and refused as errors.
+`WebContentProcess.kill` returns false for gone, unreached, and refused. The test sender accepts gone, and fails the
+test on unreached or refused.
 
 A new test-support target, `ProcessTestSupport`, depends only on `ProcessInspection`. It holds the per-site sender,
 and each site states which path it expects. `WebContentProcess` and the REPL channel record the microsecond identity.
@@ -431,6 +435,7 @@ No package test signals a process by an id that the process may no longer hold.
   `ProcessTestSupport`, which depends only on `ProcessInspection`
 - The sender signals through `ProcessInspection`'s guarded signal call. Each site states whether it expects the token
   path or the pid path. A site fails the test when it gets the other
+- The sender accepts gone. It fails the test on unreached or refused
 - Each site checks the pid when it learns it. The grandchild's parent is the driver. Each terminal tree member's
   microsecond start time is read in one pass before `close()`, and its parent is the member before it. A WebContent
   pid's path carries `com.apple.WebKit.WebContent`. The driver's pid is read while its channel is connected
@@ -465,30 +470,40 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
 - `ProcessInspection` gains a public microsecond start-time reader, and one public guarded signal call. The call takes
   a pid, a microsecond start time, and a signal number. It reads a fresh audit token, reads the start time again, and
   signals by the token when the start time matches. With no token, it confirms the start time and signals by pid. It
-  reports which path it took, or that the process is gone or unreached
+  reports which path it took, or that the process is gone, unreached, or refused
 - A token signal that returns ESRCH is retried with a fresh token while the start time still matches a live record,
-  up to three tries. It never signals by pid after ESRCH. After three tries the call reports unreached, never gone
-- The call refuses a pid of 1 or below and the caller's own pid, and reports gone
-- The microsecond reader goes through the existing record reader, so a zombie reports gone, not the pid path
+  up to three tries in all. It never signals by pid after ESRCH. After three tries the call reports unreached, never
+  gone
+- A retry that reads no token signals nothing. It reports unreached while the start time matches, or gone when it
+  does not
+- The call refuses a pid of 1 or below and the caller's own pid, signals nothing, and reports refused. A test passes
+  pid 0, pid 1, and `getpid()`, and sees refused each time
+- The microsecond reader goes through the existing record reader, so a zombie reports gone, not the pid path. A test
+  spawns a child, leaves it unwaited after it exits, and sees gone
 - The token read releases its task name port on every path. The token stays inside `ProcessInspection` as
   `audit_token_t`. `FileRouting`'s `AuditToken` is unchanged
 - `ProcessInspectionTests` signals a live child through the call with its recorded start time, and the child ends by
   the token path. A start time one microsecond off leaves the child alive. A reaped child reports gone
 - The exec test waits until the child's executable path shows the new image, then signals it through the call with
   the start time recorded before the exec. The child ends by the token path
-- Through `@testable import`, an internal token one pid version off returns ESRCH, read as an errno-style return. A
-  token made stale by an exec inside the call is retried, and the exec'd process is ended
+- Through `@testable import`, an internal token one pid version off returns ESRCH, read as an errno-style return, and
+  the child stays alive
+- The call's internal form takes a token reader. A test's reader first returns a token read before the child exec'd,
+  then reads live tokens. The call retries, and the exec'd process is ended
 - `Package.swift` lists `BrowserApplet`'s new `ProcessInspection` dependency. The comment on `ProcessInspection` names
   every target that uses it
 - `WebContentProcess` reads the microsecond identity through an injected reader beside `sample`. Its `Signal` seam
   receives the identity the product recorded. Nothing signals a stored pid alone
 - A test whose reader returns one identity at the close and another at the fire sees the close's identity at the
   `Signal` seam. The tests with a made-up pid, such as 4242, still reach the seam through their injected reader
-- `WebContentProcess.kill` keeps its path check, then signals through the guarded call
+- `WebContentProcess.kill` keeps its path check, then signals through the guarded call. It returns false for gone,
+  unreached, and refused
 - A product test injects `pathOf` to name a content process, with the live guarded call. `kill` on a live child whose
   recorded start time is one microsecond off returns false, and the child stays alive. The matching identity ends it
-- A BrowserApplet test fails when a real view's content process gives no token. The product logs each kill that takes
-  the pid path, and never logs for a process the call reports gone
+- A BrowserApplet test fails when a real view's content process gives no token
+- `WebContentProcess.kill` and the reaper log each kill that takes the pid path, and log an error for unreached and
+  refused. They never log for a process the call reports gone. A test checks the log through
+  `OSLogStore(scope: .currentProcessIdentifier)`
 - `killUnused` compares live views by pid, and reads no token
 - The REPL channel records the helper's microsecond start time beside its `ProcessIdentity`. `ProcessReaper.kill`
   receives that identity, and `.live` sends through the guarded call. `ProcessIdentity`'s fields, equality, hashing,
@@ -615,11 +630,11 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
   admission goes stale when the helper execs, so the helper would outlive its pane, where today's identity check ends
   it. The listener admits no peer without a token, so the reaper's no-token fallback could never run. The watch check
   could not tell a token read at the close from one read at the fire. `ProcessReaper.kill`'s seam was unstated.
-- 2026-11-23: The user chose a fresh token at every signal. The alternatives were a fresh token for the reaper only,
-  which left the exec escape at the test sites, keeping the admission token and its exec escape, and an identity
-  fallback on ESRCH. Amended "How a test signals a process it does not reap". It said "When the test learns a pid, it
-  reads the process's audit token", and the REPL channel's token was "the one the kernel gave its connection at
-  admission". A site now records the pid and microsecond start time. The guarded call reads a fresh
+- 2026-11-23: The user chose a fresh token at every signal. There were three alternatives. One was a fresh token for
+  the reaper only, which left the exec escape at the test sites. One kept the admission token and its exec escape. One
+  was an identity fallback on ESRCH. Amended "How a test signals a process it does not reap". It said "When the test
+  learns a pid, it reads the process's audit token", and the REPL channel's token was "the one the kernel gave its
+  connection at admission". A site now records the pid and microsecond start time. The guarded call reads a fresh
   token, confirms the start time, and signals by the token. M3 and M4 are rewritten to match. The REPL fallback text
   is gone.
 - 2026-11-23: The user chose to drop the `AuditToken` move, over keeping it. No caller of the guarded call handles a
@@ -639,6 +654,17 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
   tries. The alternative was to report the process gone and record the gap. Amended "How a test signals a process it
   does not reap": it said "A token signal that returns ESRCH means the process is gone, and nothing more is sent". The
   call never signals by pid after ESRCH. After three tries it reports the process unreached.
+- 2026-11-24: The re-check of the retry converged. The retry reaches only the recorded process or its exec'd self, and
+  sends no signal twice, since the kernel's version check fails before delivery. Routed checks to M3 and M4: a retry
+  that reads no token signals nothing, each caller's handling of gone and unreached, zombie and refusal tests, the
+  internal token reader that stales a token inside the call, the ESRCH test that the child stays alive, and how the
+  log is checked. "Up to three tries" now says "in all".
+- 2026-11-24: The user chose a separate refused result for a pid of 1 or below or the caller's own pid, over reporting
+  gone with a log line. Amended "How a test signals a process it does not reap": it said the call "refuses a pid of 1
+  or below and the caller's own pid", with M4 saying it "reports gone". The product logs refused as an error, and the
+  test sender fails the test on it.
+- 2026-11-24: Review gate: kept all. The last re-check converged, and no decision is open. No decision gets an ADR.
+  Status set to accepted.
 
 ## References
 
