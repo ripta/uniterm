@@ -1,13 +1,9 @@
 # UTERM-028 says no exec-capable applet ships, but two do
 
-**Status:** open
+**Status:** fixed 2026-11-23
 **Found:** 2026-11-22, during the UTERM-055 critique
-**Validation:** confirmed by reading the code
-**Estimate:** small; one non-trivial decision. The two passages (the Version skew rationale near line 129 and the
-Risks entry near line 258 of the UTERM-028 proposal) are a plain correction of fact. The risk's rating is a judgment
-call: keep likelihood low with a new reason, or raise it because map viewer and image viewer exec drivers may be
-deployed. Line 154 ("No exec-capable applet has an opted-in body today") is about opted-in bodies, not about accepting
-drivers, and was not checked for staleness.
+**Fixed:** 2026-11-23, by a correction of fact in UTERM-028
+**Estimate:** small; the risk's rating was resolved as low, with true reasons.
 
 ## Observed
 
@@ -21,8 +17,8 @@ be deployed.
 `Packages/UnitermKit/Sources/MapViewerApplet/MapViewerCommands.swift:10` and
 `Packages/UnitermKit/Sources/ImageViewerApplet/ImageViewerCommands.swift:13` declare
 `controlSupport: ControlCombination.all`, which includes `.disconnectedExec` and `.remoteControlledExec`.
-`MainWindowController.runExecDriver` admits them. The claim in `spec/proposals/UTERM-028-exec-driver-commands.md`,
-around lines 126 and 255, was likely true when written and is now stale.
+`MainWindowController.runExecDriver` admits them. UTERM-028 was written on 2026-11-15. The image viewer gained exec
+support on 2026-11-17 and the map viewer on 2026-11-20, so the claim was true when written.
 
 ## Repro
 
@@ -30,5 +26,7 @@ Read `ControlCombination.all` in `AppletKit/PaneControl.swift:46` and the two de
 
 ## Fix
 
-Correct UTERM-028's two passages as a correction of fact. The risk's rating then needs a call: keep it low with a new
-reason, or raise it now that map viewer and image viewer drivers may exist.
+UTERM-028's rationale and risk now name the map and image viewers. The risk stays at low likelihood. Exec drivers have
+been possible only since 2026-11-17, and nothing documents the exec wire for third parties: the only driver in the repo
+is the test fixture `Tests/ExecTestSupport/Fixtures/driver.pl`. The proposal's line about opted-in bodies still holds,
+since no applet body opts into driver keys yet.

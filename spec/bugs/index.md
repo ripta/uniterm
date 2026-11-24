@@ -36,7 +36,7 @@
 | [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | fixed |
 | [20261122-native-controller-refused-after-scriptwire-change](20261122-native-controller-refused-after-scriptwire-change.md) | A native controller is refused at hello after any ScriptWire change | proposed |
 | [20261122-script-open-pane-leaves-first-tab-unowned](20261122-script-open-pane-leaves-first-tab-unowned.md) | A pane a script opens with open-pane leaves its first tab unowned | fixed |
-| [20261122-uterm-028-says-no-exec-capable-applet-ships](20261122-uterm-028-says-no-exec-capable-applet-ships.md) | UTERM-028 says no exec-capable applet ships, but two do | open |
+| [20261122-uterm-028-says-no-exec-capable-applet-ships](20261122-uterm-028-says-no-exec-capable-applet-ships.md) | UTERM-028 says no exec-capable applet ships, but two do | fixed |
 | [20261122-capture-bypasses-image-viewer-read-scope](20261122-capture-bypasses-image-viewer-read-scope.md) | A program's pane capture can show an image the program may not read | proposed |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | fixed |
 | [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | proposed |
