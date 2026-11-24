@@ -1,15 +1,9 @@
 # UTERM-049's `save-tabs` reply waits for a file write, against ADR-11
 
-**Status:** open
+**Status:** fixed 2026-11-23
 **Found:** 2026-11-22, during the UTERM-054 review
-**Estimate:** small; one non-trivial design decision. UTERM-049 is a spec-only edit, since M3 is NOT STARTED and no code
-exists. The three options under "Fix" differ in what a program can observe, and none is clearly best. Reply at once with
-a handle follows ADR-11 to the letter but adds a result slot, a read command, and a completion event. Replying at
-confirm hides write failures from the program. Treating the panel as a read needs a guarantee about the write that the
-spec does not give. The user picks.
-**Triage note (2026-11-23):** still reproduces. The decision text in UTERM-049 ("The reply is the path written, or a
-cancel") and M3's reply check ("The reply names the path written, or says the user cancelled") are unchanged. ADR-11
-is accepted and unchanged.
+**Fixed:** 2026-11-23, by amending UTERM-049
+**Estimate:** small; one non-trivial design decision, which the user settled: reply at once with a handle.
 
 ## Observed
 
@@ -24,7 +18,7 @@ file may already be written. The program then reads a failure for a save that st
 ## Cause
 
 `spec/proposals/UTERM-049-save-and-open-browser-tab-sets.md`, "A program saves tabs through the user's save panel"
-(around line 279) and M3's reply check (around line 510). Neither names ADR-11 or a handle.
+and M3's reply check. Neither named ADR-11 or a handle.
 
 ## Repro
 
@@ -34,11 +28,18 @@ the pending reply fails.
 
 ## Fix
 
-UTERM-049 is accepted, so the fix amends it in place. It needs one design call:
+UTERM-049 is accepted and M3 has no code, so the fix amended it in place. The triage on 2026-11-23 confirmed the text
+was unchanged. Three approaches were weighed:
 
-- Reply at once with a handle. The panel's outcome and the path arrive under that handle, with a completion event, as
-  ADR-11 prescribes for a slow command with an effect.
-- Settle the reply when the user confirms the panel, before the write starts. The reply carries the chosen path. A write
-  failure goes to the user's alert, as the user's own save does, and the program never learns of it.
-- Treat the panel itself as a read until the user confirms, and state in UTERM-049 why a revocation during the write
-  cannot happen, if the write is guaranteed to finish first.
+- Reply at once with a handle. The panel's outcome and the path arrive under that handle, as ADR-11 prescribes for a
+  slow command with an effect.
+- Settle the reply when the user confirms the panel, before the write starts. A write failure would reach only the
+  user's alert, and the program would never learn of it.
+- Treat the panel itself as a read until the user confirms. This needs a guarantee that no revocation lands during the
+  write, and the spec gives none.
+
+The user chose the handle, as the most correct and robust option. `save-tabs` now replies at once with a handle.
+`wait-save` returns `saved` with the path, `cancelled`, or `failed` with the write error, and `discard-save` frees the
+handle, following UTERM-022's `wait-form`. An interruption while the panel is up dismisses it and writes nothing. One
+during the write lets the write finish, and the pending wait fails as ended without claiming the save was undone. M3's
+checks cover each outcome, both interruptions, discard, and the handle cap.

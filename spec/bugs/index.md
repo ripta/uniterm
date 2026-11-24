@@ -33,7 +33,7 @@
 | [20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread](20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread.md) | The browser's tab bar builds and updates one view per tab on the main thread | proposed |
 | [20261122-optimized-build-crashes-compiler-in-status-queue](20261122-optimized-build-crashes-compiler-in-status-queue.md) | An optimized build of the package crashes the Swift compiler in StatusKit | fixed |
 | [20261122-undo-reopen-decodes-pane-on-main-thread](20261122-undo-reopen-decodes-pane-on-main-thread.md) | Undo reopen of a closed pane decodes its description on the main thread | proposed |
-| [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | open |
+| [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | fixed |
 | [20261122-native-controller-refused-after-scriptwire-change](20261122-native-controller-refused-after-scriptwire-change.md) | A native controller is refused at hello after any ScriptWire change | proposed |
 | [20261122-script-open-pane-leaves-first-tab-unowned](20261122-script-open-pane-leaves-first-tab-unowned.md) | A pane a script opens with open-pane leaves its first tab unowned | fixed |
 | [20261122-uterm-028-says-no-exec-capable-applet-ships](20261122-uterm-028-says-no-exec-capable-applet-ships.md) | UTERM-028 says no exec-capable applet ships, but two do | open |

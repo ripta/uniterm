@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -279,11 +279,29 @@ Original question: how does a script or controller save a browser pane's tabs? T
 call".
 
 Decision: the browser gains a `save-tabs` command. It shows Save Tabs As for the target pane, the panel the user's
-command shows, with the same formats. The user picks the file and confirms any Replace. The reply is the path written,
-or a cancel. The command needs pane control over the target pane, which must be among the program's targets under
-ADR-14 P1 to P3. The user's pick in the panel authorizes the write, as it does for the user's own save, so no write
-power is needed. One panel is up at a time per window, and a second request while one is up is refused, as the pane's
-other questions are. No new permission kind is added. Amended 2026-11-22; see Decision Log.
+command shows, with the same formats. The user picks the file and confirms any Replace. The command needs pane control
+over the target pane, which must be among the program's targets under ADR-14 P1 to P3. The user's pick in the panel
+authorizes the write, as it does for the user's own save, so no write power is needed. One panel is up at a time per
+window, and a second request while one is up is refused, as the pane's other questions are. No new permission kind is
+added. Amended 2026-11-23; see Decision Log.
+
+Showing the panel is an effect, and the write that follows is another. So the reply follows ADR-11's handle shape, as
+UTERM-022's `open-form` and `wait-form` do:
+
+- `save-tabs` replies at once with a handle, once the panel shows. A refusal comes in this reply, and no panel shows.
+- `wait-save` takes the handle and only reads, so it may hold a pending reply. It returns once the save settles. The
+  outcome is `saved` with the path written, `cancelled`, or `failed` with the write's error. Reading does not consume
+  the outcome. `wait-save` needs the same pane control as `save-tabs`.
+- `discard-save` frees a handle. Discarding the handle of a panel that is still up dismisses the panel, and nothing is
+  written.
+- `wait-save` is the save's completion mechanism. ADR-11's completion event serves callers that read an event stream,
+  and UTERM-004 gives remote callers no applet events, so a save's caller waits on its handle instead.
+- A revocation, a run end, or a pane close while the panel is up dismisses it, writes nothing, fails a pending
+  `wait-save` as ended, and frees the handle. One that lands during the write lets the write finish. A write failure
+  then reaches the user's alert, as the user's own save does. The pending wait fails as ended, which never claims the
+  save was undone.
+- Save handles have the same caps and lifetimes as other ADR-11 handles. A connection holds at most 32, and a new one
+  drops its oldest settled one.
 
 This supersedes in part UTERM-005's "Control", which says every browser command needs a browser permission and acts
 only on tabs the controller opened. `save-tabs` needs pane control alone and saves every tab in the pane, because the
@@ -298,7 +316,10 @@ clear error under ADR-13. No permission kind crosses the descriptor or the polic
 
 Rationale: this is the user's own operation, under ADR-15. A path argument would need the first path-write power, and
 a folder-scoped write could replace any file in that folder without the Replace the user's save shows. A tab-list read
-power would make every program reimplement the format and add a power to read tabs it did not open.
+power would make every program reimplement the format and add a power to read tabs it did not open. A reply held until
+the write would fail after the file was written when the run is revoked mid-write, and the program would save again.
+A reply settled when the user confirms would hide a failed write from the program. The handle tells the program every
+outcome, and an interruption never misreports one.
 
 ### How the tag wins on open
 
@@ -421,7 +442,8 @@ None.
   either starts, those decisions are reviewed again before it is scheduled.
 - **`save-tabs` becomes a published controller command** — likelihood: high, impact: low.
   Mitigation: it travels in the browser's versioned command schema, so a later change bumps the version and an older
-  or newer peer gets a clear error under ADR-13. Its reply holds only a path or a cancel, which leaves little to change.
+  or newer peer gets a clear error under ADR-13. Its reply holds only a handle, and `wait-save` returns only a path, a
+  cancel, or a write error, which leaves little to change.
 - **M3 waits on a long chain** — likelihood: high, impact: low.
   Accepted: M3 starts after UTERM-018 M5, which waits on UTERM-004 M6, UTERM-005 M8, and UTERM-015 M4. M1 and M2 do
   not wait on it, so saving and opening ship first.
@@ -508,7 +530,18 @@ Starts after UTERM-018 M5, which builds the script file open.
 
 - A program's `save-tabs` shows the user's Save Tabs As panel for its target pane, and the file the user saves holds
   the same content as the user's own save
-- The reply names the path written, or says the user cancelled
+- `save-tabs` replies with a handle once the panel shows, before the user picks. `wait-save` on that handle returns
+  `saved` with the path written, `cancelled`, or `failed` with the write's error, and a second `wait-save` returns the
+  same outcome
+- A write that fails, such as into a read-only folder, makes `wait-save` return `failed`, and the user's alert still
+  shows
+- A revocation, run end, or pane close while the panel is up dismisses it, writes nothing, fails a pending `wait-save`
+  as ended, and frees the handle
+- A revocation during the write lets the file be written, fails a pending `wait-save` as ended, and never reports the
+  save as undone
+- `discard-save` on an open panel dismisses it and writes nothing. `wait-save` on a discarded or freed handle replies
+  with a structured error
+- A 33rd save handle on one connection drops the oldest settled one
 - A program without pane control over the target pane, or whose target pane is outside its targets, is refused with
   an error that names what is missing, and no panel shows
 - A second `save-tabs` while a panel is up in that window is refused
@@ -626,6 +659,17 @@ Starts after UTERM-018 M5, which builds the script file open.
   superseding in part UTERM-005's "Control". UTERM-005 carries the marker.
 - 2026-11-22: The user accepted the proposal.
 - 2026-11-22: Scheduled as UTERM-049 M1-M3 in queue.md.
+- 2026-11-23: Bug triage found that `save-tabs` held its reply until the write, against ADR-11. A revocation during
+  the write would fail the reply after the file stood, and the program could save again. The user chose that
+  `save-tabs` replies at once with a handle, over settling the reply when the user confirms, which would hide a failed
+  write from the program. The user also chose it over treating the panel as a read, which needs a promise the spec does
+  not give. "A program saves tabs through the user's save panel" said "The reply is the path written, or a cancel".
+  M3 checked "The reply names the path written, or says the user cancelled". The `save-tabs` risk said "Its reply
+  holds only a path or a cancel".
+- 2026-11-23 (autonomous): The handle's mechanism follows UTERM-022's `wait-form`. `wait-save` reads the outcome and
+  `discard-save` frees the handle. The save has no completion event, since remote callers get no applet events. Caps
+  match other ADR-11 handles. A revocation during the write lets it finish and fails the wait as ended. M3 gained
+  checks for each outcome, the interruptions, discard, and the cap.
 
 ## References
 
@@ -635,6 +679,7 @@ Starts after UTERM-018 M5, which builds the script file open.
 - [ADR-05](../adr/ADR-05-applet-lifecycle-events-and-applet-responses.md): the applet owns its tabs
 - [ADR-06](../adr/ADR-06-layout-file-versioning-and-schema-ownership.md): the version pattern this format follows
 - [ADR-08](../adr/ADR-08-ui-responsiveness.md): the save's write runs off the main thread
+- [ADR-11](../adr/ADR-11-deferred-applet-replies-never-hide-effects.md): `save-tabs` replies with a handle
 - [ADR-13](../adr/ADR-13-outside-wires-stay-compatible-across-versions.md): the program call's wire versions
 - [ADR-14](../adr/ADR-14-a-controller-controls-what-it-opened.md): P7 grants, P8 separate powers, P15 bounded reach,
   C1 effects that need no grant
