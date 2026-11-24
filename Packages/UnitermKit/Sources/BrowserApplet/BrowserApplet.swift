@@ -250,7 +250,10 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     content.onLoadOverHTTP = { [weak self] in self?.loadOverHTTP() }
     content.tabBar.onSelect = { [weak self] index in self?.selectTab(at: index) }
     content.tabBar.onClose = { [weak self] index in
-      Task { @MainActor in _ = await self?.closeTab(at: index) }
+      guard let self, self.tabs.indices.contains(index) else { return }
+
+      let target = self.tabs[index]
+      Task { @MainActor [weak self] in _ = await self?.closeTab(target) }
     }
     content.tabBar.onNew = { [weak self] in self?.openTab() }
     content.dialogView.onAnswer = { [weak self] dialog, answer in
@@ -724,9 +727,19 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
   func closeTab(at index: Int) async -> TabCloseResult {
     guard tabs.count > 1 else { return .nothingToClose }
 
-    guard !closed, tabs.indices.contains(index), !isQuestionUp else { return .declined }
+    guard tabs.indices.contains(index) else { return .declined }
 
-    let target = tabs[index]
+    return await closeTab(tabs[index])
+  }
+
+  /// Closes `target` wherever it sits when the close runs. A caller that hops before closing
+  /// resolves the tab first, since the tabs may shift before the hop lands.
+  private func closeTab(_ target: BrowserTab) async -> TabCloseResult {
+    guard tabs.count > 1 else { return .nothingToClose }
+
+    guard !closed, tabs.contains(where: { $0 === target }), !isQuestionUp else {
+      return .declined
+    }
 
     if let detail = closeDetail(for: target) {
       guard let host else { return .declined }

@@ -1,13 +1,11 @@
 # A tab's close button may close a neighboring tab after the tabs shift
 
-**Status:** open
-**Estimate:** medium; owned by an accepted proposal, with a non-trivial decision. The bar's close contract is
-`onClose: (Int)` in `AppletTabBar.swift`, wired from three applets, and tabs carry no stable ID for the bar to hand
-back. A stand-alone fix must choose the ID type and where it lives. It also changes the shared select contract, or
-leaves select and close inconsistent. UTERM-053 already settles this in its windowed-bar decision, where items carry the
-tab's ID and the applet resolves it through its ID map. That decision lists this bug as fixed by it. A separate fix
-would be rebuilt by that milestone.
-**Validation:** not confirmed; traced by reading the code during the UTERM-053 review. Not reproduced.
+**Status:** fixed 2026-11-23
+**Fixed:** 2026-11-23
+**Estimate:** small; no open design decisions. The bar's index matches the applet's tabs at click time, since both
+applets refresh the bar synchronously at every change. Only the hop before the close let the index go stale. So the fix
+resolves the tab before the hop and leaves the shared bar contract alone. UTERM-053 M1 later swaps that index lookup
+for an ID lookup.
 
 ## Observed
 
@@ -25,13 +23,19 @@ then acts on the tab now at the clicked index, which is a neighbor.
 
 ## Repro
 
-None run. Suggested: a package test queues a tab removal on the main actor, then fires the bar's close for a later
-index before the queued work runs. Expected: the clicked tab closes. Suspected actual: its neighbor closes.
+Reproduced on 2026-11-23 in package tests for the browser and the terminal. The test fires the bar's close for tab 1 of
+four, then closes tab 0 before the queued close runs. The neighbor that was at index 2 closed, and the clicked tab
+stayed open. When the clicked tab was the last one, nothing closed, since the stale index then pointed past the end.
+
+The questions applet closes synchronously from its bar, so it never had the bug.
 
 ## Fix
 
-Carry the tab's ID through the close action, and resolve it when the close runs. UTERM-053 proposes the same for a
-windowed bar's reused items. The impact is low: a closed tab can be reopened, and a tab with unsent input asks first.
+The browser's and the terminal's bar close actions now take the tab at the clicked index before their task hop. The
+task then closes that tab wherever it sits. A tab that closed meanwhile is declined. The change is in
+`Packages/UnitermKit/Sources/BrowserApplet/BrowserApplet.swift` and
+`Packages/UnitermKit/Sources/TerminalApplet/TerminalApplet.swift`. The regression tests are
+`testABarCloseClosesTheClickedTabAfterTheTabsShift` in `BrowserTabsTests` and `TerminalAppletTests`.
 
 ## Workarounds
 

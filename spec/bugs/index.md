@@ -48,7 +48,7 @@
 | [20261122-closing-pane-on-dead-mount-may-join-io-thread](20261122-closing-pane-on-dead-mount-may-join-io-thread.md) | Closing a pane whose shell is stuck on a dead mount may freeze the app | not-reproducible |
 | [20261122-terminal-tab-changes-walk-every-tab](20261122-terminal-tab-changes-walk-every-tab.md) | A terminal pane walks every tab at each title change and tab switch | fixed |
 | [20261122-palette-rebuild-walks-every-tab](20261122-palette-rebuild-walks-every-tab.md) | The palette rebuilds and filters every tab of every pane while it shows | proposed |
-| [20261122-tab-close-button-may-close-a-shifted-tab](20261122-tab-close-button-may-close-a-shifted-tab.md) | A tab's close button may close a neighboring tab after the tabs shift | open |
+| [20261122-tab-close-button-may-close-a-shifted-tab](20261122-tab-close-button-may-close-a-shifted-tab.md) | A tab's close button may close a neighboring tab after the tabs shift | fixed |
 | [20261122-browser-close-encodes-every-tab-history-on-main-thread](20261122-browser-close-encodes-every-tab-history-on-main-thread.md) | Closing a browser pane encodes every tab's history on the main thread | fixed |
 | [20261122-map-describe-encodes-document-at-every-save](20261122-map-describe-encodes-document-at-every-save.md) | A map pane encodes its undo part at every save and change check | proposed |
 | [20261122-terminal-describe-encodes-every-tab-at-each-change](20261122-terminal-describe-encodes-every-tab-at-each-change.md) | The terminal encodes every tab and closed tab on the main thread at each change | open |

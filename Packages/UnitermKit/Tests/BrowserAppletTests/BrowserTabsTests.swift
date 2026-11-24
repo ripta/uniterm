@@ -202,6 +202,35 @@ final class BrowserTabsTests: XCTestCase {
     XCTAssertEqual(harness.applet.tabCount, 1)
   }
 
+  /// Catches a bar close that resolves its index only when the close runs. A tab closes before the
+  /// queued close runs, so the clicked tab shifts down one place. The clicked tab closes, and its
+  /// neighbor stays.
+  func testABarCloseClosesTheClickedTabAfterTheTabsShift() async throws {
+    let harness = try await harness()
+    defer { harness.stop() }
+
+    for _ in 0..<3 { harness.applet.openTab() }
+
+    let clicked = harness.applet.tabs[1]
+    let neighbor = harness.applet.tabs[2]
+
+    harness.applet.content.tabBar.onClose?(1)
+
+    let first = await harness.applet.closeTab(at: 0)
+    XCTAssertEqual(first, .closed)
+
+    var turns = 0
+
+    while harness.applet.tabCount > 2, turns < 1000 {
+      await Task.yield()
+      turns += 1
+    }
+
+    XCTAssertEqual(harness.applet.tabCount, 2)
+    XCTAssertFalse(harness.applet.tabs.contains { $0 === clicked }, "the clicked tab is still open")
+    XCTAssertTrue(harness.applet.tabs.contains { $0 === neighbor }, "the neighbor closed")
+  }
+
   /// Catches Cmd-W on the last tab closing it. The applet has no tab to close, so the host closes
   /// the pane.
   func testTheLastTabIsLeftToThePane() async throws {

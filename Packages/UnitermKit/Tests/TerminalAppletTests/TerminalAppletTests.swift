@@ -715,6 +715,31 @@ final class TerminalAppletTests: XCTestCase {
     XCTAssertTrue(bar.isHidden)
   }
 
+  /// Catches a bar close that resolves its index only when the close runs. A tab closes before the
+  /// queued close runs, so the clicked tab shifts down one place. The clicked tab closes, and its
+  /// neighbor stays.
+  func testABarCloseClosesTheClickedTabAfterTheTabsShift() async throws {
+    let (applet, engine, _, _) = makeApplet()
+
+    for _ in 0..<3 { applet.openTab() }
+
+    let bar = try tabBar(of: applet)
+    bar.onClose?(1)
+
+    let first = await applet.closeTab(at: 0)
+    XCTAssertEqual(first, .closed)
+
+    var turns = 0
+
+    while applet.tabCount > 2, turns < 1000 {
+      await Task.yield()
+      turns += 1
+    }
+
+    XCTAssertEqual(applet.tabCount, 2)
+    XCTAssertEqual(engine.sessions.map(\.closed), [true, true, false, false])
+  }
+
   /// Catches a new tab that reuses the first tab's session, so both would share one tty. Each tab
   /// gets its own session, and only the selected one is shown and visible.
   func testEachTabIsItsOwnSessionAndOnlyTheSelectedOneShows() {

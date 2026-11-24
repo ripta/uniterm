@@ -282,7 +282,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     tabBar.onSelect = { [weak self] index in self?.selectTab(at: index) }
     tabBar.onNew = { [weak self] in self?.openTab() }
     tabBar.onClose = { [weak self] index in
-      Task { @MainActor [weak self] in _ = await self?.closeTab(at: index) }
+      guard let self, self.tabs.indices.contains(index) else { return }
+
+      let tab = self.tabs[index]
+      Task { @MainActor [weak self] in _ = await self?.closeTab(tab) }
     }
 
     refreshTabs()
@@ -576,9 +579,17 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   func closeTab(at index: Int) async -> TabCloseResult {
     guard tabs.count > 1 else { return .nothingToClose }
 
-    guard tabs.indices.contains(index), !closingTab else { return .declined }
+    guard tabs.indices.contains(index) else { return .declined }
 
-    let tab = tabs[index]
+    return await closeTab(tabs[index])
+  }
+
+  /// Closes `tab` wherever it sits when the close runs. A caller that hops before closing resolves
+  /// the tab first, since the tabs may shift before the hop lands.
+  private func closeTab(_ tab: Tab) async -> TabCloseResult {
+    guard tabs.count > 1 else { return .nothingToClose }
+
+    guard tabs.contains(where: { $0 === tab }), !closingTab else { return .declined }
 
     if tab.isRunningSomething {
       guard let host else { return .declined }
