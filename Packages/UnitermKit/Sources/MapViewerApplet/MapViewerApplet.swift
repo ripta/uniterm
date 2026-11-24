@@ -1024,7 +1024,7 @@ extension MapViewerApplet {
       }
     }
 
-    return await write(document, to: url)
+    return await write(document, to: url, recordingFor: path)
   }
 
   /// Writes the pins to a new file the user names, and makes it the pane's file.
@@ -1040,7 +1040,7 @@ extension MapViewerApplet {
     let bytes = captured ?? GeoJSONPatcher.emptyDocument
 
     guard await readAccepts(captured) else { return false }
-    guard await write(bytes, to: url) else { return false }
+    guard await write(bytes, to: url, recordingFor: nil) else { return false }
 
     record.path = url.path
     record.bookmark = nil
@@ -1068,10 +1068,14 @@ extension MapViewerApplet {
     return true
   }
 
-  private func write(_ bytes: Data, to url: URL) async -> Bool {
+  /// Writes `bytes` to `url`. They become what the map last saved when the pane still shows `path`,
+  /// the pane's own path the save started from. That path may be a link, and `url` its resolved
+  /// target, so the two are never compared. Save As passes nil, since it records its bytes once the
+  /// pane takes the new file.
+  private func write(_ bytes: Data, to url: URL, recordingFor path: String?) async -> Bool {
     switch await writeFile(bytes, url) {
     case .success:
-      if url.path == record.path { savedDocument = bytes }
+      if let path, path == record.path { savedDocument = bytes }
 
       changedOnDisk = false
       refresh()

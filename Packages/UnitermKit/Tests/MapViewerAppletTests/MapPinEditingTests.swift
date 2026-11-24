@@ -879,7 +879,9 @@ final class PinEditReviewTests: XCTestCase {
     XCTAssertEqual(editable, ["P"])
   }
 
-  /// Catches a save that replaces a symlinked file with a plain one, which breaks the link.
+  /// Catches a save that replaces a symlinked file with a plain one, which breaks the link. Also
+  /// catches a save through the link that leaves the pane edited, so the next Save asks about a
+  /// change on disk the map made itself.
   func testSaveThroughASymlinkKeepsTheLink() async throws {
     let scratch = try GeoScratch(self)
     let target = try scratch.write(
@@ -898,5 +900,19 @@ final class PinEditReviewTests: XCTestCase {
       try FileManager.default.attributesOfItem(atPath: link.path)[.type] as? FileAttributeType,
       .typeSymbolicLink)
     XCTAssertEqual(try Data(contentsOf: target), applet.document)
+    XCTAssertFalse(applet.isDirty, "the saved pane still reads as edited")
+
+    var asked = 0
+    applet.resolveConflict = { _, _ -> SaveConflictChoice in
+      asked += 1
+      return .cancel
+    }
+
+    applet.addPin(at: GeoCoordinate(latitude: 3, longitude: 3))
+    await applet.editing?.value
+    let saved = await applet.save()
+
+    XCTAssertTrue(saved)
+    XCTAssertEqual(asked, 0, "the second save asked about the map's own write")
   }
 }
