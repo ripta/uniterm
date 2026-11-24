@@ -221,6 +221,7 @@ class FakeApplet: Applet {
   /// The sources the pane-local Open handed the applet, and the error it throws, when set.
   var replacedSources: [(file: URL, start: String)] = []
   var replaceFailure: Error?
+  let sourceSwap = SourceSwap()
 
   /// The description carries the title, so a test can tell which applet a reopened pane came from.
   func describe() -> AppletDescription {

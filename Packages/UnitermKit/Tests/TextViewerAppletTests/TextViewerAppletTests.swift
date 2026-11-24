@@ -1,10 +1,10 @@
 import AppKit
-import AppletKit
 import AppletTestSupport
 import DocumentTestSupport
 import PDFKit
 import XCTest
 
+@testable import AppletKit
 @testable import TextViewerApplet
 @testable import TextViewerModel
 
@@ -204,6 +204,7 @@ final class TextViewerAppletTests: XCTestCase {
     applet.host = host
 
     XCTAssertTrue(applet.handleDrop([first]))
+    await applet.sourceSwap.pending?.value
     _ = await Harness.settled(applet)
     XCTAssertEqual(applet.title, "one.pdf")
 
@@ -214,6 +215,58 @@ final class TextViewerAppletTests: XCTestCase {
 
     XCTAssertTrue(applet.handleDrop([second]))
     _ = await Harness.eventually { applet.title == "two.pdf" && applet.content.body == .pdf }
+    XCTAssertEqual(applet.content.pdfView.document?.pageCount, 2)
+  }
+
+  /// Holds a start-directory answer until `open()`.
+  private actor AnswerGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+
+    func wait() async {
+      if isOpen { return }
+      await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+      isOpen = true
+      continuation?.resume()
+      continuation = nil
+    }
+  }
+
+  /// Catches a drop that stats the file on the main thread, where a mount that stopped answering
+  /// freezes the app, and an earlier drop whose late answer replaces a later one. The first drop's
+  /// stat is held. The pane keeps its source until the stat answers, a second drop meanwhile shows,
+  /// and the first one's late answer changes nothing. A held answer stands in for the hung mount,
+  /// so this cannot prove the default classifier leaves the main thread.
+  func testADropWaitsForItsStatOffTheMainThreadAndTheLaterDropWins() async throws {
+    let scratch = try Scratch(self)
+    let first = try scratch.write("one.pdf", DocumentFixtures.pdf(pages: ["one"]))
+    let second = try scratch.write("two.pdf", DocumentFixtures.pdf(pages: ["two", "more"]))
+    let host = RecordingHost()
+    let applet = Harness.applet(startDirectory: scratch.url.path)
+    applet.host = host
+
+    let gate = AnswerGate()
+    applet.sourceSwap.startDirectory = { url in
+      if url.lastPathComponent == "one.pdf" { await gate.wait() }
+
+      return await SourceStartDirectory.resolving(url)
+    }
+
+    XCTAssertTrue(applet.handleDrop([first]))
+    XCTAssertNil(applet.record.path)
+
+    XCTAssertTrue(applet.handleDrop([second]))
+    await applet.sourceSwap.pending?.value
+    XCTAssertEqual(applet.record.path, second.path)
+
+    await gate.open()
+    for _ in 0..<50 { await Task.yield() }
+
+    _ = await Harness.eventually { applet.title == "two.pdf" && applet.content.body == .pdf }
+    XCTAssertEqual(applet.record.path, second.path)
     XCTAssertEqual(applet.content.pdfView.document?.pageCount, 2)
   }
 

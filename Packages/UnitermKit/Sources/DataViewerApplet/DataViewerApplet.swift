@@ -23,6 +23,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   public private(set) var segments: [AppletSegment] = []
   public private(set) var publishedTabs: AppletTabList
   public let openPicker: OpenPicker
+  public let sourceSwap = SourceSwap()
 
   private static let untitled = "Data viewer"
 
@@ -322,16 +323,9 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return false
     }
 
-    do {
-      try replaceSource(with: file, startDirectory: SourceStartDirectory.of(file))
-      return true
-    } catch {
-      alerts.deliver(
-        Self.failureLevel,
-        "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: \(error.localizedDescription)",
-        from: self, to: host)
-      return false
-    }
+    replaceSource(withChosen: file)
+
+    return true
   }
 
   private func showOpenPanel() {
@@ -355,6 +349,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    sourceSwap.cancel()
     alerts.discard()
     nested?.close()
     nested = nil

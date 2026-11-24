@@ -32,6 +32,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   public private(set) var segments: [AppletSegment] = []
   public private(set) var publishedTabs: AppletTabList
   public let openPicker: OpenPicker
+  public let sourceSwap = SourceSwap()
 
   private static let untitled = "Map"
   private static let limits = GeoJSONLimits()
@@ -594,7 +595,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
       return false
     }
 
-    replaceSource(with: file, startDirectory: SourceStartDirectory.of(file))
+    replaceSource(withChosen: file)
 
     return true
   }
@@ -612,6 +613,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    sourceSwap.cancel()
     events.close()
     alerts.discard()
     opening?.cancel()

@@ -1,16 +1,12 @@
 # A viewer stats a picked or dropped file on the main thread
 
-**Status:** open
-**Estimate:** medium; one non-trivial design decision. Four drop handlers and the shared Open path change, and ten tests that
-call `handleDrop` and expect the swap to have happened on return must wait for it. The decision is what a drop answers
-before the stat returns. `handleDrop` returns `Bool` today, so a failed open rejects the drop. With an off-thread
-stat the handler must answer `true` first. A failed open then shows only the status-bar alert, with no rejected-drop
-animation. Whether that change is acceptable, or a drop shows a pending state, is a judgment call. Two smaller points
-look trivial: a later drop on the same pane wins over an earlier pending one, and a closed pane drops the reply, as the
-router's callers do. No open proposal owns this. The accepted proposal for current directories leaves this path out on
-purpose. Triage traced the code and did not reproduce it, since a hung mount is not cheap to build.
-**Validation:** not confirmed; found by reading the code during the UTERM-050 review. The hang needs a mount that stops
-answering.
+**Status:** fixed 2026-11-23
+**Fixed:** 2026-11-23
+**Estimate:** medium; no open design decisions. Four drop handlers and the shared Open path change. An earlier estimate
+named one decision: what a drop answers before the stat returns, on the premise that a failed open rejects the drop.
+That premise was wrong. No viewer's `replaceSource` throws: each starts an async open and reports a failure in the
+status bar. So a drop's `Bool` reflects only the one-file check, and answering it before the stat changes nothing a
+user sees.
 
 ## Observed
 
@@ -41,3 +37,21 @@ Classify the path off the main thread, as the router does, then replace the sour
 flow is already `async`. The drop handlers are synchronous, so each needs a request and a later reply, and must drop
 the reply when the pane closed meanwhile. No design call is known. UTERM-050 covers the current-directory checks next
 to this one, and leaves this path out because it is not a current directory.
+
+## Fix note
+
+Triaged and fixed on 2026-11-23. The trace held: `SourceStartDirectory.of(_:)` ran `stat` on the main actor from the
+four drop handlers and from `SourceOpening.open`. The hang itself was not reproduced, since it needs a mount that stops
+answering.
+
+A new `SourceSwap` in `AppletKit/SourceSwap.swift` learns the start directory through
+`SourceStartDirectory.resolving`, which is `@concurrent`, and swaps the source when it answers. A later drop or Open
+on the same pane supersedes one still waiting, and a closing pane cancels it. `SourceReplacing` gains a `sourceSwap`
+requirement and `replaceSource(withChosen:)`, which the Data, Map, Image, and Text drop handlers and the pane-local
+Open now call. Each viewer's `close()` cancels the swap.
+
+The regression test is `testADropWaitsForItsStatOffTheMainThreadAndTheLaterDropWins` in
+`Tests/TextViewerAppletTests/TextViewerAppletTests.swift`. It holds the first drop's stat, drops a second file, then
+releases the first. Before the fix, the first drop swapped the source at once, since its stat ran inline. Two tests that
+expected the swap on return now await the pending swap. The test cannot prove the default classifier leaves the main
+thread. `@concurrent` carries that, as it does for the router's classification.

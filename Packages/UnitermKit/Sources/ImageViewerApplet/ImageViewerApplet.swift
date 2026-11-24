@@ -30,6 +30,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
   public internal(set) var segments: [AppletSegment] = []
   public internal(set) var publishedTabs: AppletTabList
   public let openPicker: OpenPicker
+  public let sourceSwap = SourceSwap()
 
   static let untitled = "Image viewer"
 
@@ -490,16 +491,9 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
       return false
     }
 
-    do {
-      try replaceSource(with: item, startDirectory: SourceStartDirectory.of(item))
-      return true
-    } catch {
-      notify(
-        .warning,
-        "\u{201C}\(item.lastPathComponent)\u{201D} could not be opened: \(error.localizedDescription)",
-        delivery: .message)
-      return false
-    }
+    replaceSource(withChosen: item)
+
+    return true
   }
 
   private func showOpenPanel() {
@@ -1039,6 +1033,7 @@ public final class ImageViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    sourceSwap.cancel()
     remote.close()
     events.close()
     loading?.cancel()

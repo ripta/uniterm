@@ -28,6 +28,9 @@ public protocol SourceReplacing: Applet {
   /// Shows the panel the pane-local Open command asks with. The app gives each viewer the
   /// system's panel. A debug build can give it one that answers without showing.
   var openPicker: OpenPicker { get }
+
+  /// The swap to a file the user picked or dropped, while its start directory is learned.
+  var sourceSwap: SourceSwap { get }
 }
 
 extension SourceReplacing {
@@ -35,6 +38,26 @@ extension SourceReplacing {
 
   public func replaceSource(withSent file: URL, startDirectory: String) throws {
     try replaceSource(with: file, startDirectory: startDirectory)
+  }
+
+  /// Shows a file the user picked or dropped, once its start directory is known. A later choice
+  /// wins over one still waiting. A failure goes to the pane's status bar, and the pane keeps the
+  /// source it had.
+  @discardableResult
+  public func replaceSource(withChosen file: URL) -> Task<Void, Never> {
+    sourceSwap.start(file) { [weak self] file, startDirectory in
+      guard let self else { return }
+
+      do {
+        try self.replaceSource(with: file, startDirectory: startDirectory)
+      } catch {
+        self.host?.applet(
+          self, post: .warning,
+          text:
+            "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: "
+            + error.localizedDescription)
+      }
+    }
   }
 }
 
@@ -75,14 +98,6 @@ public enum SourceOpening {
 
     guard let file = await picker(request, applet.view.window).first else { return }
 
-    do {
-      try target.replaceSource(with: file, startDirectory: SourceStartDirectory.of(file))
-    } catch {
-      target.host?.applet(
-        target, post: .warning,
-        text:
-          "\u{201C}\(file.lastPathComponent)\u{201D} could not be opened: "
-          + error.localizedDescription)
-    }
+    await target.replaceSource(withChosen: file).value
   }
 }
