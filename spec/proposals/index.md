@@ -58,6 +58,7 @@
 | [UTERM-054](UTERM-054-screenshot-a-pane-or-tab.md) | Copy or save a screenshot of the current pane or tab, for the user and for programs | accepted |
 | [UTERM-055](UTERM-055-exec-drivers-capture-panes.md) | External exec drivers capture panes through a new exec protocol version | accepted |
 | [UTERM-056](UTERM-056-native-controllers-across-scriptwire-versions.md) | What happens to a native controller when ScriptWire's version changes | draft |
+| [UTERM-057](UTERM-057-package-read-by-invoker.md) | Who reads a controller package's files when `uniterm run` starts it | draft |
 
 ## Dependency Graph
 
@@ -112,6 +113,7 @@ UTERM-053 ← UTERM-005, UTERM-041, UTERM-052
 UTERM-054 ← UTERM-004, UTERM-005, UTERM-019
 UTERM-055 ← UTERM-019, UTERM-028, UTERM-054
 UTERM-056 ← UTERM-004, UTERM-021
+UTERM-057 ← UTERM-004, UTERM-015, UTERM-034
 ```
 
 ## Not Yet Filed

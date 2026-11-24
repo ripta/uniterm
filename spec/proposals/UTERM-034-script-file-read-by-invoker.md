@@ -80,7 +80,8 @@ opens a path for a declared file. Settled 2026-11-22 (autonomous), amended the s
 - No declared-file snapshot is written. Nothing but the command ever read it, and the command already holds the bytes it
   sent. It runs exactly those bytes once admitted.
 - A package keeps its snapshot. It is outside this proposal. The same gap for packages is filed as a bug, see
-  `spec/bugs/20261122-package-snapshot-opens-program-chosen-folder.md`.
+  `spec/bugs/20261122-package-snapshot-opens-program-chosen-folder.md`, and its design is in
+  [UTERM-057](UTERM-057-package-read-by-invoker.md).
 
 Rationale: a read in the invoker's process gives the run exactly what the invoker could read. This is UTERM-032's rule,
 applied to the script file. One reader and one read make the routing, the hash, and the run agree by construction. No
