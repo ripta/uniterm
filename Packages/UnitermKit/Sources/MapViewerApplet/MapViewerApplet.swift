@@ -1081,19 +1081,37 @@ extension MapViewerApplet {
     }
   }
 
-  /// Resolves the file's links and reads its bytes, for Save's check against what the map last
-  /// saved or read. It runs off the main thread, since a network mount may never answer.
-  @concurrent
-  static func readSavedFile(at path: String) async -> (url: URL, bytes: Data?) {
-    let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+  /// Resolves the file's links and reads its bytes, for a check against what the map last saved or
+  /// read.
+  ///
+  /// It runs on a dispatch queue, not on Swift's cooperative pool. A network mount may never
+  /// answer, and a read parked on it would otherwise hold one of the pool's few threads.
+  nonisolated static func readSavedFile(at path: String) async -> (url: URL, bytes: Data?) {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
 
-    return (url, try? Data(contentsOf: url))
+        continuation.resume(returning: (url, try? Data(contentsOf: url)))
+      }
+    }
   }
 
   /// Writes beside the file, then swaps the new file in. A failure leaves the old file whole. The
   /// swap keeps the old file's permissions and other metadata.
-  @concurrent
-  static func atomicWrite(_ bytes: Data, to url: URL) async -> Result<Void, any Error> {
+  ///
+  /// It runs on a dispatch queue for the same reason as the read: a write parked on a mount that
+  /// never answers must not hold a pool thread.
+  nonisolated static func atomicWrite(_ bytes: Data, to url: URL) async -> Result<Void, any Error> {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(returning: writeReplacing(bytes, at: url))
+      }
+    }
+  }
+
+  private nonisolated static func writeReplacing(_ bytes: Data, at url: URL) -> Result<
+    Void, any Error
+  > {
     let manager = FileManager.default
     let temporary = url.deletingLastPathComponent().appendingPathComponent(
       ".\(url.lastPathComponent).uniterm-\(UUID().uuidString)")
