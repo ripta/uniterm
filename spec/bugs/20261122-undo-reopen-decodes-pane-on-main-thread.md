@@ -35,3 +35,11 @@ is what the window shows and accepts while the reopen is pending. The view-build
 
 UTERM-051 now carries the question as an open scope addition, "Whether undo reopen of a closed pane also leaves the main
 thread". Triage on 2026-11-22 confirmed the call path at `reopenPane` is unchanged. It was not timed as an undo.
+
+## Measured 2026-11-23
+
+Timed as an undo, during the triage of bug `20261122-browser-close-encodes-every-tab-history-on-main-thread`. The
+restoring init got a description whose undo part held 10,000 tabs' history. It took 1.42 s in a debug build, and
+1.59 s with 20 pages of history per tab. That fix stops converting the browser's undo part, so the init no longer
+decodes the history. The same init now takes 1.32 s and 1.22 s. The undo-part decode was never the main cost.
+Building the tabs is.
