@@ -245,6 +245,54 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("[6.0, 5.0]"))
   }
 
+  /// Catches a Save that reads the file on the main thread, where a hung network mount freezes the
+  /// app, and a Save that then writes edits the user discarded while its read ran. The read is held
+  /// open while the user opens another file and discards the edits. Save then asks nothing and
+  /// writes nothing. A held read stands in for the hung mount, so this cannot prove the default
+  /// reader leaves the main thread.
+  func testSaveWritesNothingWhenItsEditsAreDiscardedDuringItsRead() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try mixedFile(scratch)
+    let original = try Data(contentsOf: file)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+    await load(applet, file)
+
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await settle(applet)
+
+    var asked = 0
+    applet.resolveConflict = { _, _ -> SaveConflictChoice in
+      asked += 1
+      return .overwrite
+    }
+
+    let gate = ReadGate()
+    applet.readOnDisk = { path in
+      await gate.wait()
+      return await MapViewerApplet.readSavedFile(at: path)
+    }
+
+    let saving = Task { await applet.save() }
+    for _ in 0..<50 { await Task.yield() }
+
+    let other = try scratch.write("other.geojson", GeoFixtures.collection([]))
+    host.answer = true
+    applet.replaceSource(with: other, startDirectory: scratch.url.path)
+    await applet.asking?.value
+    await applet.opening?.value
+    await gate.open()
+
+    let saved = await saving.value
+
+    XCTAssertFalse(saved)
+    XCTAssertEqual(asked, 0)
+    XCTAssertEqual(try Data(contentsOf: file), original)
+    XCTAssertEqual(applet.displayName, "other.geojson")
+    XCTAssertFalse(applet.isDirty)
+  }
+
   /// Catches a cancelled Save As that counts as saved, which would let a close drop the pins.
   func testACancelledSaveAsIsNotASave() async {
     let applet = MapViewerApplet(startDirectory: nil)

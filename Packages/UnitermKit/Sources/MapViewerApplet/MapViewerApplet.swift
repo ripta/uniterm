@@ -138,6 +138,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   var writeFile: @Sendable (Data, URL) async -> Result<Void, any Error> =
     MapViewerApplet.atomicWrite
 
+  /// Reads the file Save checks for a change on disk. Tests replace it to hold the read open.
+  var readOnDisk: @Sendable (String) async -> (url: URL, bytes: Data?) =
+    MapViewerApplet.readSavedFile
+
   /// Reads an edited document's pins back. Tests replace it to refuse chosen bytes.
   var readLayer: @Sendable (Data, String) async -> Result<GeoFileLayer, GeoJSONFileError> = {
     await GeoJSONFileReader.layer(of: $0, path: $1)
@@ -991,8 +995,13 @@ extension MapViewerApplet {
 
     guard await readAccepts(document) else { return false }
 
-    let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-    let onDisk = try? Data(contentsOf: url)
+    let generation = openGeneration
+    let (url, onDisk) = await readOnDisk(path)
+
+    // The read lasts as long as the file's mount takes to answer. Opening another file, clearing
+    // the file, and closing the pane each ask the user to discard the edits first. So a change
+    // here means the user gave the edits up, and Save neither asks nor writes.
+    guard generation == openGeneration, path == record.path, !closed else { return false }
 
     if onDisk != savedDocument {
       switch await resolveConflict(displayName, content.window) {
@@ -1068,6 +1077,15 @@ extension MapViewerApplet {
 
       return false
     }
+  }
+
+  /// Resolves the file's links and reads its bytes, for Save's check against what the map last
+  /// saved or read. It runs off the main thread, since a network mount may never answer.
+  @concurrent
+  static func readSavedFile(at path: String) async -> (url: URL, bytes: Data?) {
+    let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+
+    return (url, try? Data(contentsOf: url))
   }
 
   /// Writes beside the file, then swaps the new file in. A failure leaves the old file whole. The

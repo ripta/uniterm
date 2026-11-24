@@ -1,14 +1,11 @@
 # Saving a map reads its file on the main thread
 
-**Status:** open
-**Estimate:** small; one non-trivial design decision, found by the design review on 2026-11-23: what Save does when the
-pane changes during the off-main read. The read adds an unbounded wait between the decision to save and the conflict
-check. During it the user can open another file, clear the file, or close the pane with Don't Save. "Abandon" returns
-false without asking or writing when the open generation, the path, or `closed` changed. "Finish" captures
-`savedDocument`, the name, and the target before the read and compares against the capture, as a write in flight
-finishes today. Both are defensible, and they differ in what the user sees. Traced, not reproduced: the hang needs a mount that stops answering. The code path is confirmed. `performSave` is `async` but runs on the main actor, and `resolvingSymlinksInPath()` and `Data(contentsOf:)` run inline before the conflict check. No accepted proposal owns the fix. UTERM-050 and UTERM-051 cover other reads.
-**Validation:** not confirmed; found by reading the code during the UTERM-050 review. The hang needs a mount that stops
-answering.
+**Status:** fixed 2026-11-23
+**Fixed:** 2026-11-23
+**Estimate:** small; one design decision, resolved on 2026-11-23: what Save does when the pane changes during the
+off-main read. Save gives up when the open generation, the path, or `closed` changed. Opening another file, clearing the
+file, and closing the pane each ask the user to discard the edits first, so finishing would write edits the user gave
+up.
 
 ## Observed
 
@@ -34,3 +31,18 @@ until the mount times out.
 Move the conflict read off the main thread beside the write, and bring its result back to the main actor before the
 conflict question. The flow is already `async`. No design call is known. UTERM-050 covers the save panel's start
 folder, not this read.
+
+## Fix note
+
+Triaged and fixed on 2026-11-23. The trace held: `performSave` resolved the path's links and read the file inline on
+the main actor. The hang itself was not reproduced, since it needs a mount that stops answering.
+
+Save now resolves and reads the file in `readSavedFile`, which is `@concurrent`, beside `atomicWrite`. It reaches the
+read through `readOnDisk`, which tests replace. After the read, Save returns false without asking or writing when
+another file opened, the file was cleared, or the pane closed.
+
+Files: `Packages/UnitermKit/Sources/MapViewerApplet/MapViewerApplet.swift`, and
+`testSaveWritesNothingWhenItsEditsAreDiscardedDuringItsRead` in
+`Packages/UnitermKit/Tests/MapViewerAppletTests/MapPinEditingTests.swift`. The test holds the read open, opens another
+file, and discards the edits. Before the fix, Save read the file inline, returned true, and wrote the edits. The test
+cannot prove the default reader leaves the main thread. `@concurrent` carries that, as it does for the write.
