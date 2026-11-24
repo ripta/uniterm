@@ -53,6 +53,6 @@
 | [20261122-map-describe-encodes-document-at-every-save](20261122-map-describe-encodes-document-at-every-save.md) | A dirty map pane base64-encodes its whole document at every save and change check | open |
 | [20261122-terminal-describe-encodes-every-tab-at-each-change](20261122-terminal-describe-encodes-every-tab-at-each-change.md) | The terminal encodes every tab and closed tab on the main thread at each change | open |
 | [20261122-questions-bar-disagrees-with-the-shared-hide-rule](20261122-questions-bar-disagrees-with-the-shared-hide-rule.md) | The questions applet's tab bar disagrees with UTERM-041's shared hide rule | open |
-| [20261122-exec-browser-read-result-burst-ends-driver](20261122-exec-browser-read-result-burst-ends-driver.md) | A driver that sends its browser reads in a burst is ended | open |
+| [20261122-exec-browser-read-result-burst-ends-driver](20261122-exec-browser-read-result-burst-ends-driver.md) | A driver that sends its browser reads in a burst is ended | fixed |
 | [20261123-map-saved-through-a-symlink-stays-dirty](20261123-map-saved-through-a-symlink-stays-dirty.md) | A map saved through a symlink stays unsaved | open |
 | [20261123-map-file-change-reads-file-on-main-thread](20261123-map-file-change-reads-file-on-main-thread.md) | A map's file-change check reads the whole file on the main thread | open |
