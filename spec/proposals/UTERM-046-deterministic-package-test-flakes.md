@@ -1,6 +1,6 @@
 # UTERM-046: Make the Logged Package-Test Flakes Deterministic
 
-**Status:** accepted
+**Status:** designing
 **Created:** 2026-11-21
 **Updated:** 2026-11-23
 
@@ -14,8 +14,9 @@ Two package-test flakes fail CI on a loaded runner with no change to the code. T
 spinning page 0.3 s of real time and expect it to use half a core. The script fixtures miss a helper's exit and hang.
 This proposal makes both deterministic. Each regression the tests name stays caught. One live-sample claim that cannot be
 checked independently of load, that a real spinning page reads busy, gives way to a stronger check of the reading's
-units. It also moves every test signal in `ScriptHostTests`, and the one in `PresentationTests`, onto the fixture's
-handle. Then no test can signal a process id that its helper no longer holds.
+units. It also closes the reused-id race in every package test that signals a process by its id. A test's own helper
+signals through the fixture's handle. A process the product, libghostty, or WebKit reaps is signalled by a mechanism
+the open question below settles.
 
 ## Motivation
 
@@ -120,21 +121,23 @@ id move to the fixture's handle in M3. Amended 2026-11-23; see Decision Log.
 - **The fixture's neighbors.** After M2 holds on CI, move the other Foundation exit waits in `ScriptHostTests` that the
   fixture decision leaves undone. This is an addition.
 
-Decision: logged flakes only, plus every test that signals a process it spawned by process id. That covers
-`ScriptHostTests` and the watchdog in `WindowKitTests`' `PresentationTests`. New flakes go through
+Decision: logged flakes only, plus every package test that signals a process by its id. New flakes go through
 `spec/flaky-tests.md`'s Rule as they appear. Amended 2026-11-23; see Decision Log.
 
 Rationale: the logged-flakes half is complete within the proposal's problem. The signalling tests are an addition the
-user chose; see below. Every other option is an addition with no logged failure behind it. The CPU-share half of "same mechanisms elsewhere" names nothing: no other test uses
+user chose. See below. Every other option is an addition with no logged failure behind it. The CPU-share half of "same
+mechanisms elsewhere" names nothing: no other test uses
 `usage`, `busyShare`, or `letTimePass`. Its `waitUntilExit` sites run on test threads rather than dispatch workers, and
 none has failed. The real-time wait audit targets a different mechanism, sleeps that stand in for events. The fixture's
 neighbors share the fixture's suspected cause, so they are the strongest candidate if a sighting names one of them.
 
 The neighbors that signal are a different failure, not a flake. Each one checks `isRunning`, then signals the process
 id. Once the helper is reaped, that id is free for reuse. So a test can kill an unrelated process of the same user. That
-needs no logged sighting to matter, and only the fixture's handle closes it. See
-`spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md`. `PresentationTests` has the same watchdog in
-another test target, so the fixture moves to a test-support target both can import.
+needs no logged sighting to matter. For a helper the test spawns, only the fixture's handle closes it. See
+`spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md`. `PresentationTests` and `SenderWatcherTests`
+spawn their own processes in `WindowKitTests`, so the fixture moves to `ScriptTestSupport`, which both test targets
+already import. The same race sits in tests that signal a process something else reaps. Those are in the open
+question below.
 
 ### How the closed-tab tests get their sample
 
@@ -176,7 +179,45 @@ product.
 
 ## Design Decisions (Open)
 
-None.
+### How a test signals a process it does not reap
+
+The fixture closes the race because it is its helper's only reaper. These tests signal a process that something else
+reaps, so no test handle can hold the reap:
+
+- **Reaped by the product.** `ExecPaneTests.swift:815` probes the driver with `kill(pid, 0)`, then sends SIGKILL. The
+  exec transport reaps the driver. Its reaped-flag signal is private, and the channel exposes only the pid.
+- **Reaped by launchd after a reparent.** `ExecDriverChannelTests.swift:451` kills the driver's background child.
+  `TerminalSessionIntegrationTests.swift:93`, `:756`, and `:762` kill the process tree under a session's shell.
+  libghostty spawns and reaps that shell.
+- **WebKit content processes.** `WebContent.kill` in `BrowserRecoveryTests` and `MarkdownRig.swift:172` signal the pid
+  that `_webProcessIdentifier` names. The `if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) }` defers in
+  `BrowserRecoveryTests` and `BrowserHungProcessTests` check, then kill. `BrowserHungProcessTests.swift:218` passes the
+  product's chosen pid to a real `kill`.
+
+macOS has no process handle that a non-parent can hold, so no option closes the window between a check and a signal
+for these. The options differ in how small they make it, and in how many mechanisms the tests carry.
+
+- **An identity-checked sender.** The test records the process's identity when it learns the pid: the pid and its
+  start time, to the microsecond, from `proc_pidinfo`. The sender reads the start time again right before the signal,
+  and signals only when it matches. One sender in `ScriptTestSupport` serves every site. Leaves undone: a reuse that
+  lands between the read and the signal. That needs the process to exit, be reaped, and its id be handed on within
+  microseconds.
+- **An exit watch.** The test registers a kqueue `EVFILT_PROC` `NOTE_EXIT` filter when it learns the pid. The sender
+  signals only when no exit event has arrived. Leaves undone: the same window between the event check and the signal.
+  It adds a kqueue per process, and a registration that fails for a process that already ended.
+- **Stop signalling.** Each site that already waits for the process to end fails the test instead of killing it.
+  Leaves undone: a failed test leaves its process running. That breaks the terminal tests' rule that no test leaves an
+  orphan, and the browser tests' cleanup of a page that keeps spinning.
+- **Signal through the owner.** The product and libghostty gain a call that signals under their reaper's lock. Leaves
+  undone: WebKit content processes and reparented processes have no owner in reach. It adds public product calls whose
+  only users are tests, which `practices/testing.md` rules out.
+
+`HelperProcess.kill`, used in `HelperClientTests`, already signals under its reaper's lock, so it needs nothing.
+`ProcessInspectionTests` and `RemoteClientWatcherTests` signal a child before their own `waitpid`, so they need nothing
+either.
+
+The product's `WebContentProcess.kill` checks a pid's path, then signals it. That is the same check-then-signal window
+in production code. "Production behavior does not change" keeps it out of this proposal.
 
 ## Risks
 
@@ -259,6 +300,8 @@ Amended 2026-11-23; see Decision Log.
 - The spawn takes any file handle for each standard stream: a pipe the caller owns, a pty end, or the null device
 - The handle reports whether the helper has exited, and its status, without waiting. It sends any signal number
 - The handle signals the helper's own process, never its process group
+- The handle sends with `signal(_:)`, and has no method named `kill`, `terminate`, or `interrupt`
+- A helper stopped by SIGSTOP still reads as running, and SIGCONT and SIGKILL still reach it
 - The 60 s and 70 s hang guard belongs to `start`. The generic spawn takes each caller's own deadline and signal
 - The helper starts with every signal at its default and an empty signal mask, whatever the test process has set
 - The fixture marks its pipe ends close-on-exec right after creating them and before it spawns or returns, as the exec
@@ -270,32 +313,42 @@ Amended 2026-11-23; see Decision Log.
 - The `ScriptFixtures.finish` entry in `spec/flaky-tests.md` records the change, says which of its sightings it
   explains, and stays under Potential until it meets the closing rule in the `spec/flaky-tests.md` Rule section
 
-### M3: Every helper signal goes through the fixture's handle
+### M3: Every test signal goes through a guarded sender
 
 **Status:** NOT STARTED
 
+Amended 2026-11-23; see Decision Log.
+
 Starts after M2, since it moves sites onto M2's handle.
 
-No code in `ScriptHostTests` or `PresentationTests` signals a process id that the process it spawned no longer holds.
+No package test signals a process by an id that the process may no longer hold.
 
 - These sites spawn through the fixture and signal only through its handle:
   - `DeclaredFileRunTests.start`, its watchdog, and the teardowns of the tests that use it
   - `ReplSupport`'s session, on pipes and on a pty, with its watchdogs, teardown, and interrupt
   - `ScriptReplTests`' own helper run, and its kill of a REPL session
-  - `ControllerRunTests`' own `start`, its two inline runs, and its second session's teardown
-  - `ScriptReplGrantTests`' second sessions
+  - `ControllerRunTests`' own `start`, its two inline runs, and the stand-in instance in its launch-cleanup test
+  - `ScriptReplGrantTests`' `/bin/sleep` stand-ins for a second session
   - `ScriptGrantTests`' source session, and `SocketRelay.stop`
   - `ScriptReplLimitsTests`' teardown, its stop of a session, and its reaper's kill closure
-  - `ControllerConsentTests`' kills of an admitted run, through the handle of the test's run that the id belongs to
+  - `ControllerConsentTests`' kills of an admitted run
   - `PresentationTests`' helper run and its watchdog
-- The fixture lives in a test-support target that `ScriptHostTests` and `WindowKitTests` both import
-- No code in those targets signals a process it spawned, ScriptHelper or not, with a raw `kill` on a process id or with
-  `Process.terminate` or `interrupt`. The fixture's handle is the only sender
-- Signal 0 probes, and the relay's forked child, which its parent never reaps, are exempt
+  - `SenderWatcherTests`' `/bin/sleep`
+- `ControllerConsentTests.run` hands the test its handle before it waits. Each kill checks that the admitted pid equals
+  that handle's pid, and fails the test otherwise
+- The reaper's kill closure in `ScriptReplLimitsTests` finds the test's handle for the pid under a lock, and signals
+  through it. A pid with no handle is recorded and not signalled
+- `ReplProcess`'s interrupt is renamed, so the search below finds no `.interrupt()`
+- The fixture lives in `ScriptTestSupport`. The `start` wrapper stays in `ScriptHostTests`, since its scripts come from
+  that target's bundle
+- The sites in "How a test signals a process it does not reap" signal through the mechanism that question settles
+- No package test sends a signal with a raw `kill` on a process id, or with `Process.terminate` or `interrupt`
+- Signal 0 probes are exempt. So is the relay's forked child, which its parent never reaps. So are tests that signal
+  their own child before their own `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock
 - `ReplProcess` and every moved site expose the fixture's handle and no `Process`, so `.terminate()` on them does not
   compile
-- A search of both targets for `kill(`, `.terminate()`, and `.interrupt()` finds only the fixture and the exemptions
-  above
+- A search of `Tests/` for `kill(`, `.terminate()`, and `.interrupt()` finds only the fixture, the guarded sender, the
+  exemptions above, and product kill calls under test that send through an injected sender
 - Each moved site keeps its hang guard: a helper that never exits is still killed at that site's own deadline
 - The tests that send SIGINT, SIGSTOP, or SIGCONT through a moved site, such as the Ctrl-C tests in `ScriptReplTests`
   and `ControllerRunTests`, still deliver it and still see the helper's exit
@@ -355,6 +408,21 @@ No code in `ScriptHostTests` or `PresentationTests` signals a process id that th
 - 2026-11-23: The user chose to have moved sites expose only the fixture's handle, so `.terminate()` on them does not
   compile, over a source search alone. The search still covers bare `kill` on a process id.
 - 2026-11-23: Scheduled UTERM-046 M3 in queue.md, in the same row as M1-M2.
+- 2026-11-23: A re-check pass on M2 and M3 did not converge. Corrections of fact: the audit decision said the
+  signalling tests covered `ScriptHostTests` and `PresentationTests`, and M3's checks covered "both targets". All of
+  `WindowKitTests` held more sites, and so did five other test targets. `ControllerConsentTests`' kill sites had no
+  handle in reach, since `run` returns only after `finish`. `ScriptReplLimitsTests`' reaper closure runs off the main
+  actor. M3's search would have hit the handle's own sender and `ReplProcess.interrupt`. M3 named an unnamed "second
+  session". The fixture's target is `ScriptTestSupport`, which both test targets already import. Routed checks to M2:
+  the handle's sender is `signal(_:)`, and a stopped helper still reads as running. Routed the handle hand-off, the
+  reaper lookup, and the rename to M3.
+- 2026-11-23: The user chose to close the race in every package test, over narrowing M3 to `ScriptHostTests` and
+  `PresentationTests` and filing a bug for the rest. "Filing a bug while designing the proposal that would've fixed
+  the bug is idiotic." The audit decision said "every test that signals a process it spawned by process id. That
+  covers `ScriptHostTests` and the watchdog in `WindowKitTests`' `PresentationTests`." It now covers every package
+  test that signals a process by its id. M3 adds `SenderWatcherTests`. The sites whose process the product,
+  libghostty, or WebKit reaps open "How a test signals a process it does not reap". Status set to designing until it
+  settles. (addition)
 
 ## References
 

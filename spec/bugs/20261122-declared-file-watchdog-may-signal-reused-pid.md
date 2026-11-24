@@ -18,9 +18,8 @@ suggests `Process`'s view of the exit can lag or miss.
 
 ## Fix
 
-Move this helper onto the fixture's own spawn-and-reap handle that UTERM-046 M2 builds. The fixture signals only before
-its own `waitpid` reap, so the id cannot be reused. M2 moves every `finish` path. It does not name this watchdog in
-`start`, so check it off there.
+Move this helper onto the fixture's handle. UTERM-046 M2 builds the handle, and M3 moves `start` and every other
+signalling site onto it. The fixture signals only before its own `waitpid` reap, so the id cannot be reused.
 
 ## Estimate notes
 
@@ -54,9 +53,8 @@ The same pair, or `Process.terminate` after an `isRunning` check, also sits outs
 session, `ScriptReplTests`' own helper run, and `ControllerRunTests`' own `start`. M2's callers already lose their
 watchdogs to the fixture's handle.
 
-The user chose a new UTERM-046 milestone. M3 moves every remaining signalling site in `ScriptHostTests`, and the
-watchdog in `WindowKitTests`' `PresentationTests`, onto the fixture's handle after M2. `DeclaredFileRunTests.start` is
-one of them. A design-critic pass on 2026-11-23 found about twenty sites beyond the four first named, and M3 lists
-them all. This settles both decisions above. `start` leaves M2's scope as written, and the other
-signaling sites are fixed by M3, not by this bug alone. The exit waits that never signal stay undone, as UTERM-046
-already says.
+The user chose a new UTERM-046 milestone. After M2, M3 closes the race in every package test that signals a process by
+its id. `DeclaredFileRunTests.start` is one of them. Design-critic passes on 2026-11-23 found about twenty sites in
+`ScriptHostTests` beyond the four first named, and more in five other test targets. M3 lists them all. This settles
+both decisions above. `start` leaves M2's scope as written, and the other signalling sites are fixed by M3, not by this
+bug alone. The exit waits that never signal stay undone, as UTERM-046 already says.
