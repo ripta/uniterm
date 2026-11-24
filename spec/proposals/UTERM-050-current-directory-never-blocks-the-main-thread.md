@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -190,8 +190,8 @@ the main thread. See Risks.
 ### What `list-panes` reports for a directory
 
 `currentDirectory` now returns the path as held, with no check. Today `list-panes` reports a directory only when it
-existed at the moment of the call. `list-panes` rides only ScriptWire, whose sides ship together, so ADR-13 does not
-apply. The field is part of the scripting API, and `uniterm/api-version` versions that API: "A change that breaks a
+existed at the moment of the call. `list-panes` rides ScriptWire, and programs other than the bundled command use that
+wire too, so ADR-13 P1 applies. Amended 2026-11-23; see Decision Log. The field is also part of the scripting API, and `uniterm/api-version` versions that API: "A change that breaks a
 script changes it." The tabs in the same reply carry no directory. `list-panes` answers synchronously today. Script
 `open-pane` and `open-tab` already answer later, after an off-main check. The candidates were:
 
@@ -201,8 +201,11 @@ script changes it." The tabs in the same reply carry no directory. `list-panes` 
   is a directory. The call answers later. On a dead mount the script's call waits until the mount answers, and the app
   stays responsive.
 
-Decision: report the path as held, and bump `uniterm/api-version`. Decided autonomously on 2026-11-22.
+Decision: report the path as held, and bump `uniterm/api-version` and ScriptWire's version. Decided autonomously on
+2026-11-22. Amended 2026-11-23; see Decision Log.
 
+- A connection on ScriptWire 14 keeps today's rule, with `:directory` only for a folder that exists. The check runs off
+  the main thread. Whichever of this and UTERM-056 lands second builds it.
 - The `list-panes` doc and the scripting docs say the path may be gone, unreachable, or from another machine whose
   shell reported `localhost`.
 - The bump is needed because a script that passes `:directory` back to `open-pane` can now be refused. Today a gone
@@ -338,6 +341,8 @@ or a panel still checks the same path on the main thread, as it does today.
 - The contract's doc comment on `currentDirectory` states the rule, and says the path may be gone or unreachable
 - A contract test over the built-in applet catalog builds each applet over a path that does not exist and expects
   `currentDirectory` to return the raw path or nil. Its table's keys equal the catalog's type IDs
+- ScriptWire's version is bumped. When UTERM-056 has landed, a version 14 connection still gets `:directory` only for a
+  folder that exists, with no main-thread check
 - `uniterm/api-version` is bumped, and the `list-panes` doc and the scripting docs say `:directory` may be gone or
   unreachable
 - A new tab with no directory named still falls back to the starting directory, then home, when the reported one is
@@ -502,6 +507,10 @@ gone.
   check: a new tab still falls back to home rather than hand libghostty the raw path, so M1 alone does not regress the
   fallback.
 - 2026-11-22: Scheduled as UTERM-050 M1-M3 in queue.md.
+- 2026-11-23: Amended "What `list-panes` reports for a directory" and M1, from UTERM-056's review. The user chose that a
+  ScriptWire version covers what is inside a reply, and that this proposal bumps ScriptWire and keeps the existence check
+  for version 14. The text said "`list-panes` rides only ScriptWire, whose sides ship together, so ADR-13 does not
+  apply", and "report the path as held, and bump `uniterm/api-version`".
 
 ## References
 

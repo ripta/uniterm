@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-16
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -132,7 +132,8 @@ looks only for an ownerless group whose source is that pane and whose record mat
   or the group dissolving while the request waits withdraws it. Nothing is adopted then.
 - The script places the adopted members with a later layout that names them by pane ID, and may open new panes in it.
 - The call goes up the script wire's version, under UTERM-021 "Version skew". An older app and a newer command refuse
-  each other at the hello, before any effect.
+  each other before any effect, at the hello. Once UTERM-056 has landed, a newer app refuses an older command at its
+  begin. Amended 2026-11-23; see Decision Log.
 
 Rationale: discovery waits until the user grants the group, so no call returns pane metadata the run is not
 authorized for, as UTERM-004 "What anchors trust" requires. A list call would gain nothing, since the immediate "none
@@ -331,8 +332,8 @@ Amended 2026-11-20; see Decision Log.
 - A member closed while the request waits leaves the row's member list, and Allow adopts only the members that remain
 - Give Group to a verified connection on the source pane, then a save, stores that connection's selector. Give Group to
   an undeclared connection or to one on another pane, then a save, stores no record
-- An older command and a newer app refuse each other at the hello across the script wire's version change, and so do
-  a newer command and an older app
+- An older command and a newer app refuse each other before any effect across the script wire's version change, and so
+  do a newer command and an older app. Amended 2026-11-23; see Decision Log
 
 ## Decision Log
 
@@ -390,6 +391,8 @@ Amended 2026-11-20; see Decision Log.
   It now says only that no other approval opens a dialog. The decision stands on that and on its other reasons. M1
   lost the check "The request takes no focus when it is filed, per ADR-12". No check replaces it.
 - 2026-11-22: Scheduled as UTERM-033 M1 in queue.md.
+- 2026-11-23: From UTERM-056's acceptance. The decision and M1's check said the command and the app refuse each other "at
+  the hello". UTERM-056 moves an older command's refusal to its begin.
 
 ## References
 

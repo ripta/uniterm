@@ -2,7 +2,7 @@
 
 **Status:** implemented
 **Created:** 2026-11-13
-**Updated:** 2026-11-15
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -319,6 +319,7 @@ Decision: the change follows UTERM-004's skew rules.
 - The command and the app: declared files add a file begin and a declaration message, and undeclared files add an
   undeclared begin with an answer. ScriptWire's version goes up. Each side refuses any
   other version at the hello, so an older command and a newer app refuse each other before any effect.
+  Superseded in part by UTERM-056; see Decision Log.
 - The trust store: a file's version and identity approvals are new records in their own policy file. The controller
   policy file's format and records are unchanged.
 - An older build running a declared file fails at load, since it has no `declare-permissions` binding. That fails
@@ -402,6 +403,7 @@ Superseded in part by UTERM-034; see Decision Log.
 - Trust This Version keeps the next run of the same bytes from asking, and an edited file gets a fresh review
 - A call needing an undeclared power is refused, and the error names the permission, for files and controllers
 - An older command and a newer app refuse each other at the hello
+  Superseded in part by UTERM-056; see Decision Log.
 - A file reached through a symlink runs, and a pipe, a device, or a file over the size cap is refused
 - The command refuses a snapshot whose hash differs from the version the app sent, before parsing it
 - A duplicate key in a struct, `nil`, `true`, `false`, a parenthesized tuple, and a fractional version each refuse the
@@ -778,6 +780,9 @@ a socket that belongs to another user never reached the app, so it keeps 69.
   writes no snapshot. This replaces the app's read and snapshot in "The file is snapshotted and hashed", "Where the
   declaration is read", and "Authority comes from the read, not the run", M2's snapshot checks, and M3's note that the
   app reads the `.sig`.
+- 2026-11-23: Superseded in part by UTERM-056. Once it lands, the app refuses an older command at its begin instead of
+  at the hello. A program that is not the command and sends an undeclared or open begin from an older version is refused
+  too, until it is rebuilt.
 
 ## References
 

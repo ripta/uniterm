@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -136,8 +136,8 @@ Chosen by the user on 2026-11-22.
 Rationale: two builders for the same reads would drift. Passing every snapshot field to scripts would silently widen
 what an approved controller may read, which ADR-14 P8 and P10 forbid.
 
-- Skew: `list-panes` output is unchanged, so no wire changes. ScriptWire's two sides ship together in any case
-  (ADR-13).
+- Skew: `list-panes` output is unchanged, so no wire changes. A field added later is a new ScriptWire version, per ADR-13
+  P1. Amended 2026-11-23; see Decision Log.
 
 ### Refreshing
 
@@ -603,6 +603,8 @@ None.
   UI. Declined: the status bar drops such text instead, so the rule does not hold for every member.
 - 2026-11-22: Accepted by the user.
 - 2026-11-22: Scheduled as UTERM-048 M1 and UTERM-048 M2-M5 in queue.md.
+- 2026-11-23: From UTERM-056's acceptance. The skew line said "ScriptWire's two sides ship together in any case (ADR-13)",
+  which holds only for the command's own messages.
 
 ## References
 

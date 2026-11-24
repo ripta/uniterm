@@ -690,8 +690,9 @@ text form. Janet callers get Janet data notation, and exec drivers get JSON. (au
   nesting cap that is the same for both forms. A result past either is refused with a structured error.
 - A handle reads in the form of the caller kind that made it. The byte size, the cap, and the offsets count that form.
 - Skew: ScriptWire takes the next version after the one it is at when this lands. It is at 12 after UTERM-007 M5, which
-  moved it from 11 and the exec protocol from 3 to 4. App and helper ship in one bundle, and a mismatch is refused at
-  the hello in either direction. On the exec wire, base64 appears only in replies to new commands, so this proposal
+  moved it from 11 and the exec protocol from 3 to 4. App and helper ship in one bundle, and a mismatch is refused
+  before any call in either direction. Once UTERM-056 lands, a program on an older version keeps running, and a chunk it
+  cannot read answers `replyLost` with the version it needs. Amended 2026-11-23; see Decision Log. On the exec wire, base64 appears only in replies to new commands, so this proposal
   does not move the exec protocol version, which stays at 4 unless another change moves it. Amended 2026-11-15; see
   Decision Log.
 
@@ -1183,6 +1184,8 @@ Amended 2026-11-23; see Decision Log.
   after M3, and the option offered had M3 wait on UTERM-055 M1. The exec chunk ceiling is UTERM-055's 512 KiB, so one
   ceiling sizes the held count. One count per driver covers both result pools, so a driver that sends every read for
   all its handles is never refused. UTERM-055 M1 raises it for capture reads.
+- 2026-11-23: From UTERM-056's acceptance. "Result encoding" said "a mismatch is refused at the hello in either direction".
+  That holds only for the command's own messages.
 
 ## References
 

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-21
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -174,7 +174,8 @@ Decision: these follow from accepted ADRs.
 
 ### Version skew
 
-Decision: ScriptWire refuses an unknown version at the hello, as it does today.
+Decision: ScriptWire refuses an unknown version at the hello, as it does today, until UTERM-056 lands. Then the command's
+own messages keep exact match and the rest of ScriptWire is an outside wire. Amended 2026-11-23; see Decision Log.
 
 - A new helper with an old app, or an old helper with a new app: the run fails at the hello before any effect, with
   the message to relaunch uniterm. The helper is the bundle's own, so a relaunch heals it.
@@ -465,7 +466,8 @@ None.
 - **A new ScriptWire version, permission kind, Janet functions, and event shape are published contracts** —
   likelihood: high, impact: medium. Mitigation: ScriptWire refuses an unknown version at the hello, and an unknown
   permission kind fails closed. See "Version skew". The Janet names follow UTERM-019's rule that a name never changes
-  meaning and a rename adds a name, and an event gains fields only by adding them.
+  meaning and a rename adds a name. On the wire, an added event field is a new ScriptWire version, per ADR-13 P1. Amended
+  2026-11-23; see Decision Log.
 - **An older build stops honoring every file approval** — likelihood: high on a development machine, low elsewhere,
   impact: medium. After an approval of the new kind is saved, a build without the kind reads `files.json` and
   UTERM-032's input-folder store as newer. It cannot use, remember, or revoke any approval in them. `policy.json` is
@@ -528,7 +530,8 @@ None.
 - A controller's title is neutralized and bounded in the palette, as tab details are
 - A declaration of the new kind without pane control is refused, and its error says to add pane control
 - Revoking a controller while the palette is open removes its rows, and choosing a stale row records nothing
-- An older command and a newer app refuse each other at the hello. A build without the kind reads a store holding it
+- An older command and a newer app refuse each other before any effect: at the hello, or at the command's begin once
+  UTERM-056 has landed. Amended 2026-11-23; see Decision Log. A build without the kind reads a store holding it
   as newer, without moving the file aside
 - A `controller.json` that names the new permission kind is refused, and its error says a package cannot declare
   commands
@@ -707,6 +710,8 @@ Amended 2026-11-20; see Decision Log.
   Controllers", per UTERM-042 "Palette commands: wording and target". It is the same command, with the same ID. The
   title changes once UTERM-042 M1 lands.
 - 2026-11-21: Scheduled as UTERM-024 M1-M2 in queue.md.
+- 2026-11-23: From UTERM-056's acceptance. The skew decision had no end to exact match, the published-contract risk said
+  "an event gains fields only by adding them", and an M1 check had the two refuse each other only at the hello.
 
 ## References
 

@@ -134,8 +134,9 @@ two are not skewed. A newer user script on an older app gets an unbound-symbol e
   built against the earlier version is refused at hello, and a newer one is refused by an older app. Every ScriptWire
   change does this today. Filed as
   [20261122-native-controller-refused-after-scriptwire-change](../bugs/20261122-native-controller-refused-after-scriptwire-change.md),
-  which names the conflict with ADR-13. Accepted here, since this proposal makes no ScriptWire change that others do
-  not. Amended 2026-11-22; see Decision Log.
+  which names the conflict with ADR-13. Accepted until UTERM-056 lands, since this proposal makes no ScriptWire change
+  that others do not. After that, a native controller at version 14 or later keeps running, and only lacks the capture
+  calls. Amended 2026-11-23; see Decision Log.
 
 - Exec drivers: this proposal changes no exec frame or version, so a driver on either side sees no difference.
   UTERM-055 adds exec capture in its own version. Amended 2026-11-22; see Decision Log.
@@ -543,8 +544,8 @@ Sub-questions that follow from the first candidate:
   Accepted: an older app loads no policies from a file that holds a kind it lacks, and keeps the file read-only until the
   user upgrades. This is UTERM-004's designed behavior for every new kind. See "Version skew".
 - **A native controller stops connecting after the capture calls ship** — likelihood: medium, impact: medium.
-  Accepted for this proposal: every ScriptWire change refuses native controllers built against another version. The
-  fix is a ScriptWire design call filed as a bug. See "Version skew".
+  Accepted until UTERM-056 lands: until then, every ScriptWire change refuses native controllers built against another
+  version. Amended 2026-11-23; see Decision Log. See "Version skew".
 - **The capture error's reason kinds become published names** — likelihood: high, impact: low.
   Mitigation: programs switch on them, so they are append-only, and a test pins every existing name. A renamed reason
   is a new name beside the old one.
@@ -796,6 +797,8 @@ Lands before UTERM-019 M1 ships, and does not wait for M1 to M5 here.
   so a program's capture of its source pane can show a user-opened file that the image viewer's and the map viewer's
   contracts withhold. The status stays `accepted`. M5 waits for the answer. M1 through M4 are user capture only and do
   not.
+- 2026-11-23: From UTERM-056's acceptance. "Version skew" and the native-controller risk accepted the refusal for this
+  proposal, with "the fix is a ScriptWire design call filed as a bug". They now accept it until UTERM-056 lands.
 
 ## References
 

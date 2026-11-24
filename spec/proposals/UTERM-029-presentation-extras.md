@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-21
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -223,7 +223,8 @@ Decision: every contract this proposal changes ships in one app bundle with its 
 (autonomous)
 
 - ScriptWire, between the `uniterm` command and the app, gains the descriptor message under a new protocol version.
-  ScriptWire needs an exact match at the hello, per ADR-13's exemption, and a relaunch heals a mismatch.
+  It is the command's own message, so ADR-13 P6 lets it refuse every version but its own, and a relaunch heals a
+  mismatch. Amended 2026-11-23; see Decision Log.
 - The document helper ships in the app bundle and refuses a protocol mismatch at its hello, as it does today.
 - The viewer advertises PDF page references with a schema minor. A newer presenter on an older viewer refuses to send a
   slide that names a PDF. An older presenter on a newer viewer works, and a `![](x.pdf)` it sends now shows the page.
@@ -346,7 +347,8 @@ None.
 - The input kind follows "Input kinds and host functions", and `input-text` raises for a PDF or a folder with a
   message naming the kind
 - The sheet line names images and PDF pages for every input kind
-- ScriptWire's new version refuses a mismatched command at the hello
+- ScriptWire's new version refuses a mismatched command at the hello, or at its begin once UTERM-056 has landed. Amended
+  2026-11-23; see Decision Log
 - A PDF re-exported mid-rehearsal with fewer pages shows alt text past its end, never another file's page
 - A symlinked input names the canonical file in its generated references
 - An older build refuses the new input kind version at load
@@ -405,6 +407,8 @@ None.
   it and back out mid-talk". That reason rested on ADR-12, so it is gone. The decision stands on its other reasons: a
   form is unbuilt and needs the `ask-user` power.
 - 2026-11-21: Scheduled as UTERM-029 M1-M3 in queue.md.
+- 2026-11-23: From UTERM-056's acceptance. "Version skew" said "ScriptWire needs an exact match at the hello, per ADR-13's
+  exemption", and the check had a mismatched command refused only at the hello.
 
 ## References
 

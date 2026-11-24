@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -117,8 +117,9 @@ any protected location the scope lies in.
 Decision: the `input-file` kind and the folder crossing from the command to the app are new, so ScriptWire's version
 goes up.
 
-- A new command with an old app, or the reverse, fails at the hello before any effect, with the message to relaunch
-  uniterm. The command is the bundle's own, so a relaunch heals it.
+- A new command with an old app, or the reverse, fails before any effect, with the message to relaunch uniterm. It fails
+  at the hello, or, for an old command once UTERM-056 has landed, at its begin. The command is the bundle's own, so a
+  relaunch heals it. Amended 2026-11-23; see Decision Log.
 - An older build refuses a declared file that declares `input-file`, since it does not know the kind.
 - A remembered approval that holds a folder lives in a store an older build never reads, per "The stored approval". An
   older build's other remembered approvals keep working beside a newer build, and it never sees a folder. Amended
@@ -508,6 +509,7 @@ None.
 - 2026-11-22: UTERM-034 was accepted. It removes the declared-file snapshot that "Which argument is the input file" and
   "How the text reaches the script" name. This proposal is queued first, so its text stays as written. UTERM-034 M1
   amends both sections and the M1 check on a file that gains the mark before the snapshot, when it lands.
+- 2026-11-23: From UTERM-056's acceptance. "Version skew" said a mismatch "fails at the hello before any effect".
 
 ## References
 

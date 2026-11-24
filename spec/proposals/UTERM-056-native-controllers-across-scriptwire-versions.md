@@ -20,7 +20,8 @@
   new ScriptWire version, and a version 14 connection keeps today's rule, checked off the main thread.
 - UTERM-029, UTERM-033, and UTERM-034 — checks that a mismatched command is refused at the hello. An older command is
   now refused at its begin.
-- UTERM-026, UTERM-032, UTERM-043, UTERM-047, and UTERM-048 — skew lines that say ScriptWire matches exactly.
+- UTERM-026, UTERM-032, UTERM-047, and UTERM-048 — skew lines that said ScriptWire matches exactly, now updated.
+- UTERM-004 — the hello that refuses every other version: superseded in part.
 - UTERM-024 — "Version skew", whose exact-match rule holds for the command and no longer for other programs. Its event
   and read are in the subset, so each needs an older form or a call new in its version. Its line that an event gains
   fields only by adding them no longer holds within one version.
