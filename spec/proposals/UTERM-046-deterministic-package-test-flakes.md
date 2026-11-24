@@ -15,8 +15,8 @@ spinning page 0.3 s of real time and expect it to use half a core. The script fi
 This proposal makes both deterministic. Each regression the tests name stays caught. One live-sample claim that cannot be
 checked independently of load, that a real spinning page reads busy, gives way to a stronger check of the reading's
 units. It also closes the reused-id race in every package test that signals a process by its id. A test's own helper
-signals through the fixture's handle. A process the product, libghostty, or WebKit reaps is signalled by a mechanism
-the open question below settles.
+signals through the fixture's handle. A process the product, libghostty, or WebKit reaps is signalled by its audit
+token, and so is the content process the product ends.
 
 ## Motivation
 
@@ -47,10 +47,12 @@ bytes, not time.
 ### Production behavior does not change
 
 Decision: production code keeps its bounds, its time sources, and its `busyShare`. A test seam replaces only what the
-test supplies, never the rule the production code applies.
+test supplies, never the rule the production code applies. The one production change is how `WebContentProcess.kill`
+names its target: it signals by the content process's audit token. Amended 2026-11-23; see Decision Log.
 
 Rationale: the hung-process bound and the busy-share rule are how a hung page stays contained, per ADR-07. A test
-shortcut that weakened them would trade a flaky test for a weaker product.
+shortcut that weakened them would trade a flaky test for a weaker product. Signalling by token keeps every rule. It
+only stops the kill from reaching a process that took a freed pid.
 
 ### No new waits on the product's main thread
 
@@ -177,34 +179,52 @@ page enough of a core. The bracket catches it in either field, or in both with t
 claim dropped is the part that depended on the runner's load. M1's measurement covers what it told us about the
 product.
 
-## Design Decisions (Open)
-
 ### How a test signals a process it does not reap
 
 The fixture closes the race because it is its helper's only reaper. These tests signal a process that something else
 reaps, so no test handle can hold the reap:
 
-- **Reaped by the product.** `ExecPaneTests.swift:815` probes the driver with `kill(pid, 0)`, then sends SIGKILL. The
-  exec transport reaps the driver. Its reaped-flag signal is private, and the channel exposes only the pid.
-- **Reaped by launchd after a reparent.** `ExecDriverChannelTests.swift:451` kills the driver's background child.
-  `TerminalSessionIntegrationTests.swift:93`, `:756`, and `:762` kill the process tree under a session's shell.
-  libghostty spawns and reaps that shell.
+- **Reaped by other code in the test process.** `ExecPaneTests.swift:815` probes the driver with `kill(pid, 0)`, then
+  sends SIGKILL. The product's exec transport spawns the driver in the test process and reaps it. Its reaped-flag
+  signal is private, and the channel exposes only the pid. libghostty spawns `login(1)` as a child of the test process,
+  and reaps it itself.
+- **Reaped by launchd after a reparent.** `ExecDriverChannelTests.swift:451` kills the driver's background child, whose
+  pid the driver writes to a file. `TerminalSessionIntegrationTests.swift:93`, `:756`, and `:762` kill the tree under
+  `login`: the shell and its `sleep`, which launchd adopts once `login` exits on SIGHUP. `tearDown` and the defer at
+  `:755` also kill `login` itself after `close()` returned. libghostty has reaped it by then, so that SIGKILL goes to a
+  freed pid on every run.
 - **WebKit content processes.** `WebContent.kill` in `BrowserRecoveryTests` and `MarkdownRig.swift:172` signal the pid
   that `_webProcessIdentifier` names. The `if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) }` defers in
   `BrowserRecoveryTests` and `BrowserHungProcessTests` check, then kill. `BrowserHungProcessTests.swift:218` passes the
   product's chosen pid to a real `kill`.
 
-macOS has no process handle that a non-parent can hold, so no option closes the window between a check and a signal
-for these. The options differ in how small they make it, and in how many mechanisms the tests carry.
+Making the test the parent does not help. It already is the parent of the driver and of `login`, but other code in the
+same process holds the reap. macOS has no subreaper, so the test cannot take the reap of reparented or WebKit
+processes either.
 
-- **An identity-checked sender.** The test records the process's identity when it learns the pid: the pid and its
-  start time, to the microsecond, from `proc_pidinfo`. The sender reads the start time again right before the signal,
-  and signals only when it matches. One sender in `ScriptTestSupport` serves every site. Leaves undone: a reuse that
-  lands between the read and the signal. That needs the process to exit, be reaped, and its id be handed on within
-  microseconds.
+Each option is only as good as the moment the test learns the pid. Each site checks what it learned then. The
+grandchild's parent is the driver. The terminal tree and its identities are read in one pass, before `close()`. A
+WebContent pid's path carries `com.apple.WebKit.WebContent`, as `MarkdownRig.swift:166` already checks. The driver's
+pid is read only while the channel is connected. The injected `signal` closure in `BrowserHungProcessTests` looks up
+the identity the test learned, and refuses a pid it has none for.
+
+- **An audit-token sender.** When the test learns a pid, it reads the process's audit token through
+  `task_name_for_pid` and `task_info(TASK_AUDIT_TOKEN)`. Every later signal goes through
+  `proc_signal_with_audittoken` (`libproc.h:132`). The kernel signals only the process whose pid version matches the
+  token, and returns ESRCH for any other, a zombie included. A design-critic probe on 2026-11-23 confirmed that for a
+  reparented `sleep`. Where no token can be read, the sender falls back to the identity check below. Each site states
+  which path it expects, and fails the test when it gets the other. One sender in `ScriptTestSupport` serves every
+  site. Leaves undone: a site on the fallback keeps that option's window. `login` is setuid root and may refuse a
+  token. WebContent may too. Neither was tested. The call has no documentation beyond its header. An OS release that
+  drops it fails at link time.
+- **An identity-checked sender.** The test records the pid and its start time to the microsecond, from
+  `sysctl(KERN_PROC_PID)`'s `p_starttime`. `proc_pidinfo` refuses `login`, and `ProcessInspection.startTime` keeps
+  seconds only, so the reader lives in `ScriptTestSupport`. The sender reads the start time again right before the
+  signal, and signals only when it matches. Leaves undone: a reuse between that read and the signal. macOS hands out
+  pids in order, so that needs about 99,900 pid allocations inside the window.
 - **An exit watch.** The test registers a kqueue `EVFILT_PROC` `NOTE_EXIT` filter when it learns the pid. The sender
-  signals only when no exit event has arrived. Leaves undone: the same window between the event check and the signal.
-  It adds a kqueue per process, and a registration that fails for a process that already ended.
+  signals only when no exit event has arrived. Leaves undone: the same window as the identity check, between the event
+  check and the signal. It gains nothing over that option, and adds a kqueue per process.
 - **Stop signalling.** Each site that already waits for the process to end fails the test instead of killing it.
   Leaves undone: a failed test leaves its process running. That breaks the terminal tests' rule that no test leaves an
   orphan, and the browser tests' cleanup of a page that keeps spinning.
@@ -217,7 +237,31 @@ for these. The options differ in how small they make it, and in how many mechani
 either.
 
 The product's `WebContentProcess.kill` checks a pid's path, then signals it. That is the same check-then-signal window
-in production code. "Production behavior does not change" keeps it out of this proposal.
+in production code. The audit-token sender fits it: `identifier(of:)` can read a token, and the kill can signal by it.
+
+`RemoteClientWatcherTests.swift:255` spawns `sh`, which forks a 30 s client. `tearDown` kills only `sh`, so the client
+outlives the test for up to 30 s. That is an orphan, not a reused-pid signal.
+
+Decision: an audit-token sender in `ScriptTestSupport`. A site that cannot read a token falls back to the identity
+check, and each site states which path it expects. The product's `WebContentProcess` reads its content process's token
+the same way and signals by it. When the product reads no token, it keeps today's path check, so a hung page is still
+ended. `RemoteClientWatcherTests` ends the client its `sh` forks through the sender.
+
+Rationale: it is the only option that closes the window outright, and it does so for every target the test can read
+a token for. The identity check narrows the window but leaves it. The exit watch gains nothing over the identity
+check. Stopping the signals leaves orphans. Signalling through the owner needs product calls only tests use, and still
+cannot reach WebKit or reparented processes. The fallback keeps the identity check's window only where the system
+refuses a token, and a site that lands on the wrong path fails its test. So a change in what the system allows shows
+up at once. The product's kill has the same race as the tests, and the same call closes it there. The orphan is a
+reparented process, which only this sender can end safely.
+
+Leaves undone: `login`, and WebContent if it refuses a token, keep the identity check's window. M3 records which path
+each site took. The call has no documentation beyond `libproc.h`. An OS release that drops it fails at link time, not
+silently.
+
+## Design Decisions (Open)
+
+None.
 
 ## Risks
 
@@ -239,6 +283,11 @@ in production code. "Production behavior does not change" keeps it out of this p
   The exec driver's transport spawns into its own process group and signals it with `killpg`. A fixture that copies it
   would let `ControllerRunTests`' signal-relay tests pass for a command that forks and never relays SIGINT. Mitigation:
   M2 checks that the handle signals the helper's own process, never its group.
+- **The audit-token call changes or goes away** — likelihood: low, impact: medium.
+  `proc_signal_with_audittoken` has no documentation beyond `libproc.h`. A release could drop it, or refuse tokens for
+  processes it allows today. Mitigation: a dropped call fails at link time. A refused token sends a site to the
+  fallback, and each site fails its test when it gets a path it did not expect. The product keeps its path check when
+  it reads no token.
 - **A new wait mechanism misses an exit the old one saw** — likelihood: low, impact: low.
   Mitigation: the fixture's change is proven against a helper that exits at once and one that exits after a delay.
 
@@ -341,7 +390,21 @@ No package test signals a process by an id that the process may no longer hold.
 - `ReplProcess`'s interrupt is renamed, so the search below finds no `.interrupt()`
 - The fixture lives in `ScriptTestSupport`. The `start` wrapper stays in `ScriptHostTests`, since its scripts come from
   that target's bundle
-- The sites in "How a test signals a process it does not reap" signal through the mechanism that question settles
+- The sites in "How a test signals a process it does not reap" signal only through the audit-token sender in
+  `ScriptTestSupport`. A sender test signals a process by a token whose pid version is one off, and the process stays
+  alive. Signalling a process after it was reaped returns ESRCH
+- Where no token can be read, the sender compares the start time to the microsecond, read with sysctl, right before the
+  signal. Each site states whether it expects a token or the fallback, and fails the test when it gets the other
+- Each site checks the pid when it learns it: the grandchild's parent is the driver, and the terminal tree and its
+  tokens are read in one pass before `close()`. A WebContent pid's path carries `com.apple.WebKit.WebContent`, and the
+  driver's pid is read while its channel is connected
+- The terminal teardowns signal `login` only through its recorded identity, so a `login` that `close()` already ended
+  gets no signal
+- The injected `signal` closure in `BrowserHungProcessTests` signals only a pid it learned an identity for
+- `RemoteClientWatcherTests`' `tearDown` also ends the client that its `sh` forks, through the sender
+- `WebContentProcess.identifier(of:)` reads the content process's audit token, and `kill` signals by it. With no
+  token, `kill` keeps today's path check. A product test shows a token kill that a reused pid cannot reach
+- The As built block records which path each site took, and whether WebContent and `login` gave a token
 - No package test sends a signal with a raw `kill` on a process id, or with `Process.terminate` or `interrupt`
 - Signal 0 probes are exempt. So is the relay's forked child, which its parent never reaps. So are tests that signal
   their own child before their own `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock
@@ -423,6 +486,22 @@ No package test signals a process by an id that the process may no longer hold.
   test that signals a process by its id. M3 adds `SenderWatcherTests`. The sites whose process the product,
   libghostty, or WebKit reaps open "How a test signals a process it does not reap". Status set to designing until it
   settles. (addition)
+- 2026-11-23: A design-critic pass on "How a test signals a process it does not reap" added the audit-token sender.
+  Corrections of fact: the question said "macOS has no process handle that a non-parent can hold, so no option closes
+  the window". `proc_signal_with_audittoken` signals only the process a token names. The identity check said
+  "start time, to the microsecond, from `proc_pidinfo`". `proc_pidinfo` refuses `login`, so it reads sysctl. The
+  question said libghostty "spawns and reaps that shell". It spawns and reaps `login`, and the shell is reparented. The
+  terminal teardowns kill `login`'s freed pid on every run, which the question did not say. Added the checks each site
+  makes when it learns a pid, and the orphan `RemoteClientWatcherTests` leaves.
+- 2026-11-23: The user chose the audit-token sender, with the identity check as its fallback where no token can be
+  read. The user preferred it over the identity check alone, an exit watch, stopping the signals, and signalling
+  through each owner. Routed its checks to M3, and added the risk that the call changes or goes away.
+- 2026-11-23: The user chose to fix the product's `WebContentProcess.kill` here, over keeping production out. Amended
+  "Production behavior does not change". It said "production code keeps its bounds, its time sources, and its
+  `busyShare`", with no production change at all. The kill now signals by the content process's token, and keeps its
+  path check when it reads none. The bounds, time sources, and `busyShare` stay as they were. (addition)
+- 2026-11-23: The user chose to have `RemoteClientWatcherTests` end the client its `sh` forks, through the sender, over
+  leaving the orphan. (addition)
 
 ## References
 
