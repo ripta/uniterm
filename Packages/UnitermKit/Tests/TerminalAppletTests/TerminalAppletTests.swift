@@ -48,8 +48,16 @@ final class FakeSession: TerminalSession {
   func send(text: String) {}
   func perform(_ action: TerminalAction) {}
   func resize(to size: CGSize) {}
-  func setFocused(_ focused: Bool) {}
-  func setVisible(_ visible: Bool) { self.visible = visible }
+  /// How many times the applet set the session's focus or visibility, including calls that changed
+  /// nothing.
+  var focusAndVisibilityCalls = 0
+
+  func setFocused(_ focused: Bool) { focusAndVisibilityCalls += 1 }
+
+  func setVisible(_ visible: Bool) {
+    self.visible = visible
+    focusAndVisibilityCalls += 1
+  }
 
   /// Every policy the session was given, the one it was made with first.
   var clipboardPolicies: [TerminalClipboardPolicy] = []
@@ -214,7 +222,7 @@ final class TerminalAppletTests: XCTestCase {
     let (applet, engine, _, session) = makeApplet()
 
     XCTAssertEqual(engine.sessions.count, 1)
-    XCTAssertTrue(session.view.superview === applet.view)
+    XCTAssertTrue(session.view.isDescendant(of: applet.view))
   }
 
   /// Catches a pane that stays open after its shell ends.
@@ -731,22 +739,58 @@ final class TerminalAppletTests: XCTestCase {
     XCTAssertFalse(engine.sessions[1].visible)
   }
 
+  /// Catches a tab switch whose work grows with the tab count. A switch touches the tab that was
+  /// shown and the one that shows now, and no other session. A close or reopen of a tab touches no
+  /// other tab's session either. It cannot prove the cost of the walk over the tab list itself.
+  func testASwitchTouchesOnlyTheTabsThatChangeVisibility() async {
+    let (applet, engine, _, _) = makeApplet()
+
+    for _ in 0..<4 { applet.openTab() }
+
+    applet.selectTab(at: 2)
+    for session in engine.sessions { session.focusAndVisibilityCalls = 0 }
+
+    applet.selectTab(at: 4)
+
+    XCTAssertEqual(
+      engine.sessions.map { $0.focusAndVisibilityCalls > 0 }, [false, false, true, false, true])
+    XCTAssertEqual(engine.sessions.map(\.visible), [false, false, false, false, true])
+    XCTAssertEqual(engine.sessions.map(\.view.isHidden), [true, true, true, true, false])
+
+    for session in engine.sessions { session.focusAndVisibilityCalls = 0 }
+
+    let closed = await applet.closeTab(at: 0)
+    XCTAssertEqual(closed, .closed)
+
+    XCTAssertEqual(engine.sessions[1...].map { $0.focusAndVisibilityCalls }, [0, 0, 0, 0])
+    XCTAssertTrue(engine.sessions[4].visible)
+    XCTAssertEqual(applet.selectedTabIndex, 3)
+  }
+
   /// Catches a terminal that draws under the tab bar. The bar is 28 points. A 300 point applet gives
-  /// 272 to the terminal while there are two tabs and all 300 with one.
+  /// 272 to the terminal while there are two tabs and all 300 with one. A hidden tab's terminal
+  /// keeps the pane's size too, so its program never draws at a stale width.
   func testTheTerminalFillsWhatTheBarLeaves() async throws {
     let (applet, engine, _, _) = makeApplet()
+
+    func frame(of session: FakeSession) -> NSRect {
+      session.view.convert(session.view.bounds, to: applet.view)
+    }
+
     applet.view.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
-    XCTAssertEqual(engine.sessions[0].view.frame, NSRect(x: 0, y: 0, width: 400, height: 300))
+    XCTAssertEqual(frame(of: engine.sessions[0]), NSRect(x: 0, y: 0, width: 400, height: 300))
 
     applet.openTab()
-    XCTAssertEqual(engine.sessions[1].view.frame, NSRect(x: 0, y: 28, width: 400, height: 272))
+    XCTAssertEqual(frame(of: engine.sessions[1]), NSRect(x: 0, y: 28, width: 400, height: 272))
+    XCTAssertEqual(frame(of: engine.sessions[0]), NSRect(x: 0, y: 28, width: 400, height: 272))
 
     applet.view.frame = NSRect(x: 0, y: 0, width: 500, height: 200)
-    XCTAssertEqual(engine.sessions[1].view.frame, NSRect(x: 0, y: 28, width: 500, height: 172))
+    XCTAssertEqual(frame(of: engine.sessions[1]), NSRect(x: 0, y: 28, width: 500, height: 172))
+    XCTAssertEqual(frame(of: engine.sessions[0]), NSRect(x: 0, y: 28, width: 500, height: 172))
 
     let closed = await applet.closeCurrentTab()
     XCTAssertEqual(closed, .closed)
-    XCTAssertEqual(engine.sessions[0].view.frame, NSRect(x: 0, y: 0, width: 500, height: 200))
+    XCTAssertEqual(frame(of: engine.sessions[0]), NSRect(x: 0, y: 0, width: 500, height: 200))
   }
 
   /// Catches a new tab that starts elsewhere than the tab it was opened from, or lands at the end.

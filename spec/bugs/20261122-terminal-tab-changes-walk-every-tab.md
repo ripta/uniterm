@@ -1,8 +1,10 @@
 # A terminal pane walks every tab at each title change and tab switch
 
-**Status:** open
-**Validation:** not confirmed; traced by reading the code during the UTERM-053 review. The cost was not measured.
-**Estimate:** small to medium; one non-trivial design decision. See "Estimate notes".
+**Status:** fixed 2026-11-23, for the switch and resize walks. The title array and the published list stay with
+UTERM-053 M1, and the lookups by tab ID with UTERM-058 M2.
+**Fixed:** 2026-11-23
+**Estimate:** small to medium; the one non-trivial decision, how a resize reaches every live session, was settled by
+the user: a session area view.
 
 ## Observed
 
@@ -14,48 +16,42 @@ waiting tab, so a stored layout can carry any number of them.
 
 ## Cause
 
-- A title change in `handle(_:in:)` (`Packages/UnitermKit/Sources/TerminalApplet/TerminalApplet.swift`, about line 767)
-  maps every tab's title and hands the array to the tab bar. It then reports a tab change to the host.
-- The host reads the applet's published tabs at each report. The terminal's `publishedTabs` is computed (about line
-  302). Each read builds every `AppletTab`, then the list, whose init scans every tab for the selection.
-- `refreshTabs` (about lines 714-738) runs on every select, open, and close. It calls `setVisible` on every session,
-  and `setFocused(false)` on every hidden one.
-- `layoutContents` (about lines 749-753) sets a frame on every session view.
-- A lookup by tab ID scans the tabs. `selectTab(id:)` (about line 547) runs `firstIndex` over every tab, and the
-  published list's `contains` scans it too. The palette's `chooseTab` and scripting's tab lookups in
-  `WindowScripting.swift` reach both. UTERM-058 M2 fixes these lookups with a map from ID to tab.
+- A title change in `handle(_:in:)` (`Packages/UnitermKit/Sources/TerminalApplet/TerminalApplet.swift`) maps every
+  tab's title and hands the array to the tab bar. It then reports a tab change to the host.
+- The host reads the applet's published tabs at each report. The terminal's `publishedTabs` is computed. Each read
+  builds every `AppletTab`, then the list, whose init scans every tab for the selection.
+- `refreshTabs` ran on every select, open, close, and reopen. It called `setVisible` on every session, and
+  `setFocused(false)` on every hidden one.
+- `layoutContents` set a frame on every session view. It runs at each resize, and at each link hover through
+  `updateLinkPreview`.
+- A lookup by tab ID scans the tabs. `selectTab(id:)` runs `firstIndex` over every tab, and the published list's
+  `contains` scans it too. The palette's `chooseTab` and scripting's tab lookups in `WindowScripting.swift` reach both.
+  UTERM-058 M2 fixes these lookups with a map from ID to tab.
 - ADR-08 allows only local work whose duration uniterm bounds on the main thread. The terminal has no tab cap.
 
 ## Repro
 
-None run. Suggested: restore a program-mode pane of 10,000 waiting tabs and one running program that sets its title in
-a loop. Time the main thread per title change. Expected: a cost that does not grow with the tab count. Suspected
-actual: three walks over every tab per change.
+Confirmed by reading the code on 2026-11-23, then pinned by a package test. In a pane of 5 shell tabs, one switch
+touched all 5 sessions, and closing a tab that was not shown touched every remaining session.
 
 ## Fix
 
-UTERM-053 changes the shared tab bar's input, which removes the per-change title array. That proposal keeps the rest
-out of its scope. The rest needs a design call: cache the published list and update it per change, or keep it computed
-and accept a cheap walk. Keeping the hidden sessions' visibility untouched on a switch means tracking the previous
-selection.
+The applet now remembers the tab and the session view that showed at the last refresh. A refresh hides only that tab
+and shows only the selected one. A new session starts hidden, unfocused, and not visible, and the next refresh shows it
+when its tab is selected. A tab's link hover is cleared when it hides and again when it shows, so a hover that arrived
+while it was hidden is not trusted.
 
-## Estimate notes
+Session views now live in one area view sized to the content rect. Each fills it through its autoresizing mask, so
+AppKit resizes every live session, hidden ones included, and `layoutContents` sets one frame. Hidden tabs keep tracking
+the pane's size, as before. The cost of a resize follows the live sessions, which ptys bound, not the tab count.
 
-Traced on 2026-11-23 by reading the code. Nothing was run, and the cost was not measured.
+Files changed:
 
-UTERM-053 is accepted and its M1 is not started. It owns the title array in the title-change handler and the computed
-published list. It publishes a read-through list instead. This bug owns only the other two walks. UTERM-058 M2 owns the lookups by tab ID.
+- `Packages/UnitermKit/Sources/TerminalApplet/TerminalApplet.swift`
+- `Packages/UnitermKit/Tests/TerminalAppletTests/TerminalAppletTests.swift`: the regression test
+  `testASwitchTouchesOnlyTheTabsThatChangeVisibility`, and the layout test now also checks the hidden session's size
+- `UITests/TabsUITests.swift`: `testAHiddenTabsShellSeesTheWindowSize` checks in the real app that a hidden tab's shell
+  sees a window resize
 
-- `refreshTabs` calls `setVisible`, `setFocused(false)`, and clears `hoveredLink` on every tab. `setVisible` already
-  returns early when the state is unchanged. A tab with no session, which is every waiting tab of a restored
-  program-mode pane, costs one nil check. The walk could cover only the previous and the new selection. That needs the
-  previous selection tracked, and it is not a design call.
-- `layoutContents` sets a frame on every session view, hidden ones included. Bounding it to the selected session
-  changes behavior a user can see. A hidden shell tab would keep its old size through a window resize. Its program
-  would learn the new size only when the tab is shown again, or the show path would set the frame. Equally correct
-  options exist: keep sizing hidden sessions, or size a session when it is shown.
-
-Non-trivial decision: whether hidden sessions track the pane's size while hidden.
-
-The fix would touch `Packages/UnitermKit/Sources/TerminalApplet/TerminalApplet.swift` and its tests. It should wait for
-UTERM-053 M1, which edits the same functions.
+Still open, owned elsewhere: the title array in the title-change handler and the computed published list belong to
+UTERM-053 M1. The lookups by tab ID belong to UTERM-058 M2.

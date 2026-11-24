@@ -97,6 +97,11 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   public private(set) var segments: [AppletSegment] = []
 
   private let container = TerminalContainerView()
+
+  /// Holds every session's view. Each one fills it through its autoresizing mask, so AppKit sizes
+  /// every live session, hidden ones included, and a resize never walks the tab list.
+  private let sessionArea = NSView()
+
   private let tabBar = AppletTabBar()
   private let runPrompt = TerminalRunPrompt()
   private let linkPreview = TerminalLinkPreview()
@@ -108,6 +113,13 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   private let home: String
   private var tabs: [Tab]
   private var selectedIndex: Int
+
+  /// The tab and the session view that showed as of the last refresh. A refresh hides only that
+  /// tab and shows only the selected one, so its work does not grow with the tab count. The view
+  /// is kept too, since a tab that stays selected gains a session when its program runs.
+  private weak var shownTab: Tab?
+  private weak var shownView: NSView?
+
   private var started = false
   private var closingTab = false
 
@@ -260,6 +272,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
     container.setAccessibilityIdentifier("terminal-applet")
     container.addSubview(tabBar)
+    container.addSubview(sessionArea)
     container.addSubview(runPrompt)
     container.addSubview(linkPreview)
     runPrompt.isHidden = true
@@ -699,9 +712,14 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       self.handle(event, in: tab)
     }
 
+    // A session starts hidden. The next refresh shows it when its tab is the selected one.
     session.view.isHidden = true
-    container.addSubview(session.view)
-    container.addSubview(linkPreview)
+    session.setFocused(false)
+    session.setVisible(false)
+
+    session.view.frame = sessionArea.bounds
+    session.view.autoresizingMask = [.width, .height]
+    sessionArea.addSubview(session.view)
   }
 
   private var hasFocus: Bool {
@@ -712,21 +730,28 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
 
   /// Shows the selected tab's terminal and hides the others, then updates the bar and the layout.
   private func refreshTabs() {
-    for (index, tab) in tabs.enumerated() {
-      let shown = index == selectedIndex
+    let selected = selectedTab
 
-      tab.session?.view.isHidden = !shown
+    if let previous = shownTab, previous !== selected {
+      previous.session?.view.isHidden = true
+      previous.session?.setFocused(false)
+      previous.session?.setVisible(false)
 
-      if !shown {
-        tab.session?.setFocused(false)
-
-        // The pointer may leave a hidden tab's link with no report, so its hover cannot be trusted
-        // when the tab shows again. The next hover sets it.
-        tab.hoveredLink = nil
-      }
-
-      tab.session?.setVisible(shown)
+      // The pointer may leave a hidden tab's link with no report, so its hover cannot be trusted
+      // when the tab shows again. The next hover sets it.
+      previous.hoveredLink = nil
     }
+
+    if let selected, selected !== shownTab || selected.session?.view !== shownView {
+      // A hover that arrived while the tab was hidden is just as untrusted.
+      if selected !== shownTab { selected.hoveredLink = nil }
+
+      selected.session?.view.isHidden = false
+      selected.session?.setVisible(true)
+    }
+
+    shownTab = selected
+    shownView = selected?.session?.view
 
     tabBar.update(
       titles: tabs.map { $0.title }, selected: selectedIndex, canOpenTab: canOpenTab)
@@ -747,11 +772,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       x: 0, y: barHeight, width: bounds.width, height: max(0, bounds.height - barHeight))
 
     runPrompt.frame = content
-
-    for tab in tabs {
-      tab.session?.view.frame = content
-    }
-
+    sessionArea.frame = content
     linkPreview.place(in: content)
   }
 
