@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-19
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -193,6 +193,8 @@ The app never opens a path for a declared script file or its signature.
   and the app opens nothing
 - An older command and a newer app, and the reverse, refuse each other before the script's bytes are sent. Amended
   2026-11-23; see Decision Log
+- The chunk messages can also carry a controller package's descriptor, signature, per-file byte counts, and many files
+  in one stream, so UTERM-057 reuses them and builds no second mechanism
 - Earlier approvals of a file still apply to the same bytes
 - The user runs a declared file in Documents from a program started outside uniterm, on a Mac where uniterm holds a
   Documents grant and that program does not. It passes when the read is refused, or when a privacy prompt names the
@@ -252,6 +254,9 @@ The app never opens a path for a declared script file or its signature.
   could not rule the other attribution out, so it takes the higher rating. It is not high on both, so it does not block
   acceptance. The M1 manual check can run before M1 is built. (autonomous)
 - 2026-11-22: Scheduled as UTERM-034 M1 in queue.md, after UTERM-032 M1-M2.
+- 2026-11-23: M1 gains a check that its chunk messages also carry a controller package, for UTERM-057. Its design
+  streams a package's descriptor, signature, byte counts, and files over the same chunks. Adding the check while M1 is
+  unbuilt keeps one mechanism for both.
 - 2026-11-23: From UTERM-056's acceptance. "Version skew" and M1's check said each side refuses any other version "at the
   hello". UTERM-056 moves an older command's refusal to its begin.
 
