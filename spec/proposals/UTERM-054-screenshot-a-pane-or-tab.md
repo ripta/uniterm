@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -488,7 +488,41 @@ make what the user sees depend on who asked. Converged in 1 pass.
 
 ## Design Decisions (Open)
 
-None.
+### What a program's capture shows of a file the program may not read
+
+The tab-scope rule in "Which panes a program may capture" counts a program's source tab as its own. It checks no file
+read scope. An applet that shows a user-opened file can therefore hand a program, in pixels, what its own contract
+withholds. Filed as
+[20261122-capture-bypasses-image-viewer-read-scope](../bugs/20261122-capture-bypasses-image-viewer-read-scope.md).
+
+Two applets state such a contract in code:
+
+- The image viewer's replies and events carry an image's path only when the caller's scope holds both the source and
+  the image's real path. A script in the image viewer pane, holding the capture power and no path-read power, could
+  capture the user's image.
+- The map viewer's `pin-selected` event gives a pin from the user's file only its source, and no ID, coordinate, or
+  other value from the file. A capture of the map pane shows those pins at their positions, and the pin list shows
+  their names.
+
+The text viewer and the data viewer also show user-opened files. Neither states a withholding contract today.
+
+UTERM-055 gives exec drivers a caller with no read scope, so whatever this question settles applies to drivers as
+written. UTERM-055 M1 waits for it.
+
+Candidates:
+
+- A capture is refused with a named reason when the image would show a file the caller's read scope does not hold, as
+  the viewer's replies withhold its path. The reason joins the append-only reason kinds.
+- The capture power's review text states that a capture reads whatever a pane shows, including files the program may
+  not read. The image viewer's and the map viewer's contracts narrow to paths, listings, and event values. Leaves
+  undone: a program granted capture reads every user-opened file in its source pane.
+
+Sub-questions that follow from the first candidate:
+
+- Which applets the rule covers: the image viewer, the text viewer's plain text, PDF, and Markdown, the data viewer, and
+  the map viewer's file layer.
+- For the map viewer: whether the capture is refused while the file layer shows, or the file layer and its pin list
+  rows are left out of the image.
 
 ## Risks
 
@@ -627,7 +661,7 @@ None.
 **Status:** NOT STARTED
 
 Waits for UTERM-019 M3, which builds handles and read-result, and for the byte type that UTERM-019's "Result encoding"
-adds.
+adds. Also waits for the open question "What a program's capture shows of a file the program may not read".
 
 - A user's cancel, a time-out, or a revocation of a program's pending capture fails its pending reply or frees its
   handle with a structured error, under ADR-11
@@ -757,6 +791,11 @@ Lands before UTERM-019 M1 ships, and does not wait for M1 to M5 here.
   applet" as the reason for dropping exec capture. The map viewer and image viewer accept exec drivers today. The
   outcome stands, since exec capture returned as UTERM-055.
 - 2026-11-22: Scheduled as UTERM-054 M6, UTERM-054 M1-M4, and UTERM-054 M5 in queue.md.
+- 2026-11-23: Reopened design for one question, "What a program's capture shows of a file the program may not read",
+  from bug triage of `20261122-capture-bypasses-image-viewer-read-scope`. The tab-scope rule checks no file read scope,
+  so a program's capture of its source pane can show a user-opened file that the image viewer's and the map viewer's
+  contracts withhold. The status stays `accepted`. M5 waits for the answer. M1 through M4 are user capture only and do
+  not.
 
 ## References
 
