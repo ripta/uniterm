@@ -1,9 +1,9 @@
 # The terminal encodes every tab and closed tab on the main thread at each change
 
-**Status:** open
+**Status:** proposed; see [UTERM-059](../proposals/UTERM-059-terminal-change-check-never-encodes-every-tab.md)
 **Found:** 2026-11-22, during the design review of UTERM-052
-**Validation:** mechanism confirmed by reading the code. Cost not measured.
-**Estimate:** medium; three non-trivial design decisions. See "Estimate notes".
+**Estimate:** medium once UTERM-052 M2's contract exists; two non-trivial design decisions remain. See "Estimate
+notes".
 
 ## Observed
 
@@ -30,8 +30,14 @@ the published tabs, and the visibility pass. This bug covers only the descriptio
 
 ## Repro
 
-Not run. Expected: a directory change in one tab of a pane with many tabs costs the main thread no more than in a pane
-with one tab.
+Measured on 2026-11-24 with a throwaway package test, in a debug build with the fake engine. Every tab held a
+directory. One `describe()` took 65 µs with 1 tab, 2.2 ms with 100, and 21 ms with 1,000. That is about 21 µs per tab.
+A 10,000-tab run hit the per-test time limit while it opened the tabs one at a time, before any timing.
+
+The selected tab's title change reports a change so the status bar follows it. The title is not in the saved
+description, so that report pays the whole encode and the window's comparison then finds nothing changed.
+
+Expected: a change report in a pane with many tabs costs the main thread no more than in a pane with one tab.
 
 ## Fix
 
@@ -62,6 +68,11 @@ Design decisions the fix forces:
    site and a cached per-tab record, as the browser does, is a judgment call.
 3. Whether to fix it at all before a measurement at a realistic tab count. The report says the cost is unmeasured, and a
    shell pane's tab count is bounded by its ptys. Only a restored program-mode pane can hold many tabs.
+
+Re-triaged on 2026-11-24. The measurement above settles the cost. The closed tabs are capped at 20, so the
+saved-description call alone buys little, and the revision is the fix. The user chose a draft proposal, UTERM-059, with
+the revision settled. Where the revision moves, whether to fix at these counts, and what a save still pays are its open
+questions.
 
 Files the fix would touch: `Packages/UnitermKit/Sources/TerminalApplet/TerminalApplet.swift`,
 `Packages/UnitermKit/Sources/TerminalApplet/TerminalDescription.swift`, and a test in the terminal applet's test target.

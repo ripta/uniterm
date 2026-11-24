@@ -17,6 +17,9 @@
   this proposal's M2, and routes the selection, insert, and remove sites through its declared change. This proposal's
   saved-state revision says only whether anything saved changed, not which tab. See "The applet keeps each tab's
   encoded record and counts its saved changes" and "No tab cap in this proposal".
+- UTERM-059 — the terminal adopts the saved-state revision this proposal's M2 adds. It relies on the window comparing
+  descriptions only for an applet with no revision, and on the revision's doc rule. See "The applet keeps each tab's
+  encoded record and counts its saved changes".
 
 ## ADR Deviations
 
@@ -360,3 +363,4 @@ Amended 2026-11-23; see Decision Log.
 - Bug `20261122-browser-close-encodes-every-tab-history-on-main-thread`
 - Bug `20261122-map-describe-encodes-document-at-every-save`
 - Bug `20261122-terminal-describe-encodes-every-tab-at-each-change`
+- UTERM-059: the terminal's change check never encodes every tab
