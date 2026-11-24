@@ -294,6 +294,7 @@ final class MapAlertsTests: XCTestCase {
       GeoFixtures.collection([GeoFixtures.point("C", 3, 3), GeoFixtures.polygon]).utf8
     ).write(to: file)
     applet.fileChangedOnDisk()
+    await applet.checkingDisk?.value
     await applet.opening?.value
 
     XCTAssertGreaterThan(host.posts.count, afterRevert, "a watcher reload was treated as a restore")
@@ -404,6 +405,7 @@ final class MapAlertsTests: XCTestCase {
 
     try Data(GeoFixtures.collection([GeoFixtures.point("D", 5, 5)]).utf8).write(to: file)
     applet.fileChangedOnDisk()
+    await applet.checkingDisk?.value
 
     XCTAssertTrue(
       host.posts.contains { $0.text.hasPrefix("The file changed on disk") }, "\(host.posts)")

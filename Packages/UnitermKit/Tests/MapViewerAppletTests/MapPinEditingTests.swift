@@ -364,6 +364,7 @@ final class MapPinEditingTests: XCTestCase {
 
     try Data(GeoFixtures.collection([GeoFixtures.point("C", 3, 3)]).utf8).write(to: file)
     applet.fileChangedOnDisk()
+    await applet.checkingDisk?.value
     await applet.opening?.value
 
     XCTAssertEqual(applet.filePinsShown.map(\.label), ["C"])
@@ -372,6 +373,7 @@ final class MapPinEditingTests: XCTestCase {
     await settle(applet)
     try Data(GeoFixtures.collection([GeoFixtures.point("D", 5, 5)]).utf8).write(to: file)
     applet.fileChangedOnDisk()
+    await applet.checkingDisk?.value
 
     XCTAssertEqual(applet.filePinsShown.count, 2)
     XCTAssertTrue(applet.isDirty)
@@ -379,6 +381,60 @@ final class MapPinEditingTests: XCTestCase {
       applet.statusNotices.contains {
         $0.level == .warning && $0.text.hasPrefix("The file changed on disk")
       })
+  }
+
+  /// Catches a change check that reads the file inline, which freezes the app on a mount that never
+  /// answers. While the read is held open, the pane does not reload. A second change meanwhile
+  /// starts no second read. It reads once more after the first returns, and the pane then shows
+  /// the file. A held read stands in for the hung mount, so this cannot prove the default reader
+  /// leaves the main thread.
+  func testAChangeCheckReadsThroughTheReaderOneReadAtATime() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try mixedFile(scratch)
+    let applet = MapViewerApplet(startDirectory: nil)
+    await load(applet, file)
+
+    let gate = ReadGate()
+    let reads = ReadCount()
+    applet.readOnDisk = { path in
+      await reads.add()
+      await gate.wait()
+      return await MapViewerApplet.readSavedFile(at: path)
+    }
+
+    try Data(GeoFixtures.collection([GeoFixtures.point("C", 3, 3)]).utf8).write(to: file)
+    applet.fileChangedOnDisk()
+    for _ in 0..<50 { await Task.yield() }
+    await applet.opening?.value
+
+    XCTAssertNotEqual(applet.filePinsShown.map(\.label), ["C"], "the check read past the reader")
+
+    applet.fileChangedOnDisk()
+    for _ in 0..<50 { await Task.yield() }
+
+    let held = await reads.count
+    XCTAssertEqual(held, 1)
+
+    await gate.open()
+
+    var turns = 0
+
+    while applet.filePinsShown.map(\.label) != ["C"], turns < 1000 {
+      await Task.yield()
+      await applet.opening?.value
+      turns += 1
+    }
+
+    XCTAssertEqual(applet.filePinsShown.map(\.label), ["C"])
+
+    let total = await reads.count
+    XCTAssertEqual(total, 2)
+  }
+
+  private actor ReadCount {
+    private(set) var count = 0
+
+    func add() { count += 1 }
   }
 
   /// Catches a watcher that never fires, or one that stops after an editor replaces the file by

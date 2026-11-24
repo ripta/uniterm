@@ -127,6 +127,14 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// A question about unsaved edits, while it is open.
   private(set) var asking: Task<Void, Never>?
 
+  /// The change check's read, while it runs. One read runs at a time, so a mount that never answers
+  /// parks at most one read per pane.
+  private(set) var checkingDisk: Task<Void, Never>?
+
+  /// Set when the file changes again during the check's read. The check then reads once more, so
+  /// the newest file on disk is the one the pane compares.
+  private var diskChangedDuringCheck = false
+
   /// Asks where Save As writes, given a suggested name and a start folder. Tests replace it.
   var chooseSaveLocation: @MainActor (String, String?, NSWindow?) async -> URL? =
     MapViewerApplet.runSavePanel
@@ -139,7 +147,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   var writeFile: @Sendable (Data, URL) async -> Result<Void, any Error> =
     MapViewerApplet.atomicWrite
 
-  /// Reads the file Save checks for a change on disk. Tests replace it to hold the read open.
+  /// Reads the file for Save's check and the change check. Tests replace it to hold the read open.
   var readOnDisk: @Sendable (String) async -> (url: URL, bytes: Data?) =
     MapViewerApplet.readSavedFile
 
@@ -1151,11 +1159,41 @@ extension MapViewerApplet {
   /// The file on disk changed. A pane with no edits reads it again. A pane with edits keeps them
   /// and says so, and Save asks before it overwrites the change. A change that only repeats what
   /// the map last saved or read, as its own save does, is not a change.
+  ///
+  /// The read runs off the main thread, since the file's mount may never answer. A change during
+  /// the read asks for one more read instead of a second one beside it.
   func fileChangedOnDisk() {
-    guard !closed, let path = record.path else { return }
+    guard !closed, record.path != nil else { return }
 
-    let onDisk = try? Data(contentsOf: URL(fileURLWithPath: path))
+    guard checkingDisk == nil else {
+      diskChangedDuringCheck = true
+      return
+    }
 
+    checkingDisk = Task { [weak self] in
+      await self?.checkDisk()
+      self?.checkingDisk = nil
+    }
+  }
+
+  private func checkDisk() async {
+    repeat {
+      diskChangedDuringCheck = false
+
+      guard !closed, let path = record.path else { return }
+
+      let generation = openGeneration
+      let (_, onDisk) = await readOnDisk(path)
+
+      // Another file opened, the file was cleared, or the pane closed while the read ran. The
+      // bytes describe a file the pane no longer shows.
+      guard generation == openGeneration, path == record.path, !closed else { continue }
+
+      applyDiskChange(onDisk, at: path)
+    } while diskChangedDuringCheck
+  }
+
+  private func applyDiskChange(_ onDisk: Data?, at path: String) {
     guard onDisk != savedDocument else { return }
 
     if isDirty {

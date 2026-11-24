@@ -55,6 +55,6 @@
 | [20261122-questions-bar-disagrees-with-the-shared-hide-rule](20261122-questions-bar-disagrees-with-the-shared-hide-rule.md) | The questions applet's tab bar disagrees with UTERM-041's shared hide rule | proposed |
 | [20261122-exec-browser-read-result-burst-ends-driver](20261122-exec-browser-read-result-burst-ends-driver.md) | A driver that sends its browser reads in a burst is ended | fixed |
 | [20261123-map-saved-through-a-symlink-stays-dirty](20261123-map-saved-through-a-symlink-stays-dirty.md) | A map saved through a symlink stays unsaved | open |
-| [20261123-map-file-change-reads-file-on-main-thread](20261123-map-file-change-reads-file-on-main-thread.md) | A map's file-change check reads the whole file on the main thread | open |
+| [20261123-map-file-change-reads-file-on-main-thread](20261123-map-file-change-reads-file-on-main-thread.md) | A map's file-change check reads the whole file on the main thread | fixed |
 | [20261123-package-admission-read-has-no-bound](20261123-package-admission-read-has-no-bound.md) | A controller package read that never returns leaves its admission pending forever | open |
 | [20261123-script-tab-numbers-keep-closed-tabs](20261123-script-tab-numbers-keep-closed-tabs.md) | A window's script tab numbers keep an entry for every tab ever seen | open |
