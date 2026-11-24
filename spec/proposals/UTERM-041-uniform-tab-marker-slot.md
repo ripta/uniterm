@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-21
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -266,12 +266,17 @@ only the top marker would hide the authority marker, or bury an actionable one i
 
 Original question: decision 3 needs the host to know when a pane's tab bar is hidden. Every applet already follows one
 rule. The terminal hides its bar below two tabs (`TerminalApplet.swift`, about line 729), the browser does the same
-(`BrowserView.swift`, about lines 232-235), and every other applet publishes exactly one tab and has no bar. The
-candidates were a written contract that one published tab means no bar, and the applet reporting bar visibility.
+(`BrowserView.swift`, about lines 232-235). The questions applet shows the shared bar at a fixed height, always, with
+one tab per pending question (`QuestionsView.swift`, about line 53). Every other applet publishes exactly one tab and
+has no bar. The candidates were a written contract that one published tab means no bar, and the applet reporting bar
+visibility.
 
 Decision: shared code enforces the rule. The shared tab bar takes published tabs, per M1, and hides itself when given
 fewer than two. One AppletKit predicate decides it, and the host reads the same predicate from the published list to
 draw the pane-level marker. Each applet's own hide line goes away. (autonomous)
+
+- The questions applet follows the rule too. Its bar hides below two pending questions, and the bar's space goes with
+  it. An empty book publishes one placeholder tab, so it shows no bar either. Amended 2026-11-23; see Decision Log.
 
 Rationale: a written contract would leave a future applet free to show a one-tab bar. Its pane-level marker would
 then draw twice. Enforcing the rule in the code M1 already changes makes that misuse impossible at no added contract.
@@ -493,6 +498,8 @@ None.
 - The host redraws the pane-level marker from `appletTabsDidChange`, which today only refreshes the palette
 - `AppletTabBar.update` takes published tabs, and the bar hides itself below two tabs through the one AppletKit
   predicate the host also reads. The browser's bar height follows the same predicate
+- A questions pane with one pending question shows no tab bar and no blank strip where it was. An empty questions pane
+  shows no bar and no placeholder tab. Two pending questions show the bar with both tabs
 - The reach reported through `hostBadgeReachDidChange` includes the pane-level marker
 - A marker stays whole at the 80-point narrowest tab
 - When the tabs do not fit, the bar scrolls by trackpad and shift-scroll, and it shows that more tabs lie past an edge.
@@ -686,6 +693,11 @@ None.
   stands for, as the host identified them. Only the browser knows which owner opened a tab. Without the owners, the
   host could not name the controller behind a tab's marker in a pane with two owners.
 - 2026-11-21: Scheduled as M1-M2 in queue.md.
+- 2026-11-23: Correction of fact, from the triage of bug `20261122-questions-bar-disagrees-with-the-shared-hide-rule`.
+  "How the host knows the tab bar is hidden" said: "(`BrowserView.swift`, about lines 232-235), and every other applet
+  publishes exactly one tab and has no bar." The questions applet shows the shared bar at a fixed height, always, with
+  one tab per pending question. The user chose that it follows the shared hide rule, over keeping its bar as a named
+  exception. The decision gained a bullet saying so, and M1 gained a check for one, zero, and two pending questions.
 
 ## References
 
