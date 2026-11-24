@@ -1,8 +1,8 @@
 # The palette rebuilds and filters every tab of every pane while it shows
 
-**Status:** open
+**Status:** proposed. [UTERM-058](../proposals/UTERM-058-palette-tab-work-on-the-main-thread.md) settles the design,
+and its M1 measures the cost.
 **Estimate:** large; two non-trivial design decisions. See "Estimate notes".
-**Validation:** not confirmed; traced by reading the code during the UTERM-053 review. The cost was not measured.
 
 ## Observed
 
