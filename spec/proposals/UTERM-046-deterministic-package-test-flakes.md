@@ -15,9 +15,10 @@ spinning page 0.3 s of real time and expect it to use half a core. The script fi
 This proposal makes both deterministic. Each regression the tests name stays caught. One live-sample claim that cannot be
 checked independently of load, that a real spinning page reads busy, gives way to a stronger check of the reading's
 units. It also closes the reused-id race in every package test that signals a process by its id. A test's own helper
-signals through the fixture's handle. A process the product, libghostty, or WebKit reaps is signalled by its audit
-token where the system gives one, and by a start-time check where it does not. The product's two check-then-signal
-sites, the content-process kill and the REPL helper reaper, move to the same token signal.
+signals through the fixture's handle. A process the product, libghostty, or WebKit reaps is signalled by a fresh
+audit token after a start-time check, where the system gives a token. Where it does not, the process is signalled by
+pid after the same check. The product's two check-then-signal sites, the content-process kill and the REPL helper
+reaper, move to the same guarded call.
 
 ## Motivation
 
@@ -49,8 +50,8 @@ bytes, not time.
 
 Decision: production code keeps its bounds, its time sources, and its `busyShare`. A test seam replaces only what the
 test supplies, never the rule the production code applies. The one production change is how two kills name their
-target. `WebContentProcess.kill` and ScriptHost's `ProcessReaper` signal by the process's audit token. Amended
-2026-11-23; see Decision Log.
+target. `WebContentProcess.kill` and ScriptHost's `ProcessReaper` signal through `ProcessInspection`'s guarded call,
+by a fresh audit token where the system gives one. Amended 2026-11-23; see Decision Log.
 
 Rationale: the hung-process bound and the busy-share rule are how a hung page stays contained, per ADR-07. A test
 shortcut that weakened them would trade a flaky test for a weaker product. Signalling by token keeps every rule. It
@@ -218,7 +219,8 @@ the identity the test learned, and refuses a pid it has none for.
   read, the sender falls back to the identity check below. Each site states which path it expects, and fails the test
   when it gets the other. Leaves undone: a site on the fallback keeps that option's window. `login` is setuid root and
   likely refuses a token. WebContent may too, though it runs as the user. Neither was tested. The call has no
-  documentation beyond its header. An OS release that drops it fails at link time.
+  documentation beyond its header. An OS release that drops it fails at link time. The decision reads the token fresh
+  at each signal instead, since a token read at learn time goes stale on exec. See the Decision Log for 2026-11-23.
 - **An identity-checked sender.** The test records the pid and its start time to the microsecond, from
   `sysctl(KERN_PROC_PID)`'s `p_starttime`. `proc_pidinfo` refuses `login`. `ProcessInspection.startTime` keeps seconds
   only, so `ProcessInspection` gains a microsecond reader. The sender reads the start time again right before the
@@ -246,42 +248,49 @@ The product's `WebContentProcess.kill` checks a pid's path, then signals it. Scr
 outlives the test for up to 30 s. At `tearDown` the client is still `sh`'s child, since `sh` waits for it.
 
 Decision: a site records a process's pid and its start time to the microsecond when it learns the pid. Right before
-each signal, the sender reads a fresh audit token for the pid. It then reads the start time again. When the start
-time matches, it signals by that token. A process that execs keeps its pid and start time, so it is still reached.
+each signal, the guarded call reads a fresh audit token for the pid. It then reads the start time again. When the
+start time matches, it signals by that token. A process that exec'd before the signal keeps its pid and start time,
+so it is still reached.
 
-When no token can be read, the sender confirms the start time and then signals by pid. A token signal that returns
-ESRCH means the process is gone, and nothing more is sent.
+When no token can be read, the call confirms the start time and then signals by pid. A token signal that returns
+ESRCH is retried with a fresh token while the start time still matches a live record, up to three tries. The call
+never signals by pid after ESRCH. When the start time no longer matches, it reports the process gone. After three
+tries it reports the process unreached, never gone.
 
-`ProcessInspection` makes this one public call. It takes a pid, a microsecond start time, and a signal number, and it
-reports which path it took. It also gains a public microsecond start-time reader. The token stays inside the call as
-Darwin's `audit_token_t`, so `ProcessInspection` keeps no dependencies, and `FileRouting`'s `AuditToken` is unchanged.
+`ProcessInspection` makes this one public call. It takes a pid, a microsecond start time, and a signal number. It
+reports which path it took, or that the process is gone or unreached. It refuses a pid of 1 or below and the caller's
+own pid. It also gains a public microsecond start-time reader, which rejects a zombie as the existing record reader
+does. The token stays inside the call as Darwin's `audit_token_t`. So `ProcessInspection` keeps no dependencies, and
+`FileRouting`'s `AuditToken` is unchanged.
 
 A new test-support target, `ProcessTestSupport`, depends only on `ProcessInspection`. It holds the per-site sender,
-and each site states which path it expects. `WebContentProcess` and the REPL channel record the microsecond identity,
-and their kills go through the same call. `WebContentProcess.kill` keeps its path check before it. With no token, it
-still signals, so a hung page is still ended. `RemoteClientWatcherTests` spawns `sh` in its own process group, and
-sends `killpg` before its own `waitpid`. Amended 2026-11-23; see Decision Log.
+and each site states which path it expects. `WebContentProcess` and the REPL channel record the microsecond identity.
+Their kills go through the same call. `WebContentProcess.kill` keeps its path check before it. With no token, it still
+signals, so a hung page is still ended. `RemoteClientWatcherTests` spawns `sh` in its own process group, and sends
+`killpg` before its own `waitpid`. Amended 2026-11-23; see Decision Log.
 
 Rationale: the token is the only option that closes the window outright, for every target that gives one. The token is
 read before the start time. So when the start time still matches, the token names the recorded process, or that
-process after an exec. When the pid moved on in between, the start time differs, or the token gets ESRCH. Either
-way no other process is signalled. A token kept from the moment the site learned the pid would go stale on exec. A
-REPL helper that execs would then outlive its pane, which today's identity check prevents. The identity check alone
-narrows the window but leaves it. The exit watch gains nothing over the identity check. Stopping the
-signals leaves orphans. Signalling through the owner needs product calls only tests use. It still cannot reach WebKit
-or reparented processes. The fallback keeps the identity check's window only where the system refuses a token. A site
-that lands on the wrong path fails its test, so a change in what the system allows shows up at once.
+process after an exec. When the pid moved on in between, the start time differs, or the token gets ESRCH. Either way
+no other process is signalled. A token kept from the moment the site learned the pid would go stale on exec. A REPL
+helper that execs would then outlive its pane, which today's identity check prevents. An exec inside the call's own
+window also stales the token. The retry covers that, and it still never signals by pid. The identity check alone
+narrows the window but leaves it. The exit watch gains nothing over the identity check. Stopping the signals leaves
+orphans. Signalling through the owner needs product calls only tests use. It still cannot reach WebKit or reparented
+processes. The fallback keeps the identity check's window only where the system refuses a token. A site that lands on
+the wrong path fails its test, so a change in what the system allows shows up at once.
 
 `ProcessInspection` serves every site and the product. A test-only home would need four more test targets to link
 ScriptHost, and the product could not import it. The expected-path rule is test policy, so it stays in a test target.
 The product's two kills have the same race as the tests, and the same call closes it there. A stale pid either fails
 the path check, or fails the start-time match. No caller handles a token, so the package needs no new token type. The
-group signal closes the `RemoteClientWatcherTests`
-window too. The unreaped `sh` holds the group id, so no other process can take it.
+group signal closes the `RemoteClientWatcherTests` window too. The unreaped `sh` holds the group id, so no other
+process can take it.
 
 Leaves undone: `login`, and WebContent if it refuses a token, keep the identity check's window, between the start-time
-read and the signal by pid. M3 and M4 record which path each site took. The call has no documentation beyond `libproc.h`. An OS release that drops it fails at link time,
-not silently.
+read and the signal by pid. M3 and M4 record which path each site took. A process that execs three times inside the
+call's window is reported unreached, not signalled. The call has no documentation beyond `libproc.h`. An OS release
+that drops it fails at link time, not silently.
 
 ## Design Decisions (Open)
 
@@ -310,11 +319,12 @@ None.
 - **The audit-token call changes or goes away** — likelihood: low, impact: medium.
   `proc_signal_with_audittoken` has no documentation beyond `libproc.h`. A release could drop it, or refuse tokens for
   processes it allows today. Mitigation: a dropped call fails at link time. A refused token sends a site to the
-  fallback, and each site fails its test when it gets a path it did not expect. The product's two kills keep their
-  checks when they read no token.
-- **WebContent refuses a token, and the product silently stays on its path check** — likelihood: low, impact: low.
-  The product then keeps today's window, and no user sees a difference. Mitigation: a BrowserApplet test fails when a
-  real view's content process gives no token. The product logs a failed token read.
+  fallback, and each site fails its test when it gets a path it did not expect. With no token, the product's two kills
+  confirm the microsecond start time and signal by pid.
+- **WebContent refuses a token, and the product silently signals by pid** — likelihood: low, impact: low.
+  The product then keeps a window between the start-time read and the signal, and no user sees a difference.
+  Mitigation: a BrowserApplet test fails when a real view's content process gives no token. The product logs each
+  kill that takes the pid path.
 - **A new wait mechanism misses an exit the old one saw** — likelihood: low, impact: low.
   Mitigation: the fixture's change is proven against a helper that exits at once and one that exits after a delay.
 
@@ -395,7 +405,7 @@ Amended 2026-11-23; see Decision Log.
 
 Amended 2026-11-23; see Decision Log.
 
-Starts after M2 and M4. It moves sites onto M2's handle, and onto the token calls M4 adds.
+Starts after M2 and M4. It moves sites onto M2's handle, and onto M4's guarded call.
 
 No package test signals a process by an id that the process may no longer hold.
 
@@ -422,8 +432,8 @@ No package test signals a process by an id that the process may no longer hold.
 - The sender signals through `ProcessInspection`'s guarded signal call. Each site states whether it expects the token
   path or the pid path. A site fails the test when it gets the other
 - Each site checks the pid when it learns it. The grandchild's parent is the driver. Each terminal tree member's
-  microsecond start time is read in one pass before `close()`, and its parent is the member before it. A WebContent pid's path carries
-  `com.apple.WebKit.WebContent`. The driver's pid is read while its channel is connected
+  microsecond start time is read in one pass before `close()`, and its parent is the member before it. A WebContent
+  pid's path carries `com.apple.WebKit.WebContent`. The driver's pid is read while its channel is connected
 - The terminal teardowns signal `login` only through its recorded identity, so a `login` that `close()` already ended
   gets no signal
 - The injected `signal` closure in `BrowserHungProcessTests` forwards the identity the product read to the sender, and
@@ -450,27 +460,35 @@ No package test signals a process by an id that the process may no longer hold.
 
 **Status:** NOT STARTED
 
-Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its calls.
+Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its guarded call.
 
 - `ProcessInspection` gains a public microsecond start-time reader, and one public guarded signal call. The call takes
   a pid, a microsecond start time, and a signal number. It reads a fresh audit token, reads the start time again, and
   signals by the token when the start time matches. With no token, it confirms the start time and signals by pid. It
-  reports which path it took, or that the process is gone
+  reports which path it took, or that the process is gone or unreached
+- A token signal that returns ESRCH is retried with a fresh token while the start time still matches a live record,
+  up to three tries. It never signals by pid after ESRCH. After three tries the call reports unreached, never gone
+- The call refuses a pid of 1 or below and the caller's own pid, and reports gone
+- The microsecond reader goes through the existing record reader, so a zombie reports gone, not the pid path
 - The token read releases its task name port on every path. The token stays inside `ProcessInspection` as
   `audit_token_t`. `FileRouting`'s `AuditToken` is unchanged
 - `ProcessInspectionTests` signals a live child through the call with its recorded start time, and the child ends by
-  the token path. A start time one microsecond off leaves the child alive. A child that execs after its start time was
-  recorded is still ended. A reaped child reports gone. Internally, a token one pid version off returns ESRCH, read as
-  an errno-style return
+  the token path. A start time one microsecond off leaves the child alive. A reaped child reports gone
+- The exec test waits until the child's executable path shows the new image, then signals it through the call with
+  the start time recorded before the exec. The child ends by the token path
+- Through `@testable import`, an internal token one pid version off returns ESRCH, read as an errno-style return. A
+  token made stale by an exec inside the call is retried, and the exec'd process is ended
 - `Package.swift` lists `BrowserApplet`'s new `ProcessInspection` dependency. The comment on `ProcessInspection` names
   every target that uses it
-- `WebContentProcess`'s `Signal` seam receives the microsecond identity the product recorded. The closed-process watch
-  records that identity at the close, and the fire signals through the guarded call with it. Nothing signals a stored
-  pid alone
+- `WebContentProcess` reads the microsecond identity through an injected reader beside `sample`. Its `Signal` seam
+  receives the identity the product recorded. Nothing signals a stored pid alone
+- A test whose reader returns one identity at the close and another at the fire sees the close's identity at the
+  `Signal` seam. The tests with a made-up pid, such as 4242, still reach the seam through their injected reader
 - `WebContentProcess.kill` keeps its path check, then signals through the guarded call
 - A product test injects `pathOf` to name a content process, with the live guarded call. `kill` on a live child whose
   recorded start time is one microsecond off returns false, and the child stays alive. The matching identity ends it
-- A BrowserApplet test fails when a real view's content process gives no token. The product logs a failed token read
+- A BrowserApplet test fails when a real view's content process gives no token. The product logs each kill that takes
+  the pid path, and never logs for a process the call reports gone
 - `killUnused` compares live views by pid, and reads no token
 - The REPL channel records the helper's microsecond start time beside its `ProcessIdentity`. `ProcessReaper.kill`
   receives that identity, and `.live` sends through the guarded call. `ProcessIdentity`'s fields, equality, hashing,
@@ -597,16 +615,30 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its cal
   admission goes stale when the helper execs, so the helper would outlive its pane, where today's identity check ends
   it. The listener admits no peer without a token, so the reaper's no-token fallback could never run. The watch check
   could not tell a token read at the close from one read at the fire. `ProcessReaper.kill`'s seam was unstated.
-- 2026-11-23: The user chose a fresh token at every signal, over a fresh token for the reaper only, accepting the exec
-  escape, and an identity fallback on ESRCH. Amended "How a test signals a process it does not reap". It said "When
-  the test learns a pid, it reads the process's audit token", and the REPL channel's token was "the one the kernel gave
-  its connection at admission". A site now records the pid and microsecond start time. The guarded call reads a fresh
+- 2026-11-23: The user chose a fresh token at every signal. The alternatives were a fresh token for the reaper only,
+  which left the exec escape at the test sites, keeping the admission token and its exec escape, and an identity
+  fallback on ESRCH. Amended "How a test signals a process it does not reap". It said "When the test learns a pid, it
+  reads the process's audit token", and the REPL channel's token was "the one the kernel gave its connection at
+  admission". A site now records the pid and microsecond start time. The guarded call reads a fresh
   token, confirms the start time, and signals by the token. M3 and M4 are rewritten to match. The REPL fallback text
   is gone.
 - 2026-11-23: The user chose to drop the `AuditToken` move, over keeping it. No caller of the guarded call handles a
   token, so the move served no current caller. Amended the same decision: it said "The calls take and return the
   existing `AuditToken`. It moves from `FileRouting` into `ProcessInspection`". The token stays inside
   `ProcessInspection` as `audit_token_t`.
+- 2026-11-24: A re-check of the fresh-token design confirmed the ordering argument by probe. Exec keeps
+  `p_starttime` to the microsecond and bumps the pid version. A zombie gives no token. Corrections of fact: the
+  decision said "A token signal that returns ESRCH means the process is gone". An exec between the token read and the
+  signal also gets ESRCH, while the process lives. It said "A process that execs keeps its pid and start time, so it is
+  still reached". That holds only for an exec before the signal. The risks said the product "keeps its path check" and
+  "today's window" with no token. With no token, it also checks the microsecond start time. Routed checks to M4: an
+  injected identity reader for the watch tests, an exec test that waits for the new image, `@testable` for the
+  internal token test, zombie rejection, refusal of pid 1 or below and the caller's own pid, and a log only for the pid
+  path. Noted on the audit-token candidate that the decision reads the token fresh.
+- 2026-11-24: The user chose to retry a token signal that gets ESRCH, while the start time still matches, up to three
+  tries. The alternative was to report the process gone and record the gap. Amended "How a test signals a process it
+  does not reap": it said "A token signal that returns ESRCH means the process is gone, and nothing more is sent". The
+  call never signals by pid after ESRCH. After three tries it reports the process unreached.
 
 ## References
 
