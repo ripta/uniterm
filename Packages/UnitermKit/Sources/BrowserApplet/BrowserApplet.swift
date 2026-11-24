@@ -103,7 +103,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     var closed: [UInt64]
   }
 
-  private var keptUndo: (key: UndoKey, value: JSONValue?)?
+  private var keptUndo: (key: UndoKey, value: AppletUndoState?)?
 
   /// What the host last heard about, so an unchanged refresh stays quiet.
   private struct Shown: Equatable {
@@ -176,7 +176,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
       throw AppletRestoreError.corrupt("browser description: \(error)")
     }
 
-    let undo = try? description.undoState?.decoded(as: BrowserDescription.UndoState.self)
+    let undo = description.undoState?.value(as: BrowserDescription.UndoState.self)
 
     // The records line up with the tabs only when the shapes match. Anything else is a description
     // this pane did not write, and its tabs load fresh.
@@ -394,10 +394,13 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
       payload: .object([:]))
   }
 
-  /// The undo-only part, encoded once for as long as no tab's history and no closed tab changes.
+  /// The undo-only part, built once for as long as no tab's history and no closed tab changes.
   /// The window asks for a description at every change the applet reports, and a page chooses how
-  /// often its title changes. Encoding a history record costs time in step with the history.
-  private func undoPart() -> JSONValue? {
+  /// often its title changes.
+  ///
+  /// It holds each tab's record as WebKit gave it. The part never leaves memory, so a pane close
+  /// converts nothing, and neither does its reopen.
+  private func undoPart() -> AppletUndoState? {
     let key = UndoKey(
       tabs: tabs.map { UndoKey.Tab(id: $0.id, version: $0.historyVersion) },
       closed: closedTabs.map(\.stamp))
@@ -406,7 +409,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
 
     let undo = BrowserDescription.UndoState(
       closedTabs: closedTabs, tabStates: tabs.map(\.interactionData))
-    let value = undo.isEmpty ? nil : try? JSONValue(encoding: undo)
+    let value = undo.isEmpty ? nil : AppletUndoState(undo)
 
     keptUndo = (key, value)
 

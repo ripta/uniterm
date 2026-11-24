@@ -287,7 +287,7 @@ final class BrowserTabsTests: XCTestCase {
 
     let described = harness.applet.describe()
     let state = try XCTUnwrap(
-      described.undoState?.decoded(as: BrowserDescription.UndoState.self))
+      described.undoState?.value(as: BrowserDescription.UndoState.self))
 
     XCTAssertEqual(state.closedTabs.count, 1)
     XCTAssertEqual(state.closedTabs.first?.title, "B")

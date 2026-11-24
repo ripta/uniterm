@@ -225,7 +225,9 @@ class FakeApplet: Applet {
   /// The description carries the title, so a test can tell which applet a reopened pane came from.
   func describe() -> AppletDescription {
     fixedDescription
-      ?? AppletDescription(type: "fake", version: 1, payload: .string(title), undoState: undoState)
+      ?? AppletDescription(
+        type: "fake", version: 1, payload: .string(title),
+        undoState: undoState.map(AppletUndoState.init))
   }
 
   /// The undo-only part of the description: the closed tabs, newest first, as a terminal carries
@@ -241,7 +243,9 @@ class FakeApplet: Applet {
 
   /// Takes the closed tabs back from a description, as a reopened pane does.
   func restoreClosedTabs(from description: AppletDescription) {
-    guard case .array(let entries)? = description.undoState else { return }
+    guard case .array(let entries)? = description.undoState?.value(as: JSONValue.self) else {
+      return
+    }
 
     closedTabs = entries.compactMap { entry in
       guard case .object(let fields) = entry, case .number(let stamp)? = fields["stamp"],

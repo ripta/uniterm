@@ -453,7 +453,7 @@ public final class TextViewerApplet: Applet, SourceReplacing {
     "This pane showed content that a program sent. uniterm does not save that content, so it was not restored."
 
   private static func keptInline(in description: AppletDescription) -> InlineContent? {
-    guard let state = description.undoState,
+    guard let state = description.undoState?.value(as: JSONValue.self),
       let kept = try? state.decoded(as: InlineUndo.self),
       kept.text.utf8.count <= TextViewerLimits.maxInlineMarkdownBytes
     else { return nil }

@@ -17,11 +17,11 @@ public struct AppletDescription: Sendable, Equatable, Codable {
   /// What undo restores beyond the payload, such as a terminal's closed tabs. It lives in memory
   /// with the window's undo state. A layout file never writes it and never reads it, and it is
   /// dropped at quit. Two descriptions that differ only here hold the same saved state.
-  public let undoState: JSONValue?
+  public let undoState: AppletUndoState?
 
   public init(
     type: String, version: Int, payload: JSONValue, verbatim: Data? = nil,
-    undoState: JSONValue? = nil
+    undoState: AppletUndoState? = nil
   ) {
     self.type = type
     self.version = version
@@ -55,6 +55,32 @@ public struct AppletDescription: Sendable, Equatable, Codable {
     try container.encode(type, forKey: .type)
     try container.encode(version, forKey: .version)
     try container.encode(payload, forKey: .payload)
+  }
+}
+
+/// The undo-only part of a description, held as the applet's own value.
+///
+/// It never leaves the process, so nothing encodes it. An applet stores a value of its own type and
+/// reads it back with `value(as:)`. A pane's close and its reopen then cost no conversion, however
+/// large the part is.
+///
+/// Two parts are equal when they hold equal values of the same type.
+public struct AppletUndoState: Sendable, Equatable {
+  private let stored: any Sendable
+  private let matches: @Sendable (any Sendable) -> Bool
+
+  public init<Value: Sendable & Equatable>(_ value: Value) {
+    stored = value
+    matches = { ($0 as? Value) == value }
+  }
+
+  /// The value, or nil when the part holds another type, as from an applet of another kind.
+  public func value<Value>(as type: Value.Type) -> Value? {
+    stored as? Value
+  }
+
+  public static func == (lhs: AppletUndoState, rhs: AppletUndoState) -> Bool {
+    lhs.matches(rhs.stored)
   }
 }
 

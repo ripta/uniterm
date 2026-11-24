@@ -170,7 +170,8 @@ final class MapAlertsTests: XCTestCase {
     let base = try MapViewerDescription(path: missing).appletDescription()
     let description = AppletDescription(
       type: base.type, version: base.version, payload: base.payload,
-      undoState: MapViewerApplet.undoState(document: unsaved, base: nil, path: missing))
+      undoState: AppletUndoState(
+        MapViewerApplet.undoState(document: unsaved, base: nil, path: missing)))
 
     let host = RecordingHost()
     let applet = try MapViewerApplet(restoring: description)
@@ -362,7 +363,8 @@ final class MapAlertsTests: XCTestCase {
     let plain = try MapViewerDescription(path: file.path).appletDescription()
     let description = AppletDescription(
       type: plain.type, version: plain.version, payload: plain.payload,
-      undoState: MapViewerApplet.undoState(document: edited, base: base, path: file.path))
+      undoState: AppletUndoState(
+        MapViewerApplet.undoState(document: edited, base: base, path: file.path)))
 
     let applet = try MapViewerApplet(restoring: description)
     applet.host = host

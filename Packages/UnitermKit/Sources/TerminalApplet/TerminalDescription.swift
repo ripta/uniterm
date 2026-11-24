@@ -49,7 +49,7 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
     AppletDescription(
       type: Self.typeID, version: Self.currentVersion, payload: try JSONValue(encoding: self),
       undoState: closedTabs.isEmpty
-        ? nil : try JSONValue(encoding: UndoState(closedTabs: closedTabs)))
+        ? nil : AppletUndoState(try JSONValue(encoding: UndoState(closedTabs: closedTabs))))
   }
 
   /// A tab the user closed, as undo needs it. The stamp orders it against every other close in the
@@ -76,7 +76,7 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
   /// one this build cannot read, carries none. That part is never saved, so nothing older exists.
   public static func closedTabs(in description: AppletDescription) -> [ClosedTab] {
     guard description.type == typeID,
-      let state = try? description.undoState?.decoded(as: UndoState.self)
+      let state = try? description.undoState?.value(as: JSONValue.self)?.decoded(as: UndoState.self)
     else { return [] }
 
     return state.closedTabs

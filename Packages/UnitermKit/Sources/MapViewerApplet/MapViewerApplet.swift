@@ -656,7 +656,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
       return AppletDescription(
         type: description.type, version: description.version, payload: description.payload,
-        undoState: undo)
+        undoState: AppletUndoState(undo))
     }
 
     assertionFailure("the map viewer description failed to encode")
@@ -1170,7 +1170,7 @@ extension MapViewerApplet {
   /// The command layers a description's undo-only part holds, or nil when it holds none that this
   /// build can read.
   static func commandLayers(in description: AppletDescription) -> CommandLayers? {
-    guard case .object(let fields)? = description.undoState,
+    guard case .object(let fields)? = description.undoState?.value(as: JSONValue.self),
       let stored = fields[commandLayersKey],
       let snapshot = try? stored.decoded(as: CommandLayersSnapshot.self)
     else { return nil }
@@ -1182,7 +1182,7 @@ extension MapViewerApplet {
   static let unsavedPathKey = "unsavedPath"
 
   static func unsavedPins(in description: AppletDescription) -> UnsavedPins? {
-    guard case .object(let fields)? = description.undoState,
+    guard case .object(let fields)? = description.undoState?.value(as: JSONValue.self),
       case .string(let encoded)? = fields[unsavedKey],
       let document = Data(base64Encoded: encoded)
     else { return nil }

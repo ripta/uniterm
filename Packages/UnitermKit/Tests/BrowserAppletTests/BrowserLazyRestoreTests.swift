@@ -274,15 +274,15 @@ final class BrowserLazyRestoreTests: XCTestCase {
     await first.load("/b", expecting: "B")
 
     let described = first.applet.describe()
-    let state = try XCTUnwrap(described.undoState?.decoded(as: BrowserDescription.UndoState.self))
+    let state = try XCTUnwrap(described.undoState?.value(as: BrowserDescription.UndoState.self))
     let record = try XCTUnwrap(state.tabStates.first ?? nil)
 
     first.applet.close()
 
     let skewed = AppletDescription(
       type: described.type, version: described.version, payload: described.payload,
-      undoState: try JSONValue(
-        encoding: BrowserDescription.UndoState(closedTabs: [], tabStates: [record, record])))
+      undoState: AppletUndoState(
+        BrowserDescription.UndoState(closedTabs: [], tabStates: [record, record])))
     let rebuilt = try BrowserApplet(
       restoring: skewed, dataStore: .nonPersistent(), services: .testing())
     let second = BrowserHarness(server: first.server, applet: rebuilt, starting: false)

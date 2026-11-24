@@ -130,7 +130,7 @@ public struct TextViewerDescription: Codable, Equatable, Sendable {
   public func appletDescription(undoState: JSONValue? = nil) throws -> AppletDescription {
     AppletDescription(
       type: Self.typeID, version: writtenVersion, payload: try JSONValue(encoding: self),
-      undoState: undoState)
+      undoState: undoState.map(AppletUndoState.init))
   }
 
   /// Reads a description. A description of another type, a newer version, or a shape that does not

@@ -1,15 +1,10 @@
 # Closing a browser pane encodes every tab's history on the main thread
 
-**Status:** open
+**Status:** fixed 2026-11-23
 **Found:** 2026-11-22, during the design review of UTERM-052
-**Estimate:** medium; two non-trivial design decisions. First, keep each tab's encoded undo entry current at each history
-change, or capture the history data before the close and encode it off the main thread. The first adds a WebKit read and
-an encode at a rate a page chooses, and an index alignment. The second changes the close from a synchronous push to the
-ledger to an asynchronous one, so a quit or an immediate undo reopen needs the payload at once. Second, whether the
-close may wait on the first, since UTERM-052 leaves this bug open on purpose and no accepted proposal owns the fix. The
-fix would touch `BrowserApplet.swift`, `BrowserTab.swift`, and possibly `MainWindowController.swift` and the ledger.
-Re-triaged 2026-11-23: traced against the current code, where `undoPart()` still maps every tab's `interactionData` and
-encodes the whole state at a close. The cost is not measured. UTERM-052 M1 records it.
+**Fixed:** 2026-11-23
+**Estimate:** medium; settled by measurement. The user chose to drop the conversion instead of either option below,
+once triage found the undo part never leaves memory.
 
 ## Observed
 
@@ -36,9 +31,9 @@ and encodes every loaded tab's history, so it gets slower than today.
 Not run. Expected: closing a pane of 10,000 loaded tabs does not hold the main thread for a time that grows with the
 tab count. UTERM-052 M1 records the close's cost at 1,000 and 10,000 loaded tabs.
 
-## Fix
+## Options at filing
 
-Not settled. It needs a design call:
+These were the options before triage found the conversion was not needed:
 
 - Keep each tab's encoded undo entry current at each history change, so the close only wraps the kept array. That moves
   a WebKit read and an encode to each history change, at a rate a page chooses, and adds an index alignment between the
@@ -47,3 +42,32 @@ Not settled. It needs a design call:
   must be taken before the close.
 
 Bug `20261122-undo-reopen-decodes-pane-on-main-thread` tracks the decode on the way back.
+
+## Triage 2026-11-23
+
+Measured with a scratch test against real WebKit tabs, in a debug build. Tabs past 100 were restored tabs that hold a
+real history record and no page, since 10,000 live pages do not fit in memory. A restored tab skips the WebKit read, so
+those rows show the conversion alone.
+
+| Tabs | History per tab | Close before | Close after |
+|------|-----------------|--------------|-------------|
+| 100 loaded | 3 pages | about 3 ms | about 4 ms, cold |
+| 1,000 | 3 pages | 29 ms | 18 ms |
+| 10,000 | 3 pages | 277 ms | 171 ms |
+| 10,000 | 20 pages | 518 ms | 164 ms |
+
+At 100 loaded tabs the WebKit reads cost about as much as the conversion, about 0.015 ms a tab each. The undo part
+never leaves the process. A layout file never holds it. Yet each close converted every tab's record to base64 JSON and
+parsed it back, and each reopen undid that.
+
+## Fix
+
+The description's undo-only part now holds the applet's own value, unconverted (`AppletUndoState` in
+`AppletKit/AppletDescription.swift`). The browser stores its undo state as is, so a close no longer grows with history
+length. The terminal, map, and text viewer keep their JSON values inside the new holder, unchanged.
+
+What the close still does per tab: one WebKit history read and the tab record's encode for the saved part. UTERM-052
+owns the saved part. The read is about 0.015 ms a tab.
+
+Regression test: `BrowserReopenTests.testTheUndoPartHoldsEachTabsHistoryRecordUnconverted`. It failed before the fix
+with the history held as a base64 JSON string. It proves the conversion is gone, not how long a close takes.
