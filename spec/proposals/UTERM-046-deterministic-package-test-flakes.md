@@ -221,7 +221,8 @@ the identity the test learned, and refuses a pid it has none for.
   documentation beyond its header. An OS release that drops it fails at link time.
 - **An identity-checked sender.** The test records the pid and its start time to the microsecond, from
   `sysctl(KERN_PROC_PID)`'s `p_starttime`. `proc_pidinfo` refuses `login`. `ProcessInspection.startTime` keeps seconds
-  only. The sender reads the start time again right before the signal, and signals only when it matches. Leaves undone: a reuse between that read and the signal. macOS hands out
+  only, so `ProcessInspection` gains a microsecond reader. The sender reads the start time again right before the
+  signal, and signals only when it matches. Leaves undone: a reuse between that read and the signal. macOS hands out
   pids in order, so that needs about 99,900 pid allocations inside the window.
 - **An exit watch.** The test registers a kqueue `EVFILT_PROC` `NOTE_EXIT` filter when it learns the pid. The sender
   signals only when no exit event has arrived. Leaves undone: the same window as the identity check, between the event
@@ -245,12 +246,14 @@ The product's `WebContentProcess.kill` checks a pid's path, then signals it. Scr
 outlives the test for up to 30 s. At `tearDown` the client is still `sh`'s child, since `sh` waits for it.
 
 Decision: the token read, the token signal, and the microsecond start time are public calls in `ProcessInspection`.
-That product library has no dependencies, and already reads identity through sysctl for setuid-root processes. A new
-test-support target, `ProcessTestSupport`, depends only on `ProcessInspection`. It holds the per-site sender. A site
-that cannot read a token falls back to the identity check. Each site states which path it expects.
-`WebContentProcess` and `ProcessReaper` read a token with the identity they record, and signal by it.
+That product library has no dependencies, and already reads identity through sysctl for setuid-root processes. The
+calls take and return the existing `AuditToken`. It moves from `FileRouting` into `ProcessInspection`, and
+`FileRouting` depends on `ProcessInspection`. A new test-support target, `ProcessTestSupport`, depends only on
+`ProcessInspection`. It holds the per-site sender. A site that cannot read a token falls back to the identity check.
+Each site states which path it expects. `WebContentProcess` and the REPL channel record a token with the identity,
+and the kills signal by it. The REPL channel's token is the one the kernel gave its connection at admission.
 `WebContentProcess.kill` keeps its path check on both paths. With a token, it then signals by the token. With none,
-it signals as today, so a hung page is still ended. `ProcessReaper` keeps its identity check when it reads no token.
+it signals as today, so a hung page is still ended. `ProcessReaper` keeps its identity check when it has no token.
 `RemoteClientWatcherTests` spawns `sh` in its own process group, and sends `killpg` before its own `waitpid`. Amended
 2026-11-23; see Decision Log.
 
@@ -260,10 +263,11 @@ signals leaves orphans. Signalling through the owner needs product calls only te
 or reparented processes. The fallback keeps the identity check's window only where the system refuses a token. A site
 that lands on the wrong path fails its test, so a change in what the system allows shows up at once.
 
-`ProcessInspection` serves every site and the product. A test-only home would need five more test targets to link
+`ProcessInspection` serves every site and the product. A test-only home would need four more test targets to link
 ScriptHost, and the product could not import it. The expected-path rule is test policy, so it stays in a test target.
 The product's two kills have the same race as the tests, and the same call closes it there. A stale pid either fails
-the path check, or passes it and gets ESRCH from the token. The group signal closes the `RemoteClientWatcherTests`
+the path check, or passes it and gets ESRCH from the token. One token type keeps a peer's token, read from
+`LOCAL_PEERTOKEN`, usable as a signal target with no conversion. The group signal closes the `RemoteClientWatcherTests`
 window too. The unreaped `sh` holds the group id, so no other process can take it.
 
 Leaves undone: `login`, and WebContent if it refuses a token, keep the identity check's window. M3 and M4 record which
@@ -443,6 +447,10 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its cal
 
 - `ProcessInspection` reads a process's audit token, signals by a token, and reads a start time to the microsecond, as
   public calls. The token read releases its task name port on every path
+- `AuditToken` moves from `FileRouting` into `ProcessInspection`, and `FileRouting` depends on `ProcessInspection`.
+  One `AuditToken` type exists in the package. Its fields and `init?(data:)` are unchanged
+- `Package.swift` lists `BrowserApplet`'s new `ProcessInspection` dependency, and the comment on `ProcessInspection`
+  names every target that uses it
 - `ProcessInspectionTests` signals a live child by a token whose pid version is one off, and the child stays alive.
   The matching token ends it. A token for a reaped child returns ESRCH. The call's errno-style return is read as such
 - `WebContentProcess`'s `Signal` seam receives the identity the product read, its token included. Fakes with a made-up
@@ -453,11 +461,17 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its cal
   token is one pid version off returns false, and the child stays alive. The matching token ends it. A token for a
   reaped child returns false
 - A BrowserApplet test fails when a real view's content process gives no token. The product logs a failed token read
-- `ProcessReaper` records a token with each `ProcessIdentity`, and signals by it. With no token, it keeps its identity
-  check. A ScriptHost test shows that a reaper whose token is one pid version off leaves its process alive
-- `identifier(of:)` reads a token for every live view in `killUnused`, and no task name port is left open after a close
+- The closed-process watch stores the identity read at the close, and the fire signals that token. Nothing reads a
+  token from a stored pid
+- `killUnused` compares live views by pid, and no task name port is left open after a close
+- `ProcessReaper` takes the helper's `AuditToken?` beside its `ProcessIdentity`, and signals by the token. With no
+  token, it keeps its identity check. `ProcessIdentity`'s fields, equality, hashing, and `folderName` are unchanged
+- The reaper's token is the connection's `peer.token`. A ScriptHost test attaches a helper, and sees the channel's
+  recorded token equal the peer's
+- A ScriptHost test spawns a child, and calls the reaper with a token one pid version off. The child stays alive
 - Production's `busyShare`, bound, and time sources are unchanged
-- The As built block records whether WebContent and the REPL helper gave a token
+- The As built block records whether WebContent and the REPL helper gave a token, and says M4 pins the fix and not
+  the bug, since no test can force a process id's reuse
 
 ## Decision Log
 
@@ -561,6 +575,16 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its cal
 - 2026-11-23: The user chose to move ScriptHost's `ProcessReaper` onto the token signal in M4, over keeping it out.
   Amended "Production keeps its rules" to name it beside `WebContentProcess.kill`. (addition)
 - 2026-11-23: Added M4 for the product's two kills. M3 follows it.
+- 2026-11-23: A re-check of M4 found every change sound, with one design gap: the token's type. Corrections of fact:
+  M4 said `ProcessReaper` "records a token with each `ProcessIdentity`". A stored token breaks that type's equality and
+  its `folderName` round trip, so the token now rides beside it. The decision said `ProcessReaper` reads its own token.
+  The REPL channel already holds the token the kernel gave its connection, so it records that one. M4 had
+  `killUnused` read a token for every live view. Comparing pids gives the same outcome. "Five more test targets"
+  is four, since `RemoteClientWatcherTests` no longer needs the sender. Routed checks to M4: the watch fires the token
+  read at the close, `BrowserApplet`'s new dependency is listed, and M4 pins the fix and not the bug.
+- 2026-11-23: The user chose to move the existing `AuditToken` from `FileRouting` into `ProcessInspection`, with
+  `FileRouting` depending on `ProcessInspection`. The user preferred it over a second token type and over a raw
+  `audit_token_t`. Amended "How a test signals a process it does not reap" to name the type. (addition)
 
 ## References
 
