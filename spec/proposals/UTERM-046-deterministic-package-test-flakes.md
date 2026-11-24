@@ -14,7 +14,8 @@ Two package-test flakes fail CI on a loaded runner with no change to the code. T
 spinning page 0.3 s of real time and expect it to use half a core. The script fixtures miss a helper's exit and hang.
 This proposal makes both deterministic. Each regression the tests name stays caught. One live-sample claim that cannot be
 checked independently of load, that a real spinning page reads busy, gives way to a stronger check of the reading's
-units.
+units. It also moves every test signal in `ScriptHostTests`, and the one in `PresentationTests`, onto the fixture's
+handle. Then no test can signal a process id that its helper no longer holds.
 
 ## Motivation
 
@@ -103,8 +104,8 @@ that the watchdog never signals an exited process. Under a foreign reaper, `wait
 
 Leaves undone: test code in `ScriptHostTests` that waits on Foundation's exit report outside the fixture, and never
 signals its helper, keeps doing so. These are the `waitUntilExit` in `ScriptBindingTests`, `CommandHelperSandboxTests`,
-and `skipUnlessSystemIntegrityIsOn`, the two `waitUntilExit` calls in `ControllerRunTests`, and the `ScriptGrantTests`
-source session. None has a logged failure. See the audit decision below. The sites that signal their helper by process
+and `skipUnlessSystemIntegrityIsOn`, and the two `waitUntilExit` calls in `ControllerRunTests`. None has a logged
+failure. See the audit decision below. The sites that signal their helper by process
 id move to the fixture's handle in M3. Amended 2026-11-23; see Decision Log.
 
 ### How far the audit goes
@@ -119,11 +120,12 @@ id move to the fixture's handle in M3. Amended 2026-11-23; see Decision Log.
 - **The fixture's neighbors.** After M2 holds on CI, move the other Foundation exit waits in `ScriptHostTests` that the
   fixture decision leaves undone. This is an addition.
 
-Decision: logged flakes only, plus every neighbor that signals its helper by process id. New flakes go through
+Decision: logged flakes only, plus every test that signals a process it spawned by process id. That covers
+`ScriptHostTests` and the watchdog in `WindowKitTests`' `PresentationTests`. New flakes go through
 `spec/flaky-tests.md`'s Rule as they appear. Amended 2026-11-23; see Decision Log.
 
-Rationale: it is complete within the proposal's problem, the two logged flakes. Every other option is an addition with
-no logged failure behind it. The CPU-share half of "same mechanisms elsewhere" names nothing: no other test uses
+Rationale: the logged-flakes half is complete within the proposal's problem. The signalling tests are an addition the
+user chose; see below. Every other option is an addition with no logged failure behind it. The CPU-share half of "same mechanisms elsewhere" names nothing: no other test uses
 `usage`, `busyShare`, or `letTimePass`. Its `waitUntilExit` sites run on test threads rather than dispatch workers, and
 none has failed. The real-time wait audit targets a different mechanism, sleeps that stand in for events. The fixture's
 neighbors share the fixture's suspected cause, so they are the strongest candidate if a sighting names one of them.
@@ -131,7 +133,8 @@ neighbors share the fixture's suspected cause, so they are the strongest candida
 The neighbors that signal are a different failure, not a flake. Each one checks `isRunning`, then signals the process
 id. Once the helper is reaped, that id is free for reuse. So a test can kill an unrelated process of the same user. That
 needs no logged sighting to matter, and only the fixture's handle closes it. See
-`spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md`.
+`spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md`. `PresentationTests` has the same watchdog in
+another test target, so the fixture moves to a test-support target both can import.
 
 ### How the closed-tab tests get their sample
 
@@ -191,6 +194,10 @@ None.
   `posix_spawn` keeps ignored signals and the spawning thread's mask, where Foundation resets them. A REPL test ignores
   SIGPIPE for the whole test process, so helpers spawned after it would behave by test order. Mitigation: M2 starts the
   helper with every signal at its default and an empty mask, as the exec driver's transport does.
+- **A group-wide signal weakens the controller signal tests** — likelihood: low, impact: medium.
+  The exec driver's transport spawns into its own process group and signals it with `killpg`. A fixture that copies it
+  would let `ControllerRunTests`' signal-relay tests pass for a command that forks and never relays SIGINT. Mitigation:
+  M2 checks that the handle signals the helper's own process, never its group.
 - **A new wait mechanism misses an exit the old one saw** — likelihood: low, impact: low.
   Mitigation: the fixture's change is proven against a helper that exits at once and one that exits after a delay.
 
@@ -242,8 +249,15 @@ None.
 - A test can still tell a helper's exit from its death by a signal
 - The watchdog never signals a helper that has been reaped. The reaper waits with `waitid` and `WNOWAIT`, sets the reaped
   flag under the lock, and only then reaps with `waitpid`
-- Callers signal a helper through the fixture's handle, never with a raw `kill` on its process id
+- Callers of `start` and `finish` signal a helper through the fixture's handle, never with a raw `kill` on its process
+  id
+- The tests among those callers that send SIGINT, such as the Ctrl-C tests in `ScriptLimitsTests`,
+  `ScriptAskScriptTests`, and `ScriptAskRunTests`, still deliver it and still see the helper's exit
 - The fixture spawns any executable with any argument list and environment, and `start` is a thin wrapper on it
+- The spawn takes any file handle for each standard stream: a pipe the caller owns, a pty end, or the null device
+- The handle reports whether the helper has exited, and its status, without waiting. It sends any signal number
+- The handle signals the helper's own process, never its process group
+- The 60 s and 70 s hang guard belongs to `start`. The generic spawn takes each caller's own deadline and signal
 - The helper starts with every signal at its default and an empty signal mask, whatever the test process has set
 - The fixture marks its pipe ends close-on-exec right after creating them and before it spawns or returns, as the exec
   driver's transport does, so no other spawner in the test process inherits them.
@@ -258,17 +272,33 @@ None.
 
 **Status:** NOT STARTED
 
-No test can signal a process id that its helper no longer holds.
+Starts after M2, since it moves sites onto M2's handle.
 
-- `DeclaredFileRunTests.start`, `ReplSupport`'s session, `ScriptReplTests`' own helper run, and `ControllerRunTests`'
-  own `start` spawn their helpers through the fixture, and signal them only through its handle
-- No code in `ScriptHostTests` signals a helper it spawned with a raw `kill` on a process id or with
-  `Process.terminate`. The fixture's handle is the only sender
-- Each moved site keeps its hang guard: a helper that never exits is still killed at that site's deadline
-- The tests that send SIGINT, such as the Ctrl-C tests in `ScriptLimitsTests`, `ScriptReplTests`, and
-  `ControllerRunTests`, still deliver it and still see the helper's exit
+No code in `ScriptHostTests` or `PresentationTests` signals a process id that the process it spawned no longer holds.
+
+- These sites spawn through the fixture and signal only through its handle:
+  - `DeclaredFileRunTests.start`, its watchdog, and the teardowns of the tests that use it
+  - `ReplSupport`'s session, on pipes and on a pty, with its watchdogs, teardown, and interrupt
+  - `ScriptReplTests`' own helper run, and its kill of a REPL session
+  - `ControllerRunTests`' own `start`, its two inline runs, and its second session's teardown
+  - `ScriptReplGrantTests`' second sessions
+  - `ScriptGrantTests`' source session, and `SocketRelay.stop`
+  - `ScriptReplLimitsTests`' teardown, its stop of a session, and its reaper's kill closure
+  - `ControllerConsentTests`' kills of an admitted run, through the handle of the test's run that the id belongs to
+  - `PresentationTests`' helper run and its watchdog
+- The fixture lives in a test-support target that `ScriptHostTests` and `WindowKitTests` both import
+- No code in those targets signals a process it spawned, ScriptHelper or not, with a raw `kill` on a process id or with
+  `Process.terminate` or `interrupt`. The fixture's handle is the only sender
+- Signal 0 probes, and the relay's forked child, which its parent never reaps, are exempt
+- `ReplProcess` and every moved site expose the fixture's handle and no `Process`, so `.terminate()` on them does not
+  compile
+- A search of both targets for `kill(`, `.terminate()`, and `.interrupt()` finds only the fixture and the exemptions
+  above
+- Each moved site keeps its hang guard: a helper that never exits is still killed at that site's own deadline
+- The tests that send SIGINT, SIGSTOP, or SIGCONT through a moved site, such as the Ctrl-C tests in `ScriptReplTests`
+  and `ControllerRunTests`, still deliver it and still see the helper's exit
 - The REPL session still gets its input pipe, and still reads its output as it arrives
-- The regression test says that it pins the fix and not the bug, since no test can force a process id's reuse
+- The As built block says that M3 pins the fix and not the bug, since no test can force a process id's reuse
 - `spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md` is closed as fixed
 
 ## Decision Log
@@ -308,6 +338,21 @@ No test can signal a process id that its helper no longer holds.
   `DeclaredFileRunTests.start`, `ReplSupport`, the `isRunning` polls in `ControllerRunTests`, and `ScriptReplTests`' own
   helper run. M3 now moves those. Why: a raw signal after a reap can kill an unrelated process, and that is a correctness
   risk, not a flake. The user chose this over adding only `DeclaredFileRunTests.start` to M2. (addition)
+- 2026-11-23: A design-critic pass on M3 found it sound with caveats. Moving every signal onto the fixture's handle is
+  the only option that closes the race. Corrections of fact: M3 named four sites, but its catch-all check forbade about
+  twenty more raw signals in `ScriptHostTests`. M3 now lists every site. Leaves undone said the `ScriptGrantTests`
+  source session never signals. Its teardown terminates it, so it moved to M3. The Summary and the audit rationale still
+  described only the two flakes. Routed checks to M2 that M3's sites need: caller-owned streams, a pty, a non-blocking
+  exit query, any signal number, signals to the process and not its group, and `start` owning its own hang guard.
+  Moved the SIGINT check for M2's callers into M2. Added the risk that a group-wide signal weakens the controller signal
+  tests. M3 now starts after M2, and exempts signal 0 probes and the relay's forked child.
+- 2026-11-23: The user chose to specify the fixture's wider spawn in M2, over extending it in M3. M2 owns the fixture,
+  and building it once keeps it from changing shape after M2 lands. This serves M3's addition. (addition)
+- 2026-11-23: The user chose to add `PresentationTests`' watchdog to M3, over filing it as a bug. The fixture moves to
+  a test-support target that `ScriptHostTests` and `WindowKitTests` both import. (addition)
+- 2026-11-23: The user chose to have moved sites expose only the fixture's handle, so `.terminate()` on them does not
+  compile, over a source search alone. The search still covers bare `kill` on a process id.
+- 2026-11-23: Scheduled UTERM-046 M3 in queue.md, in the same row as M1-M2.
 
 ## References
 

@@ -1,6 +1,6 @@
 # The declared-file test watchdog may signal a process id that was already reused
 
-**Status:** proposed, UTERM-046 M3
+**Status:** proposed
 **Found:** 2026-11-22, during the UTERM-046 review
 **Estimate:** large; two non-trivial decisions (see Estimate notes). Both settled 2026-11-23 (see Resolution)
 
@@ -54,7 +54,9 @@ The same pair, or `Process.terminate` after an `isRunning` check, also sits outs
 session, `ScriptReplTests`' own helper run, and `ControllerRunTests`' own `start`. M2's callers already lose their
 watchdogs to the fixture's handle.
 
-The user chose a new UTERM-046 milestone. M3 moves all four sites, `DeclaredFileRunTests.start` included, onto the
-fixture's handle after M2. This settles both decisions above. `start` leaves M2's scope as written, and the other
+The user chose a new UTERM-046 milestone. M3 moves every remaining signalling site in `ScriptHostTests`, and the
+watchdog in `WindowKitTests`' `PresentationTests`, onto the fixture's handle after M2. `DeclaredFileRunTests.start` is
+one of them. A design-critic pass on 2026-11-23 found about twenty sites beyond the four first named, and M3 lists
+them all. This settles both decisions above. `start` leaves M2's scope as written, and the other
 signaling sites are fixed by M3, not by this bug alone. The exit waits that never signal stay undone, as UTERM-046
 already says.

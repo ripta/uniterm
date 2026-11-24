@@ -4,7 +4,7 @@
 |------------|------------|------|
 | UTERM-045 M1 | None | Split from M2: M1 writes the closing rule and recounts the launcher test's clean CI runs, and its count gates M2 |
 | UTERM-044 M1 | None | Shards CI's UI tests first, so every later row gets a shorter run and a shorter flake rerun |
-| UTERM-046 M1-M2 | UTERM-045 M1 | Its flaky-entry checks close by the rule UTERM-045 M1 writes into `spec/flaky-tests.md` |
+| UTERM-046 M1-M3 | UTERM-045 M1 | Its flaky-entry checks close by the rule UTERM-045 M1 writes into `spec/flaky-tests.md`. M3 moves sites onto M2's fixture handle |
 | UTERM-045 M2 | UTERM-045 M1, UTERM-044 M1 | Split from M1: starts once M1's clean count is met. After UTERM-044 M1, so its own count runs on shards and never spans that landing |
 | UTERM-043 M1 | None | Split from M2: M1 builds only on today's control code. M2 checks it against newer features |
 | UTERM-041 M1-M2 | None | |
