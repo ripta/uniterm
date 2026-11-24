@@ -1,9 +1,8 @@
 # The declared-file test watchdog may signal a process id that was already reused
 
-**Status:** open
-**Validation:** not confirmed; traced by reading the code, no reuse was observed
+**Status:** proposed, UTERM-046 M3
 **Found:** 2026-11-22, during the UTERM-046 review
-**Estimate:** large; two non-trivial decisions (see Estimate notes)
+**Estimate:** large; two non-trivial decisions (see Estimate notes). Both settled 2026-11-23 (see Resolution)
 
 ## Observed
 
@@ -45,3 +44,17 @@ Non-trivial decisions:
    proposal currently leaves them undone on purpose.
 
 Files a fix would touch: `DeclaredFileRunTests.swift`, `Support.swift` (the fixture), and the UTERM-046 proposal text.
+
+## Resolution
+
+Triaged 2026-11-23. The code is unchanged since the estimate: both watchdogs still check `isRunning`, then send
+`kill(processIdentifier, SIGKILL)`. The race is confirmed by tracing the code only. No reuse was forced or observed.
+
+The same pair, or `Process.terminate` after an `isRunning` check, also sits outside M2's callers in `ReplSupport`'s
+session, `ScriptReplTests`' own helper run, and `ControllerRunTests`' own `start`. M2's callers already lose their
+watchdogs to the fixture's handle.
+
+The user chose a new UTERM-046 milestone. M3 moves all four sites, `DeclaredFileRunTests.start` included, onto the
+fixture's handle after M2. This settles both decisions above. `start` leaves M2's scope as written, and the other
+signaling sites are fixed by M3, not by this bug alone. The exit waits that never signal stay undone, as UTERM-046
+already says.

@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Impacts
 
@@ -101,11 +101,11 @@ another process. The termination handler and `waitid` both keep that `isRunning`
 that the watchdog never signals an exited process. Under a foreign reaper, `waitid` also falls back to reading
 `terminationStatus` on a task that reads as running, which raises instead of returning.
 
-Leaves undone: test code in `ScriptHostTests` that waits on Foundation's exit report outside the fixture keeps doing so.
-These are `DeclaredFileRunTests.start`, which polls `isRunning` and has its own `isRunning` watchdog, `ReplSupport`, the
-`waitUntilExit` in `ScriptBindingTests`, `CommandHelperSandboxTests`, and `skipUnlessSystemIntegrityIsOn`, the
-`isRunning` polls and the two `waitUntilExit` calls in `ControllerRunTests`, `ScriptReplTests`' own helper run, and the
-`ScriptGrantTests` source session. None has a logged failure. See the audit decision below.
+Leaves undone: test code in `ScriptHostTests` that waits on Foundation's exit report outside the fixture, and never
+signals its helper, keeps doing so. These are the `waitUntilExit` in `ScriptBindingTests`, `CommandHelperSandboxTests`,
+and `skipUnlessSystemIntegrityIsOn`, the two `waitUntilExit` calls in `ControllerRunTests`, and the `ScriptGrantTests`
+source session. None has a logged failure. See the audit decision below. The sites that signal their helper by process
+id move to the fixture's handle in M3. Amended 2026-11-23; see Decision Log.
 
 ### How far the audit goes
 
@@ -119,13 +119,19 @@ These are `DeclaredFileRunTests.start`, which polls `isRunning` and has its own 
 - **The fixture's neighbors.** After M2 holds on CI, move the other Foundation exit waits in `ScriptHostTests` that the
   fixture decision leaves undone. This is an addition.
 
-Decision: logged flakes only. New flakes go through `spec/flaky-tests.md`'s Rule as they appear.
+Decision: logged flakes only, plus every neighbor that signals its helper by process id. New flakes go through
+`spec/flaky-tests.md`'s Rule as they appear. Amended 2026-11-23; see Decision Log.
 
 Rationale: it is complete within the proposal's problem, the two logged flakes. Every other option is an addition with
 no logged failure behind it. The CPU-share half of "same mechanisms elsewhere" names nothing: no other test uses
 `usage`, `busyShare`, or `letTimePass`. Its `waitUntilExit` sites run on test threads rather than dispatch workers, and
 none has failed. The real-time wait audit targets a different mechanism, sleeps that stand in for events. The fixture's
 neighbors share the fixture's suspected cause, so they are the strongest candidate if a sighting names one of them.
+
+The neighbors that signal are a different failure, not a flake. Each one checks `isRunning`, then signals the process
+id. Once the helper is reaped, that id is free for reuse. So a test can kill an unrelated process of the same user. That
+needs no logged sighting to matter, and only the fixture's handle closes it. See
+`spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md`.
 
 ### How the closed-tab tests get their sample
 
@@ -248,6 +254,23 @@ None.
 - The `ScriptFixtures.finish` entry in `spec/flaky-tests.md` records the change, says which of its sightings it
   explains, and stays under Potential until it meets the closing rule in the `spec/flaky-tests.md` Rule section
 
+### M3: Every helper signal goes through the fixture's handle
+
+**Status:** NOT STARTED
+
+No test can signal a process id that its helper no longer holds.
+
+- `DeclaredFileRunTests.start`, `ReplSupport`'s session, `ScriptReplTests`' own helper run, and `ControllerRunTests`'
+  own `start` spawn their helpers through the fixture, and signal them only through its handle
+- No code in `ScriptHostTests` signals a helper it spawned with a raw `kill` on a process id or with
+  `Process.terminate`. The fixture's handle is the only sender
+- Each moved site keeps its hang guard: a helper that never exits is still killed at that site's deadline
+- The tests that send SIGINT, such as the Ctrl-C tests in `ScriptLimitsTests`, `ScriptReplTests`, and
+  `ControllerRunTests`, still deliver it and still see the helper's exit
+- The REPL session still gets its input pipe, and still reads its output as it arrives
+- The regression test says that it pins the fix and not the bug, since no test can force a process id's reuse
+- `spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md` is closed as fixed
+
 ## Decision Log
 
 - 2026-11-21: Filed during a landing run in which two package-test failures cost CI reruns. The user asked whether
@@ -278,6 +301,13 @@ None.
 - 2026-11-22: Review gate: kept all. Derived samples plus a units bracket stand, and the Summary keeps its reworded
   claim. No decision gets an ADR. Status set to accepted.
 - 2026-11-22: Scheduled as UTERM-046 M1-M2 in queue.md.
+- 2026-11-23: Added M3, which moves every `ScriptHostTests` site that signals its helper by process id onto the
+  fixture's handle. This came from bug triage of `spec/bugs/20261122-declared-file-watchdog-may-signal-reused-pid.md`.
+  The audit decision read "Decision: logged flakes only. New flakes go through `spec/flaky-tests.md`'s Rule as they
+  appear." It now also covers the neighbors that signal. The fixture decision's "Leaves undone" listed
+  `DeclaredFileRunTests.start`, `ReplSupport`, the `isRunning` polls in `ControllerRunTests`, and `ScriptReplTests`' own
+  helper run. M3 now moves those. Why: a raw signal after a reap can kill an unrelated process, and that is a correctness
+  risk, not a flake. The user chose this over adding only `DeclaredFileRunTests.start` to M2. (addition)
 
 ## References
 
