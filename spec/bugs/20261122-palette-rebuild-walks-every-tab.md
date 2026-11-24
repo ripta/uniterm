@@ -19,7 +19,12 @@ palette runs that same full rebuild, with no coalescing.
 - Each keystroke calls `refreshCommandPalette` through `onQueryChange` (about line 17). That runs the full rebuild, not
   just a filter, and nothing coalesces it.
 - A pane tree change also calls `refreshCommandPalette` directly from `onTreeChange` (`MainWindowController.swift`,
-  about line 299), again with no coalescing.
+  about line 299), again with no coalescing. The same change then fires `onLayoutChange`, which schedules a second
+  rebuild 100 ms later (about lines 302-305).
+- A focus change and each divider step fire `onLayoutChange` too (`PaneAreaView.swift`, about lines 19-22, 383, and
+  395), so each schedules a full rebuild while the palette shows.
+- One pane's tab change rebuilds every pane of the window (`appletTabsDidChange`, about lines 1455-1461). UTERM-002's
+  live-query decision says the palette re-reads that pane's list.
 - `chooseTab` (about line 204) and scripting's tab lookups (`WindowScripting.swift`, about lines 546 and 795) scan the
   published list once per call.
 - ADR-08 allows only local work whose duration uniterm bounds on the main thread. A pane has no tab cap.
