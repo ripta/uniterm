@@ -40,7 +40,7 @@
 | [20261122-capture-bypasses-image-viewer-read-scope](20261122-capture-bypasses-image-viewer-read-scope.md) | A program's pane capture can show an image the program may not read | proposed |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | fixed |
 | [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | proposed |
-| [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
+| [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | fixed |
 | [20261122-declared-file-watchdog-may-signal-reused-pid](20261122-declared-file-watchdog-may-signal-reused-pid.md) | The declared-file test watchdog may signal a process id that was already reused | proposed |
 | [20261122-picked-file-start-directory-stat-on-main-thread](20261122-picked-file-start-directory-stat-on-main-thread.md) | A viewer stats a picked or dropped file on the main thread | fixed |
 | [20261122-quit-skips-unsaved-work-when-nothing-runs](20261122-quit-skips-unsaved-work-when-nothing-runs.md) | Quitting loses unsaved work when nothing is running | fixed |

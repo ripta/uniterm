@@ -61,6 +61,54 @@ final class WebContentProcessTests: XCTestCase {
   }
 }
 
+/// How the usage reader turns `proc_pid_rusage` processor time into nanoseconds. Apple silicon's
+/// timebase is 125/3, so a reading in nanoseconds put through it grows 41.7 times, and the watch
+/// would end an unused process doing little.
+final class ProcessorTimeScaleTests: XCTestCase {
+  private let appleSilicon = ProcessorTimeScale(numer: 125, denom: 3)
+
+  /// Catches a reader that puts nanoseconds through the timebase. A release that reports
+  /// nanoseconds must be read as nanoseconds.
+  func testAReadingInNanosecondsIsReadAsNanoseconds() {
+    let scale = ProcessorTimeScale.calibrated(
+      raw: 2_000_000_000, reference: 2_000_000_000, timebase: appleSilicon)
+
+    XCTAssertEqual(scale, .nanoseconds)
+  }
+
+  /// Catches a reader that stops converting ticks. Two seconds is 48 million ticks at 125/3.
+  func testAReadingInTicksGoesThroughTheTimebase() {
+    let scale = ProcessorTimeScale.calibrated(
+      raw: 48_000_000, reference: 2_000_000_000, timebase: appleSilicon)
+
+    XCTAssertEqual(scale, appleSilicon)
+  }
+
+  /// Catches a reader that guesses when neither scale matches, which could make an idle process
+  /// read as busy. It answers nil, and the watch then signals nothing.
+  func testAReadingThatMatchesNeitherScaleIsRefused() {
+    XCTAssertNil(
+      ProcessorTimeScale.calibrated(
+        raw: 300_000_000, reference: 2_000_000_000, timebase: appleSilicon))
+    XCTAssertNil(
+      ProcessorTimeScale.calibrated(raw: 0, reference: 2_000_000_000, timebase: appleSilicon))
+    XCTAssertNil(
+      ProcessorTimeScale.calibrated(raw: 48_000_000, reference: 0, timebase: appleSilicon))
+  }
+
+  /// Catches a calibration that disagrees with this machine's kernel. Measured against this test
+  /// run's own process, it picks the Mach timebase, which is what every shipped release reports.
+  func testThisMachineCalibratesToItsTimebase() throws {
+    var base = mach_timebase_info_data_t()
+    mach_timebase_info(&base)
+
+    let measured = try XCTUnwrap(WebContentProcess.processorScale)
+
+    XCTAssertEqual(
+      measured.nanoseconds(1_000_000), UInt64(1_000_000) * UInt64(base.numer) / UInt64(base.denom))
+  }
+}
+
 /// Hands out a fixed list of samples, one per read, then nil.
 private final class Samples: Sendable {
   private let queue: Mutex<[ProcessSample?]>

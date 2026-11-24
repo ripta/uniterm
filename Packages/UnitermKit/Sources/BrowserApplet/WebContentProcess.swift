@@ -88,12 +88,14 @@ struct WebContentProcess: Sendable {
   }
 
   /// Reads a process's start time and processor time with `proc_pid_rusage`. Nil when the process
-  /// is gone or not this user's.
+  /// is gone or not this user's, or when `processorScale` could not tell the kernel's units.
   ///
-  /// The kernel reports processor time in Mach ticks, so the timebase converts it to nanoseconds.
-  /// A release that reported nanoseconds instead would make a spinning process read as idle, and
-  /// the watch would then signal nothing rather than something wrong.
+  /// The units come from `processorScale`, measured against this process's own time. A wrong unit
+  /// would read an unused process as busy, or a spinning one as idle. When the units cannot be
+  /// told, every read is nil and the watch signals nothing.
   static let usage: Sample = { pid in
+    guard let scale = processorScale else { return nil }
+
     var info = rusage_info_v0()
     let status = withUnsafeMutablePointer(to: &info) { pointer in
       pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
@@ -103,16 +105,37 @@ struct WebContentProcess: Sendable {
 
     guard status == 0 else { return nil }
 
+    return ProcessSample(
+      started: info.ri_proc_start_abstime,
+      processorNanoseconds: scale.nanoseconds(info.ri_user_time + info.ri_system_time),
+      takenNanoseconds: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
+  }
+
+  /// The scale for `proc_pid_rusage` processor time, measured once against this process's own
+  /// time from `getrusage`. Nil when the two disagree with every scale.
+  static let processorScale: ProcessorTimeScale? = {
+    var info = rusage_info_v0()
+    let status = withUnsafeMutablePointer(to: &info) { pointer in
+      pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+        proc_pid_rusage(getpid(), RUSAGE_INFO_V0, $0)
+      }
+    }
+
+    var own = rusage()
+
+    guard status == 0, getrusage(RUSAGE_SELF, &own) == 0 else { return nil }
+
     var base = mach_timebase_info_data_t()
     mach_timebase_info(&base)
 
-    let ticks = info.ri_user_time + info.ri_system_time
+    let microseconds =
+      (UInt64(own.ru_utime.tv_sec) + UInt64(own.ru_stime.tv_sec)) * 1_000_000
+      + UInt64(own.ru_utime.tv_usec) + UInt64(own.ru_stime.tv_usec)
 
-    return ProcessSample(
-      started: info.ri_proc_start_abstime,
-      processorNanoseconds: ticks * UInt64(base.numer) / UInt64(base.denom),
-      takenNanoseconds: clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
-  }
+    return ProcessorTimeScale.calibrated(
+      raw: info.ri_user_time + info.ri_system_time, reference: microseconds * 1_000,
+      timebase: ProcessorTimeScale(numer: UInt64(base.numer), denom: UInt64(base.denom)))
+  }()
 
   static let executablePath: PathOf = { pid in
     var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
@@ -122,6 +145,47 @@ struct WebContentProcess: Sendable {
 
     return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
   }
+}
+
+/// How processor time from `proc_pid_rusage` becomes nanoseconds: multiply by `numer`, divide by
+/// `denom`.
+struct ProcessorTimeScale: Equatable, Sendable {
+  var numer: UInt64
+  var denom: UInt64
+
+  static let nanoseconds = ProcessorTimeScale(numer: 1, denom: 1)
+
+  func nanoseconds(_ units: UInt64) -> UInt64 {
+    units * numer / denom
+  }
+
+  /// The scale that reads `raw`, this process's own processor time from `proc_pid_rusage`, as
+  /// `reference`, the same time in nanoseconds from `getrusage`. The kernel has reported Mach
+  /// ticks, which need the timebase, and a release could report nanoseconds instead.
+  ///
+  /// Nil when neither scale lands within `tolerance` of the reference. A guess could read an idle
+  /// process as busy, and a nil scale makes the watch signal nothing.
+  static func calibrated(raw: UInt64, reference: UInt64, timebase: ProcessorTimeScale)
+    -> ProcessorTimeScale?
+  {
+    guard raw > 0, reference > 0 else { return nil }
+
+    let candidates = timebase == .nanoseconds ? [timebase] : [timebase, .nanoseconds]
+    let target = Double(reference)
+
+    let fits = candidates.filter { scale in
+      let ratio = Double(scale.nanoseconds(raw)) / target
+
+      return ratio >= 1 / tolerance && ratio <= tolerance
+    }
+
+    return fits.count == 1 ? fits.first : nil
+  }
+
+  /// How far a scale's reading may stray from the reference and still match. The two reads happen
+  /// a moment apart and `getrusage` counts microseconds, so they never agree exactly. The 41.7
+  /// times gap between the two scales on Apple silicon leaves room for both.
+  static let tolerance = 2.0
 }
 
 /// One reading of a process. The start time tells a recycled id apart from the process it once
