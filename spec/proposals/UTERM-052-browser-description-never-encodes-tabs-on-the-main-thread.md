@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -32,7 +32,8 @@ The browser applet stops encoding every tab record on the main thread each time 
 change costs the description one tab's work on the main thread, and a save encodes nothing there. Two costs still grow
 with the tab count: one pointer-sized pass over the kept records at each save, and a pane close's read and encode of
 every loaded tab's history. A restore also gives each tab its encoded record once. The close's cost is new for a pane
-that sat quiet before it closed, since a save no longer prepares it.
+that sat quiet before it closed, since a save no longer prepares it. A dirty map pane's save stops encoding its undo
+part too.
 
 ## Motivation
 
@@ -151,8 +152,10 @@ description's undo part lazy; and accepting one undo encode per save. The review
 each change.
 
 Decision: the applet contract gains a call for the saved description alone. Its default returns `describe()` without the
-undo part. The browser answers it from each tab's kept record and builds no undo part. The save calls it. The window's
-change check calls it for an applet with no saved-state revision. A pane close keeps calling `describe()`.
+undo part. The browser answers it from each tab's kept record and builds no undo part. The map answers it with its
+payload description, and builds no undo part either. The save calls it. The window's change check calls it for an
+applet with no saved-state revision, which includes the map. A pane close keeps calling `describe()`. Amended
+2026-11-23; see Decision Log.
 
 Rationale: it removes the undo encode from every save and adds no scope. With the save and the change check moved off
 `describe()`, a close is the browser's only caller of the undo part, once per applet. So its cache never hits, and the
@@ -168,8 +171,7 @@ second reads and encodes no history today, though it encodes every tab record. U
 cache before the close, so that close's history cost is new. The total main-thread work drops, but the history work
 moves from a deferred save to the close. Bug `20261122-browser-close-encodes-every-tab-history-on-main-thread` tracks
 it. Other applets keep building their undo
-parts at each save, since only the browser answers the new call. Bug
-`20261122-map-describe-encodes-document-at-every-save` tracks the map's.
+parts at each save, since only the browser and the map answer the new call.
 
 ## Design Decisions (Open)
 
@@ -240,6 +242,8 @@ The scratch measurement covered the encode alone.
   nothing
 - The call for the saved description alone is a requirement of the applet protocol, with a default. A test shows that
   the window's save, through the applet type it holds, reaches the browser's own answer
+- A map test shows that the saved description alone equals `describe()` without its undo part, and that a save and a
+  change check of a dirty map pane build no undo part. An undo reopen of a dirty map pane still brings back its edits
 - The kept history read on each tab, and the doc comment that says the applet keys a kept description on
   `historyVersion`, are each removed or given a stated current user
 - The revision test covers a selection change and a tab added and closed, as well as the two record sites. It passes
@@ -327,6 +331,10 @@ The scratch measurement covered the encode alone.
   the Summary names it and M2 reuses the stored payload's tree for a record validation leaves unchanged. M1 measures
   the pass over the kept records instead of the removed array's copy.
 - 2026-11-22: Scheduled as UTERM-052 M1-M2 in queue.md.
+- 2026-11-23: (addition) From the triage of bug `20261122-map-describe-encodes-document-at-every-save`. The user chose
+  to add the map's answer to M2. Amended "The save asks for the saved description alone": it said only the browser
+  answers the new call, and its Leaves undone line said the bug tracks the map's undo encode at each save. The map now
+  answers with its payload description and builds no undo part. The Summary says so, and M2 gained a map check.
 
 ## References
 

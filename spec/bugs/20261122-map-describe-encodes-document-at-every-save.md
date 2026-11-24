@@ -1,8 +1,7 @@
 # A dirty map pane base64-encodes its whole document at every save and change check
 
-**Status:** open
+**Status:** proposed. The fix is a check of [UTERM-052](../proposals/UTERM-052-browser-description-never-encodes-tabs-on-the-main-thread.md) M2.
 **Found:** 2026-11-22, during the design review of UTERM-052
-**Validation:** mechanism confirmed by reading the code. Cost not measured.
 **Estimate:** small; no open design decisions. Blocked on UTERM-052 milestone M2, which adds the contract call for the
 saved description alone. That milestone is not started, so no fix can land yet. Once it lands, the map overrides the
 call to return its payload description without `undoOnlyPart()`. The files are
@@ -36,3 +35,13 @@ UTERM-052 adds a contract call for the saved description alone, whose default dr
 The map could answer that call without building its undo part, and the window's change check calls it too. That needs
 no design call once UTERM-052 lands. Splitting the contract so `describe()` returns only the saved part would cover
 every applet. It was weighed in UTERM-052 as a scope addition.
+
+## Triage
+
+Triaged on 2026-11-23. The trace still holds: `describe()` calls `undoOnlyPart()` at `MapViewerApplet.swift:651`. The
+save's `savedNode` (`MainWindowController.swift:1340`) and `notifyLayoutIfDescriptionChanged` (`:1375`) still call
+`describe()` and drop the undo part. No saved-description call exists yet. UTERM-052 M2 is not started.
+
+The user chose to add the map's answer to UTERM-052 M2, as a scope addition. "The save asks for the saved description
+alone" now says the map answers the call, and M2 gained a map check. The check also covers an undo reopen of a dirty
+map pane.
