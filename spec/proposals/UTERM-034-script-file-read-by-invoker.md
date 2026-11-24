@@ -136,9 +136,10 @@ Decision: no change needed. Settled 2026-11-22 (autonomous); see Decision Log.
 Decision: the file begin changes, and chunk messages are new, so ScriptWire's version goes up. Settled 2026-11-22
 (autonomous); see Decision Log.
 
-- The command and the app ship in one bundle. ADR-13 lets ScriptWire refuse every version but its own. Each side refuses
-  any other version at the hello, so a newer command and an older app, and the reverse, refuse each other before the
-  script's bytes are sent. The message tells the user to relaunch uniterm, which heals it.
+- The command and the app ship in one bundle. ADR-13 P6 lets the command's own messages refuse every version but their
+  own. A newer command and an older app, and the reverse, refuse each other before the script's bytes are sent, at the
+  hello, or at the begin once UTERM-056 has landed. The message tells the user to relaunch uniterm, which heals
+  it. Amended 2026-11-23; see Decision Log.
 - No deploy order is needed. A revert and a redeploy undo the change.
 - UTERM-032 and UTERM-029 also bump ScriptWire's version, and neither is built. Whichever lands later bumps again.
 - No stored data changes. The trust store keys a file's approvals by its version, which stays the SHA-256 of the whole
@@ -190,7 +191,8 @@ The app never opens a path for a declared script file or its signature.
 - The review's title comes from the begin's name, the resolved file's last component, cleaned as today
 - A test that swaps a parent folder for a link after the command's read shows the run uses the bytes the command read,
   and the app opens nothing
-- An older command and a newer app, and the reverse, refuse each other at the hello
+- An older command and a newer app, and the reverse, refuse each other before the script's bytes are sent. Amended
+  2026-11-23; see Decision Log
 - Earlier approvals of a file still apply to the same bytes
 - The user runs a declared file in Documents from a program started outside uniterm, on a Mac where uniterm holds a
   Documents grant and that program does not. It passes when the read is refused, or when a privacy prompt names the
@@ -250,6 +252,8 @@ The app never opens a path for a declared script file or its signature.
   could not rule the other attribution out, so it takes the higher rating. It is not high on both, so it does not block
   acceptance. The M1 manual check can run before M1 is built. (autonomous)
 - 2026-11-22: Scheduled as UTERM-034 M1 in queue.md, after UTERM-032 M1-M2.
+- 2026-11-23: From UTERM-056's acceptance. "Version skew" and M1's check said each side refuses any other version "at the
+  hello". UTERM-056 moves an older command's refusal to its begin.
 
 ## References
 
