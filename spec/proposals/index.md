@@ -60,7 +60,7 @@
 | [UTERM-056](UTERM-056-native-controllers-across-scriptwire-versions.md) | What happens to a native controller when ScriptWire's version changes | accepted |
 | [UTERM-057](UTERM-057-package-read-by-invoker.md) | Who reads a controller package's files when `uniterm run` starts it | accepted |
 | [UTERM-058](UTERM-058-palette-tab-work-on-the-main-thread.md) | The palette lists and filters tabs without main-thread work that grows with the tab count | accepted |
-| [UTERM-059](UTERM-059-terminal-change-check-never-encodes-every-tab.md) | The terminal's change check never encodes every tab | draft |
+| [UTERM-059](UTERM-059-terminal-change-check-never-encodes-every-tab.md) | The terminal's change check never encodes every tab | accepted |
 
 ## Dependency Graph
 
