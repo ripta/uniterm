@@ -301,6 +301,7 @@ None.
   itself, over keeping the default, which encodes the closed tabs at every save, and over caching the undo part.
 - 2026-11-24: No decision earns an ADR. Each shapes the terminal applet alone.
 - 2026-11-24: Accepted.
+- 2026-11-24: Scheduled as M1 in queue.md.
 
 ## References
 

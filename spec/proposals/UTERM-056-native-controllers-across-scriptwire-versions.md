@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-23
-**Updated:** 2026-11-23
+**Updated:** 2026-11-24
 
 ## Dependencies
 
@@ -306,6 +306,7 @@ None.
 - 2026-11-23: The user checked ADR-13's amended text, kept it, and accepted this proposal. No decision earns an ADR of its
   own, since each applies ADR-13.
 - 2026-11-23: (autonomous) Corrected the ADR citation for remembered approvals from ADR-09 to ADR-14, which supersedes it.
+- 2026-11-24: Scheduled as M1-M4 in queue.md.
 
 ## References
 

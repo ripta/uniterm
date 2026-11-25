@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-23
-**Updated:** 2026-11-23
+**Updated:** 2026-11-24
 
 ## Dependencies
 
@@ -333,6 +333,7 @@ The app never opens a path for a controller package, its descriptor, or its sign
   proposal each apply it, and no ADR records it. Waits on the manual attribution check in UTERM-034 M1 or this
   proposal's M1, since a failed check changes which process reads.
 - 2026-11-23: Accepted.
+- 2026-11-24: Scheduled as M1 in queue.md.
 
 ## References
 

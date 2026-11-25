@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-23
-**Updated:** 2026-11-23
+**Updated:** 2026-11-24
 
 ## Dependencies
 
@@ -347,6 +347,7 @@ The baseline that M3's numbers are compared against, taken after UTERM-053 M1 so
 - 2026-11-23: Risks reviewed. (autonomous) The stale-report risk is raised to medium impact, since a missed insert
   leaves a tab out of the palette until the count check heals it. Added: the long dependency chain, accepted, and the
   index's memory for the window's life, accepted. Both are low impact.
+- 2026-11-24: Scheduled as M1-M3 in queue.md.
 
 ## References
 
