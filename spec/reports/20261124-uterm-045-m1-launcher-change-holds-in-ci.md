@@ -12,12 +12,16 @@ dependency and no `Live after` line.
 |---|---|---|
 | UTERM-045 M1: The launcher change holds in CI | IN PROGRESS | See "Commits" |
 
+A second `/work-queue` run on 2026-11-24 recounted from the first run's cutoff. The status is unchanged.
+
 M1 stays `IN PROGRESS`. The Rule section, the help text, and the recount are committed. The recount's count is not
-met: 21 of 33 clean CI runs, so 12 remain. M2 stays gated on that count, and its row is not in this run.
+met: 22 of 33 clean CI runs, so 11 remain. M2 stays gated on that count, and its row is not in this run.
 
 ## Commits
 
 1. "Close a flaky entry only after enough clean CI runs", which carries M1's work, its review fix, and this report.
+2. "Record a 22nd clean launcher run toward UTERM-045 M1's count", which carries the second run's recount and this
+   report's amendment.
 
 ## UTERM-045 M1
 
@@ -149,3 +153,28 @@ its head into its base, which the log's `HEAD is now at ... Merge <head> into <b
 when it is an ancestor of either parent. A push job tests its head SHA. Jobs cancelled before the test started are
 neutral. The windows and the streak follow the closing rule. The scripts and logs stayed in the session's temp
 directory, uncommitted.
+
+## Second run: recount
+
+The first run's cutoff was job 138961135380, which finished at 2026-11-25T04:05Z. During planning, the coordinator found
+one `app` job that finished after it: 138998184972, which finished at 2026-11-25T05:48Z. The launcher test passed there.
+The implementer re-listed the `ci` runs and found no other. Five other runs skipped the `app` job, so they are neutral.
+
+The tested tree was a PR merge. Its head holds "Settle the pointer on the launcher list before the scroll test's
+wheels", by ancestry. The new figures are a streak of 22, 11 runs left, and a cutoff of 2026-11-25T05:48Z. The recount
+used the method in "Recount method" above.
+
+### Checks and review
+
+- Checks: `make check`, `make lint`, `proposals.py check` pass. No Swift changed, so no package or UI tests ran.
+- Review: the reviewer confirmed the figures agree in every place. It found five prose findings, all fixed. Three were
+  parenthetical asides and a stacked sentence in the new Decision Log entry and this report. The other was a Method
+  subsection that repeated "Recount method".
+- The coordinator also sent back the report's wording. It named the pointer change as "the settlement commit" and
+  credited the whole recount to the coordinator. It also said the coordinator found the first run's cutoff job. All
+  three were fixed.
+- `adr-impact` found no ADR touched and no uncovered decision. No ADR candidate is recorded.
+- `proposals.py freeze` reported the same UTERM-004 ADR-14 References hunk as the first run, with origin `other`. It is
+  left for the user.
+- Row and final review: the run has one milestone commit, so this review served as the row and final review. It
+  included an ADR review. The row stays in `queue.md`, and UTERM-045 stays `accepted`, since M1's count is not met.

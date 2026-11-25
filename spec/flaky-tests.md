@@ -356,16 +356,16 @@ fixed ones.
 - Tried: the pointer now goes to the focused list's center, and the test waits until it is inside the list before any
   wheel. The report also gives the pointer's position. If it fails again with the pointer inside the list, this cause
   is wrong.
-- Recount through 2026-11-25T04:05Z, from the first sighting on: 2 failures in 22 CI attempts up to "Wait for the
+- Recount through 2026-11-25T05:48Z, from the first sighting on: 2 failures in 22 CI attempts up to "Wait for the
   launcher's last entry to come into view after a scroll", 4 in 20 up to "Scroll the short launcher either way the
   machine's wheel goes", and 3 in 19 up to "Settle the pointer on the launcher list before the scroll test's wheels".
   All 9 failures are wheel failures, by their message "the scroll wheel did not scroll the list".
-- The lowest rate is 2 in 22, so N is 11 and the count is 33. Since the pointer change, the test passed in 21
+- The lowest rate is 2 in 22, so N is 11 and the count is 33. Since the pointer change, the test passed in 22
   consecutive CI attempts. 5 of them came before "Poll UI test waits every quarter second instead of XCTest's second".
   Four `app` jobs in that span were cancelled before the test started, so they neither count nor break the streak.
 - Method: the test's own `passed` and `failed` lines in every `app` job log, by attempt. A fix is held when the tree
   CI tested holds it, which for a PR job is the merge of its head into its base.
-- Status: unresolved until 12 more clean CI runs reach the count of 33.
+- Status: unresolved until 11 more clean CI runs reach the count of 33.
 
 ### `WindowsUITests.testCommandNOpensASecondWindowWithItsOwnShell`
 

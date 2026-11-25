@@ -265,7 +265,7 @@ None.
 **As built:**
 
 - The Rule section, the help text, and the recount are done. The count is not met. N is 11 and the count is 33. The
-  streak since the pointer change is 21 clean runs through 2026-11-25T04:05Z, so 12 remain. M2 stays gated on the
+  streak since the pointer change is 22 clean runs through 2026-11-25T05:48Z, so 11 remain. M2 stays gated on the
   count. The figures are in the Decision Log.
 
 ### M2: One way to send a wheel
@@ -395,6 +395,9 @@ None.
   are run best guesses. A head holds a fix when the tree CI tested holds it, which for a PR job is the merge of its head
   into its base. The history starts at the first sighting, inclusive. If it started at the test's first CI run instead,
   the first window would hold 2 failures in 32 attempts, and the count would be 48.
+- 2026-11-24: Recount from the previous cutoff. One more `app` job finished: 138998184972, finished 2026-11-25T05:48Z,
+  passed. Five other runs skipped the `app` job, so they are neutral. The streak is now 22 clean runs through
+  2026-11-25T05:48Z. 11 clean runs remain.
 
 ## References
 
