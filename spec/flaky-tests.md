@@ -7,10 +7,32 @@ fixed ones.
 
 - A test that fails in a run and then passes when rerun alone is a potential flake. List it under "Potential".
 - A test that fails again when run alone is a confirmed flake. Fix its cause in the test or the product.
-- A fixed flake moves to "Fixed". Its entry names the fix by commit subject.
+- An entry moves to Fixed only with a fix commit and clean CI runs. For an entry seen once in N CI attempts, about 3N
+  consecutive clean CI runs give a 95% chance of seeing it again if still present.
+  - A clean run is one in which the entry's tests started on a head holding the fix and all passed. The entry's tests
+    are every test its sightings name. Other failures in the same run do not matter.
+  - An attempt in which the entry's test never started, such as a skipped job or one cancelled by a person or newer
+    push before the test, neither counts nor breaks the streak.
+  - A partial start in which only some of the entry's tests started and each one that started passed neither counts nor
+    breaks the streak.
+  - A test that started and did not finish, such as one cut off by a job timeout, a crash, or a cancellation mid-run by
+    a newer push, is not clean. It breaks the streak.
+  - A failure of one of the entry's tests that is logged under another entry, by its failure line and message, neither
+    counts nor breaks the streak.
+  - Each attempt of a rerun is its own run, ordered by when the attempt finished. A job a rerun carries from an earlier
+    attempt counts once, only in the attempt that ran it.
+  - N comes from the lowest failure rate among the windows between the fixes the entry records. A window begins at the
+    first CI attempt whose head holds that fix. A commit that only adds a report does not split windows. N's
+    denominator counts every CI attempt that ran any of the entry's tests, partial starts included. A window with no
+    failure sets no N. An entry with no CI failure at all has no N and stays under Potential.
+  - N counts CI attempts only. A sighting from a local run is logged and adds nothing to N.
+  - An entry seen too rarely to reach its count stays under Potential, naming the change.
+  - A run that fails with a settle's report closes nothing. It records a new cause on the entry.
+  - A Fixed entry seen again moves back to Potential with the sighting.
 - A failure that reproduces reliably is a bug. File it under `spec/bugs/`.
 - Never fix a flake with retries, longer timeouts, or weaker assertions. A wait may grow only when a measurement
   shows that one observation costs most of the old wait. The entry then records that measurement.
+- A local UI run needs the pointer and keyboard left alone.
 
 ## Potential
 
@@ -334,7 +356,16 @@ fixed ones.
 - Tried: the pointer now goes to the focused list's center, and the test waits until it is inside the list before any
   wheel. The report also gives the pointer's position. If it fails again with the pointer inside the list, this cause
   is wrong.
-- Status: unresolved until CI runs show the change holds.
+- Recount through 2026-11-25T05:48Z, from the first sighting on: 2 failures in 22 CI attempts up to "Wait for the
+  launcher's last entry to come into view after a scroll", 4 in 20 up to "Scroll the short launcher either way the
+  machine's wheel goes", and 3 in 19 up to "Settle the pointer on the launcher list before the scroll test's wheels".
+  All 9 failures are wheel failures, by their message "the scroll wheel did not scroll the list".
+- The lowest rate is 2 in 22, so N is 11 and the count is 33. Since the pointer change, the test passed in 22
+  consecutive CI attempts. 5 of them came before "Poll UI test waits every quarter second instead of XCTest's second".
+  Four `app` jobs in that span were cancelled before the test started, so they neither count nor break the streak.
+- Method: the test's own `passed` and `failed` lines in every `app` job log, by attempt. A fix is held when the tree
+  CI tested holds it, which for a PR job is the merge of its head into its base.
+- Status: unresolved until 11 more clean CI runs reach the count of 33.
 
 ### `WindowsUITests.testCommandNOpensASecondWindowWithItsOwnShell`
 
@@ -407,6 +438,31 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
   first case of the 0,-40 precise scroll failed "no oracle", as before the fix: the reference scroll view had not
   moved within the two-second bound. The test then passed 20 of 20 alone on the same tree.
 - Status: unresolved. The earlier fix does not cover this sighting.
+
+### `ShortcutOwnershipUITests.testARemapOntoAnAppletKeyWinsAndWarnsOnce`
+
+- Seen: 2026-11-25, once, in the first CI `app` run of #109. That PR changes map, viewer, browser, and terminal tab
+  code, and no palette or shortcut code.
+- Evidence: `ShortcutOwnershipUITests.swift:132` failed: the palette never went away after Escape. Synthesizing
+  Escape took 5.09 s, from 1.80 s to 6.89 s into the test, where Cmd-T took 0.16 s. Its check for interrupting
+  elements took 0.25 s, against about 0.03 s for every other event in the test. After the stall, the palette check
+  answered every 0.57 s until the wait ran out at 17 s, so the app was not hung. The whole class then passed 7 of 7
+  locally on the same head, the rerun of the CI `app` job passed, and the test passed 50 of 50 alone locally with
+  `-run-tests-until-failure`.
+- Seen again: 2026-11-25, in a local run of the test alone with `-test-iterations 15 -run-tests-until-failure`. Three
+  of nine iterations stalled. Escape took 15.2 s in the sixth and Cmd-T 5.1 s in the seventh, and both passed. In the
+  ninth, Cmd-T took 10.1 s and the test failed at `ShortcutOwnershipUITests.swift:129`, "the remapped key did not
+  win". `testmanagerd`'s log for the ninth shows Command down and Command up confirmed within milliseconds, and the T
+  down and T up each "confirmed implicitly by confirmation delay timeout of 5.00s". uniterm sent `testmanagerd` other
+  event notifications about every 8 ms through those 10 s, so its event loop ran. In the seventh, Command down timed
+  out and the T events were confirmed.
+- Suspected cause: XCTest sends each key as numbered events and waits up to 5 s for the app to confirm each one. Each
+  stall is that window running out for one or more events, and the effect of an unconfirmed key never came. Escape
+  closes the palette only through its field's `cancelOperation`, and the palette sets that field as first responder
+  before Cmd-T returns. This matches the stalled single events in the `CommandPaletteUITests`, `StatusBarUITests`, and
+  `WindowsUITests` entries. Not confirmed: why the events went unconfirmed. CI keeps no `testmanagerd` log, and
+  UTERM-060 proposes keeping it.
+- Status: unresolved.
 
 ## Fixed
 

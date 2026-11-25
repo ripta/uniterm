@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-22
+**Updated:** 2026-11-24
 
 ## Impacts
 
@@ -178,18 +178,18 @@ Candidates: the latest burst, as M1 had it, 5 of 10 runs, so 6; the rate since t
 the first sighting; the larger count of those two; a fixed floor such as 20 runs over the whole history; the lowest
 rate in any window between the fixes the entry records.
 
-Decision: the lowest rate between fixes. The entry's CI history, from its first sighting to the fix under test, splits
-at each fix the entry records. A window begins at the first CI attempt whose head holds that fix. A commit that only
-adds a report, such as "Report where the launcher list stood after each wheel in the scroll test", does not split it.
-N comes from the lowest failure rate among the windows, counting CI attempts that ran any of the entry's tests, and
-the count is 3N. The attempts counted include those in which only some of the entry's tests started. A window with no
-failure sets no N. It observed no failure rate, and the closing rule targets observed rates. A cause that survived into
-that window fails less often than any window that failed, and the count does not chase it. A later change that
-restarts the count asks about the cause that change might bring, which no earlier window saw. An entry with no CI failure at all has no N
-and stays under Potential, as the closing rule says. For the launcher, the windows split at "Wait for the launcher's
-last entry to come into view after a scroll" and "Scroll the short launcher either way the machine's wheel goes". By
-commit time they hold about 3 failures in 15 attempts, 9 in 40, and 6 in 21. The lowest is 3 in 15, so N is about 5
-and the count is about 15. M1's recount fixes the exact boundaries.
+Decision: the lowest rate between fixes. The entry's CI history, from its first sighting to the fix under test, splits at
+each fix the entry records. A window begins at the first CI attempt whose head holds that fix. A commit that only adds a
+report, such as "Report where the launcher list stood after each wheel in the scroll test", does not split it. N comes
+from the lowest failure rate among the windows, counting CI attempts that ran any of the entry's tests, and the count is
+3N. The attempts counted include those in which only some of the entry's tests started. A window with no failure sets no
+N. It observed no failure rate, and the closing rule targets observed rates. A cause that survived into that window fails
+less often than any window that failed, and the count does not chase it. A later change that restarts the count asks
+about the cause that change might bring, which no earlier window saw. An entry with no CI failure at all has no N and
+stays under Potential, as the closing rule says. For the launcher, the windows split at "Wait for the launcher's last
+entry to come into view after a scroll" and "Scroll the short launcher either way the machine's wheel goes". By commit
+time they hold 2 failures in 22 attempts, 4 in 20, and 3 in 19. The lowest is 2 in 22, so N is 11 and the count is 33.
+Amended 2026-11-24; see Decision Log.
 
 Rationale: a cause that survives every fix fails in every window at its own rate, so the lowest window rate bounds it.
 The whole history is a weighted average of the windows and never goes below that lowest window. When an earlier fix
@@ -230,15 +230,15 @@ None.
 
 ### M1: The launcher change holds in CI
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS
 
 - The `spec/flaky-tests.md` Rule section states the closing rule above, in place of moving an entry to Fixed on a fix
   commit alone
-- The launcher change has run clean in consecutive CI runs, as built, to the count the closing rule sets. The rate
-  that sets the count follows "Which observed rate sets the count": about 3 failures in 15 attempts, so about 15 runs.
-  A clean run is one as "What a clean run is" defines it. The launcher entry records the count, and notes that 5 of
-  the clean runs came before "Poll UI test waits every quarter second instead of XCTest's second". A wheel failure, or
-  a change to the aim, restarts the count. M2 does not start before the count is met
+- The launcher change has run clean in consecutive CI runs, as built, to the count the closing rule sets. The rate that
+  sets the count follows "Which observed rate sets the count": 2 failures in 22 attempts, so 33 runs. Amended 2026-11-24;
+  see Decision Log. A clean run is one as "What a clean run is" defines it. The launcher entry records the count, and
+  notes that 5 of the clean runs came before "Poll UI test waits every quarter second instead of XCTest's second". A
+  wheel failure, or a change to the aim, restarts the count. M2 does not start before the count is met
 - The Rule section's closing rule defines a clean run as "What a clean run is" does, names no CI job or shard, and
   reads the same with one `app` job or with shards. The launcher recount reads every attempt of every run
 - The Rule section takes N, for every entry, from the lowest failure rate among the windows between the fixes the
@@ -261,6 +261,12 @@ None.
 - A CI failure with the pointer inside the list sends the proposal to the user to retarget or retract
 - A CI failure in which the settle's own wait timed out, or the pointer left the list after the settle, is recorded in
   the launcher entry, restarts the count, and reopens the aiming question
+
+**As built:**
+
+- The Rule section, the help text, and the recount are done. The count is not met. N is 11 and the count is 33. The
+  streak since the pointer change is 22 clean runs through 2026-11-25T05:48Z, so 11 remain. M2 stays gated on the
+  count. The figures are in the Decision Log.
 
 ### M2: One way to send a wheel
 
@@ -376,6 +382,22 @@ None.
   now reads "no product code changes", and the settle never waits on the outcome of the event it comes before. No
   decision gets an ADR. Status set to accepted.
 - 2026-11-22: Scheduled as UTERM-045 M1 and UTERM-045 M2 in queue.md.
+- 2026-11-24: Amended "Which observed rate sets the count" and M1's count. M1's recount read the launcher test's own
+  `passed` and `failed` lines in every `app` job log, from the first sighting on 2026-11-15 through 2026-11-25T04:05Z.
+  The review's figures were approximate tallies. From the first sighting to "Wait for the launcher's last entry to come
+  into view after a scroll": 2 failures in 22 attempts. From there to "Scroll the short launcher either way the
+  machine's wheel goes": 4 in 20. From there to "Settle the pointer on the launcher list before the scroll test's
+  wheels": 3 in 19. The lowest rate is 2 in 22, so N is 11 and the count is 33. Since the pointer change, the test
+  passed in 21 consecutive attempts. 5 of them came before "Poll UI test waits every quarter second instead of
+  XCTest's second". So 12 clean runs remain. "Which observed rate sets the count" said: "By commit time they hold about
+  3 failures in 15 attempts, 9 in 40, and 6 in 21. The lowest is 3 in 15, so N is about 5 and the count is about 15.
+  M1's recount fixes the exact boundaries." M1 said: "about 3 failures in 15 attempts, so about 15 runs." Two readings
+  are run best guesses. A head holds a fix when the tree CI tested holds it, which for a PR job is the merge of its head
+  into its base. The history starts at the first sighting, inclusive. If it started at the test's first CI run instead,
+  the first window would hold 2 failures in 32 attempts, and the count would be 48.
+- 2026-11-24: Recount from the previous cutoff. One more `app` job finished: 138998184972, finished 2026-11-25T05:48Z,
+  passed. Five other runs skipped the `app` job, so they are neutral. The streak is now 22 clean runs through
+  2026-11-25T05:48Z. 11 clean runs remain.
 
 ## References
 
