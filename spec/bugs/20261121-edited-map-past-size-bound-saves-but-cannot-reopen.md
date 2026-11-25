@@ -1,6 +1,8 @@
 # An edited map past 32 MiB saves, but cannot be reopened
 
 **Status:** open
+**Estimate:** small; the bound's value waits on UTERM-040 M1's measurement.
+**Triaged:** 2026-11-22 (still reproduces by trace; fix stays with UTERM-040 M1)
 **Validation:** confirmed by tracing the code during the UTERM-040 review. Not reproduced in a test or the running app.
 **Found:** 2026-11-21, during the UTERM-040 review of the map's caps
 
@@ -28,6 +30,18 @@ nothing is lost. The map simply refuses to open what it saved.
   proposal's review gate.
 - Refuse at Save instead, and leave the edit in place. The user then holds unsaved work the map will not write.
 - Raise the reader's bound. That moves the edge without closing it.
+
+## Investigation notes
+
+Triage run on 2026-11-22.
+
+- The trace still holds on the current code. `replaceDocument` hands the edited bytes to the read-back with no size
+  check. `performSave` and `saveAs` only wait on that read-back through `readAccepts`. Only `GeoJSONFileReader.bytes`
+  enforces `maxBytes`.
+- No test covers an edit past the bound. `MapFileTests` covers only a file on disk past it.
+- The fix is one size check before the edit applies. The bound's value is not settled. UTERM-040's review gate chose a
+  bound that M1 measures over keeping 32 MiB. A fix now would pick that number early.
+- UTERM-040 M1 is not started.
 
 ## Fix
 

@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import PaneModel
 import Preferences
 import ScriptHost
@@ -17,7 +18,7 @@ import XCTest
 /// The script acts for the window's first pane, which the user has made remote-controlled.
 @MainActor
 final class ScriptTerminalTests: XCTestCase {
-  private var suite = ""
+  private let testDefaults = TestDefaults(prefix: "uniterm-script-terminal")
   private var windows: WindowSet?
 
   override func tearDown() async throws {
@@ -25,7 +26,7 @@ final class ScriptTerminalTests: XCTestCase {
       controller.window?.close()
     }
 
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   private var caller = ScriptCaller(connection: 1, window: 0, pane: NodeID(rawValue: 0))
@@ -33,9 +34,7 @@ final class ScriptTerminalTests: XCTestCase {
   private func scripting(engine: FakeEngine) throws
     -> (WindowScripting, ScriptPaneReference, TerminalApplet)
   {
-    suite = "uniterm-script-terminal-\(UUID().uuidString)"
-
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let appearance = AppearanceController(store: store)
     var first: TerminalApplet?
 

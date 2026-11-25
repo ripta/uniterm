@@ -249,17 +249,22 @@ let package = Package(
         "QuestionsApplet", "ReplApplet", "TerminalApplet", "TextViewerApplet",
       ]),
     .testTarget(name: "StatusKitTests", dependencies: ["StatusKit"]),
-    .testTarget(name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit"]),
+    .testTarget(
+      name: "FileRoutingTests", dependencies: ["FileRouting", "AppletKit", "DefaultsTestSupport"]),
     .testTarget(
       name: "AppletCatalogTests",
       dependencies: [
         "AppletCatalog", "FileRouting", "AppletKit", "WindowKit", "BrowserApplet", "Preferences",
         "BrowserTestSupport", "TerminalApplet", "ReplApplet", "DataViewerApplet", "MapViewerApplet",
-        "ImageViewerApplet", "TextViewerApplet", "QuestionsApplet",
+        "ImageViewerApplet", "TextViewerApplet", "QuestionsApplet", "DefaultsTestSupport",
       ]),
     // Ends a test process whose `swift test` is gone, so a hung test cannot outlive a cancelled
     // run. Every test target links into one bundle, so one test target's dependency guards all.
     .target(name: "TestProcessGuard", path: "Tests/TestProcessGuard"),
+    // A defaults suite per test that deletes its preference file too, so test runs stop piling up
+    // files in ~/Library/Preferences.
+    .target(name: "DefaultsTestSupport", path: "Tests/DefaultsTestSupport"),
+    .testTarget(name: "DefaultsTestSupportTests", dependencies: ["DefaultsTestSupport"]),
     // Test support. It builds ZIP archives for the tests of both targets that read workbooks, and
     // holds the seeded generator the table and map fuzzers share.
     .target(name: "TableTestSupport", path: "Tests/TableTestSupport"),
@@ -392,14 +397,14 @@ let package = Package(
       dependencies: [
         "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "FileRouting",
         "Preferences", "ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport",
-        "SourceAccess", "StatusKit",
+        "SourceAccess", "StatusKit", "DefaultsTestSupport",
       ],
       resources: [.copy("Fixtures")]),
     .testTarget(
       name: "ReplAppletTests",
       dependencies: [
         "ReplApplet", "AppletKit", "ScriptHost", "ScriptWire", "StatusKit", "TerminalSurface",
-        "WindowKit", "Preferences", "AppletTestSupport", "ScriptTestSupport",
+        "WindowKit", "Preferences", "AppletTestSupport", "ScriptTestSupport", "DefaultsTestSupport",
       ]),
     .testTarget(name: "PaneModelTests", dependencies: ["PaneModel"]),
     .testTarget(name: "ProcessInspectionTests", dependencies: ["ProcessInspection"]),
@@ -417,11 +422,12 @@ let package = Package(
       name: "TerminalAppletTests",
       dependencies: [
         "TerminalApplet", "AppletKit", "StatusKit", "TerminalSurface", "Theme", "WindowKit",
-        "Preferences", "AppletTestSupport", "ScriptHost", "ScriptWire",
+        "Preferences", "AppletTestSupport", "ScriptHost", "ScriptWire", "DefaultsTestSupport",
       ]),
-    .testTarget(name: "SettingsKitTests", dependencies: ["SettingsKit", "Preferences"]),
+    .testTarget(
+      name: "SettingsKitTests", dependencies: ["SettingsKit", "Preferences", "DefaultsTestSupport"]),
     .testTarget(name: "ThemeTests", dependencies: ["Theme"]),
-    .testTarget(name: "PreferencesTests", dependencies: ["Preferences"]),
+    .testTarget(name: "PreferencesTests", dependencies: ["Preferences", "DefaultsTestSupport"]),
     .testTarget(name: "TerminalSurfaceTests", dependencies: ["TerminalSurface", "Theme"]),
     .testTarget(
       name: "WindowKitTests",
@@ -431,9 +437,22 @@ let package = Package(
         "AppletFixtures", "ExecDriver", "ExecTestSupport", "ScriptHelper", "ControllerPackage",
         "ControllerTrust", "TestProcessGuard", "TextViewerApplet", "SourceAccess",
         "MapViewerApplet", "BrowserApplet", "BrowserModel", "BrowserTestSupport", "QuestionForm",
-        "QuestionsApplet",
+        "QuestionsApplet", "DefaultsTestSupport",
       ]),
   ],
   swiftLanguageModes: [.v6],
   cLanguageStandard: .c99
 )
+
+// The Swift 6.3.3 optimizer aborts in its CopyPropagation pass on some functions, such as
+// StatusQueue.present and HistoryPanelView.tableView(_:viewFor:row:). Which functions trip it is not
+// predictable, so the pass is off for every Swift target in an optimized build. Remove this once
+// the toolchain no longer crashes. `swift build -c release` is the check.
+for target in package.targets where target.type != .binary {
+  target.swiftSettings =
+    (target.swiftSettings ?? [])
+    + [
+      .unsafeFlags(
+        ["-Xllvm", "-sil-disable-pass=copy-propagation"], .when(configuration: .release))
+    ]
+}

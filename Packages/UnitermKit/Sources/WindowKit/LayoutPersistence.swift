@@ -135,10 +135,17 @@ public final class LayoutPersistence {
     return outcome
   }
 
-  /// Writes the layout now, stops further saves, and lets go of the lock. Quitting calls it, so a
-  /// change made an instant before the quit is still on disk.
+  /// Blocks until every write started so far has finished. A save runs on a background queue, so
+  /// a test that reads the file after a debounce waits here first.
+  func waitForWrites() {
+    saver.waitForWrites()
+  }
+
+  /// Writes the layout now, waits for it to reach the disk, stops further saves, and lets go of the
+  /// lock. Quitting calls it, so a change made an instant before the quit is still on disk.
   public func saveForQuit() {
     saver.saveNow()
+    saver.waitForWrites()
     saver.disable()
     windows.onLayoutChange = nil
     store.release()

@@ -122,6 +122,16 @@ public final class AppletTabBar: NSView {
   public var onClose: ((Int) -> Void)?
   public var onNew: (() -> Void)?
 
+  /// How far in from the trailing edge the host's control badge reaches. The tabs and the new-tab
+  /// button stay clear of it, and the bar's background still runs under it.
+  public var trailingReserve: CGFloat = 0 {
+    didSet {
+      guard trailingReserve != oldValue else { return }
+
+      needsLayout = true
+    }
+  }
+
   override public var isFlipped: Bool { true }
 
   override public var mouseDownCanMoveWindow: Bool { false }
@@ -180,7 +190,7 @@ public final class AppletTabBar: NSView {
 
     let side: CGFloat = 22
     let trailing = newButton.isHidden ? 0 : side + Self.inset
-    let available = bounds.width - 2 * Self.inset - trailing
+    let available = bounds.width - 2 * Self.inset - trailing - trailingReserve
     let count = CGFloat(max(items.count, 1))
     let width = min(
       Self.widest, max(Self.narrowest, (available - Self.gap * (count - 1)) / count))
@@ -194,7 +204,8 @@ public final class AppletTabBar: NSView {
     }
 
     newButton.frame = NSRect(
-      x: min(x, bounds.width - side - Self.inset), y: (bounds.height - side) / 2, width: side,
+      x: min(x, bounds.width - trailingReserve - side - Self.inset), y: (bounds.height - side) / 2,
+      width: side,
       height: side)
   }
 

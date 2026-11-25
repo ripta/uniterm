@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import PaneModel
 import Preferences
 import StatusKit
@@ -21,8 +22,10 @@ final class MainWindowControllerTests: XCTestCase {
   private var reuse: FakeApplet?
 
   private func makeController() throws -> MainWindowController {
-    let suite = "uniterm-window-test-\(UUID().uuidString)"
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let testDefaults = TestDefaults(prefix: "uniterm-window-test")
+    addTeardownBlock { testDefaults.discard() }
+
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let appearance = AppearanceController(store: store)
     made = []
     choices = []

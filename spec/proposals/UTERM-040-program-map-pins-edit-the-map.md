@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-21
+**Updated:** 2026-11-22
 
 ## Dependencies
 
@@ -683,6 +683,7 @@ UTERM-040`, and UTERM-016 becomes `implemented`. UTERM-008 carries the markers f
 - 2026-11-21: ADR candidate (cuts across the system): a contract a separately deployed program relies on keeps its
   meaning, for applet command schemas. Declined: it applies ADR-13's principle, and ADR-13 scopes applet schemas out
   on purpose.
+- 2026-11-22: Scheduled as UTERM-040 M1-M3 in queue.md.
 
 ## References
 

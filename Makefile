@@ -169,9 +169,13 @@ lint: fmt-check ## Lint Swift sources and check the scripts parse
 	sh -n Support/ghostty-bin/ghostty
 
 .PHONY: check
-check: check-ghosttykit-imports check-janet-isolation check-janet-vendor ## Check the Swift language mode, the GhosttyKit and Janet boundaries, the vendored Janet, and that the sandbox is off
+check: check-ghosttykit-imports check-janet-isolation check-janet-vendor check-test-defaults ## Check the Swift language mode, the GhosttyKit and Janet boundaries, the vendored Janet, test defaults domains, and that the sandbox is off
 	scripts/check-swift-mode.sh
 	scripts/check-sandbox-off.sh
+
+.PHONY: check-test-defaults
+check-test-defaults: ## Fail when a test opens a named defaults domain without TestDefaults, which leaks a plist
+	scripts/check-test-defaults.sh
 
 .PHONY: check-ghosttykit-imports
 check-ghosttykit-imports: ## Fail when any module but TerminalSurface can reach GhosttyKit

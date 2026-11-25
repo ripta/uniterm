@@ -32,6 +32,8 @@
   the host. This proposal's lives in the applet contract. Both follow ADR-11, and neither builds the other's.
 - UTERM-004 — "Exec wire format": the command hook it added can reply later, and exec drivers match such replies by
   request ID. Result chunks reach drivers as base64 strings, per "Result encoding".
+- UTERM-055 — "The frames' fields" names the exec keys of a read-result chunk, `data` and `offset`, which "Result
+  encoding" leaves unnamed. M3 checks them.
 - The follow-up inspector-bridge proposal reuses "Capabilities" and "Page events", and adds private-API capabilities
   to the same set. Its Risks entry ties capability names to `uniterm/api-version`. Under "Capability names and the
   unavailable error" they are append-only instead, and a failure after an effect is that proposal's to define.
@@ -820,6 +822,8 @@ Starts after UTERM-005 M8.
 
 **Status:** NOT STARTED
 
+Amended 2026-11-22; see Decision Log.
+
 - A held `WKFrameInfo` still targets its frame later, including a cross-origin frame, or the result is recorded and
   run-script goes main frame only
 - Run-script passes typed arguments and returns a handle. Read-result returns the promise's value or its error. The
@@ -853,6 +857,8 @@ Starts after UTERM-005 M8.
   main frame
 - A result larger than one reply is read in chunks under its handle up to its byte cap, and refused above it. A
   malformed result is refused with a structured error
+- On the exec wire, a read-result chunk's result is `{"data":d,"offset":o}`: the chunk's bytes as a base64 string, and
+  the raw byte offset it starts at. These are the keys UTERM-055 "The frames' fields" settles for every exec byte chunk
 - Run-script and injection choose the isolated or page world from two values. No call can reach uniterm's own worlds,
   and a run-script cannot post to the unsent-input tracker's handler
 - Removing a controller's injections leaves uniterm's own user scripts in place
@@ -1106,6 +1112,10 @@ Starts after UTERM-005 M8.
   would ship the run-end marker with no way to rebuild the tab.
 - 2026-11-21: Scheduled as M1-M2, M3, and M4-M6 in queue.md. M3 is its own row because it waits on UTERM-041 M1 and
   UTERM-042 M2.
+- 2026-11-22: (autonomous, addition) From UTERM-055's review. "Result encoding" said the exec wire carries chunk bytes
+  as a base64 string and named no key for it. M3 ships that first, so an implementer would have picked a permanent key.
+  UTERM-055 "The frames' fields" names the result keys `data` and `offset`, and M3 gained a check for them. Impacts
+  gained a UTERM-055 line.
 
 ## References
 

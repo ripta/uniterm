@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import Preferences
 import StatusKit
 import XCTest
@@ -35,18 +36,17 @@ private final class DirectoryApplet: Applet {
 /// A split in a real window with the terminal applet behind the factory, the way the app wires it.
 @MainActor
 final class SplitDirectoryTests: XCTestCase {
-  private var suite = ""
+  private let testDefaults = TestDefaults(prefix: "uniterm-split-directory")
 
   override func tearDown() async throws {
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   /// Builds a window whose first pane is a `DirectoryApplet`. Later panes are terminals on `engine`.
   private func window(
     reporting reported: String?, engine: FakeEngine
   ) throws -> MainWindowController {
-    suite = "uniterm-split-directory-\(UUID().uuidString)"
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
     var first = true
 
     let controller = try MainWindowController(

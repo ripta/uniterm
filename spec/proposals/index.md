@@ -35,7 +35,7 @@
 | [UTERM-031](UTERM-031-controller-keys-in-text-panes.md) | Controller keys in panes that take typed text, such as the source terminal | retracted |
 | [UTERM-032](UTERM-032-run-time-input-file.md) | A script takes its input file as an argument, and its folder is granted for slide images | accepted |
 | [UTERM-033](UTERM-033-reclaim-restored-group.md) | A controller that runs again after a relaunch adopts its restored group, with the user's approval | accepted |
-| [UTERM-034](UTERM-034-script-file-read-by-invoker.md) | Who reads a script file, so the app never opens a path the program chose | draft |
+| [UTERM-034](UTERM-034-script-file-read-by-invoker.md) | Who reads a script file, so the app never opens a path the program chose | accepted |
 | [UTERM-035](UTERM-035-keyboard-after-an-applet-ends.md) | Where the keyboard goes when a pane's or window's applet ends without the user's doing | retracted |
 | [UTERM-036](UTERM-036-program-opens-take-focus.md) | A program's opens and layouts take focus as the user's do | implemented |
 | [UTERM-037](UTERM-037-controller-browser-commands-act-as-the-users.md) | A controller's browser commands act as the user's | implemented |
@@ -45,12 +45,18 @@
 | [UTERM-041](UTERM-041-uniform-tab-marker-slot.md) | A uniform marker slot for every tab, with an authority marker first | accepted |
 | [UTERM-042](UTERM-042-actions-for-tabs-and-their-markers.md) | One action menu for a tab and its markers, with every action in the palette | accepted |
 | [UTERM-043](UTERM-043-pause-controllers.md) | Pause controllers for a while without ending their grants | accepted |
-| [UTERM-044](UTERM-044-shard-the-ci-ui-tests.md) | Shard CI's UI tests across macOS runners | draft |
-| [UTERM-045](UTERM-045-settle-ui-test-input.md) | Settle input before UI tests send it | draft |
-| [UTERM-046](UTERM-046-deterministic-package-test-flakes.md) | Make the logged package-test flakes deterministic | draft |
+| [UTERM-044](UTERM-044-shard-the-ci-ui-tests.md) | Shard CI's UI tests across macOS runners | accepted |
+| [UTERM-045](UTERM-045-settle-ui-test-input.md) | Settle input before UI tests send it | accepted |
+| [UTERM-046](UTERM-046-deterministic-package-test-flakes.md) | Make the logged package-test flakes deterministic | accepted |
 | [UTERM-047](UTERM-047-rate-limit-status-per-source.md) | Rate-limit status posts per source, with a fair bar and session-keyed sources | draft |
 | [UTERM-048](UTERM-048-pane-inspector.md) | A floating Pane Inspector that shows a pane's and its tabs' state, hidden state included | accepted |
 | [UTERM-049](UTERM-049-save-and-open-browser-tab-sets.md) | Save a browser pane's tabs as uniterm JSON, uri-list, or bookmark HTML, and open them back | accepted |
+| [UTERM-050](UTERM-050-current-directory-never-blocks-the-main-thread.md) | An applet's current directory never checks the file system on the main thread | accepted |
+| [UTERM-051](UTERM-051-launch-reads-the-layout-off-the-main-thread.md) | The launch reads and decodes the layout file off the main thread | accepted |
+| [UTERM-052](UTERM-052-browser-description-never-encodes-tabs-on-the-main-thread.md) | The browser's description never encodes every tab on the main thread | accepted |
+| [UTERM-053](UTERM-053-browser-tab-work-never-grows-with-the-tab-count-on-the-main-thread.md) | The browser's per-tab work never grows with the tab count on the main thread | accepted |
+| [UTERM-054](UTERM-054-screenshot-a-pane-or-tab.md) | Copy or save a screenshot of the current pane or tab, for the user and for programs | accepted |
+| [UTERM-055](UTERM-055-exec-drivers-capture-panes.md) | External exec drivers capture panes through a new exec protocol version | accepted |
 
 ## Dependency Graph
 
@@ -98,6 +104,12 @@ UTERM-043 ← UTERM-004, UTERM-019
 UTERM-047 ← UTERM-001, UTERM-003, UTERM-004, UTERM-017, UTERM-022
 UTERM-048 ← UTERM-003, UTERM-004, UTERM-013, UTERM-041
 UTERM-049 ← UTERM-004, UTERM-005, UTERM-015, UTERM-018, UTERM-021
+UTERM-050 ← UTERM-001, UTERM-004
+UTERM-051 ← UTERM-001, UTERM-004
+UTERM-052 ← UTERM-005
+UTERM-053 ← UTERM-005, UTERM-041, UTERM-052
+UTERM-054 ← UTERM-004, UTERM-005, UTERM-019
+UTERM-055 ← UTERM-019, UTERM-028, UTERM-054
 ```
 
 ## Not Yet Filed

@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import XCTest
 
 @testable import FileRouting
@@ -10,7 +11,7 @@ import XCTest
 /// with entries it did not write.
 @MainActor
 final class OpenWithTests: XCTestCase {
-  private var suite = ""
+  private var testDefaults: TestDefaults!
   private var defaults: UserDefaults!
   private var store: SavedChoiceStore!
 
@@ -22,12 +23,12 @@ final class OpenWithTests: XCTestCase {
   ]
 
   override func setUp() async throws {
-    suite = "uniterm-openwith-\(UUID().uuidString)"
-    defaults = UserDefaults(suiteName: suite)
+    testDefaults = TestDefaults(prefix: "uniterm-openwith")
+    defaults = testDefaults.defaults
     store = SavedChoiceStore(defaults: defaults)
 
-    let suite = suite
-    addTeardownBlock { UserDefaults().removePersistentDomain(forName: suite) }
+    let testDefaults = testDefaults!
+    addTeardownBlock { testDefaults.discard() }
   }
 
   private func model() throws -> OpenWithModel {

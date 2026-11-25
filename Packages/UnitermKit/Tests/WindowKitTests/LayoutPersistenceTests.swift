@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import LayoutKit
 import PaneModel
 import Preferences
@@ -30,7 +31,7 @@ private final class LaunchFixture {
     frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
     visibleFrame: CGRect(x: 0, y: 0, width: 1440, height: 875))
 
-  let suite = "uniterm-layout-test-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-layout-test")
   let defaults: UserDefaults
   let scheduler = WakeScheduler()
   let controls = LaunchControls()
@@ -42,7 +43,7 @@ private final class LaunchFixture {
     directory: URL, screens: [ScreenArea] = [LaunchFixture.main],
     visible: NSRect = NSRect(x: 0, y: 0, width: 4000, height: 3000)
   ) {
-    let defaults = UserDefaults(suiteName: suite)!
+    let defaults = testDefaults.defaults
     let settings = SettingsStore(defaults: defaults)
     let appearance = AppearanceController(store: settings)
     let controls = controls
@@ -110,7 +111,7 @@ private final class LaunchFixture {
     for controller in windows.controllers { controller.window?.close() }
 
     store.release()
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   var first: MainWindowController { windows.controllers[0] }
@@ -482,6 +483,7 @@ final class LayoutPersistenceTests: XCTestCase {
     XCTAssertTrue(fixture.scheduler.pending.values.contains { $0.delay == 1 })
 
     fixture.scheduler.fire()
+    fixture.persistence.waitForWrites()
 
     let saved = try LayoutCodec.decode(try Data(contentsOf: layoutFile))
     XCTAssertEqual(saved.windows[0].tree.paneIDs.count, 2)
@@ -546,6 +548,7 @@ final class LayoutPersistenceTests: XCTestCase {
     let (first, _) = try launch()
     first.first.openPane(.terminalShell, axis: .row)
     first.scheduler.fire()
+    first.persistence.waitForWrites()
 
     let written = try Data(contentsOf: layoutFile)
 

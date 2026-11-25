@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-11
-**Updated:** 2026-11-21
+**Updated:** 2026-11-22
 
 ## Dependencies
 
@@ -617,6 +617,8 @@ whether to drop it. No drop is authorized by this review.
   said user-gesture evaluation "obeys the focused-pane restriction". UTERM-019 no longer restricts input to an unfocused
   pane, so that clause is gone. The raw-command safeguards no longer name focus. They name the scheme and handoff
   rules every tab follows. (work-queue best guess)
+- 2026-11-22: Scheduled as UTERM-020 M1-M9 in queue.md.
+
 ## References
 
 - [WebKit InspectorBackend](https://github.com/WebKit/WebKit/blob/main/Source/WebInspectorUI/UserInterface/Protocol/InspectorBackend.js):

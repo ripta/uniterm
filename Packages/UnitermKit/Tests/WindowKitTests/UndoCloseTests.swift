@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import PaneModel
 import Preferences
 import StatusKit
@@ -21,13 +22,13 @@ final class UndoRecorder {
 /// script. The applets are titled "Fake 0", "Fake 1", and so on in the order made.
 @MainActor
 final class UndoFixture {
-  let suite = "uniterm-undo-test-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-undo-test")
   let defaults: UserDefaults
   let recorder = UndoRecorder()
   let controller: MainWindowController
 
   init(policy: CloseUndoPolicy = .standard) throws {
-    let defaults = UserDefaults(suiteName: suite)!
+    let defaults = testDefaults.defaults
     let store = SettingsStore(defaults: defaults)
     let recorder = recorder
 
@@ -63,7 +64,7 @@ final class UndoFixture {
 
   func cleanUp() {
     controller.window?.close()
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   var made: [FakeApplet] { recorder.made }

@@ -1,6 +1,7 @@
 # An applet's current directory checks the file system on the main thread
 
-**Status:** open
+**Status:** proposed, see [UTERM-050](../proposals/UTERM-050-current-directory-never-blocks-the-main-thread.md)
+**Triaged:** 2026-11-22 (hang not reproduced, it needs a mount that stops answering; code still matches; fix needs a design call)
 **Validation:** not confirmed; found by reading the code during the UTERM-048 review, not reproduced in the app.
 **Found:** 2026-11-22, during the UTERM-048 review
 
@@ -47,3 +48,14 @@ How each applet meets it needs a design call. The options:
   `currentDirectory` reads the cache, and a path not yet checked reads as unknown.
 
 UTERM-048's Pane Inspector polls `currentDirectory` once a second, so its M2 waits on this fix.
+
+## Investigation notes
+
+Triage run on 2026-11-22.
+
+- `TerminalApplet.currentDirectory` still calls `RestoreDirectory.local` with `RestoreDirectory.isLocalDirectory`, which
+  calls `FileManager.fileExists`. The report's other citations were not rechecked line by line.
+- No test covers the property's main-thread behavior. The terminal takes an injectable existence check, so a test can
+  block it and read the property on the main actor.
+- The hang itself was not reproduced. No mount that stops answering was available.
+- The fix has two options and no clear winner, so it went to UTERM-050.

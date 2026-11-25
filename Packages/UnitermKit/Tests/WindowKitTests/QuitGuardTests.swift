@@ -1,5 +1,6 @@
 import AppKit
 import AppletKit
+import DefaultsTestSupport
 import Preferences
 import XCTest
 
@@ -9,7 +10,7 @@ import XCTest
 /// rule, so it is tested here and not through the app delegate.
 @MainActor
 final class QuitGuardTests: XCTestCase {
-  private let suite = "uniterm-quit-test-\(UUID().uuidString)"
+  private let testDefaults = TestDefaults(prefix: "uniterm-quit-test")
   private var windows: WindowSet?
   private var asked: [CloseConfirmation] = []
   private var answer = false
@@ -28,11 +29,11 @@ final class QuitGuardTests: XCTestCase {
     }
 
     windows = nil
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
   }
 
   private func makeWindows() -> WindowSet {
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let appearance = AppearanceController(store: store)
     let log = log
 

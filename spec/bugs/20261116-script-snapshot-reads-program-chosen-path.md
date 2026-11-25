@@ -61,3 +61,11 @@ The fix needs a design call on who reads the script:
 Re-checked against the current code. `ScriptFiles.snapshotFile` still passes `request.path` from the peer's `FileBegin`
 to `DeclaredFileSnapshot.create`. The cause is unchanged and still traced only. No ADR or proposal settles who reads
 the script, so the two non-trivial decisions above stay open. The estimate stands.
+
+## Triage notes, 2026-11-22
+
+The UTERM-034 review corrected the trace. "No race is needed: the program names the protected file directly" is wrong.
+The command reads the file itself to route it (`ScriptHelperMain.swift`, `readScript`), and that read fails first for an
+invoker without access. The leak needs the parent-folder swap after the command resolves the path. The copy lands in a
+run folder under uniterm's caches, not Application Support. A refused run's copy is removed on refusal, on connection
+close, on host stop, and at the next launch. UTERM-034 is accepted, and its M1 closes this bug.

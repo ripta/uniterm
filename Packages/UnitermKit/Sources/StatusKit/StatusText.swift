@@ -7,7 +7,7 @@ import Foundation
 public enum StatusText {
   private static let ellipsis = "\u{2026}"
 
-  /// Replaces every control character with a space, drops bidirectional overrides and isolates,
+  /// Replaces every control character, line separator, and paragraph separator with a space, drops bidirectional overrides and isolates,
   /// trims the ends, and cuts the result to `maximumBytes` of UTF-8 on a character boundary.
   public static func bounded(_ text: String, maximumBytes: Int) -> String {
     var cleaned = String.UnicodeScalarView()
@@ -15,9 +15,10 @@ public enum StatusText {
     for scalar in text.unicodeScalars {
       if isBidirectionalControl(scalar) { continue }
 
-      if scalar.properties.generalCategory == .control {
+      switch scalar.properties.generalCategory {
+      case .control, .lineSeparator, .paragraphSeparator:
         cleaned.append(" ")
-      } else {
+      default:
         cleaned.append(scalar)
       }
     }

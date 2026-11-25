@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-21
+**Updated:** 2026-11-22
 
 ## Dependencies
 
@@ -27,6 +27,9 @@
   Janet capabilities. See "Approval lifetimes".
 - UTERM-021 — "The declaration's data shape": a declared file gains the `input-file` permission kind, and each
   permission meaning names where its kind may appear.
+- UTERM-034 — "Who reads the script": once it lands, the command reads a declared script's bytes and sends the
+  declaration after them, with no snapshot. This proposal's "the snapshot's declaration" then means the declaration in
+  those bytes, and its folder rides with that declaration. UTERM-034 M1 amends the text when it builds the change.
 - UTERM-021 — "Trust records for files": supersedes it in part. A file policy that holds a remembered folder lives in a
   third store, for the same reason files left the controller store. UTERM-021 is implemented, so it gains a "Superseded
   in part by UTERM-032" marker when this proposal is accepted.
@@ -502,6 +505,9 @@ None.
   /Users/me/talks/demo or a folder inside it, in panes it controls". `input-name` now returns the base name, and the
   sheet line names PDF pages. The stored folder kind keeps its version, so an older build still reads the store.
 - 2026-11-21: Scheduled as UTERM-032 M1-M2 in queue.md.
+- 2026-11-22: UTERM-034 was accepted. It removes the declared-file snapshot that "Which argument is the input file" and
+  "How the text reaches the script" name. This proposal is queued first, so its text stays as written. UTERM-034 M1
+  amends both sections and the M1 check on a file that gains the mark before the snapshot, when it lands.
 
 ## References
 

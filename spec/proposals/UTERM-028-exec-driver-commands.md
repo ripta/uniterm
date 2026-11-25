@@ -28,6 +28,9 @@
   entry's rule that member commands need the driver's own pane remote-controlled. That entry gains a "superseded in
   part by UTERM-028" Decision Log line when this proposal is accepted.
 
+- UTERM-055 — "Version skew": a later version joins the offer, so M1's version-5 documentation says a driver picks a
+  version it knows from `versions` and ignores the others.
+
 ## Summary
 
 Lets an exec driver declare commands and receive their invocations, as UTERM-024 lets a Janet controller. It is not
@@ -284,6 +287,8 @@ Amended 2026-11-20; see Decision Log.
   One that sends 5 to that app is refused with an error that says what to do
 - A driver that answers a version the app did not offer is refused before any effect, with both named
 - The version-5 documentation states that a driver ignores a hello field it does not know
+- The version-5 documentation states that a driver picks a version it knows from `versions` and ignores the others,
+  and a fixture version-5 driver runs against an offer that holds a version it does not know
 - At version 4, a declaration frame closes the channel as malformed, and no invocation is pushed
 - A second declaration in one run, after one reached the panel, is refused
 - Neither the launch approval nor a controller's host-launch grant gives the command power
@@ -377,6 +382,10 @@ Amended 2026-11-20; see Decision Log.
   decisions, the risk, and M1, per UTERM-042 "Palette commands: wording and target". It is the same command, with the
   same ID. The title changes once UTERM-042 M1 lands. The Impacts line on UTERM-004 keeps the shipped name.
 - 2026-11-21: Scheduled as UTERM-028 M1 in queue.md.
+- 2026-11-22: (autonomous, addition) From UTERM-055's review. "Version skew" says a version 5 driver ignores hello
+  fields it does not know, which covers fields, not unknown values in `versions`. UTERM-055 adds a later version to the
+  offer. M1 gained a check that the version-5 documentation says a driver picks a version it knows and ignores the
+  others, with a fixture for it. Impacts gained a UTERM-055 line.
 
 ## References
 

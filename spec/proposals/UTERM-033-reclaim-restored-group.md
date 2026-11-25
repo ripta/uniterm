@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-16
-**Updated:** 2026-11-16
+**Updated:** 2026-11-22
 
 ## Dependencies
 
@@ -389,6 +389,7 @@ Amended 2026-11-20; see Decision Log.
   "What the user sees" said "A sheet would open a dialog a program asked for, and take the keyboard, against ADR-12."
   It now says only that no other approval opens a dialog. The decision stands on that and on its other reasons. M1
   lost the check "The request takes no focus when it is filed, per ADR-12". No check replaces it.
+- 2026-11-22: Scheduled as UTERM-033 M1 in queue.md.
 
 ## References
 

@@ -2,6 +2,7 @@ import AppKit
 import AppletFixtures
 import AppletKit
 import BrowserApplet
+import DefaultsTestSupport
 import ExecDriver
 import ExecTestSupport
 import LayoutKit
@@ -24,7 +25,7 @@ import XCTest
 /// chrome on screen or the panel's buttons. The UI tests drive those.
 @MainActor
 final class ExecPaneFixture {
-  let suite = "uniterm-exec-test-\(UUID().uuidString)"
+  let testDefaults = TestDefaults(prefix: "uniterm-exec-test")
   let defaults: UserDefaults
   let windows: WindowSet
   let scripting: WindowScripting
@@ -49,7 +50,7 @@ final class ExecPaneFixture {
     ]
 
   init() throws {
-    let defaults = UserDefaults(suiteName: suite)!
+    let defaults = testDefaults.defaults
     let store = SettingsStore(defaults: defaults)
     let appearance = AppearanceController(store: store)
 
@@ -99,7 +100,7 @@ final class ExecPaneFixture {
   func cleanUp() {
     for controller in windows.controllers { controller.window?.close() }
 
-    defaults.removePersistentDomain(forName: suite)
+    testDefaults.discard()
     try? FileManager.default.removeItem(at: scratch)
   }
 

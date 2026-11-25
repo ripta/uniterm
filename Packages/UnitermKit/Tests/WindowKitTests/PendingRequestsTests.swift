@@ -1,4 +1,5 @@
 import AppKit
+import DefaultsTestSupport
 import FileRouting
 import Preferences
 import ScriptHost
@@ -10,12 +11,12 @@ import XCTest
 
 @MainActor
 final class PendingRequestsTests: XCTestCase {
-  fileprivate let suite = "uniterm-pending-requests-test-\(UUID().uuidString)"
+  fileprivate let testDefaults = TestDefaults(prefix: "uniterm-pending-requests-test")
   fileprivate var windows: WindowSet!
   private var indicator: PendingRequestsIndicator!
 
   override func setUp() async throws {
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
     let appearance = AppearanceController(store: store)
 
     windows = WindowSet(
@@ -40,7 +41,7 @@ final class PendingRequestsTests: XCTestCase {
   override func tearDown() async throws {
     for controller in windows.controllers { controller.window?.close() }
 
-    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+    testDefaults.discard()
     windows = nil
     indicator = nil
   }
@@ -166,7 +167,7 @@ extension PendingRequestsTests {
   func testAReviewArrivingAboveTheSelectionLeavesTheSelectionOnItsRow() async throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("ut-\(UUID().uuidString.prefix(8))", isDirectory: true)
-    let store = SettingsStore(defaults: UserDefaults(suiteName: suite)!)
+    let store = SettingsStore(defaults: testDefaults.defaults)
 
     store.set(.unsafe, for: .scriptFileMode)
 

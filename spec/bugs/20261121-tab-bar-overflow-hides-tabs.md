@@ -1,7 +1,9 @@
 # Tabs past the tab bar's trailing edge cannot be seen or clicked
 
 **Status:** open
-**Validation:** found by reading the code during the UTERM-041 review, not reproduced in the app.
+**Estimate:** medium; no open design decisions. The user chose the scrolling bar at UTERM-041's review gate.
+**Triaged:** 2026-11-22 (still reproduces in a package test; fix stays with UTERM-041 M1)
+**Validation:** found by reading the code during the UTERM-041 review. Reproduced by a package test on 2026-11-22, not in the running app.
 **Found:** 2026-11-21, during the UTERM-041 review
 
 ## Observed
@@ -37,3 +39,18 @@ sits where the control badge does. See `20261121-terminal-tab-bar-ignores-contro
 ## Workarounds
 
 Switch tabs from the keyboard or the palette. The selected tab's content shows, though its tab stays out of view.
+
+## Investigation notes
+
+Triage run on 2026-11-22.
+
+- The code is unchanged. `AppletTabBar.layout` still clamps each tab to at least `narrowest` (80 points). It places
+  tabs and the new-tab button past `bounds.width` and has no scroll view.
+- A scratch package test built an `AppletTabBar` 500 points wide with 8 titles and the new-tab control shown. After
+  layout, 2 of the 9 subviews had `frame.maxX` past 500, and the farthest reached 658. The test was deleted after the
+  run.
+- No regression test for this bug exists. `AppletTabTests` covers tab IDs only.
+- UTERM-041 is accepted and M1 is not started. The fix is one change with the marker slot and the badge reach in
+  `20261121-terminal-tab-bar-ignores-control-badge.md`. Landing it here would split that change.
+- The fix touches `AppletTabBar.swift` and its callers in the terminal and browser. Its regression test should put 8
+  tabs in a 500-point bar, then check that the selected tab ends inside the visible range.

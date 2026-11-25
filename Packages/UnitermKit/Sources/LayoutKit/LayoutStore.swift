@@ -69,8 +69,10 @@ public enum LaunchResult: Sendable, Equatable {
 /// crashing while it restores. Kept-aside files are numbered, so none replaces another, and only
 /// the newest few stay.
 ///
-/// All calls are meant for one thread at a time.
-public final class LayoutStore {
+/// Calls are meant for one thread at a time. The one exception is `save`, which the layout saver
+/// runs on a background queue. The lock only changes in `acquire` and `release`. The owner calls
+/// `release` after the saver has finished its writes, so a save never sees the lock change.
+public final class LayoutStore: @unchecked Sendable {
   public let directory: URL
 
   private let policy: LayoutStorePolicy

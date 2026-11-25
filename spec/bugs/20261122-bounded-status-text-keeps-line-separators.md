@@ -1,8 +1,9 @@
 # Bounded status text keeps U+2028 and U+2029 line breaks
 
-**Status:** open
-**Validation:** not confirmed; found by reading the code during the UTERM-048 review, not reproduced in the app.
+**Status:** fixed 2026-11-22
+**Estimate:** small; no open design decisions.
 **Found:** 2026-11-22, during the UTERM-048 review
+**Fixed:** 2026-11-22
 
 ## Observed
 
@@ -23,3 +24,8 @@ Call `StatusText.bounded("a\u{2028}b", maximumBytes: 64)`. Expected: `a b`. Susp
 ## Fix
 
 Treat `.lineSeparator` and `.paragraphSeparator` like `.control`, and replace them with a space.
+
+## Fix note
+
+`StatusText.bounded` now replaces `.lineSeparator` and `.paragraphSeparator` scalars with a space, as it does for
+control characters. `StatusTextTests` reproduced the bug first and covers the fix.

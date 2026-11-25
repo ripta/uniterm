@@ -5,8 +5,8 @@ import Foundation
 ///
 /// A declaration can come from a program, so its arguments and values are shown escaped. Each
 /// argument and each value gets a line of its own. A control character, a bidi override or
-/// isolate, or a directional mark shows as its escape, so no input can start a new line or
-/// reorder what the user reads before allowing it.
+/// isolate, a directional mark, or a zero-width scalar shows as its escape, so no input can start
+/// a new line, reorder what the user reads, or hide in it before allowing it.
 enum LaunchApprovalText {
   static func request(_ launch: ExecLaunch, pane: String) -> String {
     var lines = ["Run:"]
@@ -66,9 +66,14 @@ enum LaunchApprovalText {
     return result
   }
 
-  /// C0 and C1 controls, DEL, the line and paragraph separators, directional marks, and the
-  /// bidi embeddings, overrides, and isolates.
+  /// C0 and C1 controls, DEL, the line and paragraph separators, directional marks, the bidi
+  /// embeddings, overrides, and isolates, and every default-ignorable scalar such as a zero-width
+  /// space. The user must see each byte, so a joiner in an emoji sequence shows as an escape too.
   private static func isUnsafe(_ scalar: Unicode.Scalar) -> Bool {
+    if scalar.properties.isDefaultIgnorableCodePoint {
+      return true
+    }
+
     switch scalar.value {
     case 0x00...0x1F, 0x7F...0x9F, 0x200E, 0x200F, 0x2028, 0x2029, 0x202A...0x202E, 0x2066...0x2069,
       0x061C:

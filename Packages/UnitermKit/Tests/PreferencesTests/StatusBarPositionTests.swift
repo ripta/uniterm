@@ -1,3 +1,4 @@
+import DefaultsTestSupport
 import Foundation
 import XCTest
 
@@ -5,16 +6,16 @@ import XCTest
 
 @MainActor
 final class StatusBarPositionTests: XCTestCase {
-  private var suiteName = ""
+  private var testDefaults: TestDefaults!
   private var defaults: UserDefaults!
 
   override func setUp() async throws {
-    suiteName = "uniterm.tests.\(UUID().uuidString)"
-    defaults = UserDefaults(suiteName: suiteName)
+    testDefaults = TestDefaults()
+    defaults = testDefaults.defaults
   }
 
   override func tearDown() async throws {
-    defaults.removePersistentDomain(forName: suiteName)
+    testDefaults.discard()
   }
 
   /// Catches a default that moves the bar away from where it has always sat.
@@ -59,7 +60,7 @@ final class StatusBarPositionTests: XCTestCase {
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-    process.arguments = ["write", suiteName, "statusBarPosition", "-string", "sideways"]
+    process.arguments = ["write", testDefaults.suite, "statusBarPosition", "-string", "sideways"]
     try process.run()
     process.waitUntilExit()
     XCTAssertEqual(process.terminationStatus, 0)

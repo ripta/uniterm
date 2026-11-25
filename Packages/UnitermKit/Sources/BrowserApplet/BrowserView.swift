@@ -57,14 +57,13 @@ final class BrowserView: NSView, NSTextFieldDelegate {
   private static let horizontalPadding: CGFloat = 8
   private let controls = NSStackView()
   private var tabBarHeight: NSLayoutConstraint?
-  private var tabBarTrailing: NSLayoutConstraint?
   private var controlsTrailing: NSLayoutConstraint?
 
   /// How far in from the trailing edge the host's control badge reaches. The tab bar and the
   /// toolbar's trailing button stay clear of it.
   var badgeReach: CGFloat = 0 {
     didSet {
-      tabBarTrailing?.constant = -badgeReach
+      tabBar.trailingReserve = badgeReach
       controlsTrailing?.constant = -(Self.horizontalPadding + badgeReach)
     }
   }
@@ -143,17 +142,15 @@ final class BrowserView: NSView, NSTextFieldDelegate {
     let height = tabBar.heightAnchor.constraint(equalToConstant: 0)
     tabBarHeight = height
 
-    let barTrailing = tabBar.trailingAnchor.constraint(equalTo: trailingAnchor)
     let controlsEdge = controls.trailingAnchor.constraint(
       equalTo: toolbar.trailingAnchor, constant: -Self.horizontalPadding)
 
-    tabBarTrailing = barTrailing
     controlsTrailing = controlsEdge
 
     NSLayoutConstraint.activate([
       tabBar.topAnchor.constraint(equalTo: topAnchor),
       tabBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-      barTrailing,
+      tabBar.trailingAnchor.constraint(equalTo: trailingAnchor),
       height,
       toolbar.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
       toolbar.leadingAnchor.constraint(equalTo: leadingAnchor),
