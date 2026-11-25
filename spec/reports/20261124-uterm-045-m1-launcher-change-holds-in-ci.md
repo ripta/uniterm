@@ -131,6 +131,16 @@ bar. No ADR candidate is recorded.
 `proposals.py freeze` reported one hunk this run did not make, with origin `other`. It is a References line for
 ADR-14 in UTERM-004, the implemented control-and-trust proposal. It is left for the user.
 
+### Row and final review
+
+The run had one row, so the row review and the final review covered the same range, from the base to "Close a flaky
+entry only after enough clean CI runs". One reviewer pass served as both, with an ADR review. It found no findings.
+It confirmed the figures agree in all six places they appear. It also confirmed that a later session knows to count
+12 more clean runs from 2026-11-25T04:05Z. The `adr-impact` agent again found no ADR touched and no candidate.
+
+M1 is not finished, so the row stays in `queue.md`, and UTERM-045 stays `accepted`. A later `/work-queue` run picks the
+row up again once CI has run the launcher test enough times. That run recounts from the cutoff above.
+
 ### Recount method
 
 Each `app` job log of the `ci` workflow in `space-armada/uniterm`, from 2026-11-14 on, was fetched with `gh api`. The
