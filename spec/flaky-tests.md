@@ -443,11 +443,17 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
 
 - Seen: 2026-11-25, once, in the first CI `app` run of #109. That PR changes map, viewer, browser, and terminal tab
   code, and no palette or shortcut code.
-- Evidence: `ShortcutOwnershipUITests.swift:132` failed: the palette never went away after Escape. The Escape event
-  took 5 s to reach idle, from 1.80 s to 6.89 s into the test, and the palette was still there when the wait ran out at
-  17 s. The whole class then passed 7 of 7 locally on the same head, and the rerun of the CI `app` job passed.
-- Suspected cause: the app stalled on the runner while it handled Escape, so the dismissal never landed. Not
-  confirmed.
+- Evidence: `ShortcutOwnershipUITests.swift:132` failed: the palette never went away after Escape. Synthesizing
+  Escape took 5.09 s, from 1.80 s to 6.89 s into the test, where Cmd-T took 0.16 s. Its check for interrupting
+  elements took 0.25 s, against about 0.03 s for every other event in the test. After the stall, the palette check
+  answered every 0.57 s until the wait ran out at 17 s, so the app was not hung. The whole class then passed 7 of 7
+  locally on the same head, the rerun of the CI `app` job passed, and the test passed 50 of 50 alone locally with
+  `-run-tests-until-failure`.
+- Suspected cause: XCTest gave up on the Escape event after 5 s, and the event never reached the app. Escape closes the
+  palette only through its field's `cancelOperation`, and the palette sets that field as first responder before
+  Cmd-T returns. This matches the stalled single events in the `CommandPaletteUITests`, `StatusBarUITests`, and
+  `WindowsUITests` entries, where the event's effect also never came. Not confirmed: the app does not record which
+  keys it received.
 - Status: unresolved.
 
 ## Fixed
