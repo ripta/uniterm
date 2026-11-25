@@ -61,6 +61,7 @@
 | [UTERM-057](UTERM-057-package-read-by-invoker.md) | Who reads a controller package's files when `uniterm run` starts it | accepted |
 | [UTERM-058](UTERM-058-palette-tab-work-on-the-main-thread.md) | The palette lists and filters tabs without main-thread work that grows with the tab count | accepted |
 | [UTERM-059](UTERM-059-terminal-change-check-never-encodes-every-tab.md) | The terminal's change check never encodes every tab | accepted |
+| [UTERM-060](UTERM-060-record-the-input-a-ui-test-app-receives.md) | A debug build records the input a UI test's app receives, so a failure says whether its event arrived | draft |
 
 ## Dependency Graph
 
