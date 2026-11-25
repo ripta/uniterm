@@ -28,3 +28,4 @@
 | UTERM-038 M1 | None | Follows ADR-12's retraction into the map's set-region and the browser's layout seed |
 | UTERM-022 M1-M4 | UTERM-021 M4 | M3's question-only session builds on UTERM-021 M4's strict mode, begins, and command authentication |
 | UTERM-022 M5 | UTERM-022 M4 | The user's own checks in the running app, split from M2 and M4 |
+| UTERM-045 M1 | None | Split from M2: M1 writes the closing rule and recounts the launcher test's clean CI runs. M3 carries the count |
