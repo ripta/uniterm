@@ -142,6 +142,7 @@ final class FormPanelView: NSView {
     }
 
     buildButtons()
+    linkKeyViews()
 
     styler.add { [weak self] palette in
       self?.layer?.backgroundColor = palette[.base].cgColor
@@ -162,6 +163,7 @@ final class FormPanelView: NSView {
     widget.onChange = { [weak self] answer in self?.session.set(answer, for: question.id) }
     widget.onReturn = { [weak self] in self?.pressPrimary() }
     widget.onEscape = { [weak self] in self?.pressCancel() }
+    widget.onKeyViewsChange = { [weak self] in self?.linkKeyViews() }
 
     widgets[question.id] = widget
 
@@ -243,6 +245,20 @@ final class FormPanelView: NSView {
 
       buttons.append((definition, view))
       buttonBar.addArrangedSubview(view)
+    }
+  }
+
+  /// Chains the Tab stops: every question's in reading order, then the buttons, then back to the
+  /// first. Tab stays inside the form, as it does in a dialog, so no key falls to the pane behind.
+  ///
+  /// The window's own guess at an order depends on the machine's keyboard setting, so the form
+  /// never leaves it to AppKit.
+  private func linkKeyViews() {
+    let stops =
+      spec.questions.flatMap { widgets[$0.id]?.keyViews ?? [] } + buttons.map { $0.view as NSView }
+
+    for (view, next) in zip(stops, stops.dropFirst() + stops.prefix(1)) {
+      view.nextKeyView = next
     }
   }
 

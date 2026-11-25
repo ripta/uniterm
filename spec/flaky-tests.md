@@ -36,6 +36,31 @@ fixed ones.
 
 ## Potential
 
+### `QuestionsUITests.testEveryAnswerTypeReturnsItsShape`
+
+Fixed by: "Wait for the form's focus before typing its answers" and "Give the Questions form its own Tab order"
+
+- Seen: 2026-11-22, in the first CI `app` run of the PR that added it.
+- Evidence: `QuestionsUITests.swift:266` read a null name where "Ada" was typed.
+- Cause: the test typed as soon as the name field appeared. The form takes the keyboard a moment later, so the keys
+  went nowhere.
+- Fix: the test waits for the field to hold the keyboard before typing. `testANewFormTakesKeysAtOnce` still types
+  as soon as the field appears, since how soon keys arrive is its claim. It shares the exposure.
+- Seen again: 2026-11-25, in both CI `app` runs on the script tab numbers PR, and in 5 of 10 local runs on its head.
+  The same 10 runs without that change all passed. That change sits nowhere on the test's path, so it shifts the
+  timing only.
+- Evidence: `QuestionsUITests.swift:278` read a null name. The whole outcome was null. A person watching a failing run
+  saw "7-0.5" in the count field, an "Enter a number." error, and a disabled OK.
+- Cause: the ratio field starts below the form's visible part. XCUITest scrolls the form, then clicks where it found
+  the field. The click landed before the scroll took effect, so the ratio's keys went to the count field. OK stayed
+  disabled, and no outcome came. The null name only reflected the missing outcome.
+- Fix: the test moves between fields with Tab, and the form chains its own Tab order. Without that chain, Tab went
+  wherever AppKit's default sent it, which changes with the Keyboard Navigation setting. With the fix, the script tab
+  numbers PR's head passed 30 of 30 local runs.
+- Checked: an event-logging monitor, a screenshot after typing, and the debug input recorder each hid the failure or
+  changed it. Only a person watching an uninstrumented run saw the real one.
+- Status: the count of clean CI runs is not yet set for this window.
+
 ### `DataViewerUITests.testEditFindExistsAndIsDisabledWithNoFile`
 
 - Seen: 2026-11-07, once in a full suite.
@@ -485,17 +510,6 @@ Fixed by: "Stop sampling other threads' CPU after a stopped pattern match"
   worker that an earlier test left with work.
 - Fix: the test drops the CPU windows. It keeps the timed-out outcome and the bounded return, which are what it proves.
   The fix's CI run and the palette PR's run after it both passed.
-
-### `QuestionsUITests.testEveryAnswerTypeReturnsItsShape`
-
-Fixed by: "Wait for the form's focus before typing its answers"
-
-- Seen: 2026-11-22, in the first CI `app` run of the PR that added it.
-- Evidence: `QuestionsUITests.swift:266` read a null name where "Ada" was typed.
-- Cause: the test typed as soon as the name field appeared. The form takes the keyboard a moment later, so the keys
-  went nowhere.
-- Fix: the test waits for the field to hold the keyboard before typing. `testANewFormTakesKeysAtOnce` still types
-  as soon as the field appears, since how soon keys arrive is its claim. It shares the exposure.
 
 ### `MapViewerUITests.testCommandORoutesAGeoJSONFileToTheMapAndShowsItsPins`
 
