@@ -1,0 +1,480 @@
+# UTERM-060: Keep the Evidence of Where a UI Test's Input Went
+
+**Status:** accepted
+**Created:** 2026-11-25
+**Updated:** 2026-11-25
+
+## Impacts
+
+- UTERM-044 — its per-shard upload ("Each failing shard uploads its results under its own name") must carry each
+  shard's kept log, from "Where the log is taken". Its shard target runs through the same `scripts/run-ui-tests.sh`.
+- UTERM-045 — "Which call sites move" left keys out. "Whether clicks need settling" waits on a click flake with
+  evidence about the click. The kept confirmation log is evidence for both. Neither decision changes here.
+
+## Summary
+
+XCTest's `testmanagerd` already logs, for every synthesized event, whether the app confirmed processing it. A failed UI
+run keeps that log, and each failing test carries a timeline of which app was frontmost while it ran. A failure then
+says which of its events uniterm never confirmed, and whether another app was in front at the time. A debug build of
+uniterm then also records the input it receives, so a failure says whether an unconfirmed event ever reached uniterm.
+
+## Motivation
+
+Four open entries in `spec/flaky-tests.md` share one pattern. A single synthesized event takes 5 or 20 s to send, and
+its effect never comes:
+
+- `ShortcutOwnershipUITests.testARemapOntoAnAppletKeyWinsAndWarnsOnce`: Escape took 5.09 s to synthesize, and the
+  palette never closed. The palette check answered every 0.57 s for the next 11 s, so the app was not hung.
+- `CommandPaletteUITests.testAProgramTitleShowsNeutralizedAsATab`: Cmd-K took 20 s, and the palette never showed.
+- `StatusBarUITests.testClickingTheDismissControlClearsAnError`: a click took until 8.20 s, and the message stayed.
+- `WindowsUITests.testCommandNOpensASecondWindowWithItsOwnShell`: Cmd-N took 20 s, and no second window opened.
+
+XCTest sends a key as numbered events: Command down, the key down, the key up, Command up. After each one,
+`testmanagerd` waits up to 5 s for an accessibility notification from the target app saying it processed that event.
+It logs the outcome of each:
+
+```text
+Event 809: Key 55 down - waiting for confirmation...
+Event 809: confirmed by AX Notification
+Event 810: Key 17 down - waiting for confirmation...
+Event 810: confirmed implicitly by confirmation delay timeout of 5.00s
+```
+
+The stall lengths are multiples of that 5 s window: one unconfirmed event for Escape and the click, four for Cmd-K and
+Cmd-N. A local run on 2026-11-25 reproduced the shortcut test's failure at Cmd-T: Command down and Command up were
+confirmed within milliseconds, and the T down and T up each waited out the 5 s. The palette never opened. During those
+10 s, uniterm's process sent `testmanagerd` other event notifications about every 8 ms, so its event loop was running.
+
+CI keeps none of this. UI runs set `-collect-test-diagnostics never` (`Makefile:48`), and the runner's system log goes
+with the runner. So every sighting ends "not confirmed", and no fix can be chosen.
+
+The confirmation log separates an event uniterm confirmed from one it did not. It cannot say why an event went
+unconfirmed. Another app in front at that moment is one cause the test runner can see for itself, through the system's
+app activation notifications. What uniterm did with an event it confirmed is a question only uniterm can answer, and
+none of the four sightings has reached it yet.
+
+## Design Decisions (Settled)
+
+### Keep testmanagerd's event confirmations for a failed run
+
+Decision: when a UI run fails, its `testmanagerd` log for the run is kept, in CI and in local runs. A CI runner's copy
+goes up with the uploaded test results.
+
+Rationale: the log is XCTest's own receipt for each event, written by the same daemon that times the stall. It covers
+every synthesized key, click, and scroll in every test, with no product code. A CI runner is gone when the job ends, so
+the log must be taken inside the job.
+
+### Record which app was frontmost
+
+Decision: the UI test base class records which app was frontmost while each test ran, and a failing test carries that
+record.
+
+Rationale: an unconfirmed event may have gone to another app. The test runner sees activation changes itself, so this
+needs no product code.
+
+### Record inside the app, after the kept log
+
+Decision: a debug build records the input uniterm receives, when a UI test asks it to. It is built after the kept log
+and the frontmost record, and checked first against the local reproduction. A release build compiles none of it.
+Amended 2026-11-25; see Decision Log.
+
+Rationale: the kept log and the frontmost record settle whether uniterm confirmed an event and whether another app
+had the keys. They need no product code, so they come first. An in-app record answers what they leave. For an event
+left unconfirmed while uniterm was in front, a record of it says it arrived and posted no confirmation, and no record
+says it never arrived. For a confirmed event, it says what uniterm did with it. The local Cmd-T failure is the first
+case, and it reproduces in about 3 of 9 runs, so the record can be checked now rather than on a later CI sighting.
+
+### Evidence, not a fix
+
+Decision: nothing here changes a wait, sends an event, or retries anything. No test waits on the kept log, the
+frontmost record, or the in-app record. They are read after a failure.
+
+Rationale: the flaky-test rule forbids retries, longer timeouts, and weaker assertions. UTERM-045 settled that a
+settle never waits on the outcome of the event it comes before.
+
+### Where the log is taken
+
+Original question and candidates:
+
+- **The UI run script, after a failed run.** `scripts/run-ui-tests.sh` wraps every UI run, local and CI, and already
+  acts on a failed exit. It notes the run's start time, and after a failure runs `log show` from then on for
+  `testmanagerd`. It writes the result beside the run's test results. CI's upload step gains its path. The log covers
+  the whole run, so a reader finds the failing test's events by time.
+- **The base class, at a failing test's teardown.** It runs `log show` for that test's time window and attaches the
+  result to the test. The UI test runner is sandboxed (`com.apple.security.app-sandbox` in its signed entitlements),
+  and a sandboxed process cannot read the system log, so this needs a helper outside the sandbox that the runner asks.
+  An addition: a new component and a new trust boundary. A test the execution-time allowance ends never reaches
+  teardown, so it carries nothing.
+- **A CI step on failure.** The workflow runs `log show` after a failed `app` job and uploads it. Local runs keep
+  nothing.
+- **The script streams the log for the whole run.** It runs `log stream` beside the tests and keeps the output only on
+  failure. That catches lines below the default level, which a later `log show` misses. A stream can drop messages in
+  a burst, and the event lines are at the default level, which the system keeps.
+- **Turn Xcode's failure diagnostics back on.** `-collect-test-diagnostics on-failure` puts Xcode's own logs in the
+  result bundle. UI runs turned it off because those diagnostics attached screen recordings that could hold the
+  user's whole display (`spec/reports/20261110-uterm-004-m1-m6-control-and-trust.md:599-604`). Turning it on undoes that.
+
+Decision: the UI run script, after a failed run. Converged in 1 pass.
+
+Rationale: one place covers local and CI runs. The script runs after `xcodebuild` exits, so it also covers a test the
+execution-time allowance ended, which no in-test path reaches. It needs no new component and no change to the runner's
+sandbox. The event lines are at the default level, which `log show` finds after the fact, so a stream adds a child
+process for no line the log keeps. Turning diagnostics back on brings back the screen recordings that UI runs removed.
+
+### What the kept log holds
+
+Original question and candidates:
+
+- **Every testmanagerd line for the window, plus the runner's frontmost lines.** Nothing filtered out, and the
+  frontmost record from "How the frontmost record is taken" on the same clock.
+- **Every testmanagerd line for the window.** Nothing filtered out. A local run of one test wrote about 2,800 lines
+  in 20 s, most of them event notifications that carry no source.
+- **Only the event and gesture lines.** The lines that name a synthesized gesture, each numbered event, and its
+  outcome. Leaves undone: it drops the sourceless notifications, which are the only evidence that uniterm's event loop
+  kept running through a stall. It also matches Apple's unstated wording, so a new outcome wording is lost silently.
+- **The event and gesture lines, plus uniterm's own window and front-process lines.** As above, plus the AppKit lines
+  from uniterm's process. Leaves undone: the same loss of liveness evidence. Whether those AppKit lines are kept at the
+  default level is not known.
+
+Decision: every `testmanagerd` line for the window, plus the runner's frontmost lines. Converged in 1 pass.
+
+Rationale: the Motivation's own Cmd-T analysis used the sourceless notifications to show that uniterm's event loop
+ran. A filter loses them, and once a CI runner is gone they are gone for that failure. A filter also matches text
+Apple does not promise, so a new wording would drop lines with no sign. Unfiltered, the frontmost lines and the event
+lines read on one clock.
+
+### How the frontmost record is taken
+
+Original question and candidates:
+
+- **Activation notifications, logged and attached.** The base class records the frontmost app when a test starts, then
+  observes the shared workspace's app activation until the test ends. It writes each change to the unified log at the
+  default level through `Logger`, and a failing test also attaches the record.
+- **Activation notifications, attached.** As above, but the record lives only in the test's attachment. Leaves undone:
+  a test the execution-time allowance ends never reaches teardown, so it carries nothing.
+- **A poll.** The base class reads the frontmost app on a timer. Leaves undone: a change between two reads is missed.
+- **Lines from the system log.** The kept log adds the front-process lines from the window server's clients. No test
+  code changes. Whether those lines name every activation is not known, so a reader cannot trust a gap in them.
+
+Decision: activation notifications, logged and attached. Converged in 1 pass.
+
+Rationale: notifications see every change a poll can miss. Writing each change to the unified log puts it in the kept
+log on the event lines' clock, so a test the allowance ended still leaves its record. The sandboxed runner already
+reads the shared workspace in `focusReport` (`UITests/UnitermUITestCase.swift:324`), so this needs no new access.
+
+### How a reader ties a failing test to its events
+
+Original question and candidates:
+
+- **The runner marks each test and each issue in the log.** The base class writes the test's name to the unified log
+  at its start and end, and writes each issue it records with the test's name, through the same `Logger` as the
+  frontmost lines. The kept log then brackets each test by name, and marks where its failing assertion fired, on the
+  event lines' clock.
+- **The runner marks each test in the log.** As above, without the issue marks. Leaves undone: the bracket spans the
+  whole test, up to the 120 s allowance, so a reader still hunts for the failing step inside it.
+- **No change.** The uploaded `.xcresult` already holds each test's and each activity's start time. Leaves undone: a
+  reader aligns two artifacts in two time formats, UTC and local, every time, through `xcresulttool`, whose output
+  Apple does not promise.
+- **Times.** The failure carries the test's start and end wall-clock times. Leaves undone: it duplicates what the
+  `.xcresult` holds, and a test the allowance ended never writes its end time.
+- **The gesture names.** `testmanagerd` names each gesture as the test's step does, such as `Type 't' key with
+  modifiers '⌘' (0x10)`. Leaves undone: it narrows a window but cannot find one, and it assumes Apple keeps the two
+  wordings in step.
+- **A report that does the matching.** A script lists, for each failing test, its gestures and each event's outcome.
+  An addition: a parser of two formats Apple does not promise, against "What the kept log holds", which rejected a
+  filter for that reason.
+
+Decision: the runner marks each test and each issue in the log. Converged in 1 pass.
+
+Rationale: the kept log then reads on its own, on one clock, and shows which events came just before the failure. A
+test the allowance ended keeps its start mark, and the next test's start closes its bracket. It reuses the `Logger`
+the frontmost record already writes, and adds no component. `ExecPaneUITests` already overrides `record(_:)` and calls
+super (`UITests/ExecPaneUITests.swift:210-213`), so the base class's override reaches every test.
+
+### Where the app records an event
+
+Original question and candidates:
+
+- **A listen-only event tap on uniterm's process, plus a `nextEvent` override.** `CGEvent.tapCreateForPid` sees each
+  event where the window server hands it to uniterm, before AppKit queues it. An `NSApplication`
+  `nextEvent(matching:until:inMode:dequeue:)` override records each event AppKit takes off its queue with `dequeue`
+  true, including those a control's tracking loop pulls. Together they tell an event never delivered from one
+  delivered and never dequeued, and from one dequeued.
+- **A `nextEvent` override alone.** Leaves undone: an event that arrived and was never dequeued, as in a nested loop
+  whose mask skips it or a discard, has no record and reads as never arrived.
+- **A `sendEvent` override.** Leaves undone: events a nested tracking loop pulls, such as an `NSButton`'s mouse up,
+  which is the event a click's stall waits on.
+- **An `NSEvent` local monitor.** Leaves undone: the same events as `sendEvent`, and two existing monitors can consume
+  events before it in an undocumented order (`Packages/UnitermKit/Sources/QuestionsApplet/FieldWidget+Pickers.swift:64`,
+  `Packages/UnitermKit/Sources/MapViewerApplet/MapViewerView.swift:225`).
+
+Decision: the event tap plus the `nextEvent` override, when a listen-only tap on uniterm's own process works without a
+new privacy grant. When it needs one, the `nextEvent` override alone. M2 checks the grant first, on a machine where the
+debug build holds none.
+
+Rationale: only the pair answers "did the event reach uniterm" and "did AppKit take it" separately. A tap the system
+disables for answering slowly receives a disabled-by-timeout event, so the record logs that gap rather than hiding it.
+A grant would add a setup step on every developer machine and the CI image, and a machine without it would lose the
+tap's records quietly, so a grant rules the tap out. Without the tap, the one gap left is an event delivered and never
+dequeued. In the Cmd-T stall, uniterm's event loop processed other events every 8 ms, so that gap is the least likely
+explanation there. A probe on this machine showed `-[NSApplication run]` goes through the public `nextEvent` override.
+The app starts from `@main` with `NSApplication.shared` (`App/Main.swift:12`), and the debug environment is read
+before it, so the subclass is made shared only when a UI test asks.
+
+### What each record holds
+
+Original question and candidates: the times, the event's identity, whether to record characters, the keyboard holder,
+the mouse position and hit view, and non-input records for activation and key-window changes.
+
+Decision: each record holds:
+
+- The time the app took the event, and the event's own `timestamp`
+- The event type and its source, telling XCTest's events from a person's
+- For an event XCTest sent, its key code and modifier flags. For a key event from any other source, or one whose
+  source cannot be read, no key code and no flags
+- No characters
+- The key window's number, and the first responder's class and accessibility identifier, read before the event acts
+- For every mouse event, its window number and its location in that window. For presses, releases, and wheels only,
+  the identifier of the view it hits
+- A record when one of uniterm's windows becomes key or stops being key
+
+Rationale: the two times separate a main thread that held an event from an event that arrived late. The source tells
+a person's stray pointer, a logged cause, from XCTest's moves. XCTest synthesizes keys by key code, so the key code and
+flags name the key, and characters would add no evidence while putting typed text in the system log store, readable by
+an administrator for days. A person's key codes and flags would recover their typed text just as fully on a known
+layout, such as a password typed while the test window held the keyboard, so a person's key events keep only their
+type, source, and times. That still shows a person typed during the test. Amended 2026-11-25; see Decision Log. A hit test on every move would add main-thread work at about 100 moves a second, which
+could change the timing the record exists to observe. When another app's non-activating panel takes the keyboard,
+uniterm stays active, so the frontmost record misses it, but uniterm's key window should lose key status. The
+key-window record catches that. App activation needs no in-app record, since the runner's frontmost record logs it on
+the same clock.
+
+### Which events the app records
+
+Original question and candidates:
+
+- **Keys, buttons, scroll, plus moves and drags.** Key-downs, key-ups, modifier flag changes, presses and releases of
+  every mouse button, scroll wheels, pointer moves, and drags.
+- **Keys and mouse.** As above, without moves and drags. Leaves undone: hover gestures, drag paths, and a person's
+  stray pointer go unrecorded.
+- **Keys only.** Leaves undone: the `StatusBarUITests` click sighting and the `LauncherUITests` wheel flake.
+- **Every event type.** Adds app-defined, system-defined, and periodic events, which serve no named sighting and add
+  volume to the one log the evidence lives in.
+
+Decision: keys, buttons, scroll, plus moves and drags. Converged in 2 passes.
+
+Rationale: XCTest's log shows that a synthesized click sends its moves and its mouse down without waiting, and waits
+only on the mouse up, so a click's stall is its mouse up. Moves still matter. The suite hovers, drags, and right-clicks
+at 14 sites, and a person's stray pointer caused the `TerminalLinkUITests` entry, where 179 pointer lines arrived
+during a 2 s idle wait (`spec/flaky-tests.md:115`). Moves reach the app only over views that accept them, such as the
+terminal surface's tracking area, so a gap in the move records is not proof that nothing moved. The volume is bounded
+by XCTest's moves plus any physical pointer, about 100 a second.
+
+### Where the app writes the record
+
+Original question and candidates:
+
+- **The unified log, through `Logger` at the default level.** Each record lands in the kept log beside the event
+  lines, on one clock, inside the test's marks. It survives the app being killed.
+- **Both the unified log and a file.** Leaves undone: nothing the log misses, except a run that cannot read the system
+  log, where XCTest's event lines are missing too and the records cannot be matched to unconfirmed events.
+- **A file the base class names.** Leaves undone: a test the execution-time allowance ended never reaches teardown, so
+  the hang cases carry nothing.
+
+Decision: the unified log, through `Logger` at the default level. Converged in 1 pass.
+
+Rationale: it shares one artifact and one clock with the event lines, the test marks, and the frontmost lines, and it
+survives a kill and a test the allowance ended, for the same reasons the earlier decisions chose the log. The app
+already logs under the `dev.uniterm.app` subsystem (`App/AppDelegate.swift:28`). The kept log selects only the
+recording category in the test app's process, so lines from a developer's own running uniterm never land in an
+artifact. Marked-public fields sit in the system log store for days, readable by an administrator, which bears on
+whether a record holds typed characters.
+
+## Design Decisions (Open)
+
+None.
+
+## Risks
+
+- **testmanagerd's log changes with an Xcode release** — likelihood: medium, impact: medium. Mitigation: the lines are
+  Apple's own, with no stated format. M1 records the Xcode version whose lines it reads. A run whose kept log has no
+  event lines at all says so, rather than leaving an empty file that reads as "nothing happened".
+- **A CI runner hides the log** — likelihood: low, impact: high. Mitigation: the lines are at the default level, which
+  the system keeps. M1 checks that a failed CI run's kept log holds them.
+- **Unconfirmed does not mean undelivered** — likelihood: medium, impact: medium. Accepted: a confirmation that never
+  came can come from an event that arrived and posted no notification. The kept log says which events went
+  unconfirmed, not why. The frontmost record narrows it, and M2's in-app record answers the rest.
+- **The frontmost record misses a window that takes the keyboard without activating its app** — likelihood: low,
+  impact: medium. Accepted: a system authentication prompt or a non-activating panel can take keys while the frontmost
+  app stays uniterm. The record then reads "uniterm frontmost" for a key that went elsewhere. A sighting whose record
+  shows uniterm frontmost throughout leaves that cause open, and the entry says so. Amended 2026-11-25: uniterm's
+  key-window record should catch it, which M2 checks.
+- **A run cannot read the system log** — likelihood: low, impact: high. Mitigation: a CI image or a local account
+  whose user cannot read the log store would fail `log show` on every failure, and every sighting would again end "not
+  confirmed". M1's check that a failed `log show` says so detects it at the first failure. The in-app record is lost
+  then too, which is accepted: without XCTest's event lines, its records could not be matched to unconfirmed events.
+- **Keeping the log adds time to a failed CI job** — likelihood: medium, impact: high. Mitigation: a `log show` over a
+  full suite's window runs after the tests, inside the job's time limit. If it pushed the job past the limit, the job
+  would be cancelled, and its upload, the test results included, would never run. M1 measures it on a failed full
+  suite, and requires the results and the kept log to upload even when the job reaches its limit.
+- **Recording changes the timing it measures** — likelihood: medium, impact: medium. Mitigation: pointer moves arrive
+  at about 100 a second. In the `TerminalLinkUITests` entry, only the pointer moves and the debug logging differed
+  between a failing and a passing run. M2 measures the
+  cost over a burst that includes moves, skips the hit test for moves, and requires the Cmd-T stall to still reproduce
+  at about its usual rate with recording on.
+- **The event tap watches a person's input on a developer's machine** — likelihood: low, impact: medium. Mitigation:
+  it is listen-only, in a debug build, and only when a UI test launch asks. A person's key events keep no key code and
+  no flags, so typed text never reaches the log.
+- **UTERM-044 lands its per-shard upload without the kept log** — likelihood: medium, impact: low. Mitigation: UTERM-044
+  M1 is ahead of this proposal in the queue, and its checks name only the test results. M1 here carries the check that
+  each failing shard's upload also carries its kept log.
+- **The evidence shows a cause that no test-side change can fix** — likelihood: medium, impact: low. Accepted: knowing
+  that the runner drops events is itself the finding. It moves the entries from "suspected" to a known cause, and the
+  next step is a report to Apple or a change to how CI runs.
+
+## Milestones
+
+### M1: A failed run keeps where its input went
+
+**Status:** NOT STARTED
+
+- A failed local UI run keeps the `testmanagerd` log for the run, and says where in its output
+- A failed CI `app` job uploads the same log with its test results
+- A kept log shows each numbered event of a failing test's gestures, and whether it was confirmed or timed out
+- A failing test carries the record of which app was frontmost while it ran
+- A passing run keeps nothing new
+- A kept log with no event lines says so
+- The Xcode version whose lines M1 reads is recorded in the As built block
+- The kept log's window starts after the run holds the screen lock, so another run's lines never fall inside it
+- A `log show` that fails says so in the run's output and in the kept file. The Accessibility hint still prints, and
+  the script still exits 1
+- `log show`'s time on a failed full suite is measured and recorded in the As built block. The test results and the
+  kept log still upload when the job reaches its time limit
+- The kept log's path is passed to the script explicitly, not parsed from the `xcodebuild` command, and CI's upload
+  path matches it. A later failed run replaces an earlier run's kept log rather than piling up beside it
+- Each frontmost change is logged within 100 ms even while XCTest waits on a synthesized event's confirmation. When
+  the runner's main thread is blocked through that wait, the observer runs off the main thread
+- The kept file is compressed or sized so the upload stays within the artifact limits
+- The frontmost record holds the frontmost app when the test started, not only the changes
+- Each frontmost change's logged time is within 100 ms of the change, shown by activating another app during a
+  synthesized key
+- The runner's frontmost lines are at the default level, and the kept log's predicate includes them
+- The test marks, issue marks, and frontmost lines show their names in `log show` output, not `<private>`
+- Every test's start mark comes before its first gesture, and its end mark after its app ends, including in a
+  subclass that overrides setup or teardown
+- A kept log holds each failing test's start mark and its issue marks. A test the execution-time allowance ended
+  carries its start mark and the next test's start, and the As built block records whether it also gets an issue mark
+- When UTERM-044's shards land, each failing shard's upload carries its own kept log
+
+### M2: The app records the input it receives
+
+**Status:** NOT STARTED
+
+- Whether a listen-only event tap on uniterm's own process works without a new privacy grant is checked first, on a
+  machine where the debug build holds none, and recorded in the As built block. The capture point follows "Where the
+  app records an event"
+- A debug build asked by a UI test records each event "Which events the app records" names. A debug build not asked,
+  and every release build, records nothing
+- When the tap is used, a tap the system disabled leaves a record saying so, and a run of the suite shows none
+- A tap that could not be created leaves a record saying so, so its missing records never read as "never delivered".
+  The grant check also runs on the CI image's macOS
+- Probing for the tap leaves no system privacy prompt on screen during a UI run
+- The tap's callback runs off the main thread, shown by its records keeping their times while the main thread is
+  blocked
+- The base class asks every UI test launch to record, beside its other `UNITERM_` variables
+- The recording category's fields show their values in `log show` output, not `<private>`
+- A person's key event leaves a record with no key code and no flags, and an XCTest key event leaves one with both
+- Another app's non-activating panel taking the keyboard leaves a key-window record in uniterm, or the As built block
+  records that it does not
+- A UI test sends a key, a modified key, a click on a plain view, a click on an `NSButton`, a right-click, a wheel, a
+  hover, and a press-and-drag, and finds the records for each. Each event the capture point misses is named in the As
+  built block, with which views see pointer moves
+- With recording on, the shortcut test still reproduces the Cmd-T stall at about its usual rate, and the burst-cost
+  measurement includes pointer moves
+- The kept log selects only the recording category in the test app's process
+- A run of the shortcut test alone that reproduces the Cmd-T stall shows, for the unconfirmed T events, whether
+  uniterm recorded them. The result goes in the As built block and in the test's flaky entry
+- The cost of recording over a burst of synthesized events is measured with and without it, and recorded in the As
+  built block
+
+### M3: The flaky entries say what to look for
+
+**Status:** NOT STARTED
+
+- The `spec/flaky-tests.md` Rule section says that a sighting of a stalled event records which of its events went
+  unconfirmed, and which app was frontmost
+- Each of the four entries this proposal names says what its next sighting records
+- The help for `make test-app` and `make test-app-select` names where a failed run's log lands
+
+## Decision Log
+
+- 2026-11-25: Drafted from the `ShortcutOwnershipUITests` sighting on #109, as an in-app receipt log. The user chose keys
+  and mouse over keys only, and the log on every failure over only the waits that call `focusReport`.
+- 2026-11-25: The draft's first critique pass added the system-log question, the `nextEvent` capture point, the
+  activation and click-location fields, the event-timestamp matching candidate, and the off-main-thread writes. It
+  dropped the release-binary check, since CI builds no release configuration and the other debug hooks rely on
+  `#if DEBUG` alone.
+- 2026-11-25: The re-check converged. The test-side marker candidate stayed open, and the event-source field was marked
+  as an addition.
+- 2026-11-25: Review start: 2 milestones, 4 settled decisions, 5 risks, no Live after lines or row gates, no
+  out-of-scope statements; the proposal at "Draft UTERM-060 to record the input a UI test's app receives". The user
+  asked for a review of the open questions.
+- 2026-11-25: The review found that `testmanagerd` already logs each synthesized event's confirmation or its 5 s
+  timeout, and that CI discards that log. The user retargeted the proposal: keep that log for a failed run, record which
+  app was frontmost, and defer recording inside the app. This dropped the settled decisions "A debug-only hook",
+  "Keys and mouse", and "Every failure gets the log", and the five open questions about the in-app record. The draft
+  read: "A debug build of uniterm records each key and mouse event it receives to a file that a UI test names."
+- 2026-11-25: A local run reproduced the shortcut test's failure at Cmd-T, 3 stalls in 9 iterations. The T key's down
+  and up each timed out at 5 s while Command down and up were confirmed, and uniterm's event loop kept sending other
+  event notifications. The Motivation records it.
+- 2026-11-25: The UI run script keeps the log after a failed run, since it covers local and CI runs and a test the time
+  allowance ended. Failure diagnostics stay off, for the screen recordings they attach. (autonomous)
+- 2026-11-25: The kept log holds every `testmanagerd` line, plus the runner's frontmost lines, since a filter drops the
+  evidence that uniterm's event loop ran. (autonomous)
+- 2026-11-25: The base class records the frontmost app at test start and each activation change, logged at the default
+  level and attached on failure, so a test the time allowance ended still leaves its record. (autonomous)
+- 2026-11-25: The runner marks each test's start and end and each recorded issue in the unified log, so the kept log
+  reads on its own and shows the events just before a failure. (autonomous)
+- 2026-11-25: Correction of fact in "Defer recording inside the app". The rationale read: "in all four sightings the
+  stall durations point to unconfirmed events. An in-app record sees nothing of an event that never reached uniterm,
+  so it adds evidence only once an event was confirmed." That was wrong, and contradicted the risk "Unconfirmed does
+  not mean undelivered": for an unconfirmed event, a record of it says it arrived, and no record says it did not. The
+  Revisit line gained a second trigger, an event left unconfirmed while uniterm was in front, which the local Cmd-T
+  reproduction matches in shape. The deferral stands. (autonomous)
+- 2026-11-25: The coherence pass routed five checks to M1: the upload on a timed-out job, the kept log's explicit
+  path, the frontmost observer under a blocked main thread, the allowance-ended test's marks, and the earlier redaction
+  and placement checks. It added the risk that a run cannot read the system log. (autonomous)
+- 2026-11-25: The deferral of the in-app record gained a revisit trigger on each of two review passes, and the user was
+  asked about it. The user chose to build the record now, after the kept log, in a new M2, and dropped the deferral.
+  "Defer recording inside the app" read: "Decision: deferred. The app records nothing about the input it receives."
+  The flaky-entry milestone became M3. Four mechanism questions reopened. (addition)
+- 2026-11-25: The app records keys, every mouse button, scroll, pointer moves, and drags, since the suite hovers,
+  drags, and right-clicks and a stray pointer already caused one logged flake.
+- 2026-11-25: The app writes each record to the unified log through `Logger`, in its own category, selected by the
+  test app's process, so it shares the kept log's clock and survives a kill.
+- 2026-11-25: The app records at a listen-only event tap on its own process plus a `nextEvent` override, or at the
+  override alone when the tap needs a new privacy grant, which M2 checks first. Only the pair separates an event never
+  delivered from one never dequeued.
+- 2026-11-25: Each record holds two times, the event's type, key code, flags, and source, the keyboard holder, the
+  mouse window and location, and a hit view for presses, releases, and wheels. It holds no characters, and adds
+  key-window changes, which catch a non-activating panel taking the keyboard. The user said these needed no question
+  once the most correct option was clear.
+- 2026-11-25: The final re-check found that a person's key codes and flags recover their typed text as fully as
+  characters would. "What each record holds" read: "The event type, key code, modifier flags, and its source, telling
+  XCTest's events from a person's". Key codes and flags are now kept only for XCTest's events. This was the proposal
+  loop's third pass, so the fix was not re-checked. (autonomous)
+- 2026-11-25: The risk review added three risks: recording changes the timing it measures, the event tap watches a
+  person's input, and UTERM-044 lands its per-shard upload without the kept log. It corrected the CI time-limit
+  risk's mitigation to the upload M1 requires. No risk is high in both likelihood and impact. (autonomous)
+- 2026-11-25: M3 keeps its change to the `spec/flaky-tests.md` Rule section and its help text for `make test-app` and
+  `make test-app-select`, so every sighting reads the kept evidence and a local failure says where it lands.
+  (addition)
+- 2026-11-25: Review gate: kept all. The final re-check's privacy fix to "What each record holds" was not re-checked.
+  No decision earns an ADR.
+- 2026-11-25: Accepted.
+
+## References
+
+- `spec/flaky-tests.md`: the four entries named in Motivation
+- UTERM-045: Settle input before UI tests send it
+- `scripts/run-ui-tests.sh`: the wrapper every UI run goes through
