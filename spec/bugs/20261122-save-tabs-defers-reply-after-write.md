@@ -2,7 +2,14 @@
 
 **Status:** open
 **Found:** 2026-11-22, during the UTERM-054 review
-**Validation:** confirmed by reading the specs; the command is not built, since UTERM-049 M3 is NOT STARTED
+**Estimate:** small; one non-trivial design decision. UTERM-049 is a spec-only edit, since M3 is NOT STARTED and no code
+exists. The three options under "Fix" differ in what a program can observe, and none is clearly best. Reply at once with
+a handle follows ADR-11 to the letter but adds a result slot, a read command, and a completion event. Replying at
+confirm hides write failures from the program. Treating the panel as a read needs a guarantee about the write that the
+spec does not give. The user picks.
+**Triage note (2026-11-23):** still reproduces. The decision text in UTERM-049 ("The reply is the path written, or a
+cancel") and M3's reply check ("The reply names the path written, or says the user cancelled") are unchanged. ADR-11
+is accepted and unchanged.
 
 ## Observed
 

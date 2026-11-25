@@ -3,6 +3,11 @@
 **Status:** open
 **Found:** 2026-11-22, during the UTERM-055 critique
 **Validation:** confirmed by reading the code
+**Estimate:** small; one non-trivial decision. The two passages (the Version skew rationale near line 129 and the
+Risks entry near line 258 of the UTERM-028 proposal) are a plain correction of fact. The risk's rating is a judgment
+call: keep likelihood low with a new reason, or raise it because map viewer and image viewer exec drivers may be
+deployed. Line 154 ("No exec-capable applet has an opted-in body today") is about opted-in bodies, not about accepting
+drivers, and was not checked for staleness.
 
 ## Observed
 

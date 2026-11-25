@@ -3,6 +3,7 @@
 **Status:** open
 **Found:** 2026-11-22, during the UTERM-055 critique
 **Validation:** confirmed against UTERM-054's text and the image viewer's contract; capture is not built yet
+**Estimate:** large; non-trivial design decisions. The fix is a rule in an accepted, unbuilt proposal, not code. Decisions: (1) whether capture refuses for files the caller may not read, or the capture power's review text states that it reads whatever a pane shows and the image viewer's contract narrows to paths and listings; (2) which applets the rule covers (image, text, data, and the map viewer's file layer); (3) for the map viewer, whether a refusal applies or the file layer is left out of the image. Each option is equally correct and changes behavior a program can observe, so none is trivial. No code to touch yet; the change lands in UTERM-054 and UTERM-055 text first.
 
 ## Observed
 

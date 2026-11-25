@@ -1,6 +1,7 @@
 # A driver that sends its browser reads in a burst is ended
 
 **Status:** open
+**Estimate:** medium, and not startable. The hold is built by UTERM-055's unbuilt milestone, and UTERM-019 M3 (not started) is the code that would use it. The non-trivial decision is whether UTERM-019 adopts the hold, refuses with `busy`, or documents a bound. UTERM-019 states no chunk size or count for the exec wire. Needs a design call recorded in UTERM-019 before M3.
 **Found:** 2026-11-22, during the UTERM-055 review
 **Validation:** confirmed against UTERM-019's text and the exec transport; UTERM-019 M3 is not built yet
 

@@ -1,6 +1,12 @@
 # A tab's close button may close a neighboring tab after the tabs shift
 
 **Status:** open
+**Estimate:** medium; owned by an accepted proposal, with a non-trivial decision. The bar's close contract is
+`onClose: (Int)` in `AppletTabBar.swift`, wired from three applets, and tabs carry no stable ID for the bar to hand
+back. A stand-alone fix must choose the ID type and where it lives. It also changes the shared select contract, or
+leaves select and close inconsistent. UTERM-053 already settles this in its windowed-bar decision, where items carry the
+tab's ID and the applet resolves it through its ID map. That decision lists this bug as fixed by it. A separate fix
+would be rebuilt by that milestone.
 **Validation:** not confirmed; traced by reading the code during the UTERM-053 review. Not reproduced.
 
 ## Observed

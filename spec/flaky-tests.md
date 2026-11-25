@@ -211,6 +211,10 @@ fixed ones.
 - Seen again: 2026-11-21, in a local `make ci` of a landing batch that changes no script host code.
   `ScriptLintCommandTests.testUsageMistakesAreRefusedWithTheUsageStatus` ran past its 120 s limit, with the sample
   again showing `ScriptFixtures.finish` blocked in `waitUntilExit`. A rerun of the same tree passed its package tests.
+- Seen again: 2026-11-23, in a local `make test-package` during a bug sweep, checking a fix that changes only WindowKit
+  and an AppletKit doc comment. `ScriptHostAPITests.testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem` ran
+  past its 120 s limit. The sample again showed `ScriptFixtures.finish` blocked in `waitUntilExit`. `ScriptHostTests`
+  does not depend on WindowKit. The full rerun of the same tree passed all 3214 tests.
 - Status: unresolved. UTERM-046 proposes replacing `waitUntilExit` in `finish`.
 
 ### `ExecPaneUITests.testARestoredExecPaneRunsOnlyAfterValuesAndApprovalThenDrivesTheApplet`
@@ -404,27 +408,27 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
   moved within the two-second bound. The test then passed 20 of 20 alone on the same tree.
 - Status: unresolved. The earlier fix does not cover this sighting.
 
+## Fixed
+
 ### `PatternTests.testACatastrophicPatternStopsAtItsLimitAndStopsUsingCPU`
 
-Reopened. The earlier fix, "Check the stopped pattern match's CPU per thread", does not cover the sightings below.
+Fixed by: "Stop sampling other threads' CPU after a stopped pattern match"
 
 - Seen: 2026-11-22, in the first CI `package` run of the PR that added it.
 - Evidence: the process used 0.43 s of CPU in the half second after the match stopped, against a 0.15 s bound. The
   match runs on the calling thread and ends when the search returns.
 - Cause: the check read the whole process's CPU. The package suite runs in one process, and an earlier test's work
   can still be running there.
-- Fix: the test samples each thread's CPU over a window before the search and an equal one after. It fails when one
-  thread uses half the window more than its baseline. A thread left spinning after the check failed it at 0.50 s.
-  The fixed test passed 10 of 10 alone.
+- First fix: "Check the stopped pattern match's CPU per thread". The test sampled each thread's CPU over a window
+  before the search and an equal one after. It failed when one thread used half the window more than its baseline.
 - Seen again: 2026-11-23, twice in CI `package` runs of the PR for the palette's Control-K and Control-A keys, on one
   head. One thread used 0.27 s and then 0.43 s over its baseline, against the 0.25 s bound. That PR touches only the
   palette's key route. A `workflow_dispatch` run on main passed the same job once.
-- Suspected cause: `search` matches on the calling thread and returns when the match stops. The calling thread then
-  sleeps through the after window. So the after window can only see other threads, such as a background worker that
-  an earlier test left with work. A worker that is idle in the baseline and busy after fails the test.
-- Status: unresolved. The check measures threads the match never runs on.
-
-## Fixed
+- Cause of the second failure: `search` matches on the calling thread and returns when the match stops. The calling
+  thread then sleeps through the after window. So that window could only see other threads, such as a background
+  worker that an earlier test left with work.
+- Fix: the test drops the CPU windows. It keeps the timed-out outcome and the bounded return, which are what it proves.
+  The fix's CI run and the palette PR's run after it both passed.
 
 ### `QuestionsUITests.testEveryAnswerTypeReturnsItsShape`
 

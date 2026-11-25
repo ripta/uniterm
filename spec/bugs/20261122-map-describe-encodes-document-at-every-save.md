@@ -3,6 +3,12 @@
 **Status:** open
 **Found:** 2026-11-22, during the design review of UTERM-052
 **Validation:** mechanism confirmed by reading the code. Cost not measured.
+**Estimate:** small; no open design decisions. Blocked on UTERM-052 milestone M2, which adds the contract call for the
+saved description alone. That milestone is not started, so no fix can land yet. Once it lands, the map overrides the
+call to return its payload description without `undoOnlyPart()`. The files are
+`Packages/UnitermKit/Sources/MapViewerApplet/MapViewerApplet.swift` and a test in the map applet's test target that
+shows the saved description equals `describe()` without its undo part, and that a dirty pane's saved description
+builds no undo part. The choice to override per applet instead of splitting the contract is settled in UTERM-052.
 
 ## Observed
 

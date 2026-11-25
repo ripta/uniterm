@@ -1,6 +1,7 @@
 # Quitting loses unsaved work when nothing is running
 
 **Status:** open
+**Estimate:** small; no open design decisions. Traced the code path, did not run it. The fix adds a `WindowSet` property that is true when anything runs or holds unsaved work, and the delegate guard reads it. `AppDelegate` is in the app target, so no package test can drive it. The regression test sets the property on `WindowSet` in `UnsavedWorkTests`, with an idle terminal and an unsaved map.
 **Validation:** not confirmed in the app; found by reading the code during the UTERM-050 review. The trace is direct.
 
 ## Observed

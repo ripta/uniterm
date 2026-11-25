@@ -2,6 +2,10 @@
 
 **Status:** open
 **Found:** 2026-11-22, during the UTERM-046 review
+**Estimate:** small; one non-trivial design decision. Whether to only correct the comment or also add a sample guard
+is a judgment call. A guard that rejects processor time above the core count would also reject a truly spinning
+process under a nanosecond release, which reads 41.7 cores. So the guard trades a missed spin for a false kill, and
+its threshold is a second choice. Touches `WebContentProcess.swift` and the watch's tests only.
 
 ## Observed
 
@@ -16,8 +20,10 @@ above about 1.2% of a core would cross the watch's half-core share and be signal
 reported time by `numer / denom` of the Mach timebase (`WebContentProcess.swift:110`). On Apple silicon that is 125/3.
 Nanoseconds put through that conversion grow by 41.7, they do not shrink.
 
-**Validation:** traced by reading the code and the Apple silicon timebase. No release has made this change, so it was
-not reproduced.
+Confirmed by tracing the code and the Apple silicon timebase. No release has made this change, so it was not
+reproduced. The 2026-11-23 triage re-read `WebContentProcess.swift` and confirmed the comment at lines 93-95 and
+the conversion at line 113. `ClosedProcessWatch.expired` kills when `used >= busyShare * elapsed`, so an inflated
+reading signals an unused process.
 
 ## Fix
 
