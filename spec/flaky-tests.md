@@ -449,11 +449,19 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
   answered every 0.57 s until the wait ran out at 17 s, so the app was not hung. The whole class then passed 7 of 7
   locally on the same head, the rerun of the CI `app` job passed, and the test passed 50 of 50 alone locally with
   `-run-tests-until-failure`.
-- Suspected cause: XCTest gave up on the Escape event after 5 s, and the event never reached the app. Escape closes the
-  palette only through its field's `cancelOperation`, and the palette sets that field as first responder before
-  Cmd-T returns. This matches the stalled single events in the `CommandPaletteUITests`, `StatusBarUITests`, and
-  `WindowsUITests` entries, where the event's effect also never came. Not confirmed: the app does not record which
-  keys it received.
+- Seen again: 2026-11-25, in a local run of the test alone with `-test-iterations 15 -run-tests-until-failure`. Three
+  of nine iterations stalled. Escape took 15.2 s in the sixth and Cmd-T 5.1 s in the seventh, and both passed. In the
+  ninth, Cmd-T took 10.1 s and the test failed at `ShortcutOwnershipUITests.swift:129`, "the remapped key did not
+  win". `testmanagerd`'s log for the ninth shows Command down and Command up confirmed within milliseconds, and the T
+  down and T up each "confirmed implicitly by confirmation delay timeout of 5.00s". uniterm sent `testmanagerd` other
+  event notifications about every 8 ms through those 10 s, so its event loop ran. In the seventh, Command down timed
+  out and the T events were confirmed.
+- Suspected cause: XCTest sends each key as numbered events and waits up to 5 s for the app to confirm each one. Each
+  stall is that window running out for one or more events, and the effect of an unconfirmed key never came. Escape
+  closes the palette only through its field's `cancelOperation`, and the palette sets that field as first responder
+  before Cmd-T returns. This matches the stalled single events in the `CommandPaletteUITests`, `StatusBarUITests`, and
+  `WindowsUITests` entries. Not confirmed: why the events went unconfirmed. CI keeps no `testmanagerd` log, and
+  UTERM-060 proposes keeping it.
 - Status: unresolved.
 
 ## Fixed
