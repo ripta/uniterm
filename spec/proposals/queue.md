@@ -3,7 +3,6 @@
 | Milestones | Depends on | Note |
 |------------|------------|------|
 | UTERM-044 M2 | UTERM-044 M1 | Needs a pushed CI run of M1's shards |
-| UTERM-060 M1-M3 | UTERM-044 M1 | M1's kept-log upload builds on UTERM-044 M1's per-shard jobs, so it is built once |
 | UTERM-060 M4 | UTERM-060 M3 | Needs a pushed CI run of M1's kept-log upload |
 | UTERM-060 M5 | UTERM-060 M2 | Needs a Cmd-T stall with recording on. It advances only when the shortcut test stalls |
 | UTERM-046 M1-M2 | UTERM-045 M1 | Its flaky-entry checks close by the rule UTERM-045 M1 writes into `spec/flaky-tests.md` |
