@@ -472,6 +472,7 @@ None.
 - 2026-11-25: Review gate: kept all. The final re-check's privacy fix to "What each record holds" was not re-checked.
   No decision earns an ADR.
 - 2026-11-25: Accepted.
+- 2026-11-25: Scheduled as UTERM-060 M1-M3 in queue.md, after UTERM-044 M1.
 
 ## References
 
