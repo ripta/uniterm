@@ -17,6 +17,36 @@ A second `/work-queue` run on 2026-11-24 recounted from the first run's cutoff. 
 M1 stays `IN PROGRESS`. The Rule section, the help text, and the recount are committed. The recount's count is not
 met: 22 of 33 clean CI runs, so 11 remain. M2 stays gated on that count, and its row is not in this run.
 
+### Third run: `next 7`, started 2026-11-25
+
+A third `/work-queue` run took seven rows. This report carries that run's state, and the other rows' reports link
+here. The run's base is the snip after "Schedule UTERM-060 M1-M3 after UTERM-044 M1". The branch already sat on
+`upstream/main`, so no rebase ran. No redundant snip was found.
+
+| Row | Milestone | Run status | Report |
+|---|---|---|---|
+| UTERM-045 M1 | M1: The closing rule and the launcher recount | DONE | this report |
+| UTERM-044 M1 | M1: Shard the app job | QUEUED | |
+| UTERM-060 M1-M3 | M1: A failed run keeps where its input went | QUEUED | |
+| | M2: The app records the input it receives | QUEUED | |
+| | M3: The flaky entries say what to look for | QUEUED | |
+| UTERM-046 M1-M2 | M1: The browser hung-process tests | QUEUED | |
+| | M2: The script fixture's helper exit | QUEUED | |
+| UTERM-046 M4 | M4: The product's kills signal by audit token | QUEUED | |
+| UTERM-046 M3 | M3: Every test signal goes through a guarded sender | QUEUED | |
+| UTERM-045 M2 | M2: One way to send a wheel | HELD | |
+
+UTERM-045 M2 is held. M1's clean count moves to a new milestone, UTERM-045 M3, and M2 waits on it. The count stood at
+22 of 33 through 2026-11-25T05:48Z.
+
+The run's plan splits each CI-only check into a new milestone by amendment, since the run never pushes:
+
+- UTERM-045 M3 takes M1's clean count.
+- UTERM-044 M2 takes the shards' proof on a real runner and their measured lengths.
+- UTERM-060 M4 takes M1's CI upload checks and M2's grant check on the CI image.
+
+Step 0 removed one uncommitted `.cg.yaml` rule that named an absolute `/Users/...` path. The file then matched `HEAD`.
+
 ## Commits
 
 1. "Close a flaky entry only after enough clean CI runs", which carries M1's work, its review fix, and this report.
@@ -178,3 +208,58 @@ used the method in "Recount method" above.
   left for the user.
 - Row and final review: the run has one milestone commit, so this review served as the row and final review. It
   included an ADR review. The row stays in `queue.md`, and UTERM-045 stays `accepted`, since M1's count is not met.
+
+## Third run: recount and split
+
+### Recount
+
+Three `ci` runs finished after the 2026-11-25T05:48Z cutoff:
+
+- Run 259, job 139008918170, finished 2026-11-25T05:49:46Z. It skipped the `app` job, so it is neutral.
+- Run 260, job 139036554483, finished 2026-11-25T07:27:48Z. The launcher test passed. The tested tree was a PR merge,
+  and both parents hold "Settle the pointer on the launcher list before the scroll test's wheels".
+- Run 261, job 139049211184, finished 2026-11-25T07:29:27Z. It skipped the `app` job, so it is neutral.
+
+The streak is 23 clean runs through 2026-11-25T07:27:48Z, so 10 remain. The new cutoff is job 139036554483. No run
+spans UTERM-044's landing, since that row has not landed. The recount used the method in "Recount method".
+
+### Split
+
+The count is not met, so the plan's split ran. M1 is renamed "The closing rule and the launcher recount", and it is
+`DONE`. Its title read "The launcher change holds in CI". The new M3, "The launcher count is met", takes four bullets
+verbatim:
+
+- the consecutive-clean-runs bullet, with its 33-run figure and its 2026-11-24 amendment marker
+- the launcher entry staying under Potential
+- the CI failure with the pointer inside the list
+- the CI failure with a timed-out settle
+
+M1 keeps every bullet about the Rule section, the help text, and how the recount reads attempts. M3 is `IN PROGRESS`,
+since each recount advances it. The Risks entry "The launcher hypothesis is wrong" now names M3's count. The queue
+gains a `UTERM-045 M3` row before `UTERM-045 M2`, and M2 now depends on `UTERM-045 M3, UTERM-044 M1`.
+
+Best guess: the split itself. The approved plan rests it on the `/work-queue` rule that a check the run cannot perform,
+when the proposal makes it a condition of `DONE`, splits into a new milestone by amendment. If it is wrong, M1 goes
+back to `IN PROGRESS` with M3's bullets. UTERM-046 M1-M2 would then wait on M1 again.
+
+### Checks
+
+- `make check` and `make lint` pass.
+- `proposals.py check` reports only that the finished M1 row moves to `history.md`. The row's finishing commit does
+  that.
+- No Swift changed, so no package or UI tests ran.
+
+### Review
+
+- The reviewer found that M1's queue note still said "its count gates M2". Fixed.
+- The coordinator sent back five more findings, each checked against the diff, and all were fixed:
+  - The moved count bullet had dropped ", as built," and its 2026-11-24 marker. It is now verbatim.
+  - The split entry misquoted a moved bullet. It now names the bullets without quoting them.
+  - M1's title named the work M3 now holds, so M1 was renamed.
+  - M3 sat before M2, so it moved after M2.
+  - M1's As built block carried an amendment marker it does not need. The marker was removed.
+- `adr-impact` found that no ADR covers this diff, and no uncovered decision.
+- `proposals.py freeze` reported the same UTERM-004 ADR-14 References hunk as the earlier runs, with origin `other`.
+  It is left for the user.
+- Row review: the row has one milestone commit, which the milestone review covered, so that pass served as the row
+  review.
