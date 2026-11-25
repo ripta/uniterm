@@ -28,7 +28,7 @@ here. The run's base is the snip after "Schedule UTERM-060 M1-M3 after UTERM-044
 | UTERM-045 M1 | M1: The closing rule and the launcher recount | DONE | this report |
 | UTERM-044 M1 | M1: Shard the app job | DONE | [report](20261125-uterm-044-m1-shard-the-app-job.md) |
 | UTERM-060 M1-M3 | M1: A failed run keeps where its input went | DONE | [report](20261125-uterm-060-m1-m3-keep-input-evidence.md) |
-| | M2: The app records the input it receives | QUEUED | |
+| | M2: The app records the input it receives | DONE | [report](20261125-uterm-060-m1-m3-keep-input-evidence.md) |
 | | M3: The flaky entries say what to look for | QUEUED | |
 | UTERM-046 M1-M2 | M1: The browser hung-process tests | QUEUED | |
 | | M2: The script fixture's helper exit | QUEUED | |
@@ -44,6 +44,9 @@ The run's plan splits each CI-only check into a new milestone by amendment, sinc
 - UTERM-045 M3 takes M1's clean count.
 - UTERM-044 M2 takes the shards' proof on a real runner and their measured lengths.
 - UTERM-060 M4 takes M1's CI upload checks and M2's grant check on the CI image.
+
+UTERM-060 M2 split once more. No run of the shortcut test stalled, so its two Cmd-T checks moved to a new UTERM-060 M5,
+"The recorder sees a Cmd-T stall". M5 waits for a stall with recording on.
 
 Step 0 removed one uncommitted `.cg.yaml` rule that named an absolute `/Users/...` path. The file then matched `HEAD`.
 

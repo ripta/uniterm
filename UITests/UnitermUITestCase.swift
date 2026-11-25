@@ -37,8 +37,7 @@ class UnitermUITestCase: XCTestCase {
   private var activationObserver: NSObjectProtocol?
 
   /// The frontmost record for attaching to failing tests.
-  private var frontmostRecord: [String] = []
-  private let frontmostRecordQueue = DispatchQueue(label: "dev.uniterm.uitests.frontmost-record")
+  private let frontmostRecord = FrontmostRecord()
 
   override func invokeTest() {
     // Log the test's start before setup and its end after teardown, so the marks bracket every
@@ -67,7 +66,7 @@ class UnitermUITestCase: XCTestCase {
   override func tearDownWithError() throws {
     stopFrontmostTracking()
 
-    let record = frontmostRecordQueue.sync { frontmostRecord }
+    let record = frontmostRecord.lines
     if !record.isEmpty {
       let attachment = XCTAttachment(string: record.joined(separator: "\n"))
       attachment.name = "frontmost-record.txt"
@@ -109,9 +108,7 @@ class UnitermUITestCase: XCTestCase {
     let initial = Self.describeFrontmost()
     frontmostLogger.log("At test start: \(initial, privacy: .public)")
 
-    frontmostRecordQueue.sync {
-      frontmostRecord = ["At test start: \(initial)"]
-    }
+    frontmostRecord.start(with: "At test start: \(initial)")
 
     let queue = OperationQueue()
     queue.qualityOfService = .userInitiated
@@ -120,18 +117,12 @@ class UnitermUITestCase: XCTestCase {
       forName: NSWorkspace.didActivateApplicationNotification,
       object: nil,
       queue: queue
-    ) { [frontmostLogger, frontmostRecordQueue, weak self] notification in
-      guard self != nil else { return }
-
-      let frontmost = Self.describeFrontmost()
+    ) { [frontmostLogger, frontmostRecord] notification in
+      let frontmost = UnitermUITestCase.describeFrontmost()
       let timestamp = Date().timeIntervalSinceReferenceDate
-      let record = "Activation at \(timestamp): \(frontmost)"
 
       frontmostLogger.log("Activation: \(frontmost, privacy: .public)")
-
-      frontmostRecordQueue.sync {
-        self?.frontmostRecord.append(record)
-      }
+      frontmostRecord.append("Activation at \(timestamp): \(frontmost)")
     }
   }
 
@@ -202,6 +193,10 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UT_SCRATCH"] = scratch
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""
     app.launchEnvironment["UNITERM_PLACE_NAMES"] = "off"
+
+    // The app records each input event it takes to the unified log, so a failed run's kept log
+    // shows which of XCTest's events reached it.
+    app.launchEnvironment["UNITERM_RECORD_INPUT"] = "1"
 
     usesRealOpenPanel = realOpenPanel
     if !realOpenPanel { app.launchEnvironment["UNITERM_OPEN_PANEL_ANSWER"] = openPanelAnswer }
@@ -544,5 +539,23 @@ class UnitermUITestCase: XCTestCase {
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 20), "the panel never closed")
+  }
+}
+
+/// The lines of a test's frontmost record. The activation observer appends from its own queue while
+/// the test reads the lines at teardown on the main thread, so every access goes through one serial
+/// queue. That queue is what makes the unchecked conformance safe.
+private final class FrontmostRecord: @unchecked Sendable {
+  private let queue = DispatchQueue(label: "dev.uniterm.uitests.frontmost-record")
+  private var stored: [String] = []
+
+  var lines: [String] { queue.sync { stored } }
+
+  func start(with line: String) {
+    queue.sync { stored = [line] }
+  }
+
+  func append(_ line: String) {
+    queue.sync { stored.append(line) }
   }
 }

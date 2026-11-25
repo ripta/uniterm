@@ -9,6 +9,10 @@ enum UnitermMain {
       $0.key.hasPrefix("UNITERM_")
     }
 
+    #if DEBUG
+      RecordingApplication.startIfAsked(by: debugEnvironment)
+    #endif
+
     let application = NSApplication.shared
     let delegate = AppDelegate(debugEnvironment: debugEnvironment)
     application.delegate = delegate

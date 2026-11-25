@@ -485,6 +485,12 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
   down and T up each "confirmed implicitly by confirmation delay timeout of 5.00s". uniterm sent `testmanagerd` other
   event notifications about every 8 ms through those 10 s, so its event loop ran. In the seventh, Command down timed
   out and the T events were confirmed.
+- Reruns: 2026-11-25, 45 local runs of the test alone on the same machine, with UTERM-060's in-app record built. None
+  stalled, and `testmanagerd` logged no confirmation timeout. With recording on, 15 ran as separate
+  `make test-app-select` runs and 15 as one run of `-test-iterations 15`. With recording off, 15 more ran as one run of
+  `-test-iterations 15`. The earlier run stalled in 3 of 9 iterations, so the rate fell in both conditions. These runs
+  cannot show whether recording changes it. No T event went unconfirmed, so whether uniterm records one stays open for
+  the next sighting.
 - Suspected cause: XCTest sends each key as numbered events and waits up to 5 s for the app to confirm each one. Each
   stall is that window running out for one or more events, and the effect of an unconfirmed key never came. Escape
   closes the palette only through its field's `cancelOperation`, and the palette sets that field as first responder

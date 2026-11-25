@@ -235,7 +235,7 @@ Decision: each record holds:
 - No characters
 - The key window's number, and the first responder's class and accessibility identifier, read before the event acts
 - For every mouse event, its window number and its location in that window. For presses, releases, and wheels only,
-  the identifier of the view it hits
+  the class of the view it hits, and that view's accessibility identifier when it has one
 - A record when one of uniterm's windows becomes key or stops being key
 
 Rationale: the two times separate a main thread that held an event from an event that arrived late. The source tells
@@ -266,9 +266,11 @@ Decision: keys, buttons, scroll, plus moves and drags. Converged in 2 passes.
 Rationale: XCTest's log shows that a synthesized click sends its moves and its mouse down without waiting, and waits
 only on the mouse up, so a click's stall is its mouse up. Moves still matter. The suite hovers, drags, and right-clicks
 at 14 sites, and a person's stray pointer caused the `TerminalLinkUITests` entry, where 179 pointer lines arrived
-during a 2 s idle wait (`spec/flaky-tests.md:115`). Moves reach the app only over views that accept them, such as the
-terminal surface's tracking area, so a gap in the move records is not proof that nothing moved. The volume is bounded
-by XCTest's moves plus any physical pointer, about 100 a second.
+during a 2 s idle wait (`spec/flaky-tests.md:115`). While uniterm was active, M2 recorded moves over every view it
+tried, in a main window and in Settings, though only the terminal surface asks for them. AppKit merges queued moves,
+so about half of XCTest's moves leave a record of their own, and a gap in the move records is not proof that nothing
+moved. Amended 2026-11-25; see Decision Log. The volume is bounded by XCTest's moves plus any physical pointer, about
+100 a second.
 
 ### Where the app writes the record
 
@@ -320,12 +322,13 @@ None.
   see Decision Log.
 - **Recording changes the timing it measures** — likelihood: medium, impact: medium. Mitigation: pointer moves arrive
   at about 100 a second. In the `TerminalLinkUITests` entry, only the pointer moves and the debug logging differed
-  between a failing and a passing run. M2 measures the
-  cost over a burst that includes moves, skips the hit test for moves, and requires the Cmd-T stall to still reproduce
-  at about its usual rate with recording on.
-- **The event tap watches a person's input on a developer's machine** — likelihood: low, impact: medium. Mitigation:
-  it is listen-only, in a debug build, and only when a UI test launch asks. A person's key events keep no key code and
-  no flags, so typed text never reaches the log.
+  between a failing and a passing run. M2 measures the cost over a burst that includes moves, and skips the hit test
+  for moves. M5 requires the Cmd-T stall to still reproduce at about its usual rate with recording on. Amended
+  2026-11-25; see Decision Log.
+- **The recorder watches a person's input on a developer's machine** — likelihood: low, impact: medium. Mitigation:
+  no tap ships, since M2's probe found that it needs a privacy grant. The `nextEvent` override records only in a debug
+  build, and only when a UI test launch asks. A person's key events keep no key code and no flags, so typed text never
+  reaches the log. Amended 2026-11-25; see Decision Log.
 - **UTERM-044 lands its per-shard upload without the kept log** — likelihood: medium, impact: low. Mitigation: UTERM-044
   M1 is ahead of this proposal in the queue, and its checks name only the test results. M4 here carries the check that
   each failing shard's upload also carries its kept log. Amended 2026-11-25; see Decision Log.
@@ -399,7 +402,9 @@ None.
 
 ### M2: The app records the input it receives
 
-**Status:** NOT STARTED
+**Status:** DONE
+
+Amended 2026-11-25; see Decision Log.
 
 - Whether a listen-only event tap on uniterm's own process works without a new privacy grant is checked first, on a
   machine where the debug build holds none, and recorded in the As built block. The capture point follows "Where the
@@ -407,11 +412,11 @@ None.
 - A debug build asked by a UI test records each event "Which events the app records" names. A debug build not asked,
   and every release build, records nothing
 - When the tap is used, a tap the system disabled leaves a record saying so, and a run of the suite shows none
-- A tap that could not be created leaves a record saying so, so its missing records never read as "never delivered".
-  The grant check also runs on the CI image's macOS
-- Probing for the tap leaves no system privacy prompt on screen during a UI run
-- The tap's callback runs off the main thread, shown by its records keeping their times while the main thread is
-  blocked
+- When the tap is used, a tap that could not be created leaves a record saying so, so its missing records never read
+  as "never delivered"
+- When the tap is used, probing for it leaves no system privacy prompt on screen during a UI run
+- When the tap is used, its callback runs off the main thread, shown by its records keeping their times while the main
+  thread is blocked
 - The base class asks every UI test launch to record, beside its other `UNITERM_` variables
 - The recording category's fields show their values in `log show` output, not `<private>`
 - A person's key event leaves a record with no key code and no flags, and an XCTest key event leaves one with both
@@ -420,13 +425,100 @@ None.
 - A UI test sends a key, a modified key, a click on a plain view, a click on an `NSButton`, a right-click, a wheel, a
   hover, and a press-and-drag, and finds the records for each. Each event the capture point misses is named in the As
   built block, with which views see pointer moves
-- With recording on, the shortcut test still reproduces the Cmd-T stall at about its usual rate, and the burst-cost
-  measurement includes pointer moves
+- The burst-cost measurement includes pointer moves
 - The kept log selects only the recording category in the test app's process
-- A run of the shortcut test alone that reproduces the Cmd-T stall shows, for the unconfirmed T events, whether
-  uniterm recorded them. The result goes in the As built block and in the test's flaky entry
 - The cost of recording over a burst of synthesized events is measured with and without it, and recorded in the As
   built block
+
+**As built:**
+
+Times are local, on 2026-11-25.
+
+- The grant probe ran inside the debug app, as pid 10469 at 09:33:39. `CGPreflightListenEventAccess()` returned 0.
+  `CGEvent.tapCreateForPid` with `.listenOnly` on the app's own pid returned nil. tccd logged two
+  `kTCCServiceListenEvent` checks for `dev.uniterm.app`, both "Auth Right: Unknown (None)" with preflight true. So the
+  tap needs the ListenEvent grant, and the probe raised no privacy prompt.
+- A standalone command-line probe also returned nil. tccd logged no check from it, so it did not test the grant.
+- No tap code ships. The `nextEvent` override stands alone, as "Where the app records an event" settles for a tap that
+  needs a grant. The tap's bullets apply only when it is used, and the CI image's grant check moved to M4. See Decision
+  Log.
+- The record is marked public in the log. This machine shows even private fields: a probe at 10:13:15, pid 1343, logged
+  one value as private, as default, and as public, and all three showed it. So the earlier check of values against
+  `<private>` did not test redaction. Marked public, the values show on a machine that redacts too. The proof run at
+  10:44:37, pid 24177, holds no `<private>` field.
+- A launch without `UNITERM_RECORD_INPUT` records nothing. At 10:18:28 a test relaunched the app without it, as pid
+  21007. XCTest's key reached it, confirmed by AX, and so did a click. `log show` held no `dev.uniterm.app` line for
+  that pid. The same test's first launch, pid 20995, logged "Recording input" and `window_became_key`. Fifteen
+  iterations of the shortcut test with recording off, from 10:38:08, logged no recording line either.
+- A Release build made after this milestone's last code change has none of the recorder's symbols in `nm -U`. Its
+  binary holds no "input-recording" string, where the debug build's holds one.
+- Every recording launch logs "Recording input" at the default level, which marks the pid in a kept log. A launch that
+  finds the shared application already made logs an error and records nothing.
+- A key counts as XCTest's when its user data is nonzero and `testmanagerd` posted it, read from its source pid. Only
+  then does its record hold a key code and flags. Another program that posts keys with user data, such as a password
+  manager typing for a person, gets neither.
+- Keys posted inside the app at 10:01:23, as pid 48383, carried `source_pid=48383` and no key code or flags. XCTest's
+  keys in that run carried both. In the proof run at 10:44:37, all 60 of XCTest's key events carried both.
+- A person's hardware events carry `source_userdata=0 source_pid=0 source_stateid=1`. From 10:17:52 to 10:18:45, a
+  person's moves, scrolls, and keys reached the test app as pids 18272, 19479, 20995, and 23262. Their key records hold
+  no key code and no flags. Those moves then crossed uniterm's window, and WezTerm was activated at 10:18:13. That is
+  the only outside activation in this milestone's frontmost records. The hover and cost results below come from later
+  runs with no such input.
+- A press's hit test starts at the window's frame view. The frame view has no superview, so `hitTest` takes window
+  coordinates, which `locationInWindow` already is. A probe at 10:13:15, pid 1343, found the frame view, an
+  `NSThemeFrame`, at the origin with the window's 960 by 640 size and no superview.
+- At 10:17:48, pid 18045, a click on the title bar's close button landed at (16, 624). That is the button's center
+  from its screen frame. Its press and release name `_NSThemeCloseWidget`.
+- A record names the class of the view a press hits, and its identifier when it has one. See Decision Log.
+- The proof run of `InputRecordingProofTest` at 10:44:37, as pid 24177, has a record for each kind of input it
+  sends. Each of its 30 key downs and 30 key ups has one, including Cmd-T, with key code 17 and flags `0x100000`. Its
+  click and right-click on the terminal name `GhosttySurfaceView`. Its scroll, hover, and drag have records too.
+- In that run, the close button's press and release name `_NSThemeCloseWidget`, and its sheet opened. Cancel's press
+  and release name `_NSAlertButton`, and the sheet closed. `log show` found these records after the run, since the
+  sandboxed runner cannot read the log. The test passed again at 10:53:34, after the milestone's last change.
+- An `NSButton`'s tracking loop dequeues through the override. A throwaway stack probe at 10:29:26, pid 54517, caught
+  the close button's mouse up being taken inside `-[NSButtonCell trackMouse:inRect:ofView:untilMouseUp:]`, under the
+  button's `mouseDown:`, by the override. The button's action then fired.
+- On macOS 26.7.3, not every button tracks that way. The alert's Cancel button and the Settings segmented control took
+  their mouse up from the main loop, at 10:29:23 and 10:29:30. Their records hold both press and release.
+- The Settings window's events are recorded. An earlier attempt found no record of a click on its segmented control.
+  At 10:18:33, pid 21647, and again at 10:29:30, pid 54845, that click's press and release were recorded, with the
+  control's class and identifier. The earlier miss did not recur, so its cause is unknown.
+- Moves are recorded over every view tried while uniterm is active. In a run from 10:24:52, pid 39721, each hover sent
+  24 moves. The records inside each view were: terminal 10, tab bar 12, status bar 11, whole content area 11, title bar
+  11, and Settings window 13. Only the terminal surface asks for moves, yet AppKit delivered them over all of both
+  windows. See Decision Log.
+- The capture point misses two things the tests sent. AppKit merges queued moves, drags, and scrolls, so the merged
+  ones have no record of their own. In the proof run at 10:44:37, 82 of 168 moves, 99 of 275 drags, and 2 of 4 scroll
+  events had one. The gaps in the records' user data show which merged.
+- The other miss is a press on the menu bar, since menu tracking takes it outside the override. At 10:26:41, pid 44983,
+  the File menu's mouse down had no record. Its mouse up, the moves over the open menu, and the Escape that closed it
+  did. The menu also posted the Escape's key up again, so that event has two records with the same user data.
+- Another app's non-activating panel leaves a key-window record. At 10:25:11, pid 40565, a test pressed Cmd-Space,
+  which opened Spotlight. The Command down was recorded. The Space down, sent at 10:25:11.603, had no record, and
+  uniterm logged `window_resigned_key` 17 ms later. The Space down and up each timed out at 5 s, and the frontmost
+  record showed no activation.
+- The Command up, at 10:25:21.703, was recorded, so modifier changes still reach the active app under the panel.
+  Escape closed Spotlight at 10:25:22.744, and uniterm logged `window_became_key` 3 ms later.
+- The cost was timed inside the app by a throwaway timer around the record path, with
+  `clock_gettime_nsec_np(CLOCK_UPTIME_RAW)`. Three bursts of 40 keys, a drag, and 20 hovers ran from 10:25:46 to
+  10:26:37, as pids 43085, 44032, and 44661. Each logged 400 records, about 210 of them moves, 108 drags, and 80 keys.
+- The record path took 18.9, 17.0, and 18.3 ms in total over those bursts. Its mean was 47, 42, and 46 µs per event,
+  and its maximum 155, 178, and 236 µs. Moves alone averaged 37, 38, and 41 µs.
+- Timed from the test, the same bursts took 6649, 8076, and 7784 ms with recording on, a median of 7784 ms. With
+  recording off they took 6714, 7983, and 6999 ms, a median of 6999 ms. Each condition spreads by about 1.3 s, more than
+  the gap between the medians. The record path adds about 18 ms per burst, so the gap is XCTest's own variance.
+- The shortcut test did not stall in 45 runs. With recording on, 15 separate runs from 10:32:15 and one run of 15
+  iterations from 10:36:15 logged no confirmation timeout. With recording off, 15 iterations from 10:38:08 logged none
+  either. Its usual rate is 3 of 9.
+- Since neither condition stalled, these runs cannot show whether recording changes the rate. No T event went
+  unconfirmed, so whether uniterm records one waits for a stall with recording on. M5 takes both Cmd-T checks. The
+  test's flaky entry records the counts. See Decision Log.
+- A failed run's kept log holds the recording lines and none of the app's other lines. A deliberately failing
+  throwaway test at 10:47:48, pid 45815, left a kept log with its `testmanagerd` lines, the runner's marks, and that
+  pid's four recording lines.
+- The UI test build's two Sendable warnings in M1's frontmost observer are fixed. The frontmost record now lives in a
+  queue-guarded box, which the observer holds without capturing the test case.
 
 ### M3: The flaky entries say what to look for
 
@@ -441,11 +533,25 @@ None.
 
 **Status:** NOT STARTED
 
+Amended 2026-11-25; see Decision Log.
+
 - A failed CI `app` job uploads the same log with its test results
 - CI's upload path matches the kept log
 - `log show`'s time on a failed full suite is measured on CI and recorded in the As built block. The test results and
   the kept log still upload when the job reaches its time limit
 - When UTERM-044's shards land, each failing shard's upload carries its own kept log
+- When the tap is used, M2's grant check for a listen-only event tap on uniterm's own process also runs on the CI
+  image's macOS
+
+### M5: The recorder sees a Cmd-T stall
+
+**Status:** NOT STARTED
+
+Amended 2026-11-25; see Decision Log.
+
+- With recording on, the shortcut test still reproduces the Cmd-T stall at about its usual rate
+- A run of the shortcut test alone that reproduces the Cmd-T stall shows, for the unconfirmed T events, whether
+  uniterm recorded them. The result goes in the As built block and in the test's flaky entry
 
 ## Decision Log
 
@@ -531,6 +637,39 @@ None.
 - 2026-11-25: Correction of fact in M1's `log show` bullet. The original read: "`log show`'s time on a failed full suite
   is measured and recorded in the As built block. The test results and the kept log still upload when the job reaches
   its time limit". The CI-upload half moved to M4's split entry. The measurement is now local only. (autonomous)
+- 2026-11-25: M2's grant probe found that a listen-only event tap on uniterm's own process needs the ListenEvent grant,
+  which the debug build does not hold. In the debug app, `CGPreflightListenEventAccess()` returned 0, and
+  `CGEvent.tapCreateForPid` returned nil. tccd checked the grant twice, as a preflight, and raised no prompt. As "Where
+  the app records an event" settles for that case, the `nextEvent` override stands alone, and no tap code ships.
+  (run best guess)
+- 2026-11-25: Three M2 bullets now apply only when the tap is used, since none ships. They read: "A tap that could not
+  be created leaves a record saying so, so its missing records never read as "never delivered"", "Probing for the tap
+  leaves no system privacy prompt on screen during a UI run", and "The tap's callback runs off the main thread, shown
+  by its records keeping their times while the main thread is blocked". The disabled-tap bullet already said so. The
+  risk "The event tap watches a person's input on a developer's machine" became "The recorder watches a person's input
+  on a developer's machine". Its mitigation read: "it is listen-only, in a debug build, and only when a UI test launch
+  asks." (run best guess)
+- 2026-11-25: M2's sentence "The grant check also runs on the CI image's macOS" moved to M4 by amendment, since only a
+  pushed run reaches the CI image. It came from a bullet that now applies only when the tap is used, so it carries that
+  condition to M4. The local probe already rules the tap out, so the CI check records the image's answer and cannot
+  change the capture point. (run best guess)
+- 2026-11-25: "What each record holds" read: "For presses, releases, and wheels only, the identifier of the view it
+  hits". A record now names the hit view's class, and its identifier when it has one, as it does for the first
+  responder. Many hit views have no identifier, such as the title bar's close button, and the class alone tells a
+  button from a plain view. (run best guess)
+- 2026-11-25: Correction of fact in "Which events the app records". The rationale read: "Moves reach the app only over
+  views that accept them, such as the terminal surface's tracking area, so a gap in the move records is not proof that
+  nothing moved." M2 recorded moves over every view it hovered while uniterm was active, in a main window and in
+  Settings. A gap still proves nothing, since AppKit merges queued moves. (run best guess)
+- 2026-11-25: M5 "The recorder sees a Cmd-T stall" split from M2 by amendment, since 45 local runs reproduced no stall:
+  30 with recording on and 15 with it off. M2's bullets read: "With recording on, the shortcut test still reproduces
+  the Cmd-T stall at about its usual rate, and the burst-cost measurement includes pointer moves" and "A run of the
+  shortcut test alone that reproduces the Cmd-T stall shows, for the unconfirmed T events, whether uniterm recorded
+  them. The result goes in the As built block and in the test's flaky entry". M2 keeps the burst-cost half of the
+  first. M5 takes the stall half of the first and the whole second, verbatim. M5 waits for a stall with recording on,
+  in a local run or in a kept CI log. The risk "Recording changes the timing it measures" now names M5 for the stall,
+  where it named M2. Queue row `| UTERM-060 M5 | UTERM-060 M2 | Needs a Cmd-T stall with recording on. It advances
+  only when the shortcut test stalls |` added after UTERM-060 M4. (run best guess)
 
 ## References
 
