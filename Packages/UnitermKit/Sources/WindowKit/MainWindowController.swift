@@ -778,6 +778,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     if access != .disconnected {
       let control = paneControls.set(access, for: created)
       applet.controlDidChange(control)
+
+      (applet as? any CallerOwning)?.adoptFirstTab(for: AppletCaller(grant: owner.description))
     }
 
     refreshControlMarks()

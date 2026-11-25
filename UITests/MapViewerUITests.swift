@@ -318,6 +318,43 @@ final class MapViewerUITests: UnitermUITestCase {
     XCTAssertTrue(written.contains("Ferry Building"), written)
   }
 
+  /// Catches a quit that drops unsaved pins when nothing is running. A map with a pin added by
+  /// right-click sits beside no terminal activity, and Cmd-Q must ask whether to save. Cancel
+  /// leaves the app running with the edit intact.
+  func testQuittingAnEditedMapAsksEvenWhenNothingRuns() throws {
+    let file = try makeGeoJSON()
+    try plantMap(
+      payload:
+        #"{"startDirectory":"\#(file.deletingLastPathComponent().path)","path":"\#(file.path)"}"#)
+
+    let app = launchApp(environment: quitSavesOnly, arguments: closeWindowsOnQuit)
+    let window = mainWindow(in: app)
+    let mapView = window.descendants(matching: .any)["map-viewer-map"]
+
+    XCTAssertTrue(
+      waitFor(map(in: window), timeout: 20) { $0.hasSuffix("pins=3") }, "the pins did not load")
+
+    mapView.rightClick()
+    let add = app.menuItems["Add Pin Here"]
+    XCTAssertTrue(add.appears(timeout: 5), "no Add Pin Here in the context menu")
+    add.click()
+    XCTAssertTrue(waitFor(map(in: window), timeout: 10) { $0.hasSuffix("pins=4 edited") })
+
+    app.typeKey("q", modifierFlags: .command)
+
+    let question =
+      app.dialogs["unsaved-confirmation"].exists
+      ? app.dialogs["unsaved-confirmation"] : window.sheets.firstMatch
+    XCTAssertTrue(question.appears(timeout: 5), "quitting an edited map asked nothing")
+    XCTAssertTrue(app.staticTexts["Save changes before quitting?"].exists)
+    XCTAssertEqual(app.state, .runningForeground, "the app quit past the question")
+
+    app.typeKey(.escape, modifierFlags: [])
+    XCTAssertTrue(waitForNoSheet(in: window, timeout: 5))
+    XCTAssertEqual(app.state, .runningForeground, "Cancel did not keep the app running")
+    XCTAssertTrue(waitFor(map(in: window), timeout: 10) { $0.hasSuffix("pins=4 edited") })
+  }
+
   // MARK: Pins from a program
 
   private static var driverScript: String {

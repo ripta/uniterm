@@ -68,10 +68,11 @@ final class BrowserWindowTests: XCTestCase {
   private let both: Set<ControllerPermission> = [.paneControl, .browserNavigation, .browserRead]
 
   private func openBrowser(
-    _ fixture: ScriptingFixture, _ controller: MainWindowController, _ pane: ScriptPaneReference
+    _ fixture: ScriptingFixture, _ controller: MainWindowController, _ pane: ScriptPaneReference,
+    access: ScriptPaneAccess = .remoteControlled
   ) async throws -> (NodeID, BrowserApplet) {
     let reply = try await fixture.openPane(
-      kind: "browser", beside: pane, axis: nil, directory: nil, access: .remoteControlled)
+      kind: "browser", beside: pane, axis: nil, directory: nil, access: access)
 
     guard case .record(let fields) = reply, case .integer(let id)? = fields["pane"],
       let applet = controller.paneArea.applet(for: NodeID(rawValue: id)) as? BrowserApplet
@@ -184,14 +185,17 @@ final class BrowserWindowTests: XCTestCase {
       return XCTFail("open answered \(reply)")
     }
 
-    XCTAssertEqual(applet.tabOwners.count, 1)
+    let ownGrant = AppletCaller(grant: "connection 2")
+
+    XCTAssertEqual(applet.tabOwners.values.filter { $0 == ownGrant }.count, 1)
 
     let generation = controller.control(of: pane).generation
 
     controller.controllerEnded(2)
 
     XCTAssertEqual(controller.control(of: pane).generation, generation, "the control moved")
-    XCTAssertEqual(applet.tabOwners.count, 0, "the ended grant kept its tab")
+    XCTAssertEqual(
+      applet.tabOwners.values.filter { $0 == ownGrant }.count, 0, "the ended grant kept its tab")
 
     let error = await failure {
       try await self.command(fixture, controller, pane, "read", tab: tab, as: own)
@@ -364,6 +368,24 @@ final class BrowserWindowTests: XCTestCase {
     XCTAssertEqual(applet.tabOwners.count, 1)
     XCTAssertEqual(
       applet.tabOwners.values.first, AppletCaller(grant: "connection \(fixture.caller.connection)"))
+  }
+
+  /// Catches a browser pane opened with open-pane whose first tab the opener cannot drive. The
+  /// layout path owns it for the caller, and so must this one. A disconnected pane has no
+  /// controller, so its first tab stays unowned.
+  func testAnOpenedBrowserPaneStartsWithItsFirstTabOwnedByTheOpener() async throws {
+    let fixture = makeFixture()
+    let (controller, first) = try fixture.openWindow()
+
+    let (_, remote) = try await openBrowser(fixture, controller, first)
+
+    XCTAssertEqual(remote.tabOwners.count, 1)
+    XCTAssertEqual(
+      remote.tabOwners.values.first, AppletCaller(grant: "connection \(fixture.caller.connection)"))
+
+    let (_, plain) = try await openBrowser(fixture, controller, first, access: .disconnected)
+
+    XCTAssertEqual(plain.tabOwners.count, 0, "a disconnected pane's first tab was owned")
   }
 
   /// Catches a seed that bypasses the scheme rule, a url on a pane that is not a browser, and a

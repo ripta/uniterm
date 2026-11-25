@@ -35,7 +35,7 @@
 | [20261122-undo-reopen-decodes-pane-on-main-thread](20261122-undo-reopen-decodes-pane-on-main-thread.md) | Undo reopen of a closed pane decodes its description on the main thread | proposed |
 | [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | open |
 | [20261122-native-controller-refused-after-scriptwire-change](20261122-native-controller-refused-after-scriptwire-change.md) | A native controller is refused at hello after any ScriptWire change | open |
-| [20261122-script-open-pane-leaves-first-tab-unowned](20261122-script-open-pane-leaves-first-tab-unowned.md) | A pane a script opens with open-pane leaves its first tab unowned | open |
+| [20261122-script-open-pane-leaves-first-tab-unowned](20261122-script-open-pane-leaves-first-tab-unowned.md) | A pane a script opens with open-pane leaves its first tab unowned | fixed |
 | [20261122-uterm-028-says-no-exec-capable-applet-ships](20261122-uterm-028-says-no-exec-capable-applet-ships.md) | UTERM-028 says no exec-capable applet ships, but two do | open |
 | [20261122-capture-bypasses-image-viewer-read-scope](20261122-capture-bypasses-image-viewer-read-scope.md) | A program's pane capture can show an image the program may not read | open |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | fixed |
@@ -43,7 +43,7 @@
 | [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
 | [20261122-declared-file-watchdog-may-signal-reused-pid](20261122-declared-file-watchdog-may-signal-reused-pid.md) | The declared-file test watchdog may signal a process id that was already reused | open |
 | [20261122-picked-file-start-directory-stat-on-main-thread](20261122-picked-file-start-directory-stat-on-main-thread.md) | A viewer stats a picked or dropped file on the main thread | open |
-| [20261122-quit-skips-unsaved-work-when-nothing-runs](20261122-quit-skips-unsaved-work-when-nothing-runs.md) | Quitting loses unsaved work when nothing is running | open |
+| [20261122-quit-skips-unsaved-work-when-nothing-runs](20261122-quit-skips-unsaved-work-when-nothing-runs.md) | Quitting loses unsaved work when nothing is running | fixed |
 | [20261122-map-save-reads-file-on-main-thread](20261122-map-save-reads-file-on-main-thread.md) | Saving a map reads its file on the main thread | open |
 | [20261122-closing-pane-on-dead-mount-may-join-io-thread](20261122-closing-pane-on-dead-mount-may-join-io-thread.md) | Closing a pane whose shell is stuck on a dead mount may freeze the app | open |
 | [20261122-terminal-tab-changes-walk-every-tab](20261122-terminal-tab-changes-walk-every-tab.md) | A terminal pane walks every tab at each title change and tab switch | open |
