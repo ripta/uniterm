@@ -462,11 +462,27 @@ final class ExecTransport: @unchecked Sendable {
   /// holds stdout open, ends with the driver.
   private func waitForExit() -> Int32 {
     var info = siginfo_t()
-    var waited: Int32
 
-    repeat {
-      waited = waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT)
-    } while waited < 0 && errno == EINTR
+    while true {
+      guard waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == 0 else {
+        if errno == EINTR { continue }
+
+        break
+      }
+
+      // Darwin reports a stopped child to a wait that asks only for exits. WNOWAIT leaves that
+      // report in place, so the same wait would return at once forever.
+      //
+      // A wait for stops alone takes the report. It never reaps an exited child. The next wait then
+      // blocks until the driver changes again. A paused driver is therefore not taken for an exit.
+      //
+      // Darwin has not been seen to report a continue here. The check for one is defensive.
+      guard info.si_code == CLD_STOPPED || info.si_code == CLD_CONTINUED else { break }
+
+      var stop = siginfo_t()
+
+      _ = waitid(P_PID, id_t(pid), &stop, WSTOPPED | WCONTINUED | WNOHANG)
+    }
 
     state.lock()
     leaderExited = true
