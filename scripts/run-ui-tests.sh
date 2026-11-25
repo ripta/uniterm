@@ -31,6 +31,16 @@ if ! swift -e 'import CoreGraphics; exit(CGSessionCopyCurrentDictionary() == nil
   exit 1
 fi
 
+# Record the start time for log collection. The timestamp is taken after the lock, so another
+# run's lines never fall in the window.
+start_time=$(date +%s)
+
+# Write the start time to a file for CI to pick up if the test step times out.
+if [[ -n "${UNITERM_UI_KEPT_LOG:-}" ]]; then
+  start_time_file="$(dirname "$UNITERM_UI_KEPT_LOG")/ui-test-start-time.txt"
+  echo "$start_time" >"$start_time_file"
+fi
+
 log="$(mktemp "${TMPDIR:-/tmp}/uniterm-ui-tests.XXXXXX")"
 trap 'rm -f "$log" "$holder"' EXIT
 
@@ -42,4 +52,10 @@ if grep -qiE 'automation mode|not authorized|failed to initialize for UI testing
   echo "error: the UI tests could not drive the app. Grant Accessibility permission to Xcode and to the" >&2
   echo "terminal running make, in System Settings > Privacy & Security > Accessibility. Then run again." >&2
 fi
+
+# After a failed run, keep the testmanagerd log and the runner's own marks from the run's window.
+if [[ -n "${UNITERM_UI_KEPT_LOG:-}" ]]; then
+  "$(dirname "$0")/collect-ui-test-log.sh" "$start_time" "$UNITERM_UI_KEPT_LOG"
+fi
+
 exit 1

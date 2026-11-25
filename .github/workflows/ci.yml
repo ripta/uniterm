@@ -70,7 +70,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.build_required == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: macos-26
-    timeout-minutes: 45
+    # Job timeout accounts for: setup up to 5 min, then the test step, build included, up to 38 min, then collection up to 2 min and upload up to 5 min, for 50 min
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -81,14 +82,28 @@ jobs:
       - uses: ./.github/actions/macos-setup
 
       - name: Shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
+        id: test
+        timeout-minutes: 38
         run: make test-app-shard SHARD=${{ strategy.job-index }} SHARDS=${{ strategy.job-total }}
 
+      - name: Collect kept log if test step did not complete
+        if: always() && steps.test.outcome != 'success' && steps.test.outcome != 'skipped'
+        run: |
+          if [[ -f .build/DerivedData-test/ui-test-start-time.txt ]]; then
+            start_time=$(cat .build/DerivedData-test/ui-test-start-time.txt)
+            scripts/collect-ui-test-log.sh "$start_time" ".build/DerivedData-test/ui-test-kept-log-shard-${{ strategy.job-index }}.txt.gz"
+          else
+            echo "No start time recorded, skipping kept log collection"
+          fi
+
       - name: Keep the UI test results
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-test-results-shard-${{ strategy.job-index }}-attempt-${{ github.run_attempt }}
-          path: .build/DerivedData-test/Logs/Test/*.xcresult
+          path: |
+            .build/DerivedData-test/Logs/Test/*.xcresult
+            .build/DerivedData-test/ui-test-kept-log-shard-*.txt.gz
           retention-days: 7
           if-no-files-found: ignore
 

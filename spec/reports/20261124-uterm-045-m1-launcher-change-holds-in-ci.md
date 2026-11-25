@@ -27,7 +27,7 @@ here. The run's base is the snip after "Schedule UTERM-060 M1-M3 after UTERM-044
 |---|---|---|---|
 | UTERM-045 M1 | M1: The closing rule and the launcher recount | DONE | this report |
 | UTERM-044 M1 | M1: Shard the app job | DONE | [report](20261125-uterm-044-m1-shard-the-app-job.md) |
-| UTERM-060 M1-M3 | M1: A failed run keeps where its input went | QUEUED | |
+| UTERM-060 M1-M3 | M1: A failed run keeps where its input went | DONE | [report](20261125-uterm-060-m1-m3-keep-input-evidence.md) |
 | | M2: The app records the input it receives | QUEUED | |
 | | M3: The flaky entries say what to look for | QUEUED | |
 | UTERM-046 M1-M2 | M1: The browser hung-process tests | QUEUED | |

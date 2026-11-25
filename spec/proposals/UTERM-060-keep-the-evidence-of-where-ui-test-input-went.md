@@ -300,7 +300,7 @@ None.
   Apple's own, with no stated format. M1 records the Xcode version whose lines it reads. A run whose kept log has no
   event lines at all says so, rather than leaving an empty file that reads as "nothing happened".
 - **A CI runner hides the log** — likelihood: low, impact: high. Mitigation: the lines are at the default level, which
-  the system keeps. M1 checks that a failed CI run's kept log holds them.
+  the system keeps. M4 checks that a failed CI run's kept log holds them. Amended 2026-11-25; see Decision Log.
 - **Unconfirmed does not mean undelivered** — likelihood: medium, impact: medium. Accepted: a confirmation that never
   came can come from an event that arrived and posted no notification. The kept log says which events went
   unconfirmed, not why. The frontmost record narrows it, and M2's in-app record answers the rest.
@@ -315,8 +315,9 @@ None.
   then too, which is accepted: without XCTest's event lines, its records could not be matched to unconfirmed events.
 - **Keeping the log adds time to a failed CI job** — likelihood: medium, impact: high. Mitigation: a `log show` over a
   full suite's window runs after the tests, inside the job's time limit. If it pushed the job past the limit, the job
-  would be cancelled, and its upload, the test results included, would never run. M1 measures it on a failed full
-  suite, and requires the results and the kept log to upload even when the job reaches its limit.
+  would be cancelled, and its upload, the test results included, would never run. M4 measures it on a failed full
+  suite, and requires the results and the kept log to upload even when the job reaches its limit. Amended 2026-11-25;
+  see Decision Log.
 - **Recording changes the timing it measures** — likelihood: medium, impact: medium. Mitigation: pointer moves arrive
   at about 100 a second. In the `TerminalLinkUITests` entry, only the pointer moves and the debug logging differed
   between a failing and a passing run. M2 measures the
@@ -326,8 +327,8 @@ None.
   it is listen-only, in a debug build, and only when a UI test launch asks. A person's key events keep no key code and
   no flags, so typed text never reaches the log.
 - **UTERM-044 lands its per-shard upload without the kept log** — likelihood: medium, impact: low. Mitigation: UTERM-044
-  M1 is ahead of this proposal in the queue, and its checks name only the test results. M1 here carries the check that
-  each failing shard's upload also carries its kept log.
+  M1 is ahead of this proposal in the queue, and its checks name only the test results. M4 here carries the check that
+  each failing shard's upload also carries its kept log. Amended 2026-11-25; see Decision Log.
 - **The evidence shows a cause that no test-side change can fix** — likelihood: medium, impact: low. Accepted: knowing
   that the runner drops events is itself the finding. It moves the entries from "suspected" to a known cause, and the
   next step is a report to Apple or a change to how CI runs.
@@ -336,10 +337,9 @@ None.
 
 ### M1: A failed run keeps where its input went
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - A failed local UI run keeps the `testmanagerd` log for the run, and says where in its output
-- A failed CI `app` job uploads the same log with its test results
 - A kept log shows each numbered event of a failing test's gestures, and whether it was confirmed or timed out
 - A failing test carries the record of which app was frontmost while it ran
 - A passing run keeps nothing new
@@ -348,10 +348,9 @@ None.
 - The kept log's window starts after the run holds the screen lock, so another run's lines never fall inside it
 - A `log show` that fails says so in the run's output and in the kept file. The Accessibility hint still prints, and
   the script still exits 1
-- `log show`'s time on a failed full suite is measured and recorded in the As built block. The test results and the
-  kept log still upload when the job reaches its time limit
-- The kept log's path is passed to the script explicitly, not parsed from the `xcodebuild` command, and CI's upload
-  path matches it. A later failed run replaces an earlier run's kept log rather than piling up beside it
+- `log show`'s time on a failed full suite is measured locally and recorded in the As built block
+- The kept log's path is passed to the script explicitly, not parsed from the `xcodebuild` command. A later failed run
+  replaces an earlier run's kept log rather than piling up beside it
 - Each frontmost change is logged within 100 ms even while XCTest waits on a synthesized event's confirmation. When
   the runner's main thread is blocked through that wait, the observer runs off the main thread
 - The kept file is compressed or sized so the upload stays within the artifact limits
@@ -364,7 +363,39 @@ None.
   subclass that overrides setup or teardown
 - A kept log holds each failing test's start mark and its issue marks. A test the execution-time allowance ended
   carries its start mark and the next test's start, and the As built block records whether it also gets an issue mark
-- When UTERM-044's shards land, each failing shard's upload carries its own kept log
+
+**As built:**
+
+- Xcode 26.6 Build version 17F113 reads the lines M1 collects.
+- The kept log is selected by the predicate `process == 'testmanagerd' OR subsystem == 'dev.uniterm.uitests'`. The
+  subsystem match alone selects the runner's logs without matching the bundle path. The subsystem is unique to this
+  runner.
+- The kept log's path is passed via the `UNITERM_UI_KEPT_LOG` environment variable. The `test-app` and `test-app-select`
+  targets set it to `.build/DerivedData-test/ui-test-kept-log.txt.gz`. The `test-app-shard` target sets it to
+  `.build/DerivedData-test/ui-test-kept-log-shard-N.txt.gz`.
+- The script `collect-ui-test-log.sh` checks whether the output path ends in `.gz` and applies gzip compression when it
+  does. Without compression the kept log is a plain text file.
+- Running `log show` over a 25-minute window with the predicate above takes 2.7 seconds locally.
+- The frontmost attachment uses `lifetime = .deleteOnSuccess` so XCTest keeps it only when the test fails.
+  `ThrowawayAttachmentTest/testAttachmentProof` failed deliberately and showed `Added attachment named
+  'frontmost-record.txt'` at t = 0.73s in teardown. `BrowserRemoteUITests` passed without keeping any frontmost
+  attachment in its bundle, confirming XCTest deletes the attachment on success.
+- `ThrowawayTimingTest/testFrontmostTiming` launched Calculator during `typeText`. The kept log showed Calculator logged
+  at 04:09:36.864. The test output showed the frontmost logger wrote the same change at 04:09:36.868731. The delta is
+  4.7 ms. XCTest was blocked waiting on the synthesized key's confirmation during that interval.
+- `ThrowawayAllowanceTest/testExceedsAllowance` slept for 125 seconds and hit the execution time allowance. The kept
+  log showed both test start marks: `testAfterTimeout` at 04:10:03.844 and `testExceedsAllowance` at 04:10:05.597. A
+  test the allowance ended keeps its start mark. The next test's start closes its bracket. No issue mark appeared for
+  the timed-out test.
+- `BrowserRemoteUITests` ran successfully with the kept log deleted beforehand. After the passing run the kept log file
+  did not exist. Passing runs keep nothing new.
+- The entire flow from `run-ui-tests.sh` to `collect-ui-test-log.sh` works. A failing run with `make test-app-select
+  UI_TESTS=ThrowawayAttachmentTest` showed `Kept log written to: .build/DerivedData-test/ui-test-kept-log.txt.gz` at
+  the end. The script chain collects and compresses the log.
+- The test step has a 38-minute timeout. The job has a 50-minute timeout. The job timeout accounts for setup up to 5 min,
+  then the test step, build included, up to 38 min, then collection up to 2 min and upload up to 5 min. A follow-up step
+  collects the kept log if the test step didn't complete. It uses the start time recorded in `ui-test-start-time.txt`.
+  The upload step runs on `failure() || cancelled()` to cover both outcomes.
 
 ### M2: The app records the input it receives
 
@@ -405,6 +436,16 @@ None.
   unconfirmed, and which app was frontmost
 - Each of the four entries this proposal names says what its next sighting records
 - The help for `make test-app` and `make test-app-select` names where a failed run's log lands
+
+### M4: The kept evidence on CI
+
+**Status:** NOT STARTED
+
+- A failed CI `app` job uploads the same log with its test results
+- CI's upload path matches the kept log
+- `log show`'s time on a failed full suite is measured on CI and recorded in the As built block. The test results and
+  the kept log still upload when the job reaches its time limit
+- When UTERM-044's shards land, each failing shard's upload carries its own kept log
 
 ## Decision Log
 
@@ -473,6 +514,23 @@ None.
   No decision earns an ADR.
 - 2026-11-25: Accepted.
 - 2026-11-25: Scheduled as UTERM-060 M1-M3 in queue.md, after UTERM-044 M1.
+- 2026-11-25: M4 "The kept evidence on CI" split from M1 by amendment, as a run best guess, since the run never pushes.
+  M1's bullet "A failed CI `app` job uploads the same log with its test results" moved to M4 verbatim. The CI half of
+  M1's "`log show`'s time on a failed full suite is measured and recorded in the As built block. The test results and
+  the kept log still upload when the job reaches its time limit" also moved to M4. The local measurement and the CI
+  measurement are split. The bullet "When UTERM-044's shards land, each failing shard's upload carries its own kept log"
+  moved to M4 verbatim. Three risk mitigations amended to name M4 where they named M1 for CI checks: "A CI runner hides
+  the log", "Keeping the log adds time to a failed CI job", and "UTERM-044 lands its per-shard upload without the kept
+  log". Each amended risk carries a marker. M1's kept log still uploads with the test results when the job reaches its
+  time limit. Queue row `| UTERM-060 M4 | UTERM-060 M3 | <note: needs a pushed CI run> |` added after UTERM-060 M1-M3.
+  (run best guess)
+- 2026-11-25: Correction of fact in M1's kept-log path bullet. The original read: "The kept log's path is passed
+  explicitly, not parsed from the `xcodebuild` command. A later failed run replaces an earlier run's kept log rather
+  than piling up beside it, and CI's upload path matches it". The CI-upload-path half moved to M4 as a new bullet.
+  (autonomous)
+- 2026-11-25: Correction of fact in M1's `log show` bullet. The original read: "`log show`'s time on a failed full suite
+  is measured and recorded in the As built block. The test results and the kept log still upload when the job reaches
+  its time limit". The CI-upload half moved to M4's split entry. The measurement is now local only. (autonomous)
 
 ## References
 
