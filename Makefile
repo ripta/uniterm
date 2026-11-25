@@ -146,26 +146,7 @@ test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session a
 .PHONY: test-app-select
 test-app-select: ghostty ## Run only the named UI test classes or methods, e.g. make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'. A local run needs the pointer and keyboard left alone
 	$(if $(strip $(UI_TESTS)),,$(error UI_TESTS is empty. Name the tests to run, or use make test-app for the full suite))
-	@result_bundle="$(TEST_DERIVED_DATA)/Logs/Test/$$(date +%Y%m%d-%H%M%S)-$$$$.xcresult"; \
-	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) \
-		-resultBundlePath "$$result_bundle" \
-		$(foreach t,$(UI_TESTS),'-only-testing:$(UI_TEST_TARGET)/$(t)') test; \
-	if [[ ! -d "$$result_bundle" ]]; then \
-		echo "Error: result bundle not found: $$result_bundle" >&2; exit 1; \
-	fi; \
-	summary=$$(xcrun xcresulttool get test-results summary --path "$$result_bundle"); \
-	total_tests=$$(echo "$$summary" | jq '.totalTestCount'); \
-	if [[ "$$total_tests" == "null" ]]; then \
-		echo "Error: failed to read test count from $$result_bundle" >&2; exit 1; \
-	fi; \
-	if [[ "$$total_tests" -eq 0 ]]; then \
-		echo "Error: no tests ran. The selection '$(UI_TESTS)' matched nothing" >&2; exit 1; \
-	fi; \
-	if [[ -n "$(EXPECTED_TESTS)" ]]; then \
-		if [[ "$$total_tests" -ne "$(EXPECTED_TESTS)" ]]; then \
-			echo "Error: expected $(EXPECTED_TESTS) tests, but $$total_tests ran" >&2; exit 1; \
-		fi; \
-	fi
+	scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$(UI_TESTS)" "$(EXPECTED_TESTS)" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
 
 .PHONY: test-app-shard
 test-app-shard: ghostty ## Run one shard of the UI tests, e.g. make test-app-shard SHARD=0 SHARDS=3. A local run needs the pointer and keyboard left alone
@@ -187,7 +168,7 @@ test-app-shard: ghostty ## Run one shard of the UI tests, e.g. make test-app-sha
 	echo "Shard $(SHARD) of $(SHARDS) runs: $$shard_classes"; \
 	echo "Reproduce this shard with: make test-app-select UI_TESTS='$$shard_classes' EXPECTED_TESTS=$$test_count"; \
 	echo "Selected $$test_count tests"; \
-	$(MAKE) test-app-select UI_TESTS="$$shard_classes" EXPECTED_TESTS="$$test_count"
+	scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$$shard_classes" "$$test_count" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
 
 .PHONY: ghostty-offline-check
 ghostty-offline-check: ## Rebuild the pinned Ghostty with the network off, from the kept caches

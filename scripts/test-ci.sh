@@ -409,7 +409,13 @@ echo "PASS: a passing run is passed through untouched"
 # folder keeps the app's copies of them. So the UI tests must never build where the helper sandbox
 # probes and `make run` read the app.
 derived_data_paths() {
-  make -C "$root" -n $1 | grep -o -- '-derivedDataPath [^ ]*' | sort -u
+  local output status=0
+  output=$(make -C "$root" -n $1) || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "Error: make -n $1 failed with status $status" >&2
+    return $status
+  fi
+  echo "$output" | grep -o -- '-derivedDataPath [^ ]*' | sort -u
 }
 
 test_build_paths="$(derived_data_paths test-app)"

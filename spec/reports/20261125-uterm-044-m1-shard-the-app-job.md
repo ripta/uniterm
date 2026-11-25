@@ -87,3 +87,31 @@ The reviewer and the coordinator found these. All were fixed in four rounds with
 
 `adr-impact` found the diff consistent with ADR-10. The helper sandbox checks still run once, against the plain build.
 It found no uncovered decision. `proposals.py freeze` reported only the UTERM-004 ADR-14 hunk with origin `other`.
+
+### Row review
+
+A fresh reviewer read the milestone commit. It found every M1 bullet met. It traced the failed-shard upload, the
+optional `EXPECTED_TESTS`, the count file, and the shard index base, and found them consistent. One finding was
+CONFIRMED:
+
+- `test-app-shard` called `$(MAKE) test-app-select` on its last recipe line. Make runs such a line even under
+  `make -n`. So the folder check's `make -n test-app-shard` read shard files a fresh checkout lacks, and exited 2. The
+  check passed only because it ignored make's exit status.
+
+A fresh implementer fixed it in "Run a UI test selection without recursive make". The selection run moved into
+`scripts/run-ui-test-selection.sh`, which takes values only. `test-app-select` and `test-app-shard` both call it.
+`test-app-shard` reads its shard files in a plain recipe line, which `make -n` only prints. The folder check now fails
+when `make -n` fails. The coordinator sent back one round: the first version read its arguments as values or as file
+paths, depending on whether a shard was given.
+
+Checks after the fix:
+
+- `make fmt-check`, `make lint`, and `make check` pass.
+- `make test-ci` passes, 85 checks.
+- With the shard files absent, `make -n test-app-shard SHARD=0 SHARDS=1` exits 0.
+- `make test-app-select UI_TESTS='BrowserRemoteUITests'` passes with `EXPECTED_TESTS=1`. With `EXPECTED_TESTS=2` it
+  fails with "expected 2 tests, but 1 ran".
+- A real `make test-app-shard SHARD=0 SHARDS=3` logged "Selected 69 tests" and passed its first test. It was then
+  cancelled. The full shards had already passed.
+
+The row review's `adr-impact` found the commit consistent with ADR-10 and ADR-07, with no uncovered decision.
