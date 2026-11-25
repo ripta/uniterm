@@ -229,3 +229,20 @@ event. It found no uncovered decision. `proposals.py freeze` reported only the U
 The reviewer found no findings. It checked each stated fact against the Makefile, `ci.yml`, `App/InputRecorder.swift`,
 and `StatusBarView`. `adr-impact` found that no ADR covers the diff, and no uncovered decision. `proposals.py freeze`
 reported only the UTERM-004 ADR-14 hunk with origin `other`.
+
+## Row review
+
+The row review covered the three milestone commits, from the row's base. It found the seams sound:
+
+- M3's rules match M1's kept log and M2's records.
+- One script holds the log collection, and the run wrapper, the workflow, and the Makefile all call it.
+- The M4 and M5 splits agree with their Decision Log entries, markers, and queue rows.
+- The privacy rule holds: a person's keys never carry a key code.
+
+It raised two comment findings, both fixed in "Split two dense comments in the input recorder and the log collector":
+
+- The input recorder's hit-test comment held three ideas in one block.
+- The log collector's predicate comment listed what it selects and why in one block.
+
+`adr-impact` found the row consistent with ADR-07, ADR-08, and ADR-10, and no uncovered decision. M1-M3 is finished,
+so its row moves to `history.md`. UTERM-060 stays `accepted`, since M4 and M5 remain.

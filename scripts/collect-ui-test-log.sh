@@ -16,8 +16,10 @@ output_path="$2"
 echo "Collecting testmanagerd log from the run..."
 
 # Predicate: every testmanagerd line, plus the runner's own test-mark, issue-mark, and frontmost
-# lines, plus the app's input-recording lines. The subsystem match is enough without matching the
-# bundle path, since the subsystem is unique to this runner.
+# lines, plus the app's input-recording lines.
+#
+# The subsystem match is enough without matching the bundle path, since the subsystem is unique to
+# this runner.
 #
 # Only the app's recording category is taken, none of its other lines. Only a debug build that a UI
 # test launch asked to record writes that category, so a developer's own uniterm never lands in an

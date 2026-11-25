@@ -97,8 +97,10 @@
     }
 
     /// The hit test starts at the window's frame view, the content view's superview, so a press on
-    /// a title-bar button resolves to that button. The frame view has no superview, so `hitTest`
-    /// takes its point in window coordinates, which `locationInWindow` already is.
+    /// a title-bar button resolves to that button.
+    ///
+    /// The frame view has no superview. So `hitTest` takes its point in window coordinates, which
+    /// `locationInWindow` already is.
     private static func describeHitView(at location: NSPoint, in window: NSWindow) -> [String] {
       guard let root = window.contentView?.superview ?? window.contentView,
         let view = root.hitTest(location)
