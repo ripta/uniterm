@@ -258,8 +258,9 @@ None.
   Mitigation: the split reads its classes from the built test bundle, through `xcodebuild -enumerate-tests` or an
   equivalent listing. It is not yet proved on a CI runner. The runner has a GUI session, since today's `app` job passes
   `run-ui-tests.sh`'s session check. The unknown is whether listing launches the UI test runner, and so can meet the
-  same cold-launch failures before any test runs. M1 proves it first. If no listing from the build works there, the
-  division decision reopens before the split is built, since a fallback that parses Swift source is a different design.
+  same cold-launch failures before any test runs. M2 proves it first. Amended 2026-11-25; see Decision Log. If no listing
+  from the build works there, the division decision reopens before the split is built, since a fallback that parses Swift
+  source is a different design.
 - **A Ghostty pin change rebuilds Ghostty in every build job** — likelihood: low, impact: low.
   Accepted: on a pin or patch change the setup action misses its exact cache key, so `package` and each of the three
   shards rebuild Ghostty from the fallback cache, 4 rebuilds where today there are 2. Each shard's job grows by that
@@ -278,14 +279,14 @@ None.
 
 ### M1: Shard the app job
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - Every UI test class runs in exactly one shard, and CI fails when one does not
 - A shard that runs no tests, or a selection that names a class that does not exist, fails CI
 - The helper sandbox checks run once per CI run, against the plain build
 - `ci` fails when any shard fails, and passes only when every shard matches the build decision
 - The shards run as one matrix job, and `ci` keeps one `app` entry in its needs and in its result check
-- A failing shard leaves the other shards running to completion, and rerunning failed jobs reruns only the failed shard
+- A failing shard leaves the other shards running to completion
 - Each failing shard uploads its results under its own name
 - A documentation-only change skips every shard, and so does an already-tested tree
 - Every shard lists the classes in the same order, a `make test-ci` case proves the split covers every class exactly
@@ -306,7 +307,6 @@ None.
 - The comment above `ci` and the README name each CI job's local target, and `ci-app` says what it runs now that no job
   runs it
 - Each shard's class list comes from the built test bundle, and a selected class not in the bundle fails CI
-- The first shard job proves on a real CI runner that the class listing works there, before the split depends on it
 - Listing the classes runs under the same screen lock as the UI run
 - The split script runs on the Linux `changes` runner, where its `make test-ci` fixture case runs
 - CI passes `SHARD` in the same base, 0 or 1, that `make test-app-shard` documents and validates, and the logged command
@@ -315,6 +315,37 @@ None.
 - Each failing shard's results artifact is named by its shard and its run attempt, so a failed rerun does not lose them
 - `spec/flaky-tests.md`'s Rule asks each CI entry to record whether the test ran first in its shard job, and the
   shard's logged selection
+
+**As built:**
+
+- The class listing script `scripts/list-ui-test-classes.sh` runs xcodebuild with `-enumerate-tests` writing JSON to a
+  file. It reads the JSON with jq at `.values[0].children[]` to extract the `uniterm UITests` target. It filters out
+  base classes with 0 tests. The script runs under the same screen lock as the UI run. The pinned Xcode 26.6 supports it.
+- SHARD is 0-based everywhere. The workflow uses `strategy.job-index` and `strategy.job-total`.
+- The midpoint arithmetic uses pure integer math. The formula is `(m2*SHARDS + 2*total - 1) / (2*total) - 1` where
+  `m2 = 2*running + count`. An exact cut goes to the lower shard.
+- The result bundle path includes the shell's PID for uniqueness.
+- Test count reading uses `xcrun xcresulttool get test-results summary` on an explicit bundle. It reads the top-level
+  `totalTestCount` field which includes passed, failed, skipped, and expected failures. It fails when the field is missing.
+- test-app-select takes an optional EXPECTED_TESTS and fails when the bundle's total test count differs.
+- test-app-shard passes its count as EXPECTED_TESTS. A shard with one missing class among many fails.
+- The test-ci fixture cases cover two-shard and three-shard balanced splits. The exact-cut case has B's midpoint at 5
+  landing on the first cut and going to shard 0. The fractional-share case with A 3, B 1, C 6 over 3 shards gives
+  shard 0 "A", shard 1 "B", shard 2 "C". A real 33-class fixture with 206 tests splits into 10, 10, and 13 classes.
+  Error cases are covered.
+- The local listing proof enumerated 33 classes with 206 total tests. The split gave shards of 69, 67, and 70 tests in
+  10, 10, and 13 classes. Each shard passed when run through `make test-app-shard`.
+- The local test-app-select proof with BrowserRemoteUITests EXPECTED_TESTS=1 passed. With EXPECTED_TESTS=2 it failed
+  with "Error: expected 2 tests, but 1 ran".
+- SHARD validation fails for empty, non-numeric, and out-of-range values.
+- M2 takes the CI checks that need a pushed run.
+
+### M2: The shards run on CI
+
+**Status:** NOT STARTED
+
+- The first shard job proves on a real CI runner that the class listing works there, before the split depends on it
+- Rerunning a failed job reruns only the failed shard
 - The measured length of a full CI run, of a one-shard rerun, of `package`, and of each shard's setup, build, and test
   time are recorded in the As built block, with the suite size at which a shard's job would pass `package`
 
@@ -355,6 +386,12 @@ None.
   sandbox checks in `package`, three shards, and the flaky-log fields for first-in-shard and selection all stand. No
   decision gets an ADR. Status set to accepted.
 - 2026-11-22: Scheduled as UTERM-044 M1 in queue.md.
+- 2026-11-25: M1's bullets that need a real CI run moved to M2: the first shard job proving the class listing works on
+  CI, the rerun check, and the measured times. M1 is local work and proves the class listing locally. M2 runs on CI.
+  Amended the M1 bullet "A failing shard leaves the other shards running to completion, and rerunning failed jobs reruns
+  only the failed shard" to "A failing shard leaves the other shards running to completion". The rerun check moved to M2.
+  The Risk "The class listing does not work on the CI runner" amended from "M1 proves it first" to "M2 proves it first".
+  (run best guess)
 
 ## References
 

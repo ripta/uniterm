@@ -50,8 +50,9 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: make ci-tested-tree
 
-  # The three macOS jobs run side by side. The UI tests take the longest, so the app job sets the
-  # run's length. A push whose tree a merged PR already passed skips the package and app jobs.
+  # The three macOS jobs run side by side. The package job runs the package tests and the helper
+  # sandbox checks. The app job runs three UI test shards in parallel. A push whose tree a merged PR
+  # already passed skips the package and app jobs.
   package:
     needs: changes
     if: needs.changes.outputs.build_required == 'true' && needs.changes.outputs.tested != 'true'
@@ -70,19 +71,23 @@ jobs:
     if: needs.changes.outputs.build_required == 'true' && needs.changes.outputs.tested != 'true'
     runs-on: macos-26
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: ./.github/actions/macos-setup
 
-      - name: make ci-app
-        run: make ci-app
+      - name: Shard ${{ strategy.job-index }} of ${{ strategy.job-total }}
+        run: make test-app-shard SHARD=${{ strategy.job-index }} SHARDS=${{ strategy.job-total }}
 
       - name: Keep the UI test results
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ui-test-results
+          name: ui-test-results-shard-${{ strategy.job-index }}-attempt-${{ github.run_attempt }}
           path: .build/DerivedData-test/Logs/Test/*.xcresult
           retention-days: 7
           if-no-files-found: ignore
