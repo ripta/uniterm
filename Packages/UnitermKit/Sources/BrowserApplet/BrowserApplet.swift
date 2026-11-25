@@ -103,7 +103,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     var closed: [UInt64]
   }
 
-  private var keptUndo: (key: UndoKey, value: JSONValue?)?
+  private var keptUndo: (key: UndoKey, value: AppletUndoState?)?
 
   /// What the host last heard about, so an unchanged refresh stays quiet.
   private struct Shown: Equatable {
@@ -176,7 +176,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
       throw AppletRestoreError.corrupt("browser description: \(error)")
     }
 
-    let undo = try? description.undoState?.decoded(as: BrowserDescription.UndoState.self)
+    let undo = description.undoState?.value(as: BrowserDescription.UndoState.self)
 
     // The records line up with the tabs only when the shapes match. Anything else is a description
     // this pane did not write, and its tabs load fresh.
@@ -250,7 +250,10 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
     content.onLoadOverHTTP = { [weak self] in self?.loadOverHTTP() }
     content.tabBar.onSelect = { [weak self] index in self?.selectTab(at: index) }
     content.tabBar.onClose = { [weak self] index in
-      Task { @MainActor in _ = await self?.closeTab(at: index) }
+      guard let self, self.tabs.indices.contains(index) else { return }
+
+      let target = self.tabs[index]
+      Task { @MainActor [weak self] in _ = await self?.closeTab(target) }
     }
     content.tabBar.onNew = { [weak self] in self?.openTab() }
     content.dialogView.onAnswer = { [weak self] dialog, answer in
@@ -394,10 +397,13 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
       payload: .object([:]))
   }
 
-  /// The undo-only part, encoded once for as long as no tab's history and no closed tab changes.
+  /// The undo-only part, built once for as long as no tab's history and no closed tab changes.
   /// The window asks for a description at every change the applet reports, and a page chooses how
-  /// often its title changes. Encoding a history record costs time in step with the history.
-  private func undoPart() -> JSONValue? {
+  /// often its title changes.
+  ///
+  /// It holds each tab's record as WebKit gave it. The part never leaves memory, so a pane close
+  /// converts nothing, and neither does its reopen.
+  private func undoPart() -> AppletUndoState? {
     let key = UndoKey(
       tabs: tabs.map { UndoKey.Tab(id: $0.id, version: $0.historyVersion) },
       closed: closedTabs.map(\.stamp))
@@ -406,7 +412,7 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
 
     let undo = BrowserDescription.UndoState(
       closedTabs: closedTabs, tabStates: tabs.map(\.interactionData))
-    let value = undo.isEmpty ? nil : try? JSONValue(encoding: undo)
+    let value = undo.isEmpty ? nil : AppletUndoState(undo)
 
     keptUndo = (key, value)
 
@@ -721,9 +727,19 @@ public final class BrowserApplet: Applet, TabOpening, CallerOwning, BrowserTabDe
   func closeTab(at index: Int) async -> TabCloseResult {
     guard tabs.count > 1 else { return .nothingToClose }
 
-    guard !closed, tabs.indices.contains(index), !isQuestionUp else { return .declined }
+    guard tabs.indices.contains(index) else { return .declined }
 
-    let target = tabs[index]
+    return await closeTab(tabs[index])
+  }
+
+  /// Closes `target` wherever it sits when the close runs. A caller that hops before closing
+  /// resolves the tab first, since the tabs may shift before the hop lands.
+  private func closeTab(_ target: BrowserTab) async -> TabCloseResult {
+    guard tabs.count > 1 else { return .nothingToClose }
+
+    guard !closed, tabs.contains(where: { $0 === target }), !isQuestionUp else {
+      return .declined
+    }
 
     if let detail = closeDetail(for: target) {
       guard let host else { return .declined }

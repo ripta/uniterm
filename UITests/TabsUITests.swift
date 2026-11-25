@@ -71,6 +71,53 @@ final class TabsUITests: UnitermUITestCase {
     XCTAssertTrue(waitForValue("selected", of: tab(1, in: app)))
   }
 
+  /// Catches a hidden tab whose shell keeps its old size through a window resize, so its program
+  /// would draw at a stale width. The first tab's shell prints its size on SIGWINCH. The window
+  /// narrows while the second tab shows. The first tab then holds a size line with fewer columns,
+  /// printed while it was hidden.
+  ///
+  /// The tab bar's arrival also resizes the hidden tab, but it changes only the rows, so the test
+  /// looks for a change in columns.
+  func testAHiddenTabsShellSeesTheWindowSize() throws {
+    let app = launchApp()
+    let window = app.windows["main-window"]
+    let terminal = waitForTerminal(in: app)
+
+    app.typeText(
+      "TRAPWINCH() { echo \"W:$(stty size | tr \" \" x):\" }; echo \"A:$(stty size | tr \" \" x):\"\n"
+    )
+    XCTAssertTrue(
+      waitFor(terminal, timeout: 40) { self.firstMatch(#"A:\d+x(\d+):"#, in: $0) != nil },
+      "the first tab reported no size")
+    let columns = try XCTUnwrap(
+      firstMatch(#"A:\d+x(\d+):"#, in: terminal.value as? String ?? ""))
+
+    _ = openTab(in: app)
+    XCTAssertTrue(waitForValue("selected", of: tab(1, in: app)))
+
+    let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(
+      CGVector(dx: -2, dy: -2))
+    corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: -300, dy: -150)))
+
+    // The hidden shell's line can only be read once its tab shows. Showing it changes no size,
+    // since the hidden terminal already fills the same area.
+    app.typeKey("1", modifierFlags: .command)
+    XCTAssertTrue(waitForValue("selected", of: tab(0, in: app)))
+
+    let narrower = #"W:\d+x(?!\#(columns):)\d+:"#
+    let shown = window.textViews["terminal"]
+    let sawResize = waitFor(shown, timeout: 20) { self.firstMatch("(\(narrower))", in: $0) != nil }
+
+    let shot = XCTAttachment(screenshot: window.screenshot())
+    shot.name = "hidden-tab-after-resize"
+    shot.lifetime = .keepAlways
+    add(shot)
+
+    XCTAssertTrue(
+      sawResize,
+      "the hidden tab's shell kept \(columns) columns. Screen: \(shown.value as? String ?? "")")
+  }
+
   /// Catches Ctrl-Tab and Ctrl-Shift-Tab that do not reach uniterm's menu from a focused terminal.
   /// AppKit can take Ctrl-Tab for its focus loop, and Shift-Tab types back-tab, not Tab.
   func testNextAndPreviousTabKeysSwitchTabs() {

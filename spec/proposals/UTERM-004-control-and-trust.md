@@ -2,7 +2,7 @@
 
 **Status:** implemented
 **Created:** 2026-10-31
-**Updated:** 2026-11-20
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -147,7 +147,7 @@ set of notes, and a chart.
   the members it owns, take exec protocol version 2. Each side refuses any other version at the hello, so an old driver
   with a new app, or a new driver with an old app, runs no command. No deploy order is needed.
 
-Amended 2026-11-11; see Decision Log.
+Amended 2026-11-11; see Decision Log. Superseded in part by UTERM-056; see Decision Log.
 
 ### Group node kind
 
@@ -596,6 +596,7 @@ Janet VM and existing listener; do not add a CLI terminal-I/O or signal relay.
   that version 9 adds, and the command shows it. Both sides refuse any other version at the hello, so an old
   `uniterm` command with a new app, and a new command with an old app, run nothing. No deploy order is needed. The
   descriptor and signature formats start at 1. Amended 2026-11-12; see Decision Log.
+  Superseded in part by UTERM-056; see Decision Log.
 - Unix-stream peer lookup is not immutable per-message sender attestation. Generation checks and notifications do
   not make check-and-effect atomic against exec or deliberately transferred sockets. Such races and injection remain
   within the stated same-user limitation. No atomic per-message or OS-sandbox guarantee is claimed.
@@ -1642,6 +1643,9 @@ Superseded in part by UTERM-036; see Decision Log.
 - 2026-11-20: Superseded in part by UTERM-005. Format 2 adds `browser-navigation` and `browser-read` at version 1.
   Navigation covers opening browser tabs and moving them, and read covers the addresses and titles of the tabs a
   controller opened.
+- 2026-11-23: Superseded in part by UTERM-056. Once it lands, a ScriptWire hello no longer refuses every version but the
+  app's. The app refuses an older command at its begin, with the relaunch text, and a program that is not the command
+  keeps running on version 14 or later.
 
 ## References
 

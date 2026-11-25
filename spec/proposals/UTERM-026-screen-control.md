@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-21
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -310,7 +310,9 @@ either kind. (autonomous)
 
 Version skew:
 
-- The helper and the app match exactly at ScriptWire's hello, so a mismatched pair runs no call.
+- The helper and the app run no call when their versions differ: at ScriptWire's hello, or at the helper's begin once
+  UTERM-056 has landed. The added `:window` field is a new ScriptWire version, per ADR-13 P1, and a connection on an older
+  version does not get it. Amended 2026-11-23; see Decision Log.
 - An older build refuses a declared file that names either kind, before any effect.
 - A file store holding an approval of either kind reads as newer on an older build, as UTERM-024 "Stores that older
   builds read" accepts. `policy.json` holds neither kind, since packages cannot declare them, so package approvals keep
@@ -651,6 +653,8 @@ Amended 2026-11-20; see Decision Log.
   - Amended M1. The check "A layout request in a zoomed window keeps zoom, and its new panes open hidden" now checks
     that such a request ends zoom and its last new pane takes focus. No check covers a layout that makes no new pane.
 - 2026-11-21: Scheduled as UTERM-026 M1-M4 in queue.md.
+- 2026-11-23: From UTERM-056's acceptance. A skew line said "The helper and the app match exactly at ScriptWire's hello,
+  so a mismatched pair runs no call", and had no version for the added `:window` field.
 
 ## References
 

@@ -245,6 +245,54 @@ final class MapPinEditingTests: XCTestCase {
     XCTAssertTrue(try String(contentsOf: file, encoding: .utf8).contains("[6.0, 5.0]"))
   }
 
+  /// Catches a Save that reads the file on the main thread, where a hung network mount freezes the
+  /// app, and a Save that then writes edits the user discarded while its read ran. The read is held
+  /// open while the user opens another file and discards the edits. Save then asks nothing and
+  /// writes nothing. A held read stands in for the hung mount, so this cannot prove the default
+  /// reader leaves the main thread.
+  func testSaveWritesNothingWhenItsEditsAreDiscardedDuringItsRead() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try mixedFile(scratch)
+    let original = try Data(contentsOf: file)
+    let applet = MapViewerApplet(startDirectory: nil)
+    let host = RecordingHost()
+    applet.host = host
+    await load(applet, file)
+
+    applet.addPin(at: GeoCoordinate(latitude: 2, longitude: 2))
+    await settle(applet)
+
+    var asked = 0
+    applet.resolveConflict = { _, _ -> SaveConflictChoice in
+      asked += 1
+      return .overwrite
+    }
+
+    let gate = ReadGate()
+    applet.readOnDisk = { path in
+      await gate.wait()
+      return await MapViewerApplet.readSavedFile(at: path)
+    }
+
+    let saving = Task { await applet.save() }
+    for _ in 0..<50 { await Task.yield() }
+
+    let other = try scratch.write("other.geojson", GeoFixtures.collection([]))
+    host.answer = true
+    applet.replaceSource(with: other, startDirectory: scratch.url.path)
+    await applet.asking?.value
+    await applet.opening?.value
+    await gate.open()
+
+    let saved = await saving.value
+
+    XCTAssertFalse(saved)
+    XCTAssertEqual(asked, 0)
+    XCTAssertEqual(try Data(contentsOf: file), original)
+    XCTAssertEqual(applet.displayName, "other.geojson")
+    XCTAssertFalse(applet.isDirty)
+  }
+
   /// Catches a cancelled Save As that counts as saved, which would let a close drop the pins.
   func testACancelledSaveAsIsNotASave() async {
     let applet = MapViewerApplet(startDirectory: nil)
@@ -316,6 +364,7 @@ final class MapPinEditingTests: XCTestCase {
 
     try Data(GeoFixtures.collection([GeoFixtures.point("C", 3, 3)]).utf8).write(to: file)
     applet.fileChangedOnDisk()
+    await applet.checkingDisk?.value
     await applet.opening?.value
 
     XCTAssertEqual(applet.filePinsShown.map(\.label), ["C"])
@@ -324,6 +373,7 @@ final class MapPinEditingTests: XCTestCase {
     await settle(applet)
     try Data(GeoFixtures.collection([GeoFixtures.point("D", 5, 5)]).utf8).write(to: file)
     applet.fileChangedOnDisk()
+    await applet.checkingDisk?.value
 
     XCTAssertEqual(applet.filePinsShown.count, 2)
     XCTAssertTrue(applet.isDirty)
@@ -331,6 +381,60 @@ final class MapPinEditingTests: XCTestCase {
       applet.statusNotices.contains {
         $0.level == .warning && $0.text.hasPrefix("The file changed on disk")
       })
+  }
+
+  /// Catches a change check that reads the file inline, which freezes the app on a mount that never
+  /// answers. While the read is held open, the pane does not reload. A second change meanwhile
+  /// starts no second read. It reads once more after the first returns, and the pane then shows
+  /// the file. A held read stands in for the hung mount, so this cannot prove the default reader
+  /// leaves the main thread.
+  func testAChangeCheckReadsThroughTheReaderOneReadAtATime() async throws {
+    let scratch = try GeoScratch(self)
+    let file = try mixedFile(scratch)
+    let applet = MapViewerApplet(startDirectory: nil)
+    await load(applet, file)
+
+    let gate = ReadGate()
+    let reads = ReadCount()
+    applet.readOnDisk = { path in
+      await reads.add()
+      await gate.wait()
+      return await MapViewerApplet.readSavedFile(at: path)
+    }
+
+    try Data(GeoFixtures.collection([GeoFixtures.point("C", 3, 3)]).utf8).write(to: file)
+    applet.fileChangedOnDisk()
+    for _ in 0..<50 { await Task.yield() }
+    await applet.opening?.value
+
+    XCTAssertNotEqual(applet.filePinsShown.map(\.label), ["C"], "the check read past the reader")
+
+    applet.fileChangedOnDisk()
+    for _ in 0..<50 { await Task.yield() }
+
+    let held = await reads.count
+    XCTAssertEqual(held, 1)
+
+    await gate.open()
+
+    var turns = 0
+
+    while applet.filePinsShown.map(\.label) != ["C"], turns < 1000 {
+      await Task.yield()
+      await applet.opening?.value
+      turns += 1
+    }
+
+    XCTAssertEqual(applet.filePinsShown.map(\.label), ["C"])
+
+    let total = await reads.count
+    XCTAssertEqual(total, 2)
+  }
+
+  private actor ReadCount {
+    private(set) var count = 0
+
+    func add() { count += 1 }
   }
 
   /// Catches a watcher that never fires, or one that stops after an editor replaces the file by
@@ -775,7 +879,9 @@ final class PinEditReviewTests: XCTestCase {
     XCTAssertEqual(editable, ["P"])
   }
 
-  /// Catches a save that replaces a symlinked file with a plain one, which breaks the link.
+  /// Catches a save that replaces a symlinked file with a plain one, which breaks the link. Also
+  /// catches a save through the link that leaves the pane edited, so the next Save asks about a
+  /// change on disk the map made itself.
   func testSaveThroughASymlinkKeepsTheLink() async throws {
     let scratch = try GeoScratch(self)
     let target = try scratch.write(
@@ -794,5 +900,19 @@ final class PinEditReviewTests: XCTestCase {
       try FileManager.default.attributesOfItem(atPath: link.path)[.type] as? FileAttributeType,
       .typeSymbolicLink)
     XCTAssertEqual(try Data(contentsOf: target), applet.document)
+    XCTAssertFalse(applet.isDirty, "the saved pane still reads as edited")
+
+    var asked = 0
+    applet.resolveConflict = { _, _ -> SaveConflictChoice in
+      asked += 1
+      return .cancel
+    }
+
+    applet.addPin(at: GeoCoordinate(latitude: 3, longitude: 3))
+    await applet.editing?.value
+    let saved = await applet.save()
+
+    XCTAssertTrue(saved)
+    XCTAssertEqual(asked, 0, "the second save asked about the map's own write")
   }
 }

@@ -1,8 +1,8 @@
 # The questions applet's tab bar disagrees with UTERM-041's shared hide rule
 
-**Status:** open
-**Validation:** not confirmed; traced by reading the code and UTERM-041 during the UTERM-053 review. Nothing was run.
-**Estimate:** small to medium; one non-trivial design decision. The code is traced, not run. The shared hide rule is UTERM-041 M1, which is accepted and not built, so the disagreement cannot occur yet. Today `QuestionsView` pins `AppletTabBar.height` and `QuestionsApplet.refresh` feeds it names and publishes one placeholder tab for an empty book, as described above. Decision: whether the questions applet follows the shared hide rule (view drops the fixed height) or keeps its always-shown bar as a named exception in UTERM-041. Both are equally correct. Each changes what the user sees for one pending question, and the exception adds a special case to the rule. A second decision follows from the first: what the empty book's placeholder tab does under a bar that reads the published list. The fix lands after UTERM-041 M1.
+**Status:** proposed. The fix is a check of [UTERM-041](../proposals/UTERM-041-uniform-tab-marker-slot.md) M1.
+**Estimate:** small; one design decision, settled by the user on 2026-11-23. The questions applet follows the shared
+hide rule. Under that rule an empty book's one placeholder tab shows no bar, so the second decision falls away.
 
 ## Observed
 
@@ -33,3 +33,13 @@ with the bar. Suspected actual: the tab hides and the space stays.
 A design call on UTERM-041: the questions applet follows the shared hide rule and its view drops the fixed height, or
 it keeps its always-shown bar and UTERM-041's rule names it. Under UTERM-053 the bar reads the published list, so the
 empty book's placeholder tab also needs a rule.
+
+## Triage
+
+Triaged on 2026-11-23 by reading the code. `QuestionsView` still pins the bar at `AppletTabBar.height`, about line
+53, and `QuestionsApplet` still publishes one "Untitled" tab for an empty book. UTERM-041 M1 is not started, so the
+disagreement cannot occur yet.
+
+The user chose that the questions applet follows the shared hide rule. UTERM-041's "How the host knows the tab bar is
+hidden" had a correction of fact, since it said every applet but the terminal and the browser has no bar. It gained a
+bullet for the questions applet, and M1 gained a check for one, zero, and two pending questions.

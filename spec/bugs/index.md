@@ -33,26 +33,28 @@
 | [20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread](20261122-browser-tab-bar-builds-a-view-per-tab-on-main-thread.md) | The browser's tab bar builds and updates one view per tab on the main thread | proposed |
 | [20261122-optimized-build-crashes-compiler-in-status-queue](20261122-optimized-build-crashes-compiler-in-status-queue.md) | An optimized build of the package crashes the Swift compiler in StatusKit | fixed |
 | [20261122-undo-reopen-decodes-pane-on-main-thread](20261122-undo-reopen-decodes-pane-on-main-thread.md) | Undo reopen of a closed pane decodes its description on the main thread | proposed |
-| [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | open |
-| [20261122-native-controller-refused-after-scriptwire-change](20261122-native-controller-refused-after-scriptwire-change.md) | A native controller is refused at hello after any ScriptWire change | open |
+| [20261122-save-tabs-defers-reply-after-write](20261122-save-tabs-defers-reply-after-write.md) | UTERM-049's `save-tabs` reply waits for a file write, against ADR-11 | fixed |
+| [20261122-native-controller-refused-after-scriptwire-change](20261122-native-controller-refused-after-scriptwire-change.md) | A native controller is refused at hello after any ScriptWire change | proposed |
 | [20261122-script-open-pane-leaves-first-tab-unowned](20261122-script-open-pane-leaves-first-tab-unowned.md) | A pane a script opens with open-pane leaves its first tab unowned | fixed |
-| [20261122-uterm-028-says-no-exec-capable-applet-ships](20261122-uterm-028-says-no-exec-capable-applet-ships.md) | UTERM-028 says no exec-capable applet ships, but two do | open |
-| [20261122-capture-bypasses-image-viewer-read-scope](20261122-capture-bypasses-image-viewer-read-scope.md) | A program's pane capture can show an image the program may not read | open |
+| [20261122-uterm-028-says-no-exec-capable-applet-ships](20261122-uterm-028-says-no-exec-capable-applet-ships.md) | UTERM-028 says no exec-capable applet ships, but two do | fixed |
+| [20261122-capture-bypasses-image-viewer-read-scope](20261122-capture-bypasses-image-viewer-read-scope.md) | A program's pane capture can show an image the program may not read | proposed |
 | [20261122-tests-leak-preference-files](20261122-tests-leak-preference-files.md) | Tests leave tens of thousands of preference files in ~/Library/Preferences | fixed |
-| [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | open |
-| [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | open |
-| [20261122-declared-file-watchdog-may-signal-reused-pid](20261122-declared-file-watchdog-may-signal-reused-pid.md) | The declared-file test watchdog may signal a process id that was already reused | open |
-| [20261122-picked-file-start-directory-stat-on-main-thread](20261122-picked-file-start-directory-stat-on-main-thread.md) | A viewer stats a picked or dropped file on the main thread | open |
+| [20261122-package-snapshot-opens-program-chosen-folder](20261122-package-snapshot-opens-program-chosen-folder.md) | The app opens a package folder the command names, with uniterm's privacy grants | proposed |
+| [20261122-rusage-units-comment-claims-safe-failure](20261122-rusage-units-comment-claims-safe-failure.md) | The usage reader claims a units change fails safe, but it would signal idle unused processes | fixed |
+| [20261122-declared-file-watchdog-may-signal-reused-pid](20261122-declared-file-watchdog-may-signal-reused-pid.md) | The declared-file test watchdog may signal a process id that was already reused | proposed |
+| [20261122-picked-file-start-directory-stat-on-main-thread](20261122-picked-file-start-directory-stat-on-main-thread.md) | A viewer stats a picked or dropped file on the main thread | fixed |
 | [20261122-quit-skips-unsaved-work-when-nothing-runs](20261122-quit-skips-unsaved-work-when-nothing-runs.md) | Quitting loses unsaved work when nothing is running | fixed |
-| [20261122-map-save-reads-file-on-main-thread](20261122-map-save-reads-file-on-main-thread.md) | Saving a map reads its file on the main thread | open |
-| [20261122-closing-pane-on-dead-mount-may-join-io-thread](20261122-closing-pane-on-dead-mount-may-join-io-thread.md) | Closing a pane whose shell is stuck on a dead mount may freeze the app | open |
-| [20261122-terminal-tab-changes-walk-every-tab](20261122-terminal-tab-changes-walk-every-tab.md) | A terminal pane walks every tab at each title change and tab switch | open |
-| [20261122-palette-rebuild-walks-every-tab](20261122-palette-rebuild-walks-every-tab.md) | The palette rebuilds and filters every tab of every pane while it shows | open |
-| [20261122-tab-close-button-may-close-a-shifted-tab](20261122-tab-close-button-may-close-a-shifted-tab.md) | A tab's close button may close a neighboring tab after the tabs shift | open |
-| [20261122-browser-close-encodes-every-tab-history-on-main-thread](20261122-browser-close-encodes-every-tab-history-on-main-thread.md) | Closing a browser pane encodes every tab's history on the main thread | open |
-| [20261122-map-describe-encodes-document-at-every-save](20261122-map-describe-encodes-document-at-every-save.md) | A dirty map pane base64-encodes its whole document at every save and change check | open |
-| [20261122-terminal-describe-encodes-every-tab-at-each-change](20261122-terminal-describe-encodes-every-tab-at-each-change.md) | The terminal encodes every tab and closed tab on the main thread at each change | open |
-| [20261122-questions-bar-disagrees-with-the-shared-hide-rule](20261122-questions-bar-disagrees-with-the-shared-hide-rule.md) | The questions applet's tab bar disagrees with UTERM-041's shared hide rule | open |
-| [20261122-exec-browser-read-result-burst-ends-driver](20261122-exec-browser-read-result-burst-ends-driver.md) | A driver that sends its browser reads in a burst is ended | open |
-| [20261123-map-saved-through-a-symlink-stays-dirty](20261123-map-saved-through-a-symlink-stays-dirty.md) | A map saved through a symlink stays unsaved | open |
-| [20261123-map-file-change-reads-file-on-main-thread](20261123-map-file-change-reads-file-on-main-thread.md) | A map's file-change check reads the whole file on the main thread | open |
+| [20261122-map-save-reads-file-on-main-thread](20261122-map-save-reads-file-on-main-thread.md) | Saving a map reads its file on the main thread | fixed |
+| [20261122-closing-pane-on-dead-mount-may-join-io-thread](20261122-closing-pane-on-dead-mount-may-join-io-thread.md) | Closing a pane whose shell is stuck on a dead mount may freeze the app | not-reproducible |
+| [20261122-terminal-tab-changes-walk-every-tab](20261122-terminal-tab-changes-walk-every-tab.md) | A terminal pane walks every tab at each title change and tab switch | fixed |
+| [20261122-palette-rebuild-walks-every-tab](20261122-palette-rebuild-walks-every-tab.md) | The palette rebuilds and filters every tab of every pane while it shows | proposed |
+| [20261122-tab-close-button-may-close-a-shifted-tab](20261122-tab-close-button-may-close-a-shifted-tab.md) | A tab's close button may close a neighboring tab after the tabs shift | fixed |
+| [20261122-browser-close-encodes-every-tab-history-on-main-thread](20261122-browser-close-encodes-every-tab-history-on-main-thread.md) | Closing a browser pane encodes every tab's history on the main thread | fixed |
+| [20261122-map-describe-encodes-document-at-every-save](20261122-map-describe-encodes-document-at-every-save.md) | A map pane encodes its undo part at every save and change check | proposed |
+| [20261122-terminal-describe-encodes-every-tab-at-each-change](20261122-terminal-describe-encodes-every-tab-at-each-change.md) | The terminal encodes every tab and closed tab on the main thread at each change | proposed |
+| [20261122-questions-bar-disagrees-with-the-shared-hide-rule](20261122-questions-bar-disagrees-with-the-shared-hide-rule.md) | The questions applet's tab bar disagrees with UTERM-041's shared hide rule | proposed |
+| [20261122-exec-browser-read-result-burst-ends-driver](20261122-exec-browser-read-result-burst-ends-driver.md) | A driver that sends its browser reads in a burst is ended | fixed |
+| [20261123-map-saved-through-a-symlink-stays-dirty](20261123-map-saved-through-a-symlink-stays-dirty.md) | A map saved through a symlink stays unsaved | fixed |
+| [20261123-map-file-change-reads-file-on-main-thread](20261123-map-file-change-reads-file-on-main-thread.md) | A map's file-change check reads the whole file on the main thread | fixed |
+| [20261123-package-admission-read-has-no-bound](20261123-package-admission-read-has-no-bound.md) | A controller package read that never returns leaves its admission pending forever | open |
+| [20261123-script-tab-numbers-keep-closed-tabs](20261123-script-tab-numbers-keep-closed-tabs.md) | A window's script tab numbers keep an entry for every tab ever seen | open |

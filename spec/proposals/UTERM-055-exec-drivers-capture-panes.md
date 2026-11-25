@@ -2,13 +2,13 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
 - UTERM-054, for the host capture, its tab scope, its reason kinds, and the pane capture power
 - UTERM-028, for the exec version negotiation that offers the new version
-- UTERM-019, for the base64 field shape its exec byte results use
+- UTERM-019, for the base64 field shape its exec byte results use, and M3 for the read hold M1 reuses
 
 ## Impacts
 
@@ -248,23 +248,22 @@ Candidates:
 Decision: the app holds a read-result's reply until the outbound queue has room for it below a threshold that keeps
 headroom for pushed events and other replies. Then it sends it. Holding is allowed, since a read only reads. Held reads
 per driver are bounded by a count, and a read past the count is refused with `busy`. (autonomous) Amended
-2026-11-22; see Decision Log.
+2026-11-23; see Decision Log.
 
 - The stdin writer signals the channel each time it frees room, and that signal releases held reads in order. Without
   it, a driver that drains its stdin while no event arrives would wait forever.
-- The count is at least the per-run retained result cap divided by the 512 KiB chunk ceiling, with a margin for repeat
-  reads. A driver that sends every read for all its handles at once is never refused.
+- The count is at least the sum of the per-run retained result caps of every pool a driver reads, capture results and
+  UTERM-019's browser results, divided by the 512 KiB chunk ceiling, with a margin for repeat reads. A driver that
+  sends every read for all its handles at once is never refused.
 - The version's documentation promises a floor on held reads, never an exact count. It says a read past the bound is
   refused with `busy`, and is safe to send again after the driver reads its replies. The threshold is not published.
 - Revoke, run end, and pane close fail every held read. A read-result reply the app queued and has not yet written is
   dropped at Revoke, and an error reply for its request ID takes its place, in order. That is queued work under ADR-14
   P11, as UTERM-028 drops queued invocation frames.
-- The hold covers capture reads only. UTERM-019's browser read-result on the exec wire has the same overflow at version
-  4, and UTERM-019 settles its own fix. Filed as
-  [20261122-exec-browser-read-result-burst-ends-driver](../bugs/20261122-exec-browser-read-result-burst-ends-driver.md).
+- UTERM-019 M3 builds the hold for its browser read-result on the exec wire, per UTERM-019 "How the app bounds browser
+  reads in flight", since M3 ships first. M1 routes capture reads through the same hold, and one count covers both.
 
-Leaves undone: pushed events alone still end a driver that never reads its stdin, as UTERM-028 accepts. Until UTERM-019
-fixes its own reads, a browser driver that sends its browser reads in a burst can be ended.
+Leaves undone: pushed events alone still end a driver that never reads its stdin, as UTERM-028 accepts.
 
 Rationale: a driver that sends every read of a capture before reading its stdin is the obvious pattern, since `offset`
 is echoed for replies in any order. Five chunks of about 683 KiB fill the 4 MiB queue, so it is the common case for a
@@ -294,8 +293,7 @@ None.
 - **Large reads in flight end the driver** — likelihood: medium, impact: medium.
   Mitigation: chunks are sized against the frame cap, and the app holds a read until the outbound queue has room, per
   "How the app bounds reads in flight". The version's documentation lives with UTERM-028 M1's version 5 documentation.
-  UTERM-019's exec read-result has no hold until UTERM-019 settles its own, so a browser driver that sends its browser
-  reads in a burst can still be ended. Filed against UTERM-019.
+  UTERM-019 M3 builds the same hold for browser reads.
 - **A driver with no verified identity reads what a pane shows** — likelihood: medium, impact: high.
   Mitigation: capture follows UTERM-054's tab scope, and needs a per-run power for every target, the anchor included,
   so a driver's reach is bounded. "Which grant and targets an exec driver captures under" settles the power and its
@@ -370,6 +368,8 @@ Waits for UTERM-028 M1, for UTERM-054 M2, M3, and M5, and for UTERM-054's resolu
   not ended
 - A read past the held count is refused with `busy`, the driver is not ended, and the same read works once the driver
   reads its replies
+- Capture reads go through the hold UTERM-019 M3 builds, and share its count. A driver that sends every capture read
+  and every browser read for all its handles before reading its stdin is never refused
 - Run end and pane close fail held reads, as Revoke does
 - A held read is released when the writer frees room, with no event needed to wake it
 - A held read resolves its handle when it is sent, so a handle freed meanwhile answers as a freed handle does
@@ -440,6 +440,13 @@ Waits for UTERM-028 M1, for UTERM-054 M2, M3, and M5, and for UTERM-054's resolu
 - 2026-11-22: The user accepted the proposal. No decision earns an ADR: the driver's grant and targets are ADR-14's,
   wire compatibility is ADR-13's, and the frames, the held reply, and the read hold are scoped to this exec version.
 - 2026-11-22: Scheduled as UTERM-055 M1 in queue.md.
+- 2026-11-23: From the triage of 20261122-exec-browser-read-result-burst-ends-driver. The user chose that UTERM-019's
+  exec read-result reuse this proposal's read hold. Amended "How the app bounds reads in flight": it said the hold
+  covers capture reads only and UTERM-019 settles its own fix, and it sized the count from one per-run cap. UTERM-019
+  M3 now builds the hold, since it lands before M1. M1 routes capture reads through it, and the count covers both result
+  pools. (autonomous) M3 building the hold and the summed count are mechanisms under the user's choice. The risk "Large
+  reads in flight end the driver" no longer says browser bursts can end a driver. M1 gained a check for the shared
+  count, and Dependencies names UTERM-019 M3's hold.
 
 ## References
 

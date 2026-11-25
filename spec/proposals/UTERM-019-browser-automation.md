@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-11
-**Updated:** 2026-11-21
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -33,7 +33,8 @@
 - UTERM-004 — "Exec wire format": the command hook it added can reply later, and exec drivers match such replies by
   request ID. Result chunks reach drivers as base64 strings, per "Result encoding".
 - UTERM-055 — "The frames' fields" names the exec keys of a read-result chunk, `data` and `offset`, which "Result
-  encoding" leaves unnamed. M3 checks them.
+  encoding" leaves unnamed. M3 checks them. "How the app bounds browser reads in flight": M3 builds the read hold
+  UTERM-055 settles for captures, and UTERM-055 M1 routes capture reads through it.
 - The follow-up inspector-bridge proposal reuses "Capabilities" and "Page events", and adds private-API capabilities
   to the same set. Its Risks entry ties capability names to `uniterm/api-version`. Under "Capability names and the
   unavailable error" they are append-only instead, and a failure after an effect is that proposal's to define.
@@ -689,8 +690,9 @@ text form. Janet callers get Janet data notation, and exec drivers get JSON. (au
   nesting cap that is the same for both forms. A result past either is refused with a structured error.
 - A handle reads in the form of the caller kind that made it. The byte size, the cap, and the offsets count that form.
 - Skew: ScriptWire takes the next version after the one it is at when this lands. It is at 12 after UTERM-007 M5, which
-  moved it from 11 and the exec protocol from 3 to 4. App and helper ship in one bundle, and a mismatch is refused at
-  the hello in either direction. On the exec wire, base64 appears only in replies to new commands, so this proposal
+  moved it from 11 and the exec protocol from 3 to 4. App and helper ship in one bundle, and a mismatch is refused
+  before any call in either direction. Once UTERM-056 lands, a program on an older version keeps running, and a chunk it
+  cannot read answers `replyLost` with the version it needs. Amended 2026-11-23; see Decision Log. On the exec wire, base64 appears only in replies to new commands, so this proposal
   does not move the exec protocol version, which stays at 4 unless another change moves it. Amended 2026-11-15; see
   Decision Log.
 
@@ -700,6 +702,51 @@ touches page data is a serializer written in Swift. A C JSON reader in the helpe
 memory-unsafe parser. Janet data notation alone would make every external driver write its own reader. Base64 inside
 4096-byte strings would take thousands of round trips for one PDF. Converged in 2 passes. The second pass's caveats
 are folded in, and the proposal re-check covers them.
+
+### How the app bounds browser reads in flight
+
+Original question:
+
+An exec driver's read-result reaches it as a member command at version 4, and each reply carries one chunk. The app
+keeps at most 4 MiB of unsent output per driver, and an overflow ends the driver. Pushed applet events share that queue.
+A driver that sends every read for a large result before it reads its stdin fills the queue and is ended, with its run,
+its powers, and its handles. "Large results" named no bound on reads in flight, and no chunk size for the exec wire.
+Filed as [20261122-exec-browser-read-result-burst-ends-driver](../bugs/20261122-exec-browser-read-result-burst-ends-driver.md).
+Candidates:
+
+- The app holds a read-result reply until the queue has room, as UTERM-055 "How the app bounds reads in flight"
+  settles for captures.
+- The app refuses a read with `busy` when the queue is near full. Leaves undone: every driver needs retry logic, and
+  `busy` becomes the normal path for a large result, timed by the pipe.
+- The documentation states a chunk size and a count of reads in flight, and nothing enforces it. Leaves undone: a
+  driver that misreads it is ended.
+
+Decision: the app holds an exec read-result reply until the outbound queue has room for it, by the hold UTERM-055
+settles for capture reads.
+
+- On the exec wire, a chunk holds at most 512 KiB of raw bytes, the ceiling UTERM-055 "The frames' fields" settles. The
+  app may return fewer bytes before the end, so a driver advances by the decoded length. A ScriptWire chunk still fits
+  one reply.
+- The reply waits until the queue has room for it below a threshold that keeps headroom for pushed events and other
+  replies. The stdin writer signals each time it frees room, and that signal releases held reads in order.
+- Held reads per driver are bounded by a count, and a read past it is refused with `busy`. The count is at least this
+  proposal's per-run retained result cap divided by the chunk ceiling, with a margin for repeat reads. So a driver
+  that sends every read for all its handles at once is never refused.
+- A held read resolves its handle when it is sent, so a handle freed meanwhile answers as a freed handle does.
+  Revocation and run end free every handle, so they fail every held read.
+- M3 builds the hold, since it ships exec read-result first. UTERM-055 M1 routes capture reads through the same hold,
+  and raises the count to cover both result pools.
+- Skew: read-result is new in M3, so the hold and its `busy` refusal ship with its first release. No meaning a version
+  4 driver already relies on changes, as ADR-13 asks. `busy` is already a code a version 4 driver sees from a full
+  per-tab cap.
+
+Leaves undone: pushed events alone still end a driver that never reads its stdin, as UTERM-028 accepts.
+
+Rationale: the user chose the hold. A driver that sends every read before reading its stdin is the obvious pattern,
+since replies are matched by request ID and arrive in any order. Holding makes that driver work with no new frame, and
+keeps `busy` as an abuse limit. A refusal by queue room would make every driver write retry logic, and a driver that
+passes its tests could fail in the field. Documentation alone ends the obvious driver. M3 builds the hold because the
+queue puts M3 ahead of UTERM-055 M1, which waits on UTERM-054 M5, which waits on M3.
 
 ## Design Decisions (Open)
 
@@ -752,6 +799,10 @@ None.
 - **Result chunks on the exec wire become a published contract** — likelihood: high, impact: low. External drivers will
   read the base64 field. Mitigation: it appears only in replies to commands this proposal adds, and it follows the
   browser command schema's append-only rule.
+- **Large reads in flight end an exec driver** — likelihood: medium, impact: medium. A driver that sends every read
+  before reading its stdin fills the 4 MiB outbound queue. Mitigation: the app holds a read until the queue has room,
+  per "How the app bounds browser reads in flight". A driver that never reads its stdin can still be ended by pushed
+  events, as UTERM-028 accepts.
 - **The capability record holds at most 64 names** — likelihood: low, impact: low. The set is append-only, so the
   ceiling is permanent. Accepted: this proposal and UTERM-020 together need far fewer, and more would go in a new reply
   key.
@@ -822,7 +873,7 @@ Starts after UTERM-005 M8.
 
 **Status:** NOT STARTED
 
-Amended 2026-11-22; see Decision Log.
+Amended 2026-11-23; see Decision Log.
 
 - A held `WKFrameInfo` still targets its frame later, including a cross-origin frame, or the result is recorded and
   run-script goes main frame only
@@ -859,6 +910,15 @@ Amended 2026-11-22; see Decision Log.
   malformed result is refused with a structured error
 - On the exec wire, a read-result chunk's result is `{"data":d,"offset":o}`: the chunk's bytes as a base64 string, and
   the raw byte offset it starts at. These are the keys UTERM-055 "The frames' fields" settles for every exec byte chunk
+- An exec read-result chunk holds at most 512 KiB of raw bytes, and fits the 1 MiB frame cap after base64 and the
+  envelope. A test reads chunks shorter than the ceiling and joins them by decoded length
+- An exec driver that sends every read-result for a result at the per-result cap before reading its stdin receives
+  every chunk and is not ended
+- An exec read past the held count is refused with `busy`, the driver is not ended, and the same read works once the
+  driver reads its replies
+- A held read is released when the writer frees room, with no event needed to wake it
+- A held read resolves its handle when it is sent, so a handle freed meanwhile answers as a freed handle does.
+  Revocation and run end fail every held read
 - Run-script and injection choose the isolated or page world from two values. No call can reach uniterm's own worlds,
   and a run-script cannot post to the unsent-input tracker's handler
 - Removing a controller's injections leaves uniterm's own user scripts in place
@@ -1116,6 +1176,16 @@ Amended 2026-11-22; see Decision Log.
   as a base64 string and named no key for it. M3 ships that first, so an implementer would have picked a permanent key.
   UTERM-055 "The frames' fields" names the result keys `data` and `offset`, and M3 gained a check for them. Impacts
   gained a UTERM-055 line.
+- 2026-11-23: From the triage of 20261122-exec-browser-read-result-burst-ends-driver. The user chose that an exec
+  read-result reply waits until the outbound queue has room, by UTERM-055's capture hold, over a `busy` refusal at a
+  full queue and a documented bound. Added "How the app bounds browser reads in flight", a Risks entry, and M3 checks
+  for the hold.
+- 2026-11-23: (autonomous) Mechanisms under the user's choice. M3 builds the hold, since the queue puts UTERM-055 M1
+  after M3, and the option offered had M3 wait on UTERM-055 M1. The exec chunk ceiling is UTERM-055's 512 KiB, so one
+  ceiling sizes the held count. One count per driver covers both result pools, so a driver that sends every read for
+  all its handles is never refused. UTERM-055 M1 raises it for capture reads.
+- 2026-11-23: From UTERM-056's acceptance. "Result encoding" said "a mismatch is refused at the hello in either direction".
+  That holds only for the command's own messages.
 
 ## References
 

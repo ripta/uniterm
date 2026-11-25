@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -17,6 +17,9 @@
   this proposal's M2, and routes the selection, insert, and remove sites through its declared change. This proposal's
   saved-state revision says only whether anything saved changed, not which tab. See "The applet keeps each tab's
   encoded record and counts its saved changes" and "No tab cap in this proposal".
+- UTERM-059 — the terminal adopts the saved-state revision this proposal's M2 adds. It relies on the window comparing
+  descriptions only for an applet with no revision, and on the revision's doc rule. See "The applet keeps each tab's
+  encoded record and counts its saved changes".
 
 ## ADR Deviations
 
@@ -32,7 +35,8 @@ The browser applet stops encoding every tab record on the main thread each time 
 change costs the description one tab's work on the main thread, and a save encodes nothing there. Two costs still grow
 with the tab count: one pointer-sized pass over the kept records at each save, and a pane close's read and encode of
 every loaded tab's history. A restore also gives each tab its encoded record once. The close's cost is new for a pane
-that sat quiet before it closed, since a save no longer prepares it.
+that sat quiet before it closed, since a save no longer prepares it. A map pane's save and change check stop encoding
+its undo part too: a dirty pane's document, and any program pins.
 
 ## Motivation
 
@@ -151,16 +155,19 @@ description's undo part lazy; and accepting one undo encode per save. The review
 each change.
 
 Decision: the applet contract gains a call for the saved description alone. Its default returns `describe()` without the
-undo part. The browser answers it from each tab's kept record and builds no undo part. The save calls it. The window's
-change check calls it for an applet with no saved-state revision. A pane close keeps calling `describe()`.
+undo part. The browser answers it from each tab's kept record and builds no undo part. The map answers it with its
+payload description, and builds no undo part either. The save calls it. The window's change check calls it for an
+applet with no saved-state revision, which includes the map. A pane close keeps calling `describe()`. Amended
+2026-11-23; see Decision Log.
 
-Rationale: it removes the undo encode from every save and adds no scope. With the save and the change check moved off
+Rationale: it removes the undo encode from every save of the browser and the map. The map's answer is an addition the
+user chose on 2026-11-23. With the save and the change check moved off
 `describe()`, a close is the browser's only caller of the undo part, once per applet. So its cache never hits, and the
 cache is removed instead of rekeyed. A lazy undo part loses history: the close drops each never-loaded tab's restored
 history right after `describe()`, so a part evaluated later finds nothing. It would also change a shared `Sendable`,
 `Equatable` type that UTERM-051 reads. Kept undo entries still walk every tab at each save, and they add an index
 alignment that a missed move would break. Splitting the contract makes the two calls unable to disagree, but it moves
-the terminal's, the map's, and the text viewer's undo parts too, which is a scope addition.
+the terminal's and the text viewer's undo parts too, which is a scope addition.
 
 Leaves undone: a pane close reads and encodes every loaded tab's history on the main thread, while the user waits on
 the close. Today a save fills the undo cache and each tab's kept history read. So closing a pane that sat quiet for a
@@ -168,8 +175,9 @@ second reads and encodes no history today, though it encodes every tab record. U
 cache before the close, so that close's history cost is new. The total main-thread work drops, but the history work
 moves from a deferred save to the close. Bug `20261122-browser-close-encodes-every-tab-history-on-main-thread` tracks
 it. Other applets keep building their undo
-parts at each save, since only the browser answers the new call. Bug
-`20261122-map-describe-encodes-document-at-every-save` tracks the map's.
+parts at each save, since only the browser and the map answer the new call. A dirty map pane's close still
+base64-encodes its document and base on the main thread, as today. Bug
+`20261121-edited-map-past-size-bound-saves-but-cannot-reopen` tracks the missing bound on an edited document.
 
 ## Design Decisions (Open)
 
@@ -214,6 +222,8 @@ The scratch measurement covered the encode alone.
 
 **Status:** NOT STARTED
 
+Amended 2026-11-23; see Decision Log.
+
 - A test shows that a burst of title changes costs the window's change check no more per change at 10,000 tabs than at
   10 tabs. `describe()` and a save are timed apart, since each pays the accepted pass over the kept records. `refresh`
   and the tab bar are timed apart too, since UTERM-053 owns them. A record change rebuilds only its own tab's encoded
@@ -240,6 +250,9 @@ The scratch measurement covered the encode alone.
   nothing
 - The call for the saved description alone is a requirement of the applet protocol, with a default. A test shows that
   the window's save, through the applet type it holds, reaches the browser's own answer
+- A map test shows that the map's saved description alone equals `describe()` without its undo part, for a dirty pane
+  and for a clean pane holding command layers. The map implements the protocol requirement itself, not the default. The
+  existing reopen tests for unsaved pins and command layers stay green
 - The kept history read on each tab, and the doc comment that says the applet keys a kept description on
   `historyVersion`, are each removed or given a stated current user
 - The revision test covers a selection change and a tab added and closed, as well as the two record sites. It passes
@@ -327,6 +340,18 @@ The scratch measurement covered the encode alone.
   the Summary names it and M2 reuses the stored payload's tree for a record validation leaves unchanged. M1 measures
   the pass over the kept records instead of the removed array's copy.
 - 2026-11-22: Scheduled as UTERM-052 M1-M2 in queue.md.
+- 2026-11-23: (addition) From the triage of bug `20261122-map-describe-encodes-document-at-every-save`. The user chose
+  to add the map's answer to M2. Amended "The save asks for the saved description alone": it said only the browser
+  answers the new call, and its Leaves undone line said the bug tracks the map's undo encode at each save. The map now
+  answers with its payload description and builds no undo part. The Summary says so, and M2 gained a map check.
+- 2026-11-23: A design-critic pass on the map amendment found it sound. Dropping the map's undo part from the save and
+  the change check loses nothing, and a map pane's close costs what it costs today. Corrections of fact: the Summary
+  and M2's map check said only a dirty pane's undo part was dropped. A clean pane holding program pins encodes its
+  command layers there too, so both now name it. The rationale said the decision "adds no scope". It now names the
+  map's answer as the user's addition, and the split option no longer lists the map. M2's map check said "a save and a
+  change check of a dirty map pane build no undo part", which no map test can observe. It now checks the equality for
+  both kinds of pane, and that the map answers the call itself. The generic check covers the window's side. Leaves
+  undone now names the dirty map close's encode and the open bound bug.
 
 ## References
 
@@ -338,3 +363,4 @@ The scratch measurement covered the encode alone.
 - Bug `20261122-browser-close-encodes-every-tab-history-on-main-thread`
 - Bug `20261122-map-describe-encodes-document-at-every-save`
 - Bug `20261122-terminal-describe-encodes-every-tab-at-each-change`
+- UTERM-059: the terminal's change check never encodes every tab

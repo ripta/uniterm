@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-22
-**Updated:** 2026-11-22
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -28,6 +28,8 @@
 - UTERM-052 — it bounds the description's encode, and leaves the tab cap to this proposal. This review amended it to
   share this proposal's record choke point, and to build its tab array from the kept records. See "One record choke
   point serves the refresh and the description" and "No tab cap".
+- UTERM-058 — the palette's index reads the read-through view by ID and shares the refresh's change type for the
+  window's tab report. See "The published list is a read-through view of the applet's tabs".
 
 ## ADR Deviations
 
@@ -218,8 +220,9 @@ element. The entry is recomputed when its own inputs change. Those inputs includ
 address, not only the stored record, since a page that cannot be stored still has a title. The applet keeps a map from
 ID to tab. A change updates that tab's entry, so no second copy of the entries exists to drift.
 
-The refresh takes a change value: one tab, a set of tabs, the selection, an insert or remove at a position, a change
-that names no tab, or a pane-level change. It has no form that omits the change, so a call site that forgets to declare
+The refresh takes a change value: one tab, a set of tabs, the selection, an insert at a position, a remove of tabs
+named by ID, a change that names no tab, or a pane-level change. The ID map resolves a removed tab's position, so a
+remove by ID costs no scan. The window's tab report shares this type, per UTERM-058. It has no form that omits the change, so a call site that forgets to declare
 its change fails to compile. A change that names no tab, such as a download's progress or a dialog, updates segments
 and touches no tab. The applet reports a tab change when a changed tab's entry differs, and reports a change to the
 window whenever the saved-state revision moved, even when no entry changed.
@@ -228,14 +231,16 @@ The saved-state revision, moved by the record choke point, replaces the snapshot
 a layout save. The unsent-input marks and the dialog count get their own per-event signals. See "One record choke point
 serves the refresh and the description".
 
+The view returns a tab's title and details by ID through the ID map, with no scan. The published entry holds no
+details, and the palette searches a terminal tab's working directory, so the view reads details from the applet's tab.
+
 Readers that need a fixed copy take a value snapshot from the view. Equality lives on the snapshot only, so a test that
 held the list and compared it later must take a snapshot to compile. Applets with one tab keep a fixed-list form, so
 their call sites stay as they are.
 
 A copy of the entries on the applet, updated in place, was rejected. It is a second record of each tab that can drift
 from the tabs. A cached cleaned title alone was rejected. It keeps the walk, the list rebuild, and the snapshot per
-change, which the per-change bound rules out. Amended 2026-11-22 for stored positions and the change that names no tab;
-see Decision Log.
+change, which the per-change bound rules out. Amended 2026-11-23; see Decision Log.
 
 ### The bar holds each applet's read-through list
 
@@ -378,6 +383,10 @@ Waits on UTERM-041 M1 and UTERM-052 M2.
 - A test shows that each tab's element carries `tab-N` and `tab-close-N` from its stored position, that the marker
   identifiers follow it, and that `TabsUITests` passes unchanged
 - A test shows that a terminal tab is still found in the palette by its working directory
+- A test shows that at 10,000 tabs, the browser view's `contains`, `selectTab(id:)`, and its read of a tab's title and
+  details by ID each resolve through the ID map with no scan
+- A test shows that a remove reaches the refresh as the removed tabs' IDs, including a Close Other Tabs over 9,999
+  tabs
 - A test shows that after an insert and a remove in the terminal and in the questions applet, every entry's stored
   position and element frame match the tab's real place
 - A test compares the incremental published list, and every tab's stored position, with a full rebuild after a random
@@ -464,6 +473,13 @@ Waits on UTERM-041 M1 and UTERM-052 M2.
   principle for pane nodes, and this proposal applies it.
 - 2026-11-22: Accepted by the user after the review.
 - 2026-11-22: Scheduled as UTERM-053 M1 in queue.md.
+- 2026-11-23: Amended for UTERM-058, which the user approved at its review gate. "The published list is a read-through
+  view" said the change value holds "an insert or remove at a position". A remove now names tabs by ID, since
+  UTERM-058's palette index is keyed by ID and shares this type for the window's tab report. The view also returns a
+  tab's title and details by ID, since the published entry holds no details and the palette searches a terminal tab's
+  working directory. M1 gains checks for both, and for the browser's `contains` and `selectTab(id:)` resolving through
+  the ID map. The decision's marker had read "Amended 2026-11-22 for stored positions and the change that names no
+  tab; see Decision Log."
 
 ## References
 

@@ -1,16 +1,15 @@
 # The app opens a package folder the command names, with uniterm's privacy grants
 
-**Status:** open
-**Validation:** not confirmed; nothing was run. The path below is traced through the code. Whether uniterm holds a
-grant for Documents, Desktop, or Downloads depends on the user's Mac.
+**Status:** proposed. [UTERM-057](../proposals/UTERM-057-package-read-by-invoker.md) settles the design.
 **Estimate:** large; two non-trivial design decisions. Who opens the package: the command opens the folder and passes
 its descriptor to the app (a new descriptor-passing path on the socket, and an app that walks a descriptor it did not
 open), or the command reads the listed files and sends their bytes (changes `ControllerBegin` in
 `ScriptProtocol.swift`, and the app can no longer verify a tree it never sees). Whether the signature file and the
 `checkTree` walk move with it: both read from the same folder. The choice should match the declared-file answer.
-**Traced:** 2026-11-23. The app side is confirmed unchanged: `ScriptControllers.swift:162` calls
-`ControllerSnapshot.create(from: request.package, ...)` with the path the command sent. Not reproduced, since the
-result depends on a Documents grant on the Mac.
+**Traced:** 2026-11-23, twice. The app side is confirmed unchanged: `ScriptControllers.swift:162` calls
+`ControllerSnapshot.create(from: request.package, ...)` with the path the command sent. Both `runJanet` and `runNative`
+in `ControllerCommands.swift` send only the `realpath` of the folder. Not reproduced, since the result depends on a
+Documents grant on the Mac.
 **Found:** 2026-11-22, by the design critic reviewing UTERM-034
 
 ## Observed

@@ -32,6 +32,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   public private(set) var segments: [AppletSegment] = []
   public private(set) var publishedTabs: AppletTabList
   public let openPicker: OpenPicker
+  public let sourceSwap = SourceSwap()
 
   private static let untitled = "Map"
   private static let limits = GeoJSONLimits()
@@ -126,6 +127,14 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// A question about unsaved edits, while it is open.
   private(set) var asking: Task<Void, Never>?
 
+  /// The change check's read, while it runs. One read runs at a time, so a mount that never answers
+  /// parks at most one read per pane.
+  private(set) var checkingDisk: Task<Void, Never>?
+
+  /// Set when the file changes again during the check's read. The check then reads once more, so
+  /// the newest file on disk is the one the pane compares.
+  private var diskChangedDuringCheck = false
+
   /// Asks where Save As writes, given a suggested name and a start folder. Tests replace it.
   var chooseSaveLocation: @MainActor (String, String?, NSWindow?) async -> URL? =
     MapViewerApplet.runSavePanel
@@ -137,6 +146,10 @@ public final class MapViewerApplet: Applet, SourceReplacing {
   /// Writes a file's bytes to disk. Tests replace it to land an edit while a write is in flight.
   var writeFile: @Sendable (Data, URL) async -> Result<Void, any Error> =
     MapViewerApplet.atomicWrite
+
+  /// Reads the file for Save's check and the change check. Tests replace it to hold the read open.
+  var readOnDisk: @Sendable (String) async -> (url: URL, bytes: Data?) =
+    MapViewerApplet.readSavedFile
 
   /// Reads an edited document's pins back. Tests replace it to refuse chosen bytes.
   var readLayer: @Sendable (Data, String) async -> Result<GeoFileLayer, GeoJSONFileError> = {
@@ -590,7 +603,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
       return false
     }
 
-    replaceSource(with: file, startDirectory: SourceStartDirectory.of(file))
+    replaceSource(withChosen: file)
 
     return true
   }
@@ -608,6 +621,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
   public func close() {
     closed = true
+    sourceSwap.cancel()
     events.close()
     alerts.discard()
     opening?.cancel()
@@ -656,7 +670,7 @@ public final class MapViewerApplet: Applet, SourceReplacing {
 
       return AppletDescription(
         type: description.type, version: description.version, payload: description.payload,
-        undoState: undo)
+        undoState: AppletUndoState(undo))
     }
 
     assertionFailure("the map viewer description failed to encode")
@@ -991,8 +1005,13 @@ extension MapViewerApplet {
 
     guard await readAccepts(document) else { return false }
 
-    let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
-    let onDisk = try? Data(contentsOf: url)
+    let generation = openGeneration
+    let (url, onDisk) = await readOnDisk(path)
+
+    // The read lasts as long as the file's mount takes to answer. Opening another file, clearing
+    // the file, and closing the pane each ask the user to discard the edits first. So a change
+    // here means the user gave the edits up, and Save neither asks nor writes.
+    guard generation == openGeneration, path == record.path, !closed else { return false }
 
     if onDisk != savedDocument {
       switch await resolveConflict(displayName, content.window) {
@@ -1005,7 +1024,7 @@ extension MapViewerApplet {
       }
     }
 
-    return await write(document, to: url)
+    return await write(document, to: url, recordingFor: path)
   }
 
   /// Writes the pins to a new file the user names, and makes it the pane's file.
@@ -1021,7 +1040,7 @@ extension MapViewerApplet {
     let bytes = captured ?? GeoJSONPatcher.emptyDocument
 
     guard await readAccepts(captured) else { return false }
-    guard await write(bytes, to: url) else { return false }
+    guard await write(bytes, to: url, recordingFor: nil) else { return false }
 
     record.path = url.path
     record.bookmark = nil
@@ -1049,10 +1068,14 @@ extension MapViewerApplet {
     return true
   }
 
-  private func write(_ bytes: Data, to url: URL) async -> Bool {
+  /// Writes `bytes` to `url`. They become what the map last saved when the pane still shows `path`,
+  /// the pane's own path the save started from. That path may be a link, and `url` its resolved
+  /// target, so the two are never compared. Save As passes nil, since it records its bytes once the
+  /// pane takes the new file.
+  private func write(_ bytes: Data, to url: URL, recordingFor path: String?) async -> Bool {
     switch await writeFile(bytes, url) {
     case .success:
-      if url.path == record.path { savedDocument = bytes }
+      if let path, path == record.path { savedDocument = bytes }
 
       changedOnDisk = false
       refresh()
@@ -1070,10 +1093,37 @@ extension MapViewerApplet {
     }
   }
 
+  /// Resolves the file's links and reads its bytes, for a check against what the map last saved or
+  /// read.
+  ///
+  /// It runs on a dispatch queue, not on Swift's cooperative pool. A network mount may never
+  /// answer, and a read parked on it would otherwise hold one of the pool's few threads.
+  nonisolated static func readSavedFile(at path: String) async -> (url: URL, bytes: Data?) {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+
+        continuation.resume(returning: (url, try? Data(contentsOf: url)))
+      }
+    }
+  }
+
   /// Writes beside the file, then swaps the new file in. A failure leaves the old file whole. The
   /// swap keeps the old file's permissions and other metadata.
-  @concurrent
-  static func atomicWrite(_ bytes: Data, to url: URL) async -> Result<Void, any Error> {
+  ///
+  /// It runs on a dispatch queue for the same reason as the read: a write parked on a mount that
+  /// never answers must not hold a pool thread.
+  nonisolated static func atomicWrite(_ bytes: Data, to url: URL) async -> Result<Void, any Error> {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        continuation.resume(returning: writeReplacing(bytes, at: url))
+      }
+    }
+  }
+
+  private nonisolated static func writeReplacing(_ bytes: Data, at url: URL) -> Result<
+    Void, any Error
+  > {
     let manager = FileManager.default
     let temporary = url.deletingLastPathComponent().appendingPathComponent(
       ".\(url.lastPathComponent).uniterm-\(UUID().uuidString)")
@@ -1113,11 +1163,41 @@ extension MapViewerApplet {
   /// The file on disk changed. A pane with no edits reads it again. A pane with edits keeps them
   /// and says so, and Save asks before it overwrites the change. A change that only repeats what
   /// the map last saved or read, as its own save does, is not a change.
+  ///
+  /// The read runs off the main thread, since the file's mount may never answer. A change during
+  /// the read asks for one more read instead of a second one beside it.
   func fileChangedOnDisk() {
-    guard !closed, let path = record.path else { return }
+    guard !closed, record.path != nil else { return }
 
-    let onDisk = try? Data(contentsOf: URL(fileURLWithPath: path))
+    guard checkingDisk == nil else {
+      diskChangedDuringCheck = true
+      return
+    }
 
+    checkingDisk = Task { [weak self] in
+      await self?.checkDisk()
+      self?.checkingDisk = nil
+    }
+  }
+
+  private func checkDisk() async {
+    repeat {
+      diskChangedDuringCheck = false
+
+      guard !closed, let path = record.path else { return }
+
+      let generation = openGeneration
+      let (_, onDisk) = await readOnDisk(path)
+
+      // Another file opened, the file was cleared, or the pane closed while the read ran. The
+      // bytes describe a file the pane no longer shows.
+      guard generation == openGeneration, path == record.path, !closed else { continue }
+
+      applyDiskChange(onDisk, at: path)
+    } while diskChangedDuringCheck
+  }
+
+  private func applyDiskChange(_ onDisk: Data?, at path: String) {
     guard onDisk != savedDocument else { return }
 
     if isDirty {
@@ -1170,7 +1250,7 @@ extension MapViewerApplet {
   /// The command layers a description's undo-only part holds, or nil when it holds none that this
   /// build can read.
   static func commandLayers(in description: AppletDescription) -> CommandLayers? {
-    guard case .object(let fields)? = description.undoState,
+    guard case .object(let fields)? = description.undoState?.value(as: JSONValue.self),
       let stored = fields[commandLayersKey],
       let snapshot = try? stored.decoded(as: CommandLayersSnapshot.self)
     else { return nil }
@@ -1182,7 +1262,7 @@ extension MapViewerApplet {
   static let unsavedPathKey = "unsavedPath"
 
   static func unsavedPins(in description: AppletDescription) -> UnsavedPins? {
-    guard case .object(let fields)? = description.undoState,
+    guard case .object(let fields)? = description.undoState?.value(as: JSONValue.self),
       case .string(let encoded)? = fields[unsavedKey],
       let document = Data(base64Encoded: encoded)
     else { return nil }

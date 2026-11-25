@@ -187,8 +187,8 @@ final class BrowserRecoveryTests: XCTestCase {
 
     XCTAssertEqual(harness.tab.interactionData, record, "the stop replaced the history record")
 
-    let undo = try XCTUnwrap(harness.applet.describe().undoState)
-      .decoded(as: BrowserDescription.UndoState.self)
+    let undo = try XCTUnwrap(
+      harness.applet.describe().undoState?.value(as: BrowserDescription.UndoState.self))
 
     XCTAssertEqual(undo.tabStates.first ?? nil, record)
 

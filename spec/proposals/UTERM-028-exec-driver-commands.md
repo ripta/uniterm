@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-15
-**Updated:** 2026-11-21
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -126,8 +126,9 @@ protocol version 5. (autonomous)
 - Old app with new driver, and new app with old driver, both run with no deploy order. The one assumption is that a
   deployed version-4 driver ignores the unknown `versions` field. No spec required that of version 4. See Risks.
 
-Rationale: a plain bump refuses every deployed driver, including ones that never declare a command. No exec-capable
-applet ships today, but UTERM-008 M3 may ship one before this lands, and the skew analysis cannot rest on that order.
+Rationale: a plain bump refuses every deployed driver, including ones that never declare a command. The map viewer and
+the image viewer already accept exec drivers, so version-4 drivers for them may be deployed. Amended 2026-11-23; see
+Decision Log.
 The app sends its hello first, so "the app accepts both versions" without an offer cannot work. Its hello must commit to
 one number, and either an old driver or a new one refuses it. A feature list inside version 4 would let version 4's
 meaning grow, against UTERM-004's rule that unversioned text leaves old commands liable to new meanings. Converged in 2
@@ -255,9 +256,9 @@ None.
   and "The version-5 frames".
 - **A deployed version-4 driver refuses the app's hello because of the unknown `versions` field** — likelihood: low,
   impact: medium. No spec required version-4 drivers to ignore unknown fields. Such a driver refuses the new app, as it
-  would under a plain bump. Accepted: no exec-capable applet ships today and no driver documentation exists, so few if
-  any such drivers exist. The failure is a refusal before any effect, and the rule from version 5 on closes it for
-  later versions.
+  would under a plain bump. Accepted: the map viewer and the image viewer have accepted exec drivers only since
+  2026-11-17, and no driver documentation exists, so few if any such drivers exist. The failure is a refusal before any
+  effect, and the rule from version 5 on closes it for later versions. Amended 2026-11-23; see Decision Log.
 - **Disconnecting a driver's pane no longer stops its commands** — likelihood: medium, impact: low. A user who learned
   that disconnecting takes a pane's keys back finds the driver's rows and keys still live at its anchor and members.
   Mitigation: Revoke All Controllers on the anchor of any driver holding the grant, and the key indicator on each pane where
@@ -386,6 +387,12 @@ Amended 2026-11-20; see Decision Log.
   fields it does not know, which covers fields, not unknown values in `versions`. UTERM-055 adds a later version to the
   offer. M1 gained a check that the version-5 documentation says a driver picks a version it knows and ignores the
   others, with a fixture for it. Impacts gained a UTERM-055 line.
+- 2026-11-23: Correction of fact, from bug triage. The image viewer has accepted exec drivers since 2026-11-17, and the
+  map viewer since 2026-11-20. "Version skew" said "No exec-capable applet ships today, but UTERM-008 M3 may ship one
+  before this lands, and the skew analysis cannot rest on that order." The risk of a version-4 driver refusing the new
+  hello said "no exec-capable applet ships today and no driver documentation exists". The user kept the risk at low
+  likelihood, since exec drivers became possible only days ago and no driver documentation exists. The decision itself
+  is unchanged, since its analysis never depended on that order.
 
 ## References
 

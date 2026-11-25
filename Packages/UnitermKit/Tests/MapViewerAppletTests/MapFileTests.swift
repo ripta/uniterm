@@ -482,6 +482,7 @@ final class MapFileTests: XCTestCase {
     XCTAssertTrue(applet.filePinsShown.isEmpty)
 
     XCTAssertTrue(applet.handleDrop([first]))
+    await applet.sourceSwap.pending?.value
     await applet.opening?.value
 
     XCTAssertEqual(applet.filePinsShown.map(\.label), ["A"])

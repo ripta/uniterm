@@ -2,7 +2,7 @@
 
 **Status:** implemented
 **Created:** 2026-11-14
-**Updated:** 2026-11-21
+**Updated:** 2026-11-23
 
 ## Dependencies
 
@@ -505,7 +505,7 @@ Decision: the change follows UTERM-004's skew rules.
 
 - The command and the app: `open-form`, `wait-form`, and `discard-form` are new calls, and the question-only begin
   is a new begin. ScriptWire's version goes up. The hello requires an exact match, so an older command and a newer
-  app refuse each other before any effect.
+  app refuse each other before any effect. Superseded in part by UTERM-056; see Decision Log.
 - An older build reading a `controller.json` or a declaration with `ask-user` refuses the unknown kind. That fails
   closed.
 - An older app receiving a spec with a newer key refuses it as a spec error.
@@ -523,6 +523,7 @@ None.
 - **The form spec becomes a published contract** — likelihood: high, impact: medium.
   Mitigation: strict decoding refuses unknown keys, so a newer spec fails loudly on an older host. New keys are
   additive. A change in a key's meaning needs a new key, never a new reading of an old one.
+  Superseded in part by UTERM-056; see Decision Log.
 - **A script spoofs a uniterm prompt or phishes for secrets** — likelihood: medium, impact: medium.
   Mitigation: the header is drawn by uniterm and names the established requester. Forms look clearly different from
   permission prompts. Text carries no links, and there are no password fields.
@@ -719,6 +720,7 @@ Amended 2026-11-21; see Decision Log.
   This is a run best guess. See the Decision Log.
 - A busy refusal reaches the script as the wire's `busy` failure kind
 - An older command and a newer app refuse each other at the hello
+  Superseded in part by UTERM-056; see Decision Log.
 
 **As built:**
 
@@ -1090,6 +1092,9 @@ user's own runs below confirm what those covered.
   with the "not kept" note, the directory and save modes, and a cancelled panel. The UI test keeps the proof that the
   panel opens as a sheet and that Escape closes it first. M2's As built had no line on this, and its UI test of the
   answer types chose a file through the panel.
+- 2026-11-23: Superseded in part by UTERM-056. Once it lands, the app refuses an older command at its begin instead of
+  at the hello. On ScriptWire, an added form spec or result key is a new version, and a connection on an older version
+  does not get it. The `uniterm ask` output keeps its additive rule, since that is not a wire.
 
 ## References
 
