@@ -158,7 +158,7 @@ public final class WindowScripting: ScriptWindowAPI {
       .record([
         "window": .integer(controller.scriptWindowID),
         "pane": .integer(pane.rawValue),
-        "tab": .integer(controller.scriptTabNumbers.number(for: tab.id)),
+        "tab": .integer(controller.scriptTabNumbers.number(for: tab.id, in: pane)),
         "title": .string(shown ? Self.reported(tab.title) : ""),
         "selected": .bool(tab.id == tabs.selected),
       ])
@@ -259,7 +259,7 @@ public final class WindowScripting: ScriptWindowAPI {
     return .record([
       "window": .integer(controller.scriptWindowID),
       "pane": .integer(pane.rawValue),
-      "tab": .integer(controller.scriptTabNumbers.number(for: tab)),
+      "tab": .integer(controller.scriptTabNumbers.number(for: tab, in: pane)),
     ])
   }
 
@@ -546,7 +546,7 @@ public final class WindowScripting: ScriptWindowAPI {
       let id = AppletTabID(reply: text), applet.publishedTabs.contains(id)
     else { return value }
 
-    fields["tab"] = .number(Double(controller.scriptTabNumbers.number(for: id)))
+    fields["tab"] = .number(Double(controller.scriptTabNumbers.number(for: id, in: pane)))
     fields["window"] = .number(Double(controller.scriptWindowID))
     fields["pane"] = .number(Double(pane.rawValue))
 

@@ -982,6 +982,55 @@ final class WindowScriptingTests: XCTestCase {
 
     XCTAssertFalse(numbers.contains(freshNumber), "a closed tab's number was reused")
   }
+
+  /// Catches a closed pane whose tabs keep their script numbers for the window's life. A controller
+  /// that opens, lists, and closes panes all day would grow the window's numbers without bound. The
+  /// closed pane's numbers must name nothing, the open pane's must still resolve, and a later tab
+  /// must get a number never issued before.
+  ///
+  /// It cannot prove the drop for a tab that closes in a pane that stays open, which this test
+  /// leaves alone.
+  func testClosingAPaneDropsItsTabNumbers() async throws {
+    let fixture = makeFixture()
+    let (controller, pane) = try fixture.openWindow()
+    let source = try XCTUnwrap(fixture.made.first)
+    let closing = try await fixture.openOwned(beside: pane)
+    let member = try XCTUnwrap(fixture.made.last)
+    member.tabCount = 3
+
+    func numbers(of paneID: UInt64) throws -> [UInt64] {
+      let listed = try array(try fixture.listPanes(window: pane.window))
+
+      guard
+        let entry = try listed.first(where: { try record($0)["pane"] == .integer(paneID) })
+      else { return [] }
+
+      return try array(try XCTUnwrap(try record(entry)["tabs"])).map { tab in
+        guard case .integer(let number)? = try record(tab)["tab"] else { return 0 }
+        return number
+      }
+    }
+
+    let kept = try numbers(of: pane.pane)
+    let dropped = try numbers(of: closing.rawValue)
+
+    XCTAssertEqual(dropped.count, 3)
+
+    controller.closePane(closing, appletEnded: false)
+
+    XCTAssertFalse(controller.paneIDs.contains(closing))
+    XCTAssertEqual(
+      dropped.map { controller.scriptTabNumbers.tab(for: $0) }, [nil, nil, nil],
+      "a closed pane's tab numbers still name its tabs")
+    XCTAssertEqual(kept.map { controller.scriptTabNumbers.tab(for: $0) }, [source.tabID(0)])
+
+    source.openTab()
+
+    let later = try numbers(of: pane.pane)
+
+    XCTAssertEqual(later.first, kept.first)
+    XCTAssertGreaterThan(try XCTUnwrap(later.last), try XCTUnwrap(dropped.max()))
+  }
 }
 
 extension UInt64 {
