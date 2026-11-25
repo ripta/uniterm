@@ -131,12 +131,12 @@ fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, 
 # system attachments and captures screenshots, not recordings, so a direct xcodebuild test
 # records nothing either.
 .PHONY: test-app
-test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission
+test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission. A local run needs the pointer and keyboard left alone
 	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) test
 
 # Like test-package-select, an empty list fails instead of running the whole suite.
 .PHONY: test-app-select
-test-app-select: ghostty ## Run only the named UI test classes or methods, e.g. make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'
+test-app-select: ghostty ## Run only the named UI test classes or methods, e.g. make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'. A local run needs the pointer and keyboard left alone
 	$(if $(strip $(UI_TESTS)),,$(error UI_TESTS is empty. Name the tests to run, or use make test-app for the full suite))
 	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) \
 		$(foreach t,$(UI_TESTS),'-only-testing:$(UI_TEST_TARGET)/$(t)') test

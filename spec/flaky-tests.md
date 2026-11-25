@@ -7,10 +7,32 @@ fixed ones.
 
 - A test that fails in a run and then passes when rerun alone is a potential flake. List it under "Potential".
 - A test that fails again when run alone is a confirmed flake. Fix its cause in the test or the product.
-- A fixed flake moves to "Fixed". Its entry names the fix by commit subject.
+- An entry moves to Fixed only with a fix commit and clean CI runs. For an entry seen once in N CI attempts, about 3N
+  consecutive clean CI runs give a 95% chance of seeing it again if still present.
+  - A clean run is one in which the entry's tests started on a head holding the fix and all passed. The entry's tests
+    are every test its sightings name. Other failures in the same run do not matter.
+  - An attempt in which the entry's test never started, such as a skipped job or one cancelled by a person or newer
+    push before the test, neither counts nor breaks the streak.
+  - A partial start in which only some of the entry's tests started and each one that started passed neither counts nor
+    breaks the streak.
+  - A test that started and did not finish, such as one cut off by a job timeout, a crash, or a cancellation mid-run by
+    a newer push, is not clean. It breaks the streak.
+  - A failure of one of the entry's tests that is logged under another entry, by its failure line and message, neither
+    counts nor breaks the streak.
+  - Each attempt of a rerun is its own run, ordered by when the attempt finished. A job a rerun carries from an earlier
+    attempt counts once, only in the attempt that ran it.
+  - N comes from the lowest failure rate among the windows between the fixes the entry records. A window begins at the
+    first CI attempt whose head holds that fix. A commit that only adds a report does not split windows. N's
+    denominator counts every CI attempt that ran any of the entry's tests, partial starts included. A window with no
+    failure sets no N. An entry with no CI failure at all has no N and stays under Potential.
+  - N counts CI attempts only. A sighting from a local run is logged and adds nothing to N.
+  - An entry seen too rarely to reach its count stays under Potential, naming the change.
+  - A run that fails with a settle's report closes nothing. It records a new cause on the entry.
+  - A Fixed entry seen again moves back to Potential with the sighting.
 - A failure that reproduces reliably is a bug. File it under `spec/bugs/`.
 - Never fix a flake with retries, longer timeouts, or weaker assertions. A wait may grow only when a measurement
   shows that one observation costs most of the old wait. The entry then records that measurement.
+- A local UI run needs the pointer and keyboard left alone.
 
 ## Potential
 
@@ -334,7 +356,16 @@ fixed ones.
 - Tried: the pointer now goes to the focused list's center, and the test waits until it is inside the list before any
   wheel. The report also gives the pointer's position. If it fails again with the pointer inside the list, this cause
   is wrong.
-- Status: unresolved until CI runs show the change holds.
+- Recount through 2026-11-25T04:05Z, from the first sighting on: 2 failures in 22 CI attempts up to "Wait for the
+  launcher's last entry to come into view after a scroll", 4 in 20 up to "Scroll the short launcher either way the
+  machine's wheel goes", and 3 in 19 up to "Settle the pointer on the launcher list before the scroll test's wheels".
+  All 9 failures are wheel failures, by their message "the scroll wheel did not scroll the list".
+- The lowest rate is 2 in 22, so N is 11 and the count is 33. Since the pointer change, the test passed in 21
+  consecutive CI attempts. 5 of them came before "Poll UI test waits every quarter second instead of XCTest's second".
+  Four `app` jobs in that span were cancelled before the test started, so they neither count nor break the streak.
+- Method: the test's own `passed` and `failed` lines in every `app` job log, by attempt. A fix is held when the tree
+  CI tested holds it, which for a PR job is the merge of its head into its base.
+- Status: unresolved until 12 more clean CI runs reach the count of 33.
 
 ### `WindowsUITests.testCommandNOpensASecondWindowWithItsOwnShell`
 
