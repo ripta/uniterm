@@ -19,6 +19,8 @@
   refresh change names removed tabs by ID instead of by position. UTERM-053 records these amendments in its own
   decisions and Decision Log.
 - Bug `20261122-terminal-tab-changes-walk-every-tab` — M2 fixes its lookups by tab ID. Its other walks stay with it.
+- Bug `20261123-script-tab-numbers-keep-closed-tabs` — "The tab report names what changed by ID" closes it. A reported
+  remove drops the removed tabs' script tab numbers. The bug's pane-level half is already fixed.
 - UTERM-002 — "The palette ranks tabs off the main thread" replaces the live query's walk of the pane tree, and keeps a
   second copy of each tab's derived text. UTERM-002 is implemented, so it is superseded in part, not edited.
 
@@ -174,6 +176,10 @@ forgets fails to compile.
   that bug calls no design call. The bug keeps its other walks.
 - The read-through view returns a tab's details by ID. UTERM-053's published entry holds no details, and the terminal's
   working directory is a detail the palette searches. This amends UTERM-053's view. See Impacts.
+- The window also drops each removed tab's script tab number when a report names the remove. Scripting gives a tab its
+  number the first time a script sees it, and today the window keeps the entry until the tab's pane leaves. A pane
+  that opens and closes tabs all day grows the entries without bound. Numbers still only grow, so a dropped number is
+  never issued again. See bug `20261123-script-tab-numbers-keep-closed-tabs`. Amended 2026-11-24; see Decision Log.
 
 Rationale: one source for each tab's text keeps UTERM-053's "no second copy to drift" rule. A report that carried the
 values was rejected. Each applet would state a tab's text twice, once in its published list and once in the report, and
@@ -250,6 +256,9 @@ The baseline that M3's numbers are compared against, taken after UTERM-053 M1 so
   matching its tabs, as UTERM-053 M1 tests the browser's
 - `chooseTab` no longer checks `contains` before `selectTab(id:)`, and choosing a closed tab still takes the tab-gone
   path
+- A test shows that a reported remove drops the removed tabs' script tab numbers, in a pane that stays open, including a
+  Close Other Tabs over many tabs. A closed tab's number names nothing, the window keeps no entry for it, and a later
+  tab gets a number never issued before. Amended 2026-11-24; see Decision Log.
 
 ### M3: The palette ranks tabs off the main thread
 
@@ -348,6 +357,13 @@ The baseline that M3's numbers are compared against, taken after UTERM-053 M1 so
   leaves a tab out of the palette until the count check heals it. Added: the long dependency chain, accepted, and the
   index's memory for the window's life, accepted. Both are low impact.
 - 2026-11-24: Scheduled as M1-M3 in queue.md.
+- 2026-11-24: M2's tab report also drops a removed tab's script tab number. (addition) The user chose it at the triage
+  of bug `20261123-script-tab-numbers-keep-closed-tabs`. Before this, "The tab report names what changed by ID" served
+  only the palette, and M2 had no check for scripting's numbers. The window has no per-tab close signal until M2's
+  remove report, so the bug's tab-level half cannot be fixed sooner. Diffing a pane's tabs at every report was rejected,
+  since it is the per-report walk this proposal removes. A separate close callback was rejected, since it gives one
+  fact two vocabularies. The bug's pane-level half landed at that triage: a pane that leaves the window drops its tabs'
+  numbers.
 
 ## References
 

@@ -1,4 +1,5 @@
 import AppletKit
+import PaneModel
 import ScriptWire
 import XCTest
 
@@ -80,14 +81,37 @@ final class WindowIDSourceTests: XCTestCase {
   /// number never issued names nothing.
   func testTabNumbersOnlyGrowAndAreNeverReused() {
     var numbers = ScriptTabNumbers()
+    let pane = NodeID(rawValue: 1)
     let tabs = (0..<5).map { _ in AppletTabID.make() }
-    let issued = tabs.map { numbers.number(for: $0) }
+    let issued = tabs.map { numbers.number(for: $0, in: pane) }
 
     XCTAssertEqual(issued, [1, 2, 3, 4, 5])
-    XCTAssertEqual(numbers.number(for: tabs[2]), 3)
-    XCTAssertEqual(numbers.number(for: .make()), 6)
+    XCTAssertEqual(numbers.number(for: tabs[2], in: pane), 3)
+    XCTAssertEqual(numbers.number(for: .make(), in: pane), 6)
     XCTAssertEqual(numbers.tab(for: 3), tabs[2])
     XCTAssertNil(numbers.tab(for: 0))
     XCTAssertNil(numbers.tab(for: 99))
+  }
+
+  /// Catches a forgotten pane that leaves half an entry behind, drops another pane's entries, or
+  /// lets a number come back. The window test sees only the number-to-tab direction, since a
+  /// closed pane's tab is never listed again. A forgotten tab getting a fresh number shows the
+  /// other direction went too.
+  func testForgettingAPaneDropsOnlyItsEntriesAndReusesNoNumber() {
+    var numbers = ScriptTabNumbers()
+    let (closing, staying) = (NodeID(rawValue: 1), NodeID(rawValue: 2))
+    let closed = (0..<2).map { _ in AppletTabID.make() }
+    let open = AppletTabID.make()
+
+    XCTAssertEqual(closed.map { numbers.number(for: $0, in: closing) }, [1, 2])
+    XCTAssertEqual(numbers.number(for: open, in: staying), 3)
+
+    numbers.forget(pane: closing)
+
+    XCTAssertNil(numbers.tab(for: 1))
+    XCTAssertNil(numbers.tab(for: 2))
+    XCTAssertEqual(numbers.tab(for: 3), open)
+    XCTAssertEqual(numbers.number(for: open, in: staying), 3)
+    XCTAssertEqual(numbers.number(for: closed[0], in: closing), 4)
   }
 }

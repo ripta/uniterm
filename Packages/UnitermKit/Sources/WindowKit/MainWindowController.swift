@@ -1099,6 +1099,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     askerPaneClosed(pane)
     applet.close()
     paneControls.forget(pane)
+    scriptTabNumbers.forget(pane: pane)
     statusCenter.paneClosed(id: pane.rawValue)
 
     if let next = removed.refocus {
@@ -1119,6 +1120,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     askerPaneClosed(pane)
     applet.close()
     paneControls.forget(pane)
+    scriptTabNumbers.forget(pane: pane)
     statusCenter.paneClosed(id: pane.rawValue)
 
     if let next = removed.refocus {

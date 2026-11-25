@@ -1,5 +1,6 @@
 import AppletKit
 import Foundation
+import PaneModel
 
 /// Hands out the IDs that scripts use to name windows.
 ///
@@ -66,22 +67,37 @@ public struct WindowIDSource {
 /// An applet's tab ID has 128 bits, which a Janet number cannot hold. A tab gets its number the
 /// first time a script sees it. Numbers only grow and an entry is never reused, so a number that
 /// names a closed tab names nothing, never another tab.
+///
+/// Each entry remembers the pane it was issued in, and a pane that leaves the window takes its
+/// entries with it. A tab that closes in a pane that stays open keeps its entry until the pane
+/// leaves. The window learns only that a pane's tabs changed, not which tab closed.
 struct ScriptTabNumbers {
   private var numbers: [AppletTabID: UInt64] = [:]
   private var tabs: [UInt64: AppletTabID] = [:]
+  private var issued: [NodeID: [AppletTabID]] = [:]
   private var last: UInt64 = 0
 
-  mutating func number(for tab: AppletTabID) -> UInt64 {
+  mutating func number(for tab: AppletTabID, in pane: NodeID) -> UInt64 {
     if let known = numbers[tab] { return known }
 
     last += 1
     numbers[tab] = last
     tabs[last] = tab
+    issued[pane, default: []].append(tab)
 
     return last
   }
 
   func tab(for number: UInt64) -> AppletTabID? {
     tabs[number]
+  }
+
+  /// Drops every entry issued in the pane. `last` keeps its value, so no number comes back.
+  mutating func forget(pane: NodeID) {
+    for tab in issued.removeValue(forKey: pane) ?? [] {
+      if let number = numbers.removeValue(forKey: tab) {
+        tabs[number] = nil
+      }
+    }
   }
 }
