@@ -385,9 +385,9 @@ None.
 
 ### M2: The script fixture's helper exit
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-23; see Decision Log.
+Amended 2026-11-25; see Decision Log.
 
 - `ScriptFixtures.finish` returns once its helper exits, without `waitUntilExit`, including for a helper that exited
   before `finish` was called
@@ -405,7 +405,8 @@ Amended 2026-11-23; see Decision Log.
 - The regression test says that it pins the fix and not the bug, since no test reproduced Foundation missing an exit
 - A test can still tell a helper's exit from its death by a signal
 - The watchdog never signals a helper that has been reaped. The reaper waits with `waitid` and `WNOWAIT`, sets the reaped
-  flag under the lock, and only then reaps with `waitpid`
+  flag under the lock, and only then reaps with `waitpid`. Darwin's `waitid` also reports a stopped child to a wait for
+  exits alone. The reaper takes that report with a wait for stops alone, and waits again
 - Callers of `start` and `finish` signal a helper through the fixture's handle, never with a raw `kill` on its process
   id
 - The tests among those callers that send SIGINT, such as the Ctrl-C tests in `ScriptLimitsTests`,
@@ -426,6 +427,36 @@ Amended 2026-11-23; see Decision Log.
 - The handle reports a normal exit and a death by signal apart, as `terminationReason` does today
 - The `ScriptFixtures.finish` entry in `spec/flaky-tests.md` records the change, says which of its sightings it
   explains, and stays under Potential until it meets the closing rule in the `spec/flaky-tests.md` Rule section
+
+**As built:**
+
+- The handle spawns any executable with any argument list, environment, and folder. Each standard stream is the null
+  device, a file handle the caller owns, or a pipe the handle captures and reads from the spawn on. Each caller names its
+  own deadlines. `start` keeps the 60 s SIGTERM and 70 s SIGKILL. The handle sends with `signal(_:)`, which reports
+  sent, refused because the helper was reaped, or the errno `kill` returned. It reports whether the helper runs, its
+  exit without waiting, and a wait for the exit. An exit and a death by signal are separate cases. The names and the
+  stream and result types are run best guesses. See the Decision Log for 2026-11-25.
+- `finish` now throws. A wait that finds no child marks the helper reaped and throws an error that names another
+  reaper. The run's result keeps `status`, the exit status or the signal number as Foundation read it, and adds the
+  exit case that tells the two apart. When a helper is reaped while a process it started holds a captured pipe open,
+  `finish` keeps what the pipe held at the reap and returns.
+- The stopped-helper test caught Darwin's `waitid` reporting a stop to the reaper's wait for exits. The reaper now takes
+  that report and waits again, and the milestone's reaper bullet is amended. See the Decision Log for 2026-11-25. The
+  exec driver's transport had the same gap. "Keep a stopped exec driver from reading as exited" fixes it. The
+  product's `HelperProcess` uses the same wait, but it kills its helper before it waits, so a stop never reads as an
+  exit there. It needed no change.
+- Three moved callers had no hang guard: the shipped command's `open` run, the deleted-folder `open` run, and the
+  fake-app run. Each now has a 60 s SIGKILL deadline. See the Decision Log for 2026-11-25.
+- `HelperHandleTests` proves the bullets, and its regression test says it pins the fix, not the bug. Mutations each
+  failed a test, and each was restored: signalling after the reap, waiting without `WNOWAIT`, a `waitid` that gives up
+  on EINTR, pipe ends left inheritable, no close-on-exec default for the spawn, no signal default, no empty mask, no
+  stop-report wait, a reader that waits for a held pipe's end, reading that starts only at `finish`, and a signal to the
+  helper's group. Dropping the lock in `signal` passed the plain tests and drew a Thread Sanitizer data race report on
+  the reaped flag. The unmutated fixture runs clean under the sanitizer.
+- The EINTR proof interrupts the reaper's `waitid` with a thread-directed SIGUSR2. The `waitpid` retry has no proof,
+  since no test can catch the reaper inside it.
+- `ScriptHostTests` passed 358 tests, with 3 skipped, and the 3 skipped shipped-command tests passed under
+  `make test-helper-sandbox`. The SIGINT tests still deliver the signal and see the exit.
 
 ### M3: Every test signal goes through a guarded sender
 
@@ -696,6 +727,19 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
   test was renamed, since it no longer reads a spinning page. The before-change measurement added runs with separate
   busy processes and runs over the product's 10 s bound. Busy loops in the test process left the page 98% of a core
   even at user-interactive QoS. (run best guess)
+- 2026-11-25: M2's mechanisms were chosen in the work-queue run. The handle is `HelperHandle`, with
+  `signal(_:)`, `isRunning`, `exitStatus()`, `waitForExit()`, and `finish()`. Its signal reports sent, reaped, or
+  failed. Each stream is the null device, a caller's file handle, or a captured pipe. `finish` throws when a wait finds
+  no child, so no status is made up. It keeps the old `status` and adds the exit case. It stops reading a captured pipe
+  at the reap, so a process the helper started cannot hold it open. Three moved callers had no hang guard and now get
+  a 60 s SIGKILL, so a hang fails one test instead of the run. The closed-output test of `uniterm ask` now hands the
+  command a pipe it owns and closes both ends right after the spawn, since the handle reads its captured pipes itself.
+  The SIGINT checks moved from the bare status to the exit case, such as `.exited(130)` for the helper and
+  `.signalled(SIGINT)` for `uniterm ask`, so a death by signal can no longer pass for an exit. Correction of fact:
+  M2's reaper bullet said "The reaper waits with `waitid` and `WNOWAIT`, sets the reaped flag under the lock, and
+  only then reaps with `waitpid`". On Darwin that wait also returns for a stopped child, and the reaper would then
+  refuse every later signal. The bullet now says the reaper takes a stop report with a wait for stops alone, and
+  waits again. (run best guess)
 
 ## References
 

@@ -73,9 +73,111 @@ uncovered decision. `proposals.py freeze` reported only the UTERM-004 ADR-14 hun
 
 The coordinator added the commit subject to the flaky entry's change line.
 
-### Shared machine
+### Shared machine (M1)
 
 Another session, uniterm-74, was reproducing a flaky UI test on the same machine. The implementer's busy loops ran
 from 19:53 to 20:05Z, and that session saw head failures at 20:02:27Z and 20:03:18Z. A mutation run overlapped
 another of its failures, at 20:07:43Z. The coordinator sent it the load timeline. It paused its runs for the full
 `make test-package`.
+
+That session later ran ten alternating pairs under the same load. The failure followed PR #111's tab-number change:
+5 failures in 10 with it, and 0 in 10 without it. So the load did not cause it.
+
+## UTERM-046 M2
+
+### What was built
+
+- `HelperHandle` is a new test fixture in `ScriptHostTests`. It spawns a helper with `posix_spawn`, with every signal
+  at its default, an empty mask, and only the three standard streams inherited. Its own pipe ends are close-on-exec
+  from the moment they are made.
+- Its reaper waits with `waitid(WEXITED|WNOWAIT)`, sets the reaped flag under the lock, and only then reaps with
+  `waitpid`. Each wait retries on EINTR. `signal(_:)` returns `.reaped` once the flag is set, so no signal reaches a
+  reused pid.
+- A wait that finds no child throws an error that names another reaper. `finish` therefore throws, and a made-up
+  status is impossible.
+- `ScriptFixtures.start` returns the handle and owns the 60 s SIGTERM and 70 s SIGKILL guard. Every caller of `start`
+  and `finish` moved to it, including the nine files M2 lists that built their own `Process`.
+- The SIGINT tests now check the exit case, not only the status.
+- The test sites M3 moves are untouched.
+- Production code is unchanged.
+
+### The Darwin finding
+
+On Darwin 25.6, `waitid(WEXITED|WNOWAIT)` returns for a stopped child, with `CLD_STOPPED`. It keeps returning while
+the child stays stopped. The fixture takes that report with a `WSTOPPED|WCONTINUED|WNOHANG` wait and waits again.
+M2's reaper bullet is amended for it, as a correction of fact. The reviewer confirmed the finding with its own probe.
+
+The implementer then checked the product's two users of the same wait:
+
+- The exec driver's transport read a stop as the driver's exit, and sent `killpg(SIGKILL)`. A test through
+  `ExecDriverChannel` failed on the unfixed code with "The driver was ended by signal 9". "Keep a stopped exec driver
+  from reading as exited" fixes it with the same loop, in its own commit.
+- The decoder host's `HelperProcess` kills its helper before it waits, so a stop never reads as an exit there. Its
+  test passed on the unfixed code. The first report of a bug there was wrong, and `HelperProcess` is unchanged. The
+  second review then found that its test could not catch the regression it named: the test's own `kill()` came first.
+  It also raced the helper's hello frame. The test was dropped.
+
+### Checks
+
+- Mutations, each restored. Removing each of these guards failed its test:
+  - the reaped-flag guard in `signal`
+  - `WNOWAIT`
+  - `FD_CLOEXEC` on the fixture's pipes
+  - `POSIX_SPAWN_CLOEXEC_DEFAULT`
+  - the default-signal and empty-mask settings
+  - the stop-report wait
+  - reading from the spawn on
+  - the helper's own process group
+  - the EINTR retry in `waitid`
+- Dropping the lock in `signal` let the plain tests pass, and Thread Sanitizer reported the race.
+- The `waitpid` EINTR retry has no proof, and the As built block says so.
+- `testFinishReturnsForAHelperReapedBeforeItAndForOneThatEndsWhileItWaits` pins the fix, not the bug. No test
+  reproduced Foundation missing an exit.
+- `ScriptHostTests`, `ExecDriverChannelTests`, and `HelperClientTests`: 397 tests, 3 skipped, 0 failures.
+  `make test-helper-sandbox` passed the three shipped-command tests.
+- `make fmt-check`, `make lint`, `make check`: pass. `proposals.py check` reports only the row's move to history.
+- The coordinator ran the full `make test-package` three times: before the review fixes, after the first round, and
+  after the second. The last run, at about 22:50Z, ran 3242 tests, with 10 skipped and no failures. It holds one test
+  fewer than the run before it, since the decoder host's test was dropped.
+
+### Review
+
+The first review found nothing blocking, and the implementer fixed all eight of its findings:
+
+- A test could leave SIGCHLD ignored for the rest of the run, if its spawn threw. It now restores in a `defer`.
+- The plain-spawn test compared whole-process descriptor lists, which another thread could disturb. It now ties each
+  descriptor to the fixture.
+- The EINTR retry gained a proof, and a 256 KiB helper output gained a stall test.
+- The As built block retold a Decision Log reason. It now points to the entry.
+- The Decision Log gained two best guesses it had missed.
+- The As built block said the product sites "were reported as a bug", with no bug file. It now names the fix commit.
+- The flaky entry credited three sightings, where only one recorded no live child.
+- Three comments packed several ideas into one block.
+
+A second review covered the fix round and the exec driver fix. It found the driver fix correct, with its own probe of
+Darwin's `waitid`. Its findings, all fixed:
+
+- The decoder host's new test could not catch its regression, and raced a hello frame. It was dropped.
+- The EINTR test's wait for its handler had no bound. It now polls for 10 s, and fails at once if `pthread_kill`
+  fails.
+- The no-child test's `finish` could wait without a bound. It now returns with a failure when the helper never ends.
+  The implementer left that test without the 30 s SIGKILL backstop. With `SA_NOCLDWAIT`, the kernel frees the pid at
+  exit, before the fixture sets its reaped flag, so a late SIGKILL could reach a freed pid. The coordinator accepted
+  that reasoning.
+- The driver test sent SIGCONT unconditionally. On the failing path the driver is already reaped, so the signal could
+  reach a reused pid. It now sends it only while the driver still reads as stopped.
+- A Decision Log line ran to 150 columns, a flaky-entry sentence said the deadlines "now" end a helper, and three
+  comments read wrong or packed ideas. All were fixed.
+
+`adr-impact` found M2 consistent with ADR-07, ADR-08, ADR-10, ADR-13, and ADR-14, with no uncovered decision.
+`proposals.py freeze` reported only the UTERM-004 ADR-14 hunk with origin `other`.
+
+### Notes
+
+- The first implementer run stopped on an expired AWS token. The user refreshed it, and the same agent resumed.
+- Three mutation runs left orphaned `cat` processes, pids 61463, 65440, and 76428, with launchd as their parent.
+  Ending them needs `kill` outside the sandbox, which auto mode denied. They are left for the user.
+- The implementer made a Thread Sanitizer build in `.build/swiftpm-tsan`, which git ignores.
+- The new exec driver test stops and continues its driver with a raw `kill`. UTERM-046 M3, which moves test signals
+  to a guarded sender, must cover or exempt it. Two test files now copy an `isStopped` check, which M3's support target
+  can share.

@@ -168,7 +168,7 @@ final class UndeclaredFileTests: XCTestCase {
 
   private func runCommand(
     _ file: URL, allow: [String] = []
-  ) throws -> Process {
+  ) throws -> HelperHandle {
     try ScriptFixtures.start(
       socket: host.instanceAddress, script: file, allow: allow, executable: try HardenedHelper.url()
     )
@@ -186,7 +186,7 @@ final class UndeclaredFileTests: XCTestCase {
     let file = try script("(spit \"\(marker.path)\" \"x\")\n(print :ran)\n")
 
     for allow in [["fs-write"], ["fs-read", "fs-write"]] {
-      let run = await ScriptFixtures.finish(try runCommand(file, allow: allow))
+      let run = try await ScriptFixtures.finish(try runCommand(file, allow: allow))
 
       XCTAssertEqual(run.status, 77, run.standardError)
       XCTAssertEqual(run.standardOutput, "", "code ran in strict mode")
@@ -208,7 +208,7 @@ final class UndeclaredFileTests: XCTestCase {
     settings.defaults.set("permissive", forKey: "scriptFileMode")
     try startCommandHost()
 
-    let run = await ScriptFixtures.finish(try runCommand(try script("(print :ran)\n")))
+    let run = try await ScriptFixtures.finish(try runCommand(try script("(print :ran)\n")))
 
     XCTAssertEqual(run.status, 77, run.standardError)
     XCTAssertEqual(run.standardOutput, "")
@@ -456,7 +456,7 @@ final class UndeclaredFileTests: XCTestCase {
 
     XCTAssertNil(host.decideUndeclaredReview(review.id, .askEachUse))
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
     XCTAssertEqual(run.status, 0, run.standardError)
     XCTAssertEqual(run.standardOutput, "ran\n")
@@ -482,7 +482,7 @@ final class UndeclaredFileTests: XCTestCase {
 
     XCTAssertNil(host.decideUndeclaredReview(review.id, .reject))
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
     XCTAssertEqual(run.status, 77, run.standardError)
     XCTAssertEqual(run.standardOutput, "")
@@ -498,7 +498,7 @@ final class UndeclaredFileTests: XCTestCase {
     try startCommandHost()
 
     let file = try script("(print :ran)\n(declare-permissions {:kind :pane-control :version 1})\n")
-    let run = await ScriptFixtures.finish(try runCommand(file))
+    let run = try await ScriptFixtures.finish(try runCommand(file))
 
     XCTAssertEqual(run.status, 65, run.standardError)
     XCTAssertEqual(run.standardOutput, "")
@@ -637,7 +637,7 @@ final class UndeclaredFileTests: XCTestCase {
       "(import uniterm)\n(print (get (protect (uniterm/read-clipboard)) 0))\n")
     var token: ChangeObservers.Token? = host.answerUndeclaredReviews(with: .allowEverything)
 
-    let first = await ScriptFixtures.finish(try runCommand(file))
+    let first = try await ScriptFixtures.finish(try runCommand(file))
 
     XCTAssertEqual(first.status, 0, first.standardError)
     XCTAssertEqual(first.standardOutput, "true\n")
@@ -654,7 +654,7 @@ final class UndeclaredFileTests: XCTestCase {
 
     host.permissionRequests.decide(try XCTUnwrap(host.permissionRequests.rows.first).id, .deny)
 
-    let denied = await ScriptFixtures.finish(second)
+    let denied = try await ScriptFixtures.finish(second)
 
     XCTAssertEqual(denied.standardOutput, "false\n")
     XCTAssertNotNil(token)
@@ -766,7 +766,7 @@ final class UndeclaredFileTests: XCTestCase {
     try startCommandHost()
 
     let file = try script("(print :ran)\n")
-    let early = await ScriptFixtures.finish(try runCommand(file))
+    let early = try await ScriptFixtures.finish(try runCommand(file))
 
     XCTAssertEqual(early.status, 77, early.standardError)
 
@@ -779,7 +779,7 @@ final class UndeclaredFileTests: XCTestCase {
     XCTAssertNil(
       host.decideUndeclaredReview(try XCTUnwrap(host.undeclaredReviews.first).id, .askEachUse))
 
-    let run = await ScriptFixtures.finish(late)
+    let run = try await ScriptFixtures.finish(late)
 
     XCTAssertEqual(run.standardOutput, "ran\n")
   }

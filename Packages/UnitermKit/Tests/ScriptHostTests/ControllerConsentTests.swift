@@ -122,28 +122,17 @@ final class ControllerConsentTests: XCTestCase {
   private func run(
     _ package: URL, allow: [String] = [], executable: URL? = nil
   ) async throws -> HelperRun {
-    let process = Process()
     var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
 
     environment["UNITERM_SOCKET"] = nil
-    process.environment = environment
-    process.executableURL = try executable ?? HardenedHelper.url()
-    process.arguments =
-      ["run", "--socket", host.instanceAddress] + allow.flatMap { ["--allow", $0] }
-      + [package.path]
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
 
-    try process.run()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { kill(watchdog.processIdentifier, SIGKILL) }
-    }
-
-    return await ScriptFixtures.finish(process)
+    return try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: try executable ?? HardenedHelper.url(),
+        arguments: ["run", "--socket", host.instanceAddress] + allow.flatMap { ["--allow", $0] }
+          + [package.path],
+        environment: environment,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)]))
   }
 
   private var reviewCount: Int { reviewsSeen.count }

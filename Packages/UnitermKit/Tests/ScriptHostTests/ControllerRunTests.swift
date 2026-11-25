@@ -97,29 +97,17 @@ final class ControllerRunTests: XCTestCase {
     _ executable: URL, _ arguments: [String], environment: [String: String] = [:],
     in folder: URL? = nil
   ) async throws -> HelperRun {
-    let process = Process()
     // The test runner sets dyld variables of its own, which a controller run refuses. A test
     // that wants one passes it in `environment`.
     var inherited = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("DYLD_") }
 
     inherited["UNITERM_SOCKET"] = nil
-    process.environment = inherited.merging(environment) { _, new in new }
-    process.executableURL = executable
-    process.arguments = arguments
-    process.currentDirectoryURL = folder
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
 
-    try process.run()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { kill(watchdog.processIdentifier, SIGKILL) }
-    }
-
-    return await ScriptFixtures.finish(process)
+    return try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: executable, arguments: arguments,
+        environment: inherited.merging(environment) { _, new in new }, directory: folder,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)]))
   }
 
   private func runJanet(

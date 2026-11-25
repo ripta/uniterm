@@ -545,19 +545,16 @@ final class DeclaredFileProtocolTests: XCTestCase {
 
     defer { close(listening) }
 
-    let process = Process()
+    let run = try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: try HardenedHelper.url(),
+        arguments: ["run", "--socket", socketPath, file.path],
+        environment: ProcessInfo.processInfo.environment.filter {
+          !$0.key.hasPrefix("DYLD_") && $0.key != "UNITERM_SOCKET"
+        },
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)]))
 
-    process.executableURL = try HardenedHelper.url()
-    process.arguments = ["run", "--socket", socketPath, file.path]
-    process.environment = ProcessInfo.processInfo.environment.filter {
-      !$0.key.hasPrefix("DYLD_") && $0.key != "UNITERM_SOCKET"
-    }
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-    try process.run()
-
-    return (await ScriptFixtures.finish(process), sawDeclaration.isSet)
+    return (run, sawDeclaration.isSet)
   }
 
   /// Catches a command that parses or runs bytes whose hash differs from the version the app

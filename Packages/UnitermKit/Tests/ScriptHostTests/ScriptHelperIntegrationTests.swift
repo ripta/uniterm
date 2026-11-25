@@ -233,7 +233,7 @@ final class ScriptHelperIntegrationTests: XCTestCase {
     _ = try socket.readFrame(limit: ScriptHelperMessage.bodyLimit(type:))
     try socket.send(ScriptAppMessage.hello(version: ScriptProtocol.version + 1).frame())
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
     XCTAssertEqual(run.status, 70)
     XCTAssertTrue(run.standardError.contains("Relaunch uniterm"), run.standardError)
@@ -309,11 +309,11 @@ final class ScriptHelperIntegrationTests: XCTestCase {
 
     let peer = try XCTUnwrap(measured.peer)
 
-    XCTAssertEqual(peer.pid, process.processIdentifier)
+    XCTAssertEqual(peer.pid, process.pid)
     XCTAssertEqual(peer.uid, getuid())
-    XCTAssertEqual(peer.token?.pid, process.processIdentifier)
+    XCTAssertEqual(peer.token?.pid, process.pid)
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
     XCTAssertEqual(run.status, 0, run.standardError)
 

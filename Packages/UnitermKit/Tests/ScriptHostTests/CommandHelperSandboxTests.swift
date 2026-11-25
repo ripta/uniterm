@@ -81,9 +81,12 @@ final class CommandHelperSandboxTests: XCTestCase {
     let process = try ScriptFixtures.start(
       socket: host.instanceAddress, script: ScriptFixtures.script("jit-sample"),
       allow: ["ffi-jit", "ffi-use"], executable: command)
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
-    XCTAssertEqual(process.terminationReason, .exit, "the command was killed: \(run.status)")
+    if case .signalled(let signal) = run.exit {
+      XCTFail("the command was killed by signal \(signal)")
+    }
+
     XCTAssertEqual(run.status, 0, run.standardError)
     XCTAssertEqual(run.standardOutput, "42\n", run.standardError)
   }
@@ -125,17 +128,11 @@ final class CommandHelperSandboxTests: XCTestCase {
 
     defer { free(resolved) }
 
-    let process = Process()
-
-    process.executableURL = command
-    process.arguments = ["open", "--socket", host.instanceAddress, "relative.txt"]
-    process.currentDirectoryURL = directory
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-    try process.run()
-
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: command, arguments: ["open", "--socket", host.instanceAddress, "relative.txt"],
+        environment: ProcessInfo.processInfo.environment, directory: directory,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)]))
 
     XCTAssertEqual(run.status, 0, run.standardError)
     XCTAssertEqual(opener.paths, [[String(cString: resolved) + "/relative.txt"]])

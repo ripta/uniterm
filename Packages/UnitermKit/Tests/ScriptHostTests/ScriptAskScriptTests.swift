@@ -71,7 +71,7 @@ final class ScriptAskScriptTests: XCTestCase {
       .submitted(submission: 1, action: "go", answers: ["region": .text("eu")]))
     try await answer(.cancelled(action: "cancel"))
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
     XCTAssertEqual(run.status, 0, run.standardError)
     XCTAssertEqual(
@@ -102,11 +102,11 @@ final class ScriptAskScriptTests: XCTestCase {
 
     let key = try XCTUnwrap(windows.askedForms.first?.requester.key)
 
-    kill(process.processIdentifier, SIGINT)
+    XCTAssertEqual(process.signal(SIGINT), .sent)
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
-    XCTAssertEqual(run.status, 130, run.standardError)
+    XCTAssertEqual(run.exit, .exited(130), run.standardError)
     XCTAssertEqual(run.standardOutput, "before\n")
     XCTAssertEqual(windows.discardedForms, [key])
     XCTAssertFalse(windows.hasOpenForm(requester: key))
@@ -190,11 +190,11 @@ final class ScriptAskScriptTests: XCTestCase {
       let waiting = await pollUntil(timeout: .seconds(30)) { seen.isSet }
 
       XCTAssertTrue(waiting, "the script never waited")
-      kill(process.processIdentifier, SIGINT)
+      XCTAssertEqual(process.signal(SIGINT), .sent)
 
-      let run = await ScriptFixtures.finish(process)
+      let run = try await ScriptFixtures.finish(process)
 
-      XCTAssertEqual(run.status, 130, "discardFirst \(discardFirst): \(run.standardError)")
+      XCTAssertEqual(run.exit, .exited(130), "discardFirst \(discardFirst): \(run.standardError)")
       XCTAssertEqual(run.standardOutput, "before\n")
 
       let names = await served.value
