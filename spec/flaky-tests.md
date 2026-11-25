@@ -439,6 +439,17 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
   moved within the two-second bound. The test then passed 20 of 20 alone on the same tree.
 - Status: unresolved. The earlier fix does not cover this sighting.
 
+### `ShortcutOwnershipUITests.testARemapOntoAnAppletKeyWinsAndWarnsOnce`
+
+- Seen: 2026-11-25, once, in the first CI `app` run of #109. That PR changes map, viewer, browser, and terminal tab
+  code, and no palette or shortcut code.
+- Evidence: `ShortcutOwnershipUITests.swift:132` failed: the palette never went away after Escape. The Escape event
+  took 5 s to reach idle, from 1.80 s to 6.89 s into the test, and the palette was still there when the wait ran out at
+  17 s. The whole class then passed 7 of 7 locally on the same head, and the rerun of the CI `app` job passed.
+- Suspected cause: the app stalled on the runner while it handled Escape, so the dismissal never landed. Not
+  confirmed.
+- Status: unresolved.
+
 ## Fixed
 
 ### `PatternTests.testACatastrophicPatternStopsAtItsLimitAndStopsUsingCPU`
