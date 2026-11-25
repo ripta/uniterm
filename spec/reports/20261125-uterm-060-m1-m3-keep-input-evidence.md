@@ -192,3 +192,40 @@ event. It found no uncovered decision. `proposals.py freeze` reported only the U
 
 - `.cg.yaml` gained two uncommitted rules during M2: the probe binary's path, and the plugin `detect_era.py` rule that
   step 0 removed. Both name absolute paths, so the coordinator removed them, and the file matches `HEAD`.
+
+## UTERM-060 M3
+
+### What was built
+
+- The `spec/flaky-tests.md` Rule section gains a field on what a stalled-event sighting records. It names the kept
+  log's paths and the frontmost attachment. It says how an app record pairs with `testmanagerd`'s line: by
+  `source_userdata`, which is the event's number, and by `type`. It also says what a missing record does and does not
+  prove.
+- Each of the four entries the proposal names gains a "Next sighting" line. The `ShortcutOwnershipUITests` line says
+  that UTERM-060 M5 reads its next Cmd-T stall.
+- The help for `make test-app`, `make test-app-select`, and `make test-app-shard` names where a failed run keeps its
+  log.
+- One sentence in the `ShortcutOwnershipUITests` entry said that CI keeps no `testmanagerd` log. M1 made that false,
+  so it now says that the CI run of that sighting kept none.
+
+### Best guesses
+
+- Without the tap, a missing record cannot tell an event that never reached uniterm from one that never left its
+  queue. The Rule field says a missing record means AppKit never dequeued the event, and names both causes. This
+  rests on "Where the app records an event".
+
+### Checks
+
+- `make help` renders the three help lines in full. `make check`, `make lint`: pass. `make test-ci`: pass, 85
+  checks.
+- `proposals.py check` reports only that the finished row moves to `history.md`. The row's finishing commit does
+  that.
+- No Swift changed, so no package or UI tests ran.
+- The implementer checked the pairing against M2's kept log and proof run. Event 81922, "Key 0 down", pairs with the
+  record holding `source_userdata=81922`. Command's "Key 55 down" records as `type=flagsChanged`.
+
+### Review
+
+The reviewer found no findings. It checked each stated fact against the Makefile, `ci.yml`, `App/InputRecorder.swift`,
+and `StatusBarView`. `adr-impact` found that no ADR covers the diff, and no uncovered decision. `proposals.py freeze`
+reported only the UTERM-004 ADR-14 hunk with origin `other`.

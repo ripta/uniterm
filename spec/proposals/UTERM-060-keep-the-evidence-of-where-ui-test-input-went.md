@@ -522,12 +522,34 @@ Times are local, on 2026-11-25.
 
 ### M3: The flaky entries say what to look for
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The `spec/flaky-tests.md` Rule section says that a sighting of a stalled event records which of its events went
   unconfirmed, and which app was frontmost
 - Each of the four entries this proposal names says what its next sighting records
 - The help for `make test-app` and `make test-app-select` names where a failed run's log lands
+
+**As built:**
+
+Times are local, on 2026-11-25.
+
+- The Rule section gains a rule for a sighting of a stalled event. It names where a failed run keeps its log and the
+  frontmost attachment. It says how the app's record of an event pairs with `testmanagerd`'s line for it, and what a
+  missing record means.
+- The pairing was read from M2's logs. In the deliberately failing run at 10:47:48, `testmanagerd` logged a key down
+  as Event 81922. The app's record of it carries `source_userdata=81922` and `testmanagerd`'s pid. In the proof run at
+  10:44:38, a mouse up paired the same way, as Event 81432. Command's "Key 55 down" at 10:44:41 recorded as
+  `type=flagsChanged`, not `keyDown`.
+- In that proof run, `testmanagerd` logged each click's mouse down as "not waiting for confirmation", and waited only
+  on its mouse up.
+- The status bar answers every hit test inside it, and it dismisses on the mouse down. So the status bar entry's next
+  sighting reads the mouse down's record, whose hit view is the bar rather than the dismiss control.
+- Each of the four entries gains a "Next sighting" line, the field the file's other entries already use. The shortcut
+  entry's line says that M5 reads its next Cmd-T stall.
+- The shortcut entry read "CI keeps no `testmanagerd` log, and UTERM-060 proposes keeping it." It now reads "The CI run
+  kept no `testmanagerd` log." M1 keeps that log for a failed CI run, so the present tense no longer held.
+- The help for `test-app` and `test-app-select` now ends by naming where a failed run keeps its event log. The
+  `test-app-shard` help names its own file the same way.
 
 ### M4: The kept evidence on CI
 
