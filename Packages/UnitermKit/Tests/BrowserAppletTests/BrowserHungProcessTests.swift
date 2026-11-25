@@ -122,6 +122,73 @@ private final class Samples: Sendable {
   }
 }
 
+/// Reads a content process through the live sampler, and reports it as spinning a whole core.
+///
+/// Each reading keeps the live start time, the live time taken, and the live nil for a process
+/// that is gone. Only the processor time is replaced, by the time taken, so any two readings of one
+/// process read as one core between them. A closed tab's watch then decides on the real process,
+/// and no load on the machine can starve the page under the watch's share. The cost is that a test
+/// reading through it cannot show that a real spinning page reads busy.
+///
+/// The watch skips a process whose two readings carry the same time. So each reading must come
+/// later than the one before it for the same process, or the test fails here. A test that expects
+/// no signal cannot pass on that skip.
+private final class BusySamples: Sendable {
+  private let taken = Mutex<[pid_t: UInt64]>([:])
+
+  func next(_ pid: pid_t) -> ProcessSample? {
+    guard var reading = WebContentProcess.usage(pid) else { return nil }
+
+    reading.processorNanoseconds = reading.takenNanoseconds
+
+    let previous = taken.withLock { $0.updateValue(reading.takenNanoseconds, forKey: pid) }
+
+    if let previous, reading.takenNanoseconds <= previous {
+      XCTFail(
+        "process \(pid) was read at \(reading.takenNanoseconds) ns, no later than its reading at "
+          + "\(previous) ns, so the watch skips it")
+    }
+
+    return reading
+  }
+}
+
+/// Reads a content process through the live sampler unchanged, and keeps every reading.
+private final class LiveSamples: Sendable {
+  private let readings = Mutex<[ProcessSample?]>([])
+
+  var all: [ProcessSample?] { readings.withLock { $0 } }
+
+  func next(_ pid: pid_t) -> ProcessSample? {
+    let reading = WebContentProcess.usage(pid)
+
+    readings.withLock { $0.append(reading) }
+
+    return reading
+  }
+}
+
+/// The share of one core a process used between two readings of it. The differences are taken in
+/// floating point, so readings out of order give a negative share instead of trapping.
+private func share(from first: ProcessSample, to last: ProcessSample) -> Double {
+  (Double(last.processorNanoseconds) - Double(first.processorNanoseconds))
+    / (Double(last.takenNanoseconds) - Double(first.takenNanoseconds))
+}
+
+/// This process's own processor time and uptime in nanoseconds, from readers the usage reader does
+/// not use: the POSIX process CPU clock, and Foundation's system uptime. Each counts in units it
+/// documents, so neither shares a conversion with the reading it brackets.
+private struct OwnTimes {
+  var processor: UInt64
+  var uptime: UInt64
+
+  static func now() -> OwnTimes {
+    OwnTimes(
+      processor: clock_gettime_nsec_np(CLOCK_PROCESS_CPUTIME_ID),
+      uptime: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
+  }
+}
+
 /// The decision a closed tab's watch makes when its bound runs out, from samples a test supplies.
 /// The integration tests below spin real pages. These pin each reason to leave a process alone.
 @MainActor
@@ -197,8 +264,21 @@ final class ClosedProcessWatchTests: XCTestCase {
 /// A content process that spins. The tab ends it when its bound runs out, whether the user's
 /// reload or the user's close ran into it. Each test spins a real page served by the fixture
 /// server, so each proves that the process is gone and not just that a signal was sent.
+///
+/// A closed tab's watch reads a spinning page through `BusySamples`, so the share of a core the
+/// page gets on a loaded machine never decides a test. None of those tests shows that a real
+/// spinning page reads as busy.
 @MainActor
 final class BrowserHungProcessTests: XCTestCase {
+  /// How far the independent readers may disagree with the usage reader. The process CPU clock
+  /// counts whole microseconds of user and system time, so it can trail the kernel's own count by
+  /// up to 2 µs. Measured over 100,000 brackets, idle and with a busy loop on every core, it
+  /// trailed by at most 1.5 µs. The uptime reader never fell outside the bracket.
+  ///
+  /// A unit error is 41.7 times off, so it moves a reading by most of its own size. The test asks
+  /// for at least 100 times the allowance of processor time, so that move dwarfs the allowance.
+  private static let readerAllowance: UInt64 = 10_000
+
   private func make(hang: HangPolicy) async throws -> BrowserHarness {
     try await BrowserHarness.make(
       services: .testing(hang: hang), hosting: .focusedWindow,
@@ -209,15 +289,18 @@ final class BrowserHungProcessTests: XCTestCase {
     view.evaluateJavaScript("while (true) {}", completionHandler: nil)
   }
 
-  private func policy(_ timer: ManualHangTimer, log: SignalLog? = nil) -> HangPolicy {
+  private func policy(
+    _ timer: ManualHangTimer, log: SignalLog? = nil,
+    sample: @escaping WebContentProcess.Sample = WebContentProcess.usage
+  ) -> HangPolicy {
     var policy = timer.policy
 
-    if let log {
-      policy.process = WebContentProcess(signal: { pid, number in
-        log.record(pid, number)
+    policy.process = WebContentProcess(
+      sample: sample,
+      signal: { pid, number in
+        log?.record(pid, number)
         _ = Darwin.kill(pid, number)
       })
-    }
 
     return policy
   }
@@ -226,8 +309,8 @@ final class BrowserHungProcessTests: XCTestCase {
     await harness.eventually(what, seconds: 15) { !WebContent.isRunning(pid) }
   }
 
-  /// A closed tab's watch compares the process's processor time with real time, so a test lets a
-  /// third of a second pass between a close and the bound it fires by hand.
+  /// A live sample compares a process's processor time with real time, so a test that reads an
+  /// idle page live lets a third of a second pass between two readings.
   private func letTimePass(in harness: BrowserHarness) async {
     let until = Date().addingTimeInterval(0.3)
 
@@ -308,12 +391,13 @@ final class BrowserHungProcessTests: XCTestCase {
   }
 
   /// Catches a spinning process left behind by a tab the user closes. The close arms no hang bound,
-  /// since only a reload does. Its watch finds the process spinning when the bound runs out, and
-  /// the process ends.
+  /// since only a reload does. Its watch reads the process as busy when the bound runs out, and
+  /// the process ends. The bound fires right after the close, since the busy sample needs no time
+  /// to pass.
   func testClosingASpinningTabEndsItsProcessWhenTheBoundRunsOut() async throws {
     let timer = ManualHangTimer()
     let log = SignalLog()
-    let harness = try await make(hang: policy(timer, log: log))
+    let harness = try await make(hang: policy(timer, log: log, sample: BusySamples().next))
     defer { harness.stop() }
 
     await harness.load("/a", expecting: "A")
@@ -334,7 +418,6 @@ final class BrowserHungProcessTests: XCTestCase {
     XCTAssertTrue(WebContent.isRunning(pid), "the process ended before the bound ran out")
     XCTAssertTrue(log.pids.isEmpty)
 
-    await letTimePass(in: harness)
     timer.fire()
 
     await waitUntilGone(pid, in: harness, "the closed tab's process ends")
@@ -343,10 +426,15 @@ final class BrowserHungProcessTests: XCTestCase {
   }
 
   /// Catches a live sample in the wrong units. The kernel reports processor time in Mach ticks, so
-  /// a missed conversion makes a spinning page read about 41 times slower than real time on Apple
-  /// silicon, under the watch's share. A spinning page reads at least that share of a core and at
-  /// most about one core, and the same page idle reads under the share.
-  func testTheLiveSampleReadsASpinningPageAsBusyAndAnIdleOneAsNot() async throws {
+  /// a missed conversion reads 41.7 times too low on Apple silicon, and a needless one 41.7 times
+  /// too high. The time taken must be uptime in nanoseconds too. A reading of this test's own
+  /// process must fall between independent readings taken just before and just after it. So
+  /// either field in the wrong units fails, and so do both with their ratio intact.
+  ///
+  /// The same page left idle also reads under the watch's share. Load cannot make an idle page
+  /// read busy, so that side stays live. The test cannot show that a real spinning page reads busy,
+  /// since that depends on how much of a core the machine gives it.
+  func testTheLiveSampleIsInNanosecondsAndReadsAnIdlePageAsIdle() async throws {
     let harness = try await make(hang: policy(ManualHangTimer()))
     defer { harness.stop() }
 
@@ -356,37 +444,51 @@ final class BrowserHungProcessTests: XCTestCase {
 
     defer { if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) } }
 
-    func share() async throws -> Double {
-      let first = try XCTUnwrap(WebContentProcess.usage(pid))
+    let allowance = Self.readerAllowance
+    let before = OwnTimes.now()
+    let middle = try XCTUnwrap(WebContentProcess.usage(getpid()))
+    let after = OwnTimes.now()
 
-      await letTimePass(in: harness)
+    XCTAssertGreaterThan(
+      before.processor, 100 * allowance,
+      "the process used too little processor time for the bracket to tell a unit error")
+    XCTAssertGreaterThanOrEqual(
+      middle.processorNanoseconds + allowance, before.processor,
+      "the processor time read low, so a unit is off")
+    XCTAssertLessThanOrEqual(
+      middle.processorNanoseconds, after.processor + allowance,
+      "the processor time read high, so a unit is off")
+    XCTAssertGreaterThanOrEqual(
+      middle.takenNanoseconds + allowance, before.uptime,
+      "the time taken read low, so a unit is off")
+    XCTAssertLessThanOrEqual(
+      middle.takenNanoseconds, after.uptime + allowance,
+      "the time taken read high, so a unit is off")
 
-      let last = try XCTUnwrap(WebContentProcess.usage(pid))
+    let first = try XCTUnwrap(WebContentProcess.usage(pid))
 
-      XCTAssertEqual(first.started, last.started, "the process changed while it was read")
+    await letTimePass(in: harness)
 
-      return Double(last.processorNanoseconds - first.processorNanoseconds)
-        / Double(last.takenNanoseconds - first.takenNanoseconds)
-    }
+    let last = try XCTUnwrap(WebContentProcess.usage(pid))
 
-    let idle = try await share()
-
-    spin(harness.tab.webView)
-
-    let busy = try await share()
-
-    XCTAssertLessThan(idle, ClosedProcessWatch.busyShare, "an idle page read as spinning")
-    XCTAssertGreaterThanOrEqual(busy, ClosedProcessWatch.busyShare, "a spinning page read as idle")
-    XCTAssertLessThanOrEqual(busy, 1.5, "processor time ran ahead of real time, so a unit is off")
+    XCTAssertEqual(first.started, last.started, "the process changed while it was read")
+    XCTAssertLessThan(
+      share(from: first, to: last), ClosedProcessWatch.busyShare, "an idle page read as spinning")
   }
 
-  /// Catches a close that kills a process a live page uses. The closed pop-up was idle, and its
-  /// opener still lives on the same process, so the bound running out signals nothing and the
-  /// opener keeps answering.
+  /// Catches a close that kills a process a live page uses, and a live sample that reads a closed
+  /// tab's idle process as spinning. The closed pop-up was idle, and its opener still lives on the
+  /// same process, so the bound running out signals nothing and the opener keeps answering. The
+  /// watch reads the process live, and its readings at the close and at the fire must read idle.
+  ///
+  /// The idle guard and the live-tab check each stop the signal alone, since the opener shares the
+  /// process. So the missing signal cannot show which of them held. The wait before the fire is a
+  /// fixed third of a second, and never waits on what the page reads.
   func testClosingAnIdlePopUpSignalsNothing() async throws {
     let timer = ManualHangTimer()
     let log = SignalLog()
-    let harness = try await make(hang: policy(timer, log: log))
+    let samples = LiveSamples()
+    let harness = try await make(hang: policy(timer, log: log, sample: samples.next))
     defer { harness.stop() }
 
     await harness.load("/a", expecting: "A")
@@ -413,6 +515,18 @@ final class BrowserHungProcessTests: XCTestCase {
     XCTAssertTrue(log.pids.isEmpty)
     XCTAssertTrue(WebContent.isRunning(pid))
     XCTAssertEqual(opener.generation, 0)
+
+    let readings = samples.all
+
+    XCTAssertEqual(readings.count, 2, "the watch read the process other than at the close and fire")
+
+    let first = try XCTUnwrap(readings.first ?? nil, "the watch could not read the process")
+    let last = try XCTUnwrap(readings.last ?? nil, "the watch could not read the process")
+
+    XCTAssertEqual(first.started, last.started, "the process changed during the bound")
+    XCTAssertLessThan(
+      share(from: first, to: last), ClosedProcessWatch.busyShare,
+      "the closed pop-up's idle process read as spinning")
 
     let value = await harness.run("1 + 1") as? Int
 
@@ -442,13 +556,14 @@ final class BrowserHungProcessTests: XCTestCase {
   }
 
   /// Catches a close that kills a live tab. A pop-up shares its opener's process here. The opener
-  /// runs a script that never ends, so the process spins through the pop-up's bound. The opener is
-  /// busy, not hung, and the user closed only the pop-up. No signal goes out and the process lives
-  /// on.
+  /// runs a script that never ends, so the process reads busy through the pop-up's bound. The
+  /// opener is busy, not hung, and the user closed only the pop-up. No signal goes out and the
+  /// process lives on. The busy sample takes the watch past its idle guard, so only the live-tab
+  /// check stops the signal.
   func testClosingATabThatSharesItsProcessWithALiveBusyTabSignalsNothing() async throws {
     let timer = ManualHangTimer()
     let log = SignalLog()
-    let harness = try await make(hang: policy(timer, log: log))
+    let harness = try await make(hang: policy(timer, log: log, sample: BusySamples().next))
     defer { harness.stop() }
 
     await harness.load("/a", expecting: "A")
@@ -471,7 +586,6 @@ final class BrowserHungProcessTests: XCTestCase {
 
     XCTAssertEqual(result, .closed)
 
-    await letTimePass(in: harness)
     timer.fire()
 
     XCTAssertTrue(log.pids.isEmpty, "a live tab's process was signalled")
@@ -479,11 +593,12 @@ final class BrowserHungProcessTests: XCTestCase {
   }
 
   /// Catches a skipped kill that leaves the process for good. After the pop-up's watch skipped, the
-  /// opener closes. Its watch finds the process spinning and no other live tab, so it ends it.
+  /// opener closes. Its watch reads the process as busy with no other live tab, so it ends it. The
+  /// busy sample takes the first watch past its idle guard, so only the live-tab check skips it.
   func testTheLastLiveTabClosingEndsAProcessAnEarlierCloseLeftAlone() async throws {
     let timer = ManualHangTimer()
     let log = SignalLog()
-    let harness = try await make(hang: policy(timer, log: log))
+    let harness = try await make(hang: policy(timer, log: log, sample: BusySamples().next))
     defer { harness.stop() }
 
     await harness.load("/a", expecting: "A")
@@ -503,16 +618,14 @@ final class BrowserHungProcessTests: XCTestCase {
 
     _ = await harness.applet.closeTab(at: 1)
 
-    await letTimePass(in: harness)
     timer.fire()
 
-    XCTAssertTrue(log.pids.isEmpty)
+    XCTAssertTrue(log.pids.isEmpty, "a live tab's process was signalled")
 
     let closed = await harness.applet.closeTab(at: 0)
 
     XCTAssertEqual(closed, .closed)
 
-    await letTimePass(in: harness)
     timer.fire()
 
     await waitUntilGone(pid, in: harness, "the process ends with the last tab on it")
@@ -526,7 +639,7 @@ final class BrowserHungProcessTests: XCTestCase {
   func testATabReopenedInsideTheWindowGetsItsOwnProcessAndSurvivesTheKill() async throws {
     let timer = ManualHangTimer()
     let log = SignalLog()
-    let harness = try await make(hang: policy(timer, log: log))
+    let harness = try await make(hang: policy(timer, log: log, sample: BusySamples().next))
     defer { harness.stop() }
 
     await harness.load("/a", expecting: "A")
@@ -555,7 +668,6 @@ final class BrowserHungProcessTests: XCTestCase {
 
     XCTAssertNotEqual(fresh, pid, "the reopened view joined the spinning process")
 
-    await letTimePass(in: harness)
     timer.fire()
 
     await waitUntilGone(pid, in: harness, "the spinning process ends")

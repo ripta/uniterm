@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-24
+**Updated:** 2026-11-25
 
 ## Impacts
 
@@ -336,7 +336,7 @@ None.
 
 ### M1: The browser hung-process tests
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The closed-tab tests pass on a runner whose cores are all busy with other work
 - The live-sample test fails when either time field of the live reading is in the wrong units. Its bracket allows the
@@ -358,6 +358,30 @@ None.
 - The closed-tab test's entry in `spec/flaky-tests.md` records the change, says the test pins the fix and not the bug,
   and stays under Potential until it meets the closing rule in the `spec/flaky-tests.md` Rule section
 - Production's `busyShare`, bound, and time sources are unchanged
+
+**As built:**
+
+- The before-change measurement found no product finding. Every run read the closed page at 0.966 of a core or more.
+  That held over the test's 0.3 s window and over the product's 10 s bound, idle and with a busy loop per core. The
+  closed process kept its priority and its Darwin role from the close to the fire. The numbers are in the closed-tab
+  test's entry in `spec/flaky-tests.md`. The busy loops ran at default priority, below the page's, so none could
+  starve it. The CI failure did not reproduce, so its cause stays unconfirmed, and the test pins the fix, not the bug.
+- The derived busy sample checks each reading of a process against the one before it. That covers every watch a test
+  arms, including the one the harness's teardown arms. A sample made to read the same time every time failed the four
+  derived-sample tests with the sampler's message. With the check also removed, the busy-opener test passed without
+  reaching the live-tab check.
+- Removing the live-tab check failed the busy-opener test and the first close of the last-live-tab test. The idle
+  pop-up test still passed, as its doc comment says.
+- The bracket reads the test's own processor time from the POSIX process CPU clock, and its uptime from Foundation's
+  system uptime. Its allowance is 10 µs. Over 100,000 measured brackets, the CPU clock trailed the usage reader by at
+  most 1.5 µs, and the uptime reader never fell outside. The live-sample test failed with the processor time left in
+  Mach ticks, with it converted twice, with the time taken in Mach ticks, and with both in Mach ticks. It is now
+  `testTheLiveSampleIsInNanosecondsAndReadsAnIdlePageAsIdle`, since it no longer reads a spinning page.
+- `testClosingAnIdlePopUpSignalsNothing` also checks that the watch's own live readings, at the close and at the fire,
+  read under the share. They read under 0.006 in each of the four runs that printed them, idle and loaded. Its wait
+  stays a fixed 0.3 s.
+- After the change, the class passed idle, with 14 and with 42 busy loops in the test process, and with 14 busy
+  processes. The closed-tab test went from 0.73 s to 0.14 s. Production code is unchanged.
 
 ### M2: The script fixture's helper exit
 
@@ -665,6 +689,13 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
   test sender fails the test on it.
 - 2026-11-24: Review gate: kept all. The last re-check converged, and no decision is open. No decision gets an ADR.
   Status set to accepted.
+- 2026-11-25: M1's mechanisms were chosen in the work-queue run. The bracket's independent readers are the POSIX
+  process CPU clock and Foundation's system uptime. Its 10 µs allowance comes from a measurement. The derived busy
+  sample's forward check covers every reading of a process, not only the close and the fire. The idle pop-up test
+  checks that the watch's live readings read idle, which is how "still sees an idle page" is checked. The live-sample
+  test was renamed, since it no longer reads a spinning page. The before-change measurement added runs with separate
+  busy processes and runs over the product's 10 s bound. Busy loops in the test process left the page 98% of a core
+  even at user-interactive QoS. (run best guess)
 
 ## References
 
