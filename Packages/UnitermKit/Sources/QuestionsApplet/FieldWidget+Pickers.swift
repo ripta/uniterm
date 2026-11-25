@@ -77,6 +77,8 @@ final class ColorField: FieldWidget {
 
   override var focusTarget: NSView? { well }
 
+  override var keyViews: [NSView] { [well, clearButton] }
+
   override func lock() {
     well.isEnabled = false
     clearButton.isEnabled = false
@@ -236,6 +238,8 @@ final class FileField: FieldWidget {
   }
 
   override var focusTarget: NSView? { chooseButton }
+
+  override var keyViews: [NSView] { [chooseButton, clearButton] }
 
   override func lock() {
     chooseButton.isEnabled = false

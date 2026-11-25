@@ -368,6 +368,57 @@ final class QuestionsAppletTests: XCTestCase {
     }
   }
 
+  /// Catches a Tab that leaves the form's order. Without a chain of its own, Tab goes wherever
+  /// AppKit's guess sends it, which depends on the machine's keyboard setting. The chain runs
+  /// through every question in reading order, then the buttons, and wraps to the first field. A
+  /// radio group is one stop, on its selected radio, and the stop follows a new selection.
+  func testTabRunsThroughTheQuestionsThenTheButtonsAndWraps() throws {
+    let (applet, _) = makeApplet()
+    let spec = try FormSpecReader.decode(
+      Data(
+        """
+        {"items": [
+          {"id": "name", "text": "Name?", "type": "string"},
+          {"id": "bio", "text": "Bio?", "type": "text", "multiline": true},
+          {"id": "count", "text": "Count?", "type": "integer"},
+          {"id": "pick", "text": "Pick?", "type": "choice", "choices": ["a", "b"],
+           "default": "b"},
+          {"id": "ratio", "text": "Ratio?", "type": "number"}]}
+        """.utf8))
+
+    _ = applet.open(spec, for: requester("a")) { _ in }
+
+    let first = try XCTUnwrap(find("question-name", in: applet.view))
+
+    func chain() -> [String] {
+      var names: [String] = []
+      var view: NSView? = first
+
+      repeat {
+        names.append(view?.accessibilityIdentifier() ?? "?")
+        view = view?.nextKeyView
+      } while view != nil && view !== first && names.count < 20
+
+      if view === first { names.append("wraps") }
+
+      return names
+    }
+
+    XCTAssertEqual(
+      chain(),
+      [
+        "question-name", "question-bio", "question-count", "question-pick-choice-1",
+        "question-pick-clear", "question-ratio", "form-button-ok", "form-button-cancel", "wraps",
+      ])
+
+    let a = try XCTUnwrap(find("question-pick-choice-0", in: applet.view) as? NSButton)
+
+    a.performClick(nil)
+
+    XCTAssertEqual(
+      chain().dropFirst(3).first, "question-pick-choice-0", "the stop stayed on the old radio")
+  }
+
   /// Catches a destructive button that Return presses. Return presses the primary button only, so
   /// a form with a destructive button and no primary button ignores Return.
   func testReturnNeverPressesADestructiveButton() throws {

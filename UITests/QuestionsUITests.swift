@@ -261,14 +261,17 @@ final class QuestionsUITests: UnitermUITestCase {
     // and `testANewFormTakesKeysAtOnce` owns how soon keys arrive.
     XCTAssertTrue(waitForFocus(on: "question-name", in: app), "the form never took the keyboard")
 
+    // Tab moves between the fields. The ratio field starts below the form's visible part, and a click
+    // on it can land before the scroll that brings it into view does. Its keys then go to the count
+    // field, and the button stays disabled. Tab reaches the field however the form is scrolled.
     app.typeText("Ada")
-    element("question-bio", in: app).click()
+    app.typeKey(.tab, modifierFlags: [])
     app.typeText("a")
     app.typeKey(.return, modifierFlags: [])
     app.typeText("b")
-    element("question-count", in: app).click()
+    app.typeKey(.tab, modifierFlags: [])
     app.typeText("7")
-    element("question-ratio", in: app).click()
+    app.typeKey(.tab, modifierFlags: [])
     app.typeText("-0.5")
 
     element("form-button-ok", in: app).click()

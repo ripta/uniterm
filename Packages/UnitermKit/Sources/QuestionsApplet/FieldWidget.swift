@@ -23,6 +23,9 @@ class FieldWidget: NSObject {
   /// The user pressed Escape in a field.
   var onEscape: () -> Void = {}
 
+  /// The widget's Tab stops changed, such as a radio group's stop moving to a new selection.
+  var onKeyViewsChange: () -> Void = {}
+
   init(question: FormQuestion, styler: FormStyler) {
     self.question = question
     self.styler = styler
@@ -38,6 +41,12 @@ class FieldWidget: NSObject {
 
   /// The control that takes the keyboard first.
   var focusTarget: NSView? { nil }
+
+  /// The widget's Tab stops, in reading order. The form chains them with the other questions'.
+  ///
+  /// A stop the user cannot reach now, such as a hidden Clear button, stays in the list. AppKit
+  /// skips a view that cannot become the key view.
+  var keyViews: [NSView] { focusTarget.map { [$0] } ?? [] }
 
   /// The form was answered, so the controls stop taking input.
   func lock() {}
@@ -493,6 +502,16 @@ final class ChoiceField: FieldWidget, NSTextFieldDelegate {
     usesRadios ? (radios.first { $0.state == .on } ?? radios.first ?? otherRadio) : popup
   }
 
+  /// The radio group is one stop, as in any Mac form: the selected radio, or the first when none
+  /// is.
+  override var keyViews: [NSView] {
+    let group = radios + (allowsOther ? [otherRadio] : [])
+    let lead: NSView =
+      usesRadios ? (group.first { $0.state == .on } ?? group.first ?? popup) : popup
+
+    return [lead] + (allowsOther ? [otherField] : []) + [clearButton]
+  }
+
   override func lock() {
     for radio in radios { radio.isEnabled = false }
 
@@ -547,6 +566,8 @@ final class ChoiceField: FieldWidget, NSTextFieldDelegate {
 
     render()
     onChange(answer)
+
+    if usesRadios { onKeyViewsChange() }
 
     if new == .other { otherField.window?.makeFirstResponder(otherField) }
   }
@@ -682,6 +703,8 @@ final class MultiField: FieldWidget {
   }
 
   override var focusTarget: NSView? { boxes.first }
+
+  override var keyViews: [NSView] { boxes }
 
   override func lock() {
     for box in boxes { box.isEnabled = false }
