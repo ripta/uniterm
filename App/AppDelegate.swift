@@ -437,10 +437,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let declarations = appletDeclarations
 
+    let scrollbackStore = (try? terminalConfigDirectory()).map {
+      ScrollbackStore(directory: $0.appending(path: "scrollback", directoryHint: .isDirectory))
+    }
+
     let restoreApplet: AppletRestorer = { description in
       switch description.type {
       case TerminalDescription.typeID:
-        return try TerminalApplet(engine: engine, restoring: description)
+        return try TerminalApplet(
+          engine: engine, restoring: description, scrollbackStore: scrollbackStore)
 
       case DataViewerDescription.typeID:
         return try DataViewerApplet(restoring: description, picker: picker)
@@ -479,7 +484,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let makeApplet: AppletFactory = { choice, directory in
       switch choice {
       case .terminalShell:
-        return TerminalApplet(engine: engine, workingDirectory: directory)
+        return TerminalApplet(
+          engine: engine, workingDirectory: directory, scrollbackStore: scrollbackStore)
 
       case .terminalProgram(let command):
         return try TerminalApplet(engine: engine, program: command, workingDirectory: directory)

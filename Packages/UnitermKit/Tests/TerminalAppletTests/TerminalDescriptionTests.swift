@@ -16,9 +16,42 @@ final class TerminalDescriptionTests: XCTestCase {
 
     let wrapped = try original.appletDescription()
     XCTAssertEqual(wrapped.type, "terminal")
-    XCTAssertEqual(wrapped.version, 1)
+    XCTAssertEqual(wrapped.version, 2)
 
     XCTAssertEqual(try TerminalDescription.decode(wrapped), original)
+  }
+
+  /// Catches a build that cannot read the layout an older build saved. A version 1 payload has no
+  /// scrollback IDs and reads as tabs with none.
+  func testAVersionOnePayloadReadsWithNoScrollback() throws {
+    let older = AppletDescription(
+      type: "terminal", version: 1,
+      payload: .object([
+        "mode": .string("shell"),
+        "tabs": .array([.object(["workingDirectory": .string("/tmp")])]),
+        "selectedTab": .number(0),
+      ]))
+
+    let decoded = try TerminalDescription.decode(older)
+    XCTAssertEqual(decoded.tabs, [.init(workingDirectory: "/tmp")])
+    XCTAssertNil(decoded.tabs[0].scrollback)
+  }
+
+  /// The scrollback ID is a stored key too. A tab saved at quit names its file by it.
+  func testPayloadShapeWithAScrollbackID() throws {
+    let wrapped = try TerminalDescription(
+      mode: .shell, tabs: [.init(workingDirectory: "/tmp", scrollback: "ID-1")]
+    ).appletDescription()
+
+    XCTAssertEqual(
+      wrapped.payload,
+      .object([
+        "mode": .string("shell"),
+        "tabs": .array([
+          .object(["workingDirectory": .string("/tmp"), "scrollback": .string("ID-1")])
+        ]),
+        "selectedTab": .number(0),
+      ]))
   }
 
   /// The payload keys are a stored format. A change to them must be deliberate, so the expected
@@ -48,10 +81,10 @@ final class TerminalDescriptionTests: XCTestCase {
   }
 
   func testNewerVersionIsRefused() {
-    let newer = AppletDescription(type: "terminal", version: 2, payload: .object([:]))
+    let newer = AppletDescription(type: "terminal", version: 3, payload: .object([:]))
 
     XCTAssertThrowsError(try TerminalDescription.decode(newer)) {
-      XCTAssertEqual($0 as? AppletRestoreError, .newerVersion(found: 2, supported: 1))
+      XCTAssertEqual($0 as? AppletRestoreError, .newerVersion(found: 3, supported: 2))
     }
   }
 

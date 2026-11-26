@@ -63,6 +63,9 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     /// it starts, so the text is not held for the tab's whole life.
     var pendingReplay: String?
 
+    /// The ID of the scrollback this tab saved as the app quit. The tab's description names it.
+    var savedScrollback: String?
+
     init(launch: TerminalLaunch, title: String) {
       self.launch = launch
       self.title = title
@@ -93,6 +96,9 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   /// Debug-level only. It logs outcomes and lengths, never the text of a link.
   private static let linkLog = Logger(subsystem: "dev.uniterm.app", category: "terminal-link")
 
+  /// Logs a failed save, never the text.
+  private static let scrollbackLog = Logger(subsystem: "dev.uniterm.app", category: "terminal")
+
   public let typeID = TerminalDescription.typeID
   public let view: NSView
 
@@ -115,6 +121,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   private let shellEnvironment: [String: String]
   private let directoryExists: (String) -> Bool
   private let home: String
+
+  /// Where shell tabs keep their scrollback from a quit to the next launch. Nil keeps none.
+  private let scrollbackStore: ScrollbackStore?
+
   private var tabs: [Tab]
   private var selectedIndex: Int
 
@@ -162,11 +172,13 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   }
 
   /// A shell in one tab, with the launch as given.
-  public convenience init(engine: any TerminalEngine, launch: TerminalLaunch) {
+  public convenience init(
+    engine: any TerminalEngine, launch: TerminalLaunch, scrollbackStore: ScrollbackStore? = nil
+  ) {
     self.init(
       engine: engine, mode: .shell, commandLine: nil, shellEnvironment: launch.environment,
       launches: [launch], selected: 0, directoryExists: RestoreDirectory.isLocalDirectory,
-      home: NSHomeDirectory())
+      home: NSHomeDirectory(), scrollbackStore: scrollbackStore)
   }
 
   /// A shell in one tab. It starts in the given directory when that is an absolute path and still
@@ -175,7 +187,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   public convenience init(
     engine: any TerminalEngine, workingDirectory: String? = nil,
     directoryExists: @escaping (String) -> Bool = RestoreDirectory.isLocalDirectory,
-    home: String = NSHomeDirectory()
+    home: String = NSHomeDirectory(), scrollbackStore: ScrollbackStore? = nil
   ) {
     let directory = RestoreDirectory.resolve(
       reported: workingDirectory, starting: nil, home: home, exists: directoryExists)
@@ -183,7 +195,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     self.init(
       engine: engine, mode: .shell, commandLine: nil, shellEnvironment: [:],
       launches: [.loginShell(workingDirectory: directory)], selected: 0,
-      directoryExists: directoryExists, home: home)
+      directoryExists: directoryExists, home: home, scrollbackStore: scrollbackStore)
   }
 
   /// One program in one tab. The line is split into words, and no shell interprets the user's
@@ -211,10 +223,14 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   /// Each tab starts in the directory its shell reported last, when that is an absolute path that
   /// is still a directory here. Otherwise it starts in the tab's starting directory, and then in
   /// the home directory.
+  ///
+  /// A shell tab saved at quit shows its scrollback above its first prompt. The store's file is
+  /// read and deleted here. A program tab's saved file is deleted unread, since the tab comes back
+  /// waiting to run.
   public convenience init(
     engine: any TerminalEngine, restoring description: AppletDescription,
     directoryExists: @escaping (String) -> Bool = RestoreDirectory.isLocalDirectory,
-    home: String = NSHomeDirectory()
+    home: String = NSHomeDirectory(), scrollbackStore: ScrollbackStore? = nil
   ) throws {
     let decoded = try TerminalDescription.decode(description)
     let carried = TerminalDescription.closedTabs(in: description)
@@ -230,7 +246,12 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       self.init(
         engine: engine, mode: .shell, commandLine: nil, shellEnvironment: [:],
         launches: directories.map { .loginShell(workingDirectory: $0) },
-        selected: decoded.selectedTab, directoryExists: directoryExists, home: home)
+        selected: decoded.selectedTab, directoryExists: directoryExists, home: home,
+        scrollbackStore: scrollbackStore)
+
+      for (tab, saved) in zip(tabs, decoded.tabs) {
+        tab.pendingReplay = saved.scrollback.flatMap { scrollbackStore?.take($0) }
+      }
 
     case .program:
       guard let line = decoded.command else {
@@ -247,7 +268,12 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       self.init(
         engine: engine, mode: .program, commandLine: line, shellEnvironment: [:],
         launches: directories.map { .program(words, workingDirectory: $0) },
-        selected: decoded.selectedTab, directoryExists: directoryExists, home: home)
+        selected: decoded.selectedTab, directoryExists: directoryExists, home: home,
+        scrollbackStore: scrollbackStore)
+
+      for saved in decoded.tabs {
+        if let id = saved.scrollback { scrollbackStore?.remove(id) }
+      }
 
       for tab in tabs { tab.awaitingRun = true }
       refreshTabs()
@@ -259,11 +285,13 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   private init(
     engine: any TerminalEngine, mode: TerminalDescription.Mode, commandLine: String?,
     shellEnvironment: [String: String], launches: [TerminalLaunch], selected: Int,
-    directoryExists: @escaping (String) -> Bool, home: String
+    directoryExists: @escaping (String) -> Bool, home: String,
+    scrollbackStore: ScrollbackStore? = nil
   ) {
     self.engine = engine
     self.directoryExists = directoryExists
     self.home = home
+    self.scrollbackStore = scrollbackStore
     self.mode = mode
     self.commandLine = commandLine
     self.shellEnvironment = shellEnvironment
@@ -471,12 +499,35 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     focus()
   }
 
+  /// Saves each shell tab's scrollback, so the next launch shows it above the tab's first prompt.
+  /// A tab whose session has not started saves the text it was going to show. A program-mode
+  /// terminal saves none, since its tab comes back waiting to run.
+  public func willQuit() {
+    guard mode == .shell, let scrollbackStore else { return }
+
+    for tab in tabs {
+      if let previous = tab.savedScrollback {
+        scrollbackStore.remove(previous)
+        tab.savedScrollback = nil
+      }
+
+      guard let text = tab.session?.scrollbackText() ?? tab.pendingReplay else { continue }
+
+      do {
+        tab.savedScrollback = try scrollbackStore.write(text)
+      } catch {
+        Self.scrollbackLog.error("a tab's scrollback was not saved: \(String(describing: error))")
+      }
+    }
+  }
+
   public func describe() -> AppletDescription {
     let description = TerminalDescription(
       mode: mode, command: commandLine,
       tabs: tabs.map {
         TerminalDescription.Tab(
-          workingDirectory: $0.workingDirectory, startDirectory: $0.launch.workingDirectory)
+          workingDirectory: $0.workingDirectory, startDirectory: $0.launch.workingDirectory,
+          scrollback: $0.savedScrollback)
       },
       selectedTab: selectedIndex)
 
