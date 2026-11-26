@@ -449,9 +449,20 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     // `tableColumns` bridges a fresh array on each read, so it is read once.
     let tableColumns = tableView.tableColumns
 
+    let numeric = session?.numericColumns ?? IndexSet()
+
     for (index, column) in targetColumns.enumerated() where index < tableColumns.count {
-      if tableColumns[index].title != column.title {
-        tableColumns[index].title = column.title
+      let tableColumn = tableColumns[index]
+
+      if tableColumn.title != column.title {
+        tableColumn.title = column.title
+      }
+
+      let alignment: NSTextAlignment = numeric.contains(index) ? .right : .left
+
+      if tableColumn.headerCell.alignment != alignment {
+        tableColumn.headerCell.alignment = alignment
+        tableView.headerView?.needsDisplay = true
       }
     }
 
@@ -591,6 +602,9 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
     cell.label.stringValue = ColumnWidth.displayText(
       session.snapshot, row: source, column: column, limit: 2_000)
+    let numeric = session.numericColumns.contains(column)
+    cell.label.alignment = numeric ? .right : .left
+    cell.label.font = numeric ? DataCell.numberFont : DataCell.font
 
     switch session.snapshot.kind(row: source, column: column) {
     case .nested: cell.restingColor = palette[.blue].nsColor
