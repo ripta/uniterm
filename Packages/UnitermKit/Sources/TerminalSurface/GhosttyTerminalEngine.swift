@@ -41,6 +41,10 @@ public final class GhosttyTerminalEngine: TerminalEngine {
   private var notificationTokens: [any NSObjectProtocol] = []
   private let helperDirectory: URL
 
+  /// True once this instance has written the replay launchers. A later uniterm build may change
+  /// them, so each instance writes them once before its first replay.
+  private var launchersInstalled = false
+
   /// The search path a shell gets when uniterm itself was started with none.
   static let defaultPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -125,10 +129,65 @@ public final class GhosttyTerminalEngine: TerminalEngine {
       launch.environment, helperDirectory: helperDirectory,
       inheritedPath: ProcessInfo.processInfo.environment["PATH"])
 
-    let view = try GhosttySurfaceView(
-      app: app, launch: launch, clipboardPolicy: clipboardPolicy, pasteboard: pasteboard)
+    let replay = launch.program == nil ? launch.replay.flatMap(prepareReplay) : nil
+
+    if let replay {
+      launch.environment.merge(replay.environment) { $1 }
+    }
+
+    let view: GhosttySurfaceView
+    do {
+      view = try GhosttySurfaceView(
+        app: app, launch: launch, clipboardPolicy: clipboardPolicy, pasteboard: pasteboard,
+        shellCommand: replay?.command)
+    } catch {
+      if let file = replay?.file { try? FileManager.default.removeItem(at: file) }
+      throw error
+    }
+
     sessions.add(view)
     return view
+  }
+
+  /// Where the replay launchers and the files they show live, inside the config directory.
+  var replayDirectory: URL {
+    store.directory.appending(path: "replay", directoryHint: .isDirectory)
+  }
+
+  /// Writes the launch's saved output and picks the launcher that shows it. Nil when the output is
+  /// empty or the files cannot be written. The shell then starts without it, since saved output is
+  /// never worth a tab that fails to open.
+  private func prepareReplay(_ text: String) -> (
+    command: String, environment: [String: String], file: URL
+  )? {
+    guard let text = ScrollbackText.prepared(text) else { return nil }
+
+    let shell = ScrollbackReplay.loginShellPath()
+    let launcher = replayDirectory.appending(path: ScrollbackReplay.launcherName(forShell: shell))
+
+    guard let command = ScrollbackReplay.command(launcher: launcher) else {
+      logger.warning("the replay folder's path cannot be quoted, so no output is shown")
+      return nil
+    }
+
+    do {
+      if !launchersInstalled {
+        ScrollbackReplay.removeStaleFiles(in: replayDirectory)
+        try ScrollbackReplay.installLaunchers(in: replayDirectory)
+        launchersInstalled = true
+      }
+
+      let file = try ScrollbackReplay.writeReplayFile(text, in: replayDirectory)
+
+      return (
+        command,
+        [ScrollbackReplay.fileVariable: file.path, ScrollbackReplay.shellVariable: shell],
+        file
+      )
+    } catch {
+      logger.error("the saved output was not written: \(String(describing: error))")
+      return nil
+    }
   }
 
   /// libghostty points `GHOSTTY_BIN_DIR` at the host executable's directory and appends that

@@ -107,12 +107,12 @@ final class TerminalSessionIntegrationTests: XCTestCase {
     savedEnvironment = [:]
   }
 
-  private func startShell(policy: TerminalClipboardPolicy = .interactive) throws
-    -> any TerminalSession
-  {
+  private func startShell(
+    policy: TerminalClipboardPolicy = .interactive, replay: String? = nil
+  ) throws -> any TerminalSession {
     let launch = TerminalLaunch.loginShell(
       workingDirectory: sandbox.appending(path: "work").path,
-      environment: ["HOME": sandbox.appending(path: "home").path])
+      environment: ["HOME": sandbox.appending(path: "home").path], replay: replay)
     return host(try engine.makeSession(launch: launch, clipboardPolicy: policy))
   }
 
@@ -316,6 +316,54 @@ final class TerminalSessionIntegrationTests: XCTestCase {
 
     let expected = "S:\(after.rows)x\(after.columns)"
     try await waitUntil("stty to report \(expected)") { self.screen(session).contains(expected) }
+  }
+
+  // MARK: Scrollback
+
+  /// Catches a capture that reads only the visible rows. Output scrolls well past the screen, and
+  /// the capture still holds its first line.
+  func testScrollbackTextHoldsOutputThatScrolledOffTheScreen() async throws {
+    let session = try startShell()
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    try run(#"for i in $(seq 1 200); do echo "SB:$i:"; done"#, in: session)
+    try await waitUntil("the last line") { self.screen(session).contains("SB:200:") }
+
+    XCTAssertFalse(screen(session).contains("SB:1:\n"), "the first line is still on screen")
+
+    let text = try XCTUnwrap(session.scrollbackText())
+    XCTAssertTrue(text.contains("SB:1:\n"), "the capture lost the scrolled-off lines")
+    XCTAssertTrue(text.contains("SB:200:\n"))
+  }
+
+  /// Catches a replay that loses shell integration, shows its text after the prompt, or leaks its
+  /// variables and file. The shell reports its directory with OSC 7, which only integration does.
+  /// The saved lines sit above the first prompt. The shell is a login shell, sees none of the
+  /// launcher's variables, and the file is gone.
+  func testAReplayShowsAboveThePromptAndKeepsShellIntegration() async throws {
+    var directories: [String] = []
+    let session = try startShell(replay: "EARLIER-ONE\nEARLIER-TWO\n")
+    session.onEvent = { event in
+      if case .workingDirectoryChanged(let path) = event { directories.append(path) }
+    }
+
+    try await waitUntil("the first prompt's working directory") { !directories.isEmpty }
+    try await waitUntil("an idle prompt") { !session.isRunningSomething }
+
+    let lines = screen(session).split(separator: "\n", omittingEmptySubsequences: false)
+    let saved = try XCTUnwrap(lines.firstIndex { $0.contains("EARLIER-TWO") }, "\(lines)")
+    let prompt = try XCTUnwrap(lines.lastIndex { $0.contains("%") }, "\(lines)")
+    XCTAssertEqual(lines.firstIndex { $0.contains("EARLIER-ONE") }, saved - 1)
+    XCTAssertLessThan(saved, prompt)
+
+    try run(
+      #"echo "V:${UNITERM_REPLAY_FILE-unset}:${UNITERM_REPLAY_SHELL-unset}:$0:""#, in: session)
+    try await waitUntil("the shell's report") {
+      self.screen(session).contains("V:unset:unset:-zsh:")
+    }
+
+    let left = try FileManager.default.contentsOfDirectory(atPath: engine.replayDirectory.path)
+    XCTAssertFalse(left.contains { $0.hasPrefix("replay-") }, "the replay file was kept: \(left)")
   }
 
   /// Catches a pane that stays open after its shell ends.
