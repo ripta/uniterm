@@ -48,27 +48,33 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
   public func appletDescription(closedTabs: [ClosedTab] = []) throws -> AppletDescription {
     AppletDescription(
       type: Self.typeID, version: Self.currentVersion, payload: try JSONValue(encoding: self),
-      undoState: closedTabs.isEmpty
-        ? nil : AppletUndoState(try JSONValue(encoding: UndoState(closedTabs: closedTabs))))
+      undoState: closedTabs.isEmpty ? nil : AppletUndoState(UndoState(closedTabs: closedTabs)))
   }
 
   /// A tab the user closed, as undo needs it. The stamp orders it against every other close in the
   /// window. The index is where the tab sat after the close dialog returned.
-  public struct ClosedTab: Codable, Equatable, Sendable {
+  public struct ClosedTab: Equatable, Sendable {
     public var stamp: UInt64
     public var index: Int
     public var title: String
     public var tab: Tab
 
-    public init(stamp: UInt64, index: Int, title: String, tab: Tab) {
+    /// The tab's output as it closed, which the reopened tab shows above its first prompt. It lives
+    /// only in memory, with the rest of the undo state.
+    public var scrollback: String?
+
+    public init(stamp: UInt64, index: Int, title: String, tab: Tab, scrollback: String? = nil) {
       self.stamp = stamp
       self.index = index
       self.title = title
       self.tab = tab
+      self.scrollback = scrollback
     }
   }
 
-  struct UndoState: Codable, Equatable, Sendable {
+  /// Held as the value itself, never encoded, since a closed tab's scrollback can be large and a
+  /// description is made on every layout save.
+  struct UndoState: Equatable, Sendable {
     var closedTabs: [ClosedTab]
   }
 
@@ -76,7 +82,7 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
   /// one this build cannot read, carries none. That part is never saved, so nothing older exists.
   public static func closedTabs(in description: AppletDescription) -> [ClosedTab] {
     guard description.type == typeID,
-      let state = try? description.undoState?.value(as: JSONValue.self)?.decoded(as: UndoState.self)
+      let state = description.undoState?.value(as: UndoState.self)
     else { return [] }
 
     return state.closedTabs

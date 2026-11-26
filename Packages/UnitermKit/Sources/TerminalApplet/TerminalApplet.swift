@@ -59,6 +59,10 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     /// A program-mode tab restored from a description. It has no session until the user runs it.
     var awaitingRun = false
 
+    /// Earlier output the tab's next session shows above its first prompt. The session takes it as
+    /// it starts, so the text is not held for the tab's whole life.
+    var pendingReplay: String?
+
     init(launch: TerminalLaunch, title: String) {
       self.launch = launch
       self.title = title
@@ -614,8 +618,8 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     return .closed
   }
 
-  /// Keeps a closed tab for reopening. The stamp and the index are taken now, after any close
-  /// question was answered, so both describe the tab as it left.
+  /// Keeps a closed tab for reopening. The stamp, the index, and the scrollback are taken now, after
+  /// any close question was answered, so they describe the tab as it left.
   private func recordClosed(_ tab: Tab, at index: Int) {
     guard let host else { return }
 
@@ -623,7 +627,8 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
       TerminalDescription.ClosedTab(
         stamp: host.issueCloseStamp(), index: index, title: tab.title,
         tab: TerminalDescription.Tab(
-          workingDirectory: tab.workingDirectory, startDirectory: tab.launch.workingDirectory)),
+          workingDirectory: tab.workingDirectory, startDirectory: tab.launch.workingDirectory),
+        scrollback: tab.session?.scrollbackText()),
       at: 0)
 
     if closedTabs.count > Self.closedTabDepth {
@@ -636,8 +641,9 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   }
 
   /// Starts a fresh shell from the closed tab's description, in the directory it last reported
-  /// when that is absolute and still exists, else its start directory, else home. The tab goes
-  /// back to its former index, clamped to the tab count, and is selected.
+  /// when that is absolute and still exists, else its start directory, else home. The shell shows
+  /// the tab's earlier output above its first prompt. The tab goes back to its former index,
+  /// clamped to the tab count, and is selected.
   ///
   /// The session starts before anything changes. A session that fails to start leaves no tab, the
   /// entry stays, and the selection is as it was.
@@ -651,6 +657,7 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
     let tab = Tab(
       launch: .loginShell(workingDirectory: directory, environment: shellEnvironment),
       title: Self.defaultTitle)
+    tab.pendingReplay = entry.scrollback
 
     if started {
       do {
@@ -711,7 +718,11 @@ public final class TerminalApplet: Applet, TabOpening, InputOwning {
   }
 
   private func startSession(for tab: Tab) throws {
-    let session = try engine.makeSession(launch: tab.launch, clipboardPolicy: clipboardPolicy)
+    var launch = tab.launch
+    launch.replay = tab.pendingReplay
+
+    let session = try engine.makeSession(launch: launch, clipboardPolicy: clipboardPolicy)
+    tab.pendingReplay = nil
     tab.remoteWatcher?.stop()
     tab.remoteWatcher = nil
     tab.remoteSource = nil
