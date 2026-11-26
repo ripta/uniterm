@@ -725,7 +725,7 @@ final class ScriptReplTests: XCTestCase {
         isRunning: {
           checked.add($0.pid)
           return running
-        }, kill: { killed.add($0) })
+        }, kill: { killed.add($0.pid) })
       let local = try makeHost(reaper: reaper)
       let channel = openTestRepl(host: local.host, history: [])
       let peer = try await attach(channel, to: local.host)
@@ -745,6 +745,36 @@ final class ScriptReplTests: XCTestCase {
       _ = peer
       local.host.stop()
     }
+  }
+
+  /// Catches a REPL helper that the guarded kill cannot reach by its token. The real helper is a
+  /// child of the test process, as it is of the app's terminal session, and the pane ending it
+  /// goes through the live call with the start time read when it attached. It pins the fix and
+  /// not the bug, since no test can force the helper's process ID to be reused.
+  func testEndingAReplHelperSignalsItByItsToken() async throws {
+    let results = SignalResults()
+    let local = try makeHost(
+      reaper: .guarded(delay: .seconds(3600), signal: results.live))
+
+    defer {
+      local.host.stop()
+      try? FileManager.default.removeItem(at: local.directory)
+    }
+
+    let channel = openTestRepl(host: local.host, history: [])
+    let events = ReplEvents(channel)
+    let repl = try start(channel)
+
+    expect(await attached(events))
+    XCTAssertEqual(events.attachedProcess?.pid, repl.pid)
+
+    channel.terminate(.stoppedByUser)
+
+    XCTAssertEqual(results.all, [.byToken])
+
+    let status = await repl.exitStatus()
+
+    XCTAssertEqual(status, SIGKILL)
   }
 
   private func makeHost(reaper: ProcessReaper) throws -> (host: ScriptHost, directory: URL) {

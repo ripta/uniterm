@@ -32,9 +32,12 @@ here. The run's base is the snip after "Schedule UTERM-060 M1-M3 after UTERM-044
 | | M3: The flaky entries say what to look for | DONE | [report](20261125-uterm-060-m1-m3-keep-input-evidence.md) |
 | UTERM-046 M1-M2 | M1: The browser hung-process tests | DONE | [report](20261125-uterm-046-m1-m2-deterministic-package-test-flakes.md) |
 | | M2: The script fixture's helper exit | DONE | [report](20261125-uterm-046-m1-m2-deterministic-package-test-flakes.md) |
-| UTERM-046 M4 | M4: The product's kills signal by audit token | QUEUED | |
+| UTERM-046 M4 | M4: The product's kills signal by audit token | DONE | [report](20261125-uterm-046-m4-the-products-kills-signal-by-audit-token.md) |
 | UTERM-046 M3 | M3: Every test signal goes through a guarded sender | QUEUED | |
 | UTERM-045 M2 | M2: One way to send a wheel | HELD | |
+
+The user paused the run after UTERM-046 M4, on 2026-11-26. UTERM-046 M3, the run's final review, and the final
+report wait until the user resumes it.
 
 UTERM-045 M2 is held. M1's clean count moves to a new milestone, UTERM-045 M3, and M2 waits on it. The count stood at
 22 of 33 through 2026-11-25T05:48Z.

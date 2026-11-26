@@ -11,6 +11,7 @@ final class ProcessInspectionTests: XCTestCase {
     let missing: pid_t = 999_999
 
     XCTAssertNil(ProcessInspection.startTime(of: missing))
+    XCTAssertNil(ProcessInspection.startTimeMicroseconds(of: missing))
     XCTAssertNil(ProcessInspection.parent(of: missing))
     XCTAssertFalse(ProcessInspection.isRunning(pid: missing, started: 0))
   }
@@ -41,6 +42,7 @@ final class ProcessInspectionTests: XCTestCase {
 
     XCTAssertEqual(kill(pid, 0), 0, "the child was collected before the check")
     XCTAssertNil(ProcessInspection.startTime(of: pid), "a zombie reported a start time")
+    XCTAssertNil(ProcessInspection.startTimeMicroseconds(of: pid), "a zombie reported a start")
     XCTAssertNil(ProcessInspection.parent(of: pid), "a zombie reported a parent")
     XCTAssertFalse(ProcessInspection.isRunning(pid: pid, started: started ?? 0))
   }
@@ -49,7 +51,9 @@ final class ProcessInspectionTests: XCTestCase {
   /// parent, and reads as running under that start time.
   func testTheTestProcessHasAStartTimeAndAParent() throws {
     let started = try XCTUnwrap(ProcessInspection.startTime(of: getpid()))
+    let microseconds = try XCTUnwrap(ProcessInspection.startTimeMicroseconds(of: getpid()))
 
+    XCTAssertEqual(microseconds / 1_000_000, started, "the two readers disagree on the second")
     XCTAssertEqual(ProcessInspection.parent(of: getpid())?.pid, getppid())
     XCTAssertTrue(ProcessInspection.isRunning(pid: getpid(), started: started))
     XCTAssertFalse(ProcessInspection.isRunning(pid: getpid(), started: started - 1))

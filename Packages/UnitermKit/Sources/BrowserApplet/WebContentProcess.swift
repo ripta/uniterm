@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import OSLog
+import ProcessInspection
 import WebKit
 
 /// Reads the id of a web view's content process and ends the process with SIGKILL.
@@ -18,27 +19,49 @@ import WebKit
 /// process. `kill(0, ...)` signals this process's own group. Ids at or below 1 are never signalled.
 /// The path of the process must also name a WebKit content process, so a recycled id that now
 /// belongs to something else is left alone.
+///
+/// A kill names its process by the id and the microsecond it started, read when the product
+/// learned the id. The signal goes through `ProcessInspection`'s guarded call, which sends it only
+/// while that pair still names a live process. So an id the system handed to another process after
+/// the path check is left alone too.
 struct WebContentProcess: Sendable {
   typealias PathOf = @Sendable (pid_t) -> String?
   typealias Sample = @Sendable (pid_t) -> ProcessSample?
-  typealias Signal = @Sendable (pid_t, Int32) -> Void
+  typealias Identify = @Sendable (pid_t) -> ContentProcessIdentity?
+  typealias Signal = @Sendable (ContentProcessIdentity, Int32) -> ProcessInspection.SignalResult
 
   var pathOf: PathOf
   var sample: Sample
+  var identify: Identify
   var signal: Signal
 
   init(
     pathOf: @escaping PathOf = WebContentProcess.executablePath,
-    sample: @escaping Sample = WebContentProcess.usage, signal: @escaping Signal
+    sample: @escaping Sample = WebContentProcess.usage,
+    identify: @escaping Identify = WebContentProcess.startIdentity,
+    signal: @escaping Signal = WebContentProcess.guardedSignal
   ) {
     self.pathOf = pathOf
     self.sample = sample
+    self.identify = identify
     self.signal = signal
   }
 
-  static let live = WebContentProcess(signal: { pid, number in _ = Darwin.kill(pid, number) })
+  static let live = WebContentProcess()
 
   private static let log = Logger(subsystem: "dev.uniterm.app", category: "browser")
+
+  /// Reads the identity of the process `pid` names now. Nil when it is gone or a zombie.
+  static let startIdentity: Identify = { pid in
+    ProcessInspection.startTimeMicroseconds(of: pid).map {
+      ContentProcessIdentity(pid: pid, startedMicroseconds: $0)
+    }
+  }
+
+  static let guardedSignal: Signal = { identity, number in
+    ProcessInspection.signal(
+      number, pid: identity.pid, startedMicroseconds: identity.startedMicroseconds)
+  }
 
   /// The substring that every WebKit content process path carries, including the development
   /// builds that a debug run of WebKit uses.
@@ -58,9 +81,20 @@ struct WebContentProcess: Sendable {
     return pid > 1 ? pid : nil
   }
 
-  /// Sends SIGKILL to `pid` when it is a WebKit content process. Returns whether it signalled.
+  /// The content process of `view` with the time it started, or nil when it has none or the
+  /// process is already gone.
+  @MainActor
+  func identity(of view: WKWebView) -> ContentProcessIdentity? {
+    identifier(of: view).flatMap(identify)
+  }
+
+  /// Sends SIGKILL to the process `identity` names when it is a WebKit content process. Returns
+  /// whether it signalled. A process the guarded call reports gone, unreached, or refused was not
+  /// signalled.
   @discardableResult
-  func kill(_ pid: pid_t) -> Bool {
+  func kill(_ identity: ContentProcessIdentity) -> Bool {
+    let pid = identity.pid
+
     guard pid > 1 else { return false }
 
     guard let path = pathOf(pid), path.contains(Self.pathMarker) else {
@@ -68,23 +102,44 @@ struct WebContentProcess: Sendable {
       return false
     }
 
-    signal(pid, SIGKILL)
+    switch signal(identity, SIGKILL) {
+    case .byToken:
+      return true
 
-    return true
+    case .byPid:
+      Self.log.notice("ended process \(pid) by its id: the system gave no audit token")
+      return true
+
+    case .gone:
+      return false
+
+    case .unreached:
+      Self.log.error("could not end process \(pid): the signal did not reach it")
+      return false
+
+    case .refused:
+      Self.log.error("not ending process \(pid): the id is never signalled")
+      return false
+    }
   }
 
   /// Ends the content process a closed tab left, when no live web view in the app uses it. A busy
   /// page is not a hung one, and a tab that shares the process may be busy. Returns whether it
   /// signalled.
+  ///
+  /// Live views are compared by id alone, and no token is read for them. A live view on the id
+  /// means a tab uses that process, whichever process it is now.
   @MainActor
   @discardableResult
-  func killUnused(_ pid: pid_t) -> Bool {
+  func killUnused(_ identity: ContentProcessIdentity) -> Bool {
+    let pid = identity.pid
+
     guard !LiveContentViews.contains(where: { identifier(of: $0) == pid }) else {
       Self.log.notice("not ending process \(pid): a live tab shares it")
       return false
     }
 
-    return kill(pid)
+    return kill(identity)
   }
 
   /// Reads a process's start time and processor time with `proc_pid_rusage`. Nil when the process
@@ -196,6 +251,12 @@ struct ProcessSample: Equatable, Sendable {
   var takenNanoseconds: UInt64
 }
 
+/// A content process as a kill names it: its id, and the microsecond it started.
+struct ContentProcessIdentity: Equatable, Sendable {
+  var pid: pid_t
+  var startedMicroseconds: Int
+}
+
 /// Watches the content process a closed tab let go of, and ends it when it spins with no tab left.
 ///
 /// A tab that closes while its page spins never arms the hang bound, since the bound belongs to a
@@ -206,6 +267,8 @@ struct ProcessSample: Equatable, Sendable {
 /// The watch samples the process at the close, and again when the policy's bound runs out. It ends
 /// the process only when the same process is still there, used at least `busyShare` of a core over
 /// the bound, and no live tab uses it. An idle process is left for WebKit to end.
+///
+/// The process's identity is read at the close, and the kill names that identity at the fire.
 @MainActor
 enum ClosedProcessWatch {
   /// The share of one core a process must use over the bound to count as spinning. A page in an
@@ -216,13 +279,17 @@ enum ClosedProcessWatch {
   static func watch(pid: pid_t, policy: HangPolicy) {
     let process = policy.process
 
-    guard let first = process.sample(pid) else { return }
+    guard let first = process.sample(pid), let identity = process.identify(pid) else { return }
 
-    _ = policy.schedule(policy.bound) { expired(pid: pid, first: first, process: process) }
+    _ = policy.schedule(policy.bound) {
+      expired(identity: identity, first: first, process: process)
+    }
   }
 
-  private static func expired(pid: pid_t, first: ProcessSample, process: WebContentProcess) {
-    guard let last = process.sample(pid), last.started == first.started,
+  private static func expired(
+    identity: ContentProcessIdentity, first: ProcessSample, process: WebContentProcess
+  ) {
+    guard let last = process.sample(identity.pid), last.started == first.started,
       last.takenNanoseconds > first.takenNanoseconds,
       last.processorNanoseconds >= first.processorNanoseconds
     else { return }
@@ -232,7 +299,7 @@ enum ClosedProcessWatch {
 
     guard used >= busyShare * elapsed else { return }
 
-    process.killUnused(pid)
+    process.killUnused(identity)
   }
 }
 

@@ -745,9 +745,9 @@ final class BrowserTab: NSObject {
   /// same site could otherwise land in the process that still spins. A tab that shares the process
   /// hears it end, and recovers as it does from any content process that stops.
   private func endHungProcess() {
-    guard let view = current, let pid = hangPolicy.process.identifier(of: view) else { return }
+    guard let view = current, let identity = hangPolicy.process.identity(of: view) else { return }
 
-    hangPolicy.process.kill(pid)
+    hangPolicy.process.kill(identity)
   }
 
   /// Replaces the web view, then tells the applet. `hadFocus` is read before the old view leaves.
