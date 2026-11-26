@@ -76,6 +76,34 @@ final class LayoutUITests: UnitermUITestCase {
       "the shell did not start in /usr/bin")
   }
 
+  /// Catches a relaunch that loses a terminal's output, or leaves it on disk. The shell prints a
+  /// marker before Cmd-Q. After the relaunch the marker sits above a fresh prompt, and the saved
+  /// file is gone.
+  func testATerminalShowsItsEarlierOutputAfterARelaunch() throws {
+    let app = launchApp(arguments: closeWindowsOnQuit)
+    let terminal = waitForTerminal(in: app)
+    XCTAssertTrue(waitFor(terminal, timeout: 40) { $0.contains("% ") })
+
+    app.typeText("echo \"SB:$((6*7)):relaunch\"\n")
+    XCTAssertTrue(waitFor(terminal, timeout: 20) { $0.contains("SB:42:relaunch") })
+
+    app.typeKey("q", modifierFlags: .command)
+    XCTAssertTrue(app.wait(for: .notRunning, timeout: 15))
+
+    let saved = URL(fileURLWithPath: scratch + "-terminal/scrollback")
+    XCTAssertEqual(
+      try FileManager.default.contentsOfDirectory(atPath: saved.path).count, 1,
+      "the quit saved no scrollback")
+
+    let relaunched = launchApp(arguments: closeWindowsOnQuit)
+    let restored = waitForTerminal(in: relaunched)
+    XCTAssertTrue(
+      waitFor(restored, timeout: 40) { self.promptFollows("SB:42:relaunch", in: $0) },
+      "the restored tab lost its output: \(restored.value as? String ?? "")")
+
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: saved.path), [])
+  }
+
   /// Catches a quit that drops a change made an instant before it. The save delay is an hour, so
   /// the split reaches the file only if Cmd-Q writes it.
   func testAChangeMadeJustBeforeQuitStillRestores() throws {

@@ -374,6 +374,15 @@ class UnitermUITestCase: XCTestCase {
     return String(text[range])
   }
 
+  /// True when `marker` is on screen with a shell prompt below it, as saved output shows above a
+  /// fresh shell's first prompt.
+  func promptFollows(_ marker: String, in text: String) -> Bool {
+    guard let shown = text.range(of: marker), let prompt = text.range(of: "% ", options: .backwards)
+    else { return false }
+
+    return shown.upperBound <= prompt.lowerBound
+  }
+
   func waitUntilGone(_ element: XCUIElement, timeout: TimeInterval = 10) -> Bool {
     element.disappears(timeout: timeout)
   }
