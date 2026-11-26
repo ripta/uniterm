@@ -503,15 +503,16 @@ final class DataViewerUITests: UnitermUITestCase {
     app.typeKey("f", modifierFlags: .command)
     app.typeText("rom")
 
+    // The filter still hides a row, so each count goes on to say which rows it covers.
     let count = findCount(in: window)
-    XCTAssertTrue(waitFor(count, timeout: 10) { $0 == "1 of 2 matches" })
+    XCTAssertTrue(waitFor(count, timeout: 10) { $0.hasPrefix("1 of 2 matches") })
     XCTAssertTrue(window.staticTexts["data-viewer-find-caption"].exists, "no FIND caption")
 
     window.buttons["data-viewer-find-next"].click()
-    XCTAssertTrue(waitFor(count, timeout: 5) { $0 == "2 of 2 matches" })
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("2 of 2 matches") })
 
     window.buttons["data-viewer-find-previous"].click()
-    XCTAssertTrue(waitFor(count, timeout: 5) { $0 == "1 of 2 matches" })
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("1 of 2 matches") })
 
     window.buttons["data-viewer-find-done"].click()
     XCTAssertTrue(waitUntilGone(window.searchFields["data-viewer-find"]), "Done left the strip up")

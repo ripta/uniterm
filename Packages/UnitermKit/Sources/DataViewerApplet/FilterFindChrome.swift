@@ -141,6 +141,14 @@ final class FilterField: NSSearchField {
     }
   }
 
+  /// A search field exposes only its own cell's parts, so the count is added by hand for VoiceOver
+  /// and the UI tests to reach.
+  override func accessibilityChildren() -> [Any]? {
+    let own = super.accessibilityChildren() ?? []
+
+    return countLabel.isHidden ? own : own + [countLabel]
+  }
+
   override func layout() {
     super.layout()
 
