@@ -211,6 +211,24 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertGreaterThanOrEqual(widths[1], cityText + ColumnWidth.cellPadding)
   }
 
+  /// Catches a numeric column measured in the plain font and then drawn in tabular digits, which
+  /// are wider, so its numbers end in an ellipsis.
+  func testANumericColumnIsWideEnoughForItsTabularDigits() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "n\n1111111111\n2\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.numericColumns == IndexSet([0]) }
+
+    let needed =
+      ("1111111111" as NSString).size(withAttributes: [.font: DataCell.numberFont]).width
+      + ColumnWidth.cellPadding
+
+    XCTAssertGreaterThanOrEqual(applet.content.tableView.tableColumns[0].width, needed)
+  }
+
   /// Catches a width the view sets again over one the user chose. A column resized by hand keeps
   /// its width through later refreshes, such as a filter.
   func testAColumnResizedByHandKeepsItsWidth() async throws {
