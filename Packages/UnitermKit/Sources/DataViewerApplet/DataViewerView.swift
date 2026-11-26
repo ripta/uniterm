@@ -75,6 +75,19 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   private let openButton = NSButton(title: "Open\u{2026}", target: nil, action: nil)
   private let messageStack = NSStackView()
   let progress = NSProgressIndicator()
+  private let fileRow = NSStackView()
+  let fileNameLabel = NSTextField(labelWithString: "")
+  let headerOpenButton = NSButton(title: "Open\u{2026}", target: nil, action: nil)
+
+  /// The name of the open file, shown beside the filter. Nil for a nested table.
+  var fileName: String? {
+    didSet {
+      guard fileName != oldValue else { return }
+
+      fileNameLabel.stringValue = fileName ?? ""
+      fileNameLabel.toolTip = fileName
+    }
+  }
   private var identities: [ColumnIdentity] = []
   private var sort: SortSpec?
   private var palette = ThemePalette.latte
@@ -189,8 +202,37 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     header.spacing = 4
     header.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 0, right: 8)
     header.translatesAutoresizingMaskIntoConstraints = false
+    fileNameLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+    fileNameLabel.lineBreakMode = .byTruncatingMiddle
+    fileNameLabel.setContentHuggingPriority(.required, for: .horizontal)
+    fileNameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    fileNameLabel.setAccessibilityIdentifier("data-viewer-file-name")
+
+    headerOpenButton.target = self
+    headerOpenButton.action = #selector(openPressed)
+    headerOpenButton.bezelStyle = .rounded
+    headerOpenButton.controlSize = .small
+    headerOpenButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    headerOpenButton.setContentHuggingPriority(.required, for: .horizontal)
+    headerOpenButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+    headerOpenButton.toolTip = "Open another file in this pane"
+    headerOpenButton.setAccessibilityIdentifier("data-viewer-open-file")
+    headerOpenButton.setAccessibilityLabel("Open another file in this pane")
+
+    fileRow.orientation = .horizontal
+    fileRow.spacing = 8
+    fileRow.alignment = .centerY
+    fileRow.addArrangedSubview(fileNameLabel)
+    fileRow.addArrangedSubview(filterField)
+    fileRow.addArrangedSubview(headerOpenButton)
+
+    // A nested table belongs to its cell, not to a file, and a pane-local Open there would replace
+    // the file under the popover.
+    fileNameLabel.isHidden = isNested
+    headerOpenButton.isHidden = isNested
+
     header.addArrangedSubview(sheetPicker)
-    header.addArrangedSubview(filterField)
+    header.addArrangedSubview(fileRow)
     header.addArrangedSubview(findRow)
 
     addSubview(header)
@@ -198,7 +240,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     addSubview(messageStack)
 
     NSLayoutConstraint.activate([
-      filterField.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+      fileRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
       findRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
       header.topAnchor.constraint(equalTo: topAnchor),
       header.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -274,7 +316,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
     let showsTable = body == .table
     scrollView.isHidden = !showsTable
-    filterField.isHidden = !showsTable
+    fileRow.isHidden = !showsTable
     findRow.isHidden = !showsTable || !findVisible
     messageStack.isHidden = showsTable
 
@@ -345,6 +387,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     tableView.gridColor = palette[.surface0].nsColor
     messageLabel.textColor = palette[.subtext1].nsColor
     findCountLabel.textColor = palette[.subtext1].nsColor
+    fileNameLabel.textColor = palette[.subtext1].nsColor
     tableView.reloadData()
   }
 

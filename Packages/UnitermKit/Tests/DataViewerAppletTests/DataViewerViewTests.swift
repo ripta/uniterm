@@ -321,6 +321,50 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertEqual(expanded, 1)
   }
 
+  // MARK: The file row
+
+  /// Catches a pane that shows a table with no way to tell which file it is, and no way to open
+  /// another without the File menu. The row beside the filter names the file, and its Open button
+  /// runs the pane-local Open, which replaces the file.
+  func testTheFileRowNamesTheFileAndItsOpenButtonReplacesIt() async throws {
+    let scratch = try Scratch(self)
+    let first = try scratch.write("first.csv", "a\n1\n")
+    let second = try scratch.write("second.csv", "b\n2\n")
+    var asked = 0
+    let applet = DataViewerApplet(
+      startDirectory: scratch.url.path, budget: makeBudget(),
+      picker: { _, _ in
+        asked += 1
+        return [second]
+      })
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: first, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    XCTAssertEqual(applet.content.fileNameLabel.stringValue, "first.csv")
+    XCTAssertFalse(applet.content.headerOpenButton.isHidden)
+
+    applet.content.headerOpenButton.performClick(nil)
+
+    let replaced = await eventually {
+      applet.title == "second.csv" && applet.session.phase == .loaded
+    }
+    XCTAssertTrue(replaced)
+    XCTAssertEqual(asked, 1)
+    XCTAssertEqual(applet.content.fileNameLabel.stringValue, "second.csv")
+  }
+
+  /// Catches a nested popover that offers to open a file, which would replace the file under it.
+  func testANestedTableHasNoFileRowControls() {
+    let nested = NestedTable(
+      bytes: Array(#"[{"x":1}]"#.utf8), title: "items", budget: makeBudget(), palette: .latte)
+    addTeardownBlock { nested.close() }
+
+    XCTAssertTrue(nested.view.headerOpenButton.isHidden)
+    XCTAssertTrue(nested.view.fileNameLabel.isHidden)
+  }
+
   // MARK: Color math
 
   private static func resolved(_ color: NSColor, in view: NSView) -> NSColor {
