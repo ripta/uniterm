@@ -393,8 +393,15 @@ Fixed by: "Wait for the form's focus before typing its answers" and "Give the Qu
   not at the time.
 - Evidence: it failed with "timed out waiting until the main frame reported its edit" after 16 s. The rerun of the
   failed job passed on the same head.
-- Suspected cause: unknown. No CI run since 2026-11-08 has failed it.
-- Status: unresolved.
+- Seen again: 2026-11-25, once in CI's `package` job on PR #117, at 04:38:45 UTC on 2026-11-26. Its first attempt
+  failed and the rerun of the failed job, attempt 2, passed on the same head. The test is a package test, so it did not
+  run in a shard job, and no shard selection applies.
+- Evidence: `BrowserUnsentInputTests.swift:196` failed with "timed out waiting until the main frame reported its edit
+  and its clear" after 19.049 s. It was the only failure in that job. The test passed in 0.46 to 0.70 s in the
+  `package` jobs of the other three pull request runs after the sharding landed, and in the rerun. Its message now also
+  names the clear, so it may come from a different wait than the 2026-11-08 sighting. That is not confirmed.
+- Suspected cause: unknown. No cause is guessed from two sightings.
+- Status: unresolved. Two sightings in CI and no fix, so it sets no N and stays under Potential.
 
 ### `LauncherUITests.testAShortPaneKeepsTheFilterBoxAndScrollsToTheLastEntry`
 
