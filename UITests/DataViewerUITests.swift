@@ -485,4 +485,35 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("1 of 1 matches") })
     XCTAssertEqual(filter.value as? String, "o", "typing after Cmd-F went to the filter")
   }
+
+  /// Catches a filter and a find that look and act alike. The filter row carries its caption and
+  /// counts the rows it keeps. The find strip carries its own caption, and its arrow buttons step
+  /// and its Done button closes it. The colors need a screenshot, which this suite does not take.
+  func testTheFilterAndFindStripCarryTheirOwnControls() throws {
+    let (app, window) = try openFindFile()
+
+    XCTAssertTrue(window.staticTexts["data-viewer-filter-caption"].exists, "no FILTER caption")
+
+    window.searchFields["data-viewer-filter"].click()
+    app.typeText("rom")
+
+    let rows = window.descendants(matching: .any)["data-viewer-filter-count"]
+    XCTAssertTrue(waitFor(rows, timeout: 10) { $0 == "2 of 3 rows" }, "no row count in the filter")
+
+    app.typeKey("f", modifierFlags: .command)
+    app.typeText("rom")
+
+    let count = findCount(in: window)
+    XCTAssertTrue(waitFor(count, timeout: 10) { $0 == "1 of 2 matches" })
+    XCTAssertTrue(window.staticTexts["data-viewer-find-caption"].exists, "no FIND caption")
+
+    window.buttons["data-viewer-find-next"].click()
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0 == "2 of 2 matches" })
+
+    window.buttons["data-viewer-find-previous"].click()
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0 == "1 of 2 matches" })
+
+    window.buttons["data-viewer-find-done"].click()
+    XCTAssertTrue(waitUntilGone(window.searchFields["data-viewer-find"]), "Done left the strip up")
+  }
 }

@@ -433,6 +433,134 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertTrue(hid, "the row arrows stayed after the pane grew")
   }
 
+  // MARK: Filter and find
+
+  /// Catches a caption, a count, or a match's text that does not reach text contrast on either
+  /// flavor. Each accent and each tint is derived from the palette, so both flavors are checked.
+  func testTheFilterAndFindColorsReadOnBothPalettes() {
+    for palette in [ThemePalette.latte, .mocha] {
+      let colors = FilterFindColors(palette)
+      let base = palette[.base].nsColor
+      let name = "\(palette.flavor)"
+
+      XCTAssertGreaterThanOrEqual(Contrast.ratio(colors.filterAccent, base), 4.5, name)
+      XCTAssertGreaterThanOrEqual(Contrast.ratio(colors.findAccent, colors.findStrip), 4.5, name)
+      XCTAssertGreaterThanOrEqual(
+        Contrast.ratio(colors.inkOnStrongMatch, colors.strongMatch), 4.5, name)
+      XCTAssertGreaterThanOrEqual(
+        Contrast.ratio(colors.inkOnPaleMatch, colors.paleMatch), 4.5, name)
+
+      let view = DataViewerView(session: TableSession(budget: makeBudget()))
+      view.apply(palette)
+
+      let count = try? XCTUnwrap(view.findCountLabel.textColor)
+      XCTAssertGreaterThanOrEqual(
+        Contrast.ratio(count ?? .clear, colors.findStrip), 4.5, "\(name) find count")
+    }
+  }
+
+  /// Catches a find match whose tint goes blue under the selection, or whose text turns white
+  /// on amber. A tinted cell covers the row's blue, so its ink holds under the emphasized style.
+  /// The current match is the strong amber and the others the pale one.
+  func testAFindMatchKeepsItsAmberAndInkUnderTheSelection() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "city\nRome\nRomeo\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    _ = hosted(applet.view)
+
+    applet.apply(.latte)
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    applet.content.onFind?("rom")
+    _ = await eventually { applet.session.matches.count == 2 }
+
+    let colors = applet.content.colors
+    let table = applet.content.tableView
+
+    for (row, tint) in [(0, colors.strongMatch), (1, colors.paleMatch)] {
+      guard let field = emphasizedField(table, row: row, column: 0),
+        let cell = field.superview as? DataCell
+      else { return XCTFail("no cell at row \(row)") }
+
+      XCTAssertEqual(cell.tint, tint)
+      XCTAssertEqual(field.textColor, cell.tintInk)
+      XCTAssertGreaterThanOrEqual(Contrast.ratio(field.textColor ?? .clear, tint), 4.5)
+    }
+  }
+
+  /// Catches a filter whose matched text is not marked in the rows it keeps, or whose mark
+  /// vanishes on the selection. The matched letters carry the underline, ignoring case, in mauve
+  /// at rest and in the selection's text color on the emphasized blue. The field shows the count.
+  func testTheFilterUnderlinesWhatItMatchedAndCountsTheRows() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "city\nOSLO\nLisbon\nRome\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    _ = hosted(applet.view)
+
+    applet.apply(.latte)
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    applet.session.setFilter("os")
+    _ = await eventually { applet.session.visibleCount == 1 }
+
+    XCTAssertEqual(applet.content.filterField.count, "1 of 3 rows")
+
+    let table = applet.content.tableView
+    table.layoutSubtreeIfNeeded()
+
+    let cell = try XCTUnwrap(
+      table.rowView(atRow: 0, makeIfNecessary: true)?.view(atColumn: 0) as? DataCell)
+    XCTAssertEqual(cell.label.stringValue, "OSLO")
+    XCTAssertEqual(cell.label.underlines, [NSRange(location: 0, length: 2)])
+    XCTAssertEqual(cell.currentUnderlineColor, applet.content.colors.filterUnderline)
+
+    cell.backgroundStyle = .emphasized
+    XCTAssertEqual(cell.currentUnderlineColor, .alternateSelectedControlTextColor)
+
+    applet.session.setFilter("")
+    _ = await eventually { applet.session.visibleCount == 3 }
+    XCTAssertEqual(applet.content.filterField.count, "")
+  }
+
+  /// Catches a find strip whose buttons do nothing. Next and previous step the match, and Done
+  /// closes the strip and clears the query. Each control and caption has a label for VoiceOver.
+  func testTheFindStripStepsAndCloses() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "city\nRome\nRomeo\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    applet.showFind()
+    applet.content.onFind?("rom")
+    _ = await eventually { applet.session.matches.count == 2 }
+
+    let strip = applet.content.findRow
+    XCTAssertFalse(strip.isHidden)
+    XCTAssertTrue(strip.nextButton.isEnabled)
+
+    strip.nextButton.performClick(nil)
+    XCTAssertEqual(applet.session.currentMatch, 1)
+
+    strip.previousButton.performClick(nil)
+    XCTAssertEqual(applet.session.currentMatch, 0)
+
+    for control in [strip.caption, strip.previousButton, strip.nextButton, strip.doneButton]
+      as [NSView]
+    {
+      XCTAssertFalse(control.accessibilityLabel()?.isEmpty ?? true)
+    }
+    XCTAssertEqual(applet.content.filterCaption.accessibilityLabel(), "Filter")
+
+    strip.doneButton.performClick(nil)
+    XCTAssertTrue(strip.isHidden)
+    XCTAssertEqual(applet.session.findQuery, "")
+  }
+
   // MARK: Color math
 
   private static func resolved(_ color: NSColor, in view: NSView) -> NSColor {
