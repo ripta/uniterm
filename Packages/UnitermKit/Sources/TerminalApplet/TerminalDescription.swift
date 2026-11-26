@@ -4,7 +4,8 @@ import Foundation
 /// The restorable state of a terminal applet.
 ///
 /// It is inert. Restoring a terminal starts a fresh shell in each tab's directory. It never runs a
-/// program. A program-mode terminal keeps its command here and shows it with a Run action.
+/// program. A program-mode terminal keeps its command here and shows it with a Run action. A shell
+/// tab saved at quit shows its earlier output again, as plain text above its first prompt.
 public struct TerminalDescription: Codable, Equatable, Sendable {
   public enum Mode: String, Codable, Sendable {
     case shell
@@ -20,9 +21,15 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
     /// reads as nil.
     public var startDirectory: String?
 
-    public init(workingDirectory: String?, startDirectory: String? = nil) {
+    /// The ID of the tab's scrollback in the `ScrollbackStore`, written as the app quit. A
+    /// description made at any other time has none. Version 2 added it.
+    public var scrollback: String?
+
+    public init(workingDirectory: String?, startDirectory: String? = nil, scrollback: String? = nil)
+    {
       self.workingDirectory = workingDirectory
       self.startDirectory = startDirectory
+      self.scrollback = scrollback
     }
   }
 
@@ -40,8 +47,9 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
 
   public static let typeID = "terminal"
 
-  /// The version of the payload this build reads and writes.
-  public static let currentVersion = 1
+  /// The version of the payload this build reads and writes. Version 2 added each tab's scrollback
+  /// ID. Version 1 reads as tabs with none.
+  public static let currentVersion = 2
 
   /// The description, with the closed tabs in its undo-only part when there are any. The payload
   /// is the same either way.
