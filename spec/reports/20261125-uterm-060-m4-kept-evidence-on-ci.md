@@ -58,3 +58,14 @@ has no `Live after` line.
     predates the collection step.
   - The tap bullet's note now says plainly that the bullet does not apply.
 - Checks after the fixes: `make lint` passes. `proposals.py check` shows only the expected history move.
+
+## Row review
+
+- adr-impact: no ADR touched. No uncovered decision.
+- The reviewer re-checked the run claims, the paths, the split, and the queue row beside UTERM-044 M3. It found them
+  coherent.
+- Finding: M6's third bullet still read "When UTERM-044's shards land, ...", though the shards have landed. Fixed. It
+  now reads "Each failing shard's upload carries its own kept log". The split's Decision Log entry quotes the old text.
+- Finding: the milestone commit's body opened with a recap of the prior state, a forbidden opener. The commit was not
+  pushed, so the coordinator reworded it with the same tree and author date.
+- Checks after the fix: `make lint` passes. `proposals.py check` shows only the expected history move.

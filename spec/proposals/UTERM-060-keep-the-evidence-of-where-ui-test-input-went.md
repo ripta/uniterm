@@ -603,7 +603,7 @@ Split from M4 on 2026-11-25; see Decision Log.
 - A failed CI `app` job uploads the same log with its test results
 - `log show`'s time on a failed full suite is measured on CI and recorded in the As built block. The test results and
   the kept log still upload when the job reaches its time limit
-- When UTERM-044's shards land, each failing shard's upload carries its own kept log
+- Each failing shard's upload carries its own kept log
 
 ## Decision Log
 
@@ -732,7 +732,8 @@ Split from M4 on 2026-11-25; see Decision Log.
   checks now name M6: "A CI runner hides the log", "Keeping the log adds time to a failed CI job", and "UTERM-044 lands
   its per-shard upload without the kept log". The UTERM-044 impact line names no milestone, so it stays. Queue row
   `| UTERM-060 M6 | UTERM-060 M4 | Needs a shard to fail on CI. It advances only when one does |` added after
-  UTERM-060 M5. (run best guess)
+  UTERM-060 M5. The third bullet then read: "When UTERM-044's shards land, each failing shard's upload carries its
+  own kept log". The shards have since landed, so M6 drops the condition. The check is unchanged. (run best guess)
 - 2026-11-25: M4's tap bullet does not apply, since no tap code ships. The bullet stays in M4, and its As built block
   says so. The decision is M2's entry on the grant probe. (run best guess)
 
