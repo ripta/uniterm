@@ -49,9 +49,11 @@ bytes, not time.
 ### Production keeps its rules
 
 Decision: production code keeps its bounds, its time sources, and its `busyShare`. A test seam replaces only what the
-test supplies, never the rule the production code applies. The one production change is how two kills name their
-target. `WebContentProcess.kill` and ScriptHost's `ProcessReaper` signal through `ProcessInspection`'s guarded call,
-by a fresh audit token where the system gives one. Amended 2026-11-23; see Decision Log.
+test supplies, never the rule the production code applies. The one planned production change is how two kills name
+their target. `WebContentProcess.kill` and ScriptHost's `ProcessReaper` signal through `ProcessInspection`'s guarded
+call, by a fresh audit token where the system gives one. Separately, "Keep a stopped exec driver from reading as
+exited" fixed a bug found along the way: the exec driver's transport took a paused driver for one that had exited.
+Amended 2026-11-25; see Decision Log.
 
 Rationale: the hung-process bound and the busy-share rule are how a hung page stays contained, per ADR-07. A test
 shortcut that weakened them would trade a flaky test for a weaker product. Signalling by token keeps every rule. It
@@ -189,8 +191,8 @@ reaps, so no test handle can hold the reap:
 
 - **Reaped by other code in the test process.** `ExecPaneTests.swift:815` probes the driver with `kill(pid, 0)`, then
   sends SIGKILL. The product's exec transport spawns the driver in the test process and reaps it. Its reaped-flag
-  signal is private, and the channel exposes only the pid. libghostty spawns `login(1)` as a child of the test process,
-  and reaps it itself.
+  signal is private, and the channel exposes only the pid. `ExecDriverChannelTests`' pause test sends the same driver
+  SIGSTOP and then SIGCONT by pid. libghostty spawns `login(1)` as a child of the test process, and reaps it itself.
 - **Reaped by launchd after a reparent.** `ExecDriverChannelTests.swift:451` kills the driver's background child, whose
   pid the driver writes to a file. `TerminalSessionIntegrationTests.swift:93`, `:756`, and `:762` kill the tree under
   `login`: the shell and its `sleep`, which launchd adopts once `login` exits on SIGHUP. `tearDown` and the defer at
@@ -198,8 +200,8 @@ reaps, so no test handle can hold the reap:
   freed pid on every run.
 - **WebKit content processes.** `WebContent.kill` in `BrowserRecoveryTests` and `MarkdownRig.swift:172` signal the pid
   that `_webProcessIdentifier` names. The `if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) }` defers in
-  `BrowserRecoveryTests` and `BrowserHungProcessTests` check, then kill. `BrowserHungProcessTests.swift:218` passes the
-  product's chosen pid to a real `kill`.
+  `BrowserRecoveryTests` and `BrowserHungProcessTests` check, then kill. The `policy(_:log:sample:)` helper in
+  `BrowserHungProcessTests` passes the product's chosen pid to a real `kill`.
 
 Making the test the parent does not help. It already is the parent of the driver and of `login`, but other code in the
 same process holds the reap. macOS has no subreaper, so the test cannot take the reap of reparented or WebKit
@@ -268,10 +270,11 @@ Callers handle each result. The product's two kills treat gone as done, and log 
 test on unreached or refused.
 
 A new test-support target, `ProcessTestSupport`, depends only on `ProcessInspection`. It holds the per-site sender,
-and each site states which path it expects. `WebContentProcess` and the REPL channel record the microsecond identity.
-Their kills go through the same call. `WebContentProcess.kill` keeps its path check before it. With no token, it still
-signals, so a hung page is still ended. `RemoteClientWatcherTests` spawns `sh` in its own process group, and sends
-`killpg` before its own `waitpid`. Amended 2026-11-23; see Decision Log.
+and each site states which path it expects. It also holds the reader that tells whether a process is stopped.
+`WebContentProcess` and the REPL channel record the microsecond identity. Their kills go through the same call.
+`WebContentProcess.kill` keeps its path check before it. With no token, it still signals, so a hung page is still
+ended. `RemoteClientWatcherTests` spawns `sh` in its own process group, and sends `killpg` before its own `waitpid`.
+Amended 2026-11-25; see Decision Log.
 
 Rationale: the token is the only option that closes the window outright, for every target that gives one. The token is
 read before the start time. So when the start time still matches, the token names the recorded process, or that
@@ -462,7 +465,7 @@ Amended 2026-11-25; see Decision Log.
 
 **Status:** NOT STARTED
 
-Amended 2026-11-23; see Decision Log.
+Amended 2026-11-25; see Decision Log.
 
 Starts after M2 and M4. It moves sites onto M2's handle, and onto M4's guarded call.
 
@@ -498,12 +501,17 @@ No package test signals a process by an id that the process may no longer hold.
   gets no signal
 - The injected `signal` closure in `BrowserHungProcessTests` forwards the identity the product read to the sender, and
   records the pid. It signals nothing for an identity it was not given
+- `ExecDriverChannelTests`' pause test sends its SIGSTOP and SIGCONT through the sender, and expects the token path.
+  It records the driver's identity while the channel is connected
+- The stopped-state reader lives in `ProcessTestSupport`, and `HelperHandleTests` and `ExecDriverChannelTests` drop
+  their copies of `isStopped`. Reading whether the fixture's own helper is stopped is not a signal site
 - `RemoteClientWatcherTests` spawns `sh` in its own process group. `tearDown` sends `killpg` before its own `waitpid`,
   so the client `sh` forks ends with it
 - The As built block records which path each site took, and whether `login` gave a token
 - No package test sends a signal with a raw `kill` on a process id, or with `Process.terminate` or `interrupt`
 - Signal 0 probes are exempt. So is the relay's forked child, which its parent never reaps. So are tests that signal
-  their own child before their own `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock
+  their own child before their own `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock. So is the
+  `pthread_kill` in `HelperHandleTests`' EINTR test, which signals a thread of the test process and names no process id
 - `ReplProcess` and every moved site expose the fixture's handle and no `Process`, so `.terminate()` on them does not
   compile
 - A search of `Tests/` for `kill(`, `.terminate()`, and `.interrupt()` finds only the fixture, the sender, the
@@ -740,6 +748,18 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
   only then reaps with `waitpid`". On Darwin that wait also returns for a stopped child, and the reaper would then
   refuse every later signal. The bullet now says the reaper takes a stop report with a wait for stops alone, and
   waits again. (run best guess)
+- 2026-11-25: The row review of M1-M2 amended M3 and two settled decisions. M2 and the driver fix added signal sites
+  that M3's search would find. The pause test in `ExecDriverChannelTests` sends its driver SIGSTOP and SIGCONT by pid.
+  It now sits under "Reaped by other code in the test process", and M3 moves it to the sender on the token path, since
+  the driver is a child of the test process. The thread-directed `pthread_kill` in `HelperHandleTests` names no
+  process id, so M3 exempts it. M3's exemption list said "So are tests that signal their own child before their own
+  `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock". The stopped-state reader was copied
+  into two test files, so `ProcessTestSupport` now holds it. "Production keeps its rules" said "The one production
+  change is how two kills name their target". That stopped being true once "Keep a stopped exec driver from reading
+  as exited" fixed a bug found along the way, so the decision now names that change as the planned one and the fix as
+  separate. Correction of fact: "How a test signals a process it does not reap" cited
+  `BrowserHungProcessTests.swift:218`, which M1 moved. It now names the `policy(_:log:sample:)` helper.
+  (run best guess)
 
 ## References
 

@@ -459,6 +459,15 @@ final class HelperHandleTests: XCTestCase {
     discard.__sigaction_u.__sa_handler = SIG_IGN
     discard.sa_flags = SA_NOCLDWAIT
 
+    // While SIGCHLD discards exits, the kernel reaps every child of the test process, and the wait
+    // of whatever started it would then fail. The test runs only with no other child alive.
+    let others = childrenOfTheTestProcess()
+
+    guard others.isEmpty else {
+      return XCTFail(
+        "the test process has other children, which discarding exits would reap: \(others)")
+    }
+
     guard sigaction(SIGCHLD, &discard, &previous) == 0 else {
       return XCTFail("SIGCHLD could not be set to discard exits: errno \(errno)")
     }
@@ -600,6 +609,19 @@ final class HelperHandleTests: XCTestCase {
     }
 
     return nil
+  }
+
+  /// The ids of the test process's children, zombies included. The buffer starts zeroed and only
+  /// its nonzero entries count, so the answer holds whether the call reports ids or bytes.
+  private func childrenOfTheTestProcess() -> [pid_t] {
+    var ids = [pid_t](repeating: 0, count: 1024)
+    let reported = ids.withUnsafeMutableBytes {
+      proc_listchildpids(getpid(), $0.baseAddress, Int32($0.count))
+    }
+
+    guard reported > 0 else { return [] }
+
+    return ids.prefix(min(Int(reported), ids.count)).filter { $0 > 0 }
   }
 
   /// The pipe behind descriptor `descriptor` of process `pid`, or nil when it is not a pipe.

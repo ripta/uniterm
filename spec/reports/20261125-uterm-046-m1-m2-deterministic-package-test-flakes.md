@@ -181,3 +181,38 @@ Darwin's `waitid`. Its findings, all fixed:
 - The new exec driver test stops and continues its driver with a raw `kill`. UTERM-046 M3, which moves test signals
   to a guarded sender, must cover or exempt it. Two test files now copy an `isStopped` check, which M3's support target
   can share.
+
+## Row review
+
+The row review covered the three commits from the row's base. It found the two stop-report loops alike in logic, and
+M2's citation of the driver fix's subject exact. Its own probe confirmed Darwin's behavior once more. It also checked
+M1's bracket on a Mac that had slept, where `ProcessInfo.systemUptime` tracked `CLOCK_UPTIME_RAW` within 83 ns.
+
+Its findings, fixed in "Address the UTERM-046 M1-M2 row review":
+
+- M3's signal-site list missed the driver test's SIGSTOP and SIGCONT, and the EINTR test's `pthread_kill`. M3 now
+  lists both, and names `ProcessTestSupport` as the home of the shared stopped-state reader.
+- The settled decision "Production keeps its rules" said the proposal has one production change. It now says one
+  planned change, and names the driver fix as a bug found along the way.
+- A line citation went stale after M1. It now names the `policy(_:log:sample:)` helper.
+- The two stop-report loops' comments now agree.
+- The no-child test sets `SA_NOCLDWAIT` process-wide for a moment. It now fails, naming them, when the test process
+  has other children before it starts. A thread could still spawn one inside that window.
+- `HelperProcess` gained a comment on why Darwin's stop report cannot read as an exit there. The reader kills before
+  it waits.
+
+The coordinator also reworded the M2 commit's body before this review's fixes. It had claimed that no test signal
+reaches a reused pid, which holds only for the fixture's callers until M3.
+
+`adr-impact` found the row consistent with ADR-03, ADR-05, ADR-07, ADR-08, ADR-10, ADR-11, ADR-13, ADR-14, and
+ADR-15. It found no uncovered decision. A paused driver now stays connected until the pane closes or the app quits. At
+quit, the main thread's wait for it stays within its 0.5 s bound.
+
+### For the user
+
+- The wait-without-reap loop now lives in three places: the exec transport, the fixture, and `HelperProcess`. Folding
+  them into one `ProcessInspection` function, which M4 extends, would be a scope addition. The row leaves them apart.
+- The no-child test's window could close fully if a separate probe process set `SA_NOCLDWAIT` instead of the test
+  process. That needs a new probe executable, which would be a scope addition too.
+
+UTERM-046 M1-M2 is finished, so its row moves to `history.md`. UTERM-046 stays `accepted`, since M3 and M4 remain.
