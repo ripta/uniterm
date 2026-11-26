@@ -401,7 +401,6 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private func refresh() {
     guard !closed else { return }
 
-    let fileName = record.path.map { ($0 as NSString).lastPathComponent }
     let query = describesFromRecord ? record.query : session.query
 
     if session.phase == .loaded || session.phase == .stoppedAtBudget
@@ -434,6 +433,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     host?.appletDidChange(self)
   }
 
+  private var fileName: String? {
+    record.path.map { ($0 as NSString).lastPathComponent }
+  }
+
   private func body() -> DataViewerBody {
     if let failure = failure() {
       return .message(failure)
@@ -443,15 +446,16 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return .table
     }
 
+    let opening = "Opening \(fileName ?? "the file")\u{2026}"
+
     switch session.phase {
     case .idle:
-      return .message(
-        record.path == nil
-          ? "Open a CSV, JSON, or .xlsx file, or drop one here."
-          : "Opening\u{2026}")
+      return record.path == nil
+        ? .message("Open a CSV, JSON, or .xlsx file, or drop one here.")
+        : .loading(opening, fraction: nil)
 
     case .loading:
-      return .message("Loading\u{2026}")
+      return .loading(opening, fraction: session.progress.fraction)
 
     case .loaded:
       if let sheet = session.selectedSheet, session.sheets.count > 1 {
