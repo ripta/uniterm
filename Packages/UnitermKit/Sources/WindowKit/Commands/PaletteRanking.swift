@@ -147,7 +147,7 @@ enum PaletteRanking {
   }
 
   /// Tabs focused before, newest first. Then commands run before, newest first. Then the tabs never
-  /// focused in tree order, and the commands never run by title.
+  /// focused in tree order, and the commands never run in registration order.
   private static func emptyQueryOrder(_ candidates: [PaletteCandidate]) -> [PaletteEntry] {
     candidates.sorted { lhs, rhs in
       let left = emptyQueryGroup(lhs)
