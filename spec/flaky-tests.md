@@ -29,6 +29,9 @@ fixed ones.
   - An entry seen too rarely to reach its count stays under Potential, naming the change.
   - A run that fails with a settle's report closes nothing. It records a new cause on the entry.
   - A Fixed entry seen again moves back to Potential with the sighting.
+- Each CI entry records whether the test ran first in its shard job, and the shard's logged selection. A shard job
+  means the matrix job that ran one of the three UI test shards. When a test ran in a full local run, those fields say
+  so instead.
 - A failure that reproduces reliably is a bug. File it under `spec/bugs/`.
 - Never fix a flake with retries, longer timeouts, or weaker assertions. A wait may grow only when a measurement
   shows that one observation costs most of the old wait. The entry then records that measurement.

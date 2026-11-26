@@ -32,6 +32,13 @@ DRY_RUN ?=
 TEST_TIME_LIMIT ?= 120
 # Space-separated UI test classes or Class/testMethod names, for test-app-select.
 UI_TESTS ?=
+# Expected test count for test-app-select. When set, the target fails if the bundle's started-test
+# count differs. When empty, only zero tests fail.
+EXPECTED_TESTS ?=
+# 0-based shard index for test-app-shard. Valid range: 0 to SHARDS-1.
+SHARD ?=
+# Total number of shards for test-app-shard. Must be at least 1.
+SHARDS ?=
 # Space-separated swift test filters, for test-package-select.
 PACKAGE_TESTS ?=
 
@@ -134,12 +141,34 @@ fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, 
 test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission. A local run needs the pointer and keyboard left alone
 	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) test
 
-# Like test-package-select, an empty list fails instead of running the whole suite.
+# Like test-package-select, an empty list fails instead of running the whole suite. This fails loudly
+# when a named class does not exist, so a selection that matches nothing cannot pass.
 .PHONY: test-app-select
 test-app-select: ghostty ## Run only the named UI test classes or methods, e.g. make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'. A local run needs the pointer and keyboard left alone
 	$(if $(strip $(UI_TESTS)),,$(error UI_TESTS is empty. Name the tests to run, or use make test-app for the full suite))
-	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) \
-		$(foreach t,$(UI_TESTS),'-only-testing:$(UI_TEST_TARGET)/$(t)') test
+	scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$(UI_TESTS)" "$(EXPECTED_TESTS)" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
+
+.PHONY: test-app-shard
+test-app-shard: ghostty ## Run one shard of the UI tests, e.g. make test-app-shard SHARD=0 SHARDS=3. A local run needs the pointer and keyboard left alone
+	if [[ -z "$(SHARD)" ]]; then echo "Error: SHARD is empty. Set SHARD to the 0-based shard index" >&2; exit 1; fi; \
+	if [[ -z "$(SHARDS)" ]]; then echo "Error: SHARDS is empty. Set SHARDS to the total number of shards" >&2; exit 1; fi; \
+	if ! [[ "$(SHARD)" =~ ^[0-9]+$$ ]] || ! [[ "$(SHARDS)" =~ ^[0-9]+$$ ]]; then echo "Error: SHARD and SHARDS must be numbers" >&2; exit 1; fi; \
+	if [[ "$(SHARD)" -lt 0 ]] || [[ "$(SHARD)" -ge "$(SHARDS)" ]]; then echo "Error: SHARD $(SHARD) out of range 0..$$(( $(SHARDS) - 1 ))" >&2; exit 1; fi
+	@echo "Building test bundle..."
+	$(XCODEBUILD_TEST) build-for-testing
+	@echo "Enumerating test classes under screen lock..."
+	@scripts/run-ui-tests.sh scripts/list-ui-test-classes.sh $(XCODEBUILD_TEST) >$(TEST_DERIVED_DATA)/class-list.txt
+	@echo "Splitting into $(SHARDS) shards..."
+	@scripts/shard-ui-tests.sh $(SHARD) $(SHARDS) $(TEST_DERIVED_DATA)/class-list.txt $(TEST_DERIVED_DATA)/shard-$(SHARD)-count.txt >$(TEST_DERIVED_DATA)/shard-$(SHARD).txt
+	@if [[ ! -s $(TEST_DERIVED_DATA)/shard-$(SHARD).txt ]]; then \
+		echo "Error: shard $(SHARD) is empty" >&2; exit 1; \
+	fi
+	@shard_classes=$$(cat $(TEST_DERIVED_DATA)/shard-$(SHARD).txt | tr '\n' ' ' | sed 's/ *$$//'); \
+	test_count=$$(cat $(TEST_DERIVED_DATA)/shard-$(SHARD)-count.txt); \
+	echo "Shard $(SHARD) of $(SHARDS) runs: $$shard_classes"; \
+	echo "Reproduce this shard with: make test-app-select UI_TESTS='$$shard_classes' EXPECTED_TESTS=$$test_count"; \
+	echo "Selected $$test_count tests"; \
+	scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$$shard_classes" "$$test_count" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
 
 .PHONY: ghostty-offline-check
 ghostty-offline-check: ## Rebuild the pinned Ghostty with the network off, from the kept caches
@@ -201,17 +230,18 @@ licenses: ## Collect the license notices for Ghostty, its libraries, the Swift p
 web-assets: ## Fetch the pinned Markdown parser and sanitizer, verify them, and copy them in. Needs the network
 	scripts/fetch-web-assets.sh
 
-# CI runs ci-package, ci-app, and ghostty-offline-check as three jobs side by side, and skips the
-# offline rebuild once an earlier run proved the same Ghostty inputs on the same runner image. The
-# job targets let a failed job be rerun locally on its own.
+# CI runs ci-package and three app shards side by side, then ghostty-offline-check. The offline
+# rebuild runs only when no earlier run proved the same Ghostty inputs on the same runner image. The
+# job targets let a failed job be rerun locally on its own. A CI run calls test-app-shard, not
+# ci-app, so ci-app covers every UI test for a local full run.
 .PHONY: ci
 ci: ci-package ci-app ghostty-offline-check ## Run every CI job. Includes the 4-minute offline Ghostty rebuild
 
 .PHONY: ci-package
-ci-package: fmt-check lint check test-ci test-package swiftpm-offline-check ## Run CI's package job: checks, package tests, and the SwiftPM offline check
+ci-package: fmt-check lint check test-ci test-package test-helper-sandbox swiftpm-offline-check ## Run CI's package job: checks, package tests, helper sandbox tests, and the SwiftPM offline check
 
 .PHONY: ci-app
-ci-app: test-helper-sandbox test-app ## Run CI's app job: the app build, the helper sandbox tests, and the UI tests
+ci-app: test-app ## Run the UI tests locally. CI runs test-app-shard for each of three shards instead
 
 .PHONY: ci-changes
 ci-changes:

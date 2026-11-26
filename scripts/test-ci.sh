@@ -409,7 +409,13 @@ echo "PASS: a passing run is passed through untouched"
 # folder keeps the app's copies of them. So the UI tests must never build where the helper sandbox
 # probes and `make run` read the app.
 derived_data_paths() {
-  make -C "$root" -n "$1" | grep -o -- '-derivedDataPath [^ ]*' | sort -u
+  local output status=0
+  output=$(make -C "$root" -n $1) || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "Error: make -n $1 failed with status $status" >&2
+    return $status
+  fi
+  echo "$output" | grep -o -- '-derivedDataPath [^ ]*' | sort -u
 }
 
 test_build_paths="$(derived_data_paths test-app)"
@@ -420,6 +426,22 @@ for target in build test-helper-sandbox; do
   fi
 done
 echo "PASS: the UI tests build apart from the app the helper sandbox probes"
+
+# test-app-shard uses TEST_DERIVED_DATA like test-app.
+shard_build_paths="$(derived_data_paths "test-app-shard SHARD=0 SHARDS=1")"
+if [[ -z "$shard_build_paths" ]] || [[ "$shard_build_paths" != "$test_build_paths" ]]; then
+  echo "FAIL: make test-app-shard builds into a different folder than make test-app" >&2
+  echo "  test-app: $test_build_paths" >&2
+  echo "  test-app-shard: $shard_build_paths" >&2
+  exit 1
+fi
+for target in build test-helper-sandbox; do
+  if [[ "$shard_build_paths" == "$(derived_data_paths "$target")" ]]; then
+    echo "FAIL: make test-app-shard builds into the same folder as make $target: $shard_build_paths" >&2
+    exit 1
+  fi
+done
+echo "PASS: test-app-shard builds into the same folder as test-app"
 
 status=0
 run_watch 30 failing || status=$?
@@ -448,3 +470,136 @@ run_watch 2 slow-run || status=$?
 expect_watch_status "a run longer than the limit, of short tests, passes" 0 "$status"
 expect_watch_text "a run longer than the limit keeps every test" watch-out "-[Suite testThird]' passed"
 echo "PASS: the limit applies to each test, not to the run"
+
+# The UI test split divides classes by test count into contiguous ranges of the name-sorted list.
+# A class whose test midpoint lands exactly on a cut has one defined owner. This checks every shard
+# and verifies the union covers all classes exactly once.
+expect_split() {
+  local name="$1" total_shards="$2" fixture="$3"
+  shift 3
+  local expected_shards=("$@")
+
+  local list="$scratch/split-list.txt"
+  local count_file="$scratch/split-count.txt"
+  printf '%s\n' "$fixture" >"$list"
+
+  local all_classes="$(echo "$fixture" | awk '{print $1}' | LC_ALL=C sort)"
+  local union=""
+
+  for ((shard=0; shard<total_shards; shard++)); do
+    local stdout
+    stdout="$("$root/scripts/shard-ui-tests.sh" "$shard" "$total_shards" "$list" "$count_file")" || {
+      echo "FAIL: $name: shard $shard failed" >&2
+      exit 1
+    }
+    local actual="$(echo "$stdout" | tr '\n' ' ' | sed 's/ *$//')"
+    local expected="${expected_shards[$shard]}"
+    if [[ "$actual" != "$expected" ]]; then
+      echo "FAIL: $name: shard $shard expected '$expected', got '$actual'" >&2
+      exit 1
+    fi
+    union="$union $actual"
+  done
+
+  local union_sorted="$(echo "$union" | tr ' ' '\n' | grep -v '^$' | LC_ALL=C sort)"
+  if [[ "$union_sorted" != "$all_classes" ]]; then
+    echo "FAIL: $name: union does not match all classes" >&2
+    echo "  all classes: $all_classes" >&2
+    echo "  union: $union_sorted" >&2
+    exit 1
+  fi
+
+  echo "PASS: $name"
+}
+
+expect_split_error() {
+  local name="$1" total_shards="$2" fixture="$3" error_text="$4"
+  local list="$scratch/split-list.txt"
+  local count_file="$scratch/split-count.txt"
+  printf '%s\n' "$fixture" >"$list"
+  local output
+  if output="$("$root/scripts/shard-ui-tests.sh" 0 "$total_shards" "$list" "$count_file" 2>&1)"; then
+    echo "FAIL: $name: shard-ui-tests.sh passed when it should have failed" >&2
+    exit 1
+  fi
+  if ! echo "$output" | grep -qF "$error_text"; then
+    echo "FAIL: $name: error lacks: $error_text" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+  echo "PASS: $name"
+}
+
+# Two shards, 10 tests in 3 classes. Each shard gets 5 tests. B's midpoint at 3.5 is before the cut
+# at 5, so B goes to shard 0 with A.
+expect_split "two shards balanced" 2 "A 2
+B 3
+C 5" "A B" "C"
+
+# Three shards, 15 tests in 5 classes. Each shard gets 5 tests. B's midpoint at 5 lands exactly on
+# the first cut, so B goes to shard 0.
+expect_split "three shards with exact cut" 3 "A 3
+B 4
+C 3
+D 2
+E 3" "A B" "C" "D E"
+
+# Three shards with fractional share. Total 10, each shard gets 3.33. A's midpoint 1.5 < 3.33 goes
+# to shard 0. B's midpoint 3.5 > 3.33 and < 6.67 goes to shard 1. C's midpoint 7 > 6.67 goes to
+# shard 2.
+expect_split "three shards fractional" 3 "A 3
+B 1
+C 6" "A" "B" "C"
+
+# Real 33-class listing, 206 tests over 3 shards. Shard 0 gets 69 tests (10 classes), shard 1 gets
+# 67 tests (10 classes), shard 2 gets 70 tests (13 classes).
+expect_split "real 33-class listing" 3 "BrowserRemoteUITests 1
+BrowserUITests 12
+CommandPaletteUITests 13
+ControllerConsentUITests 9
+ControllerRunUITests 1
+DataViewerUITests 10
+DockedPaletteUITests 7
+ExecPaneUITests 2
+FormLayoutUITests 1
+ImageViewerUITests 13
+LaunchServicesOpenUITests 2
+LauncherUITests 7
+LayoutUITests 7
+MapViewerUITests 12
+OpenPanelUITests 1
+PaneControlUITests 1
+PaneTreeUITests 10
+PendingRequestsUITests 2
+PresentationUITests 1
+QuestionsUITests 24
+QuestionsWireUITests 3
+ReplCapabilityUITests 1
+ReplUITests 7
+ScriptOpenUITests 2
+ScriptRunUITests 2
+ShortcutOwnershipUITests 7
+StatusBarUITests 5
+TabsUITests 6
+TerminalLinkUITests 2
+TerminalUITests 11
+TextViewerUITests 14
+WindowChromeUITests 4
+WindowsUITests 6" \
+"BrowserRemoteUITests BrowserUITests CommandPaletteUITests ControllerConsentUITests ControllerRunUITests DataViewerUITests DockedPaletteUITests ExecPaneUITests FormLayoutUITests ImageViewerUITests" \
+"LaunchServicesOpenUITests LauncherUITests LayoutUITests MapViewerUITests OpenPanelUITests PaneControlUITests PaneTreeUITests PendingRequestsUITests PresentationUITests QuestionsUITests" \
+"QuestionsWireUITests ReplCapabilityUITests ReplUITests ScriptOpenUITests ScriptRunUITests ShortcutOwnershipUITests StatusBarUITests TabsUITests TerminalLinkUITests TerminalUITests TextViewerUITests WindowChromeUITests WindowsUITests"
+
+# One shard gets everything.
+expect_split "one shard" 1 "A 2
+B 3
+C 5" "A B C"
+
+# Empty listing fails.
+expect_split_error "empty listing fails" 1 "" "no classes in listing"
+
+# Zero tests fails.
+expect_split_error "zero tests fails" 1 "A 0" "test count must be a positive integer"
+
+# Invalid format fails.
+expect_split_error "invalid format fails" 1 "A" "invalid line format"

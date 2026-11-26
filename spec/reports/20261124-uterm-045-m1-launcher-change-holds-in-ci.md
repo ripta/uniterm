@@ -26,7 +26,7 @@ here. The run's base is the snip after "Schedule UTERM-060 M1-M3 after UTERM-044
 | Row | Milestone | Run status | Report |
 |---|---|---|---|
 | UTERM-045 M1 | M1: The closing rule and the launcher recount | DONE | this report |
-| UTERM-044 M1 | M1: Shard the app job | QUEUED | |
+| UTERM-044 M1 | M1: Shard the app job | DONE | [report](20261125-uterm-044-m1-shard-the-app-job.md) |
 | UTERM-060 M1-M3 | M1: A failed run keeps where its input went | QUEUED | |
 | | M2: The app records the input it receives | QUEUED | |
 | | M3: The flaky entries say what to look for | QUEUED | |

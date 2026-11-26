@@ -50,17 +50,17 @@ Commands:
 - `make fmt`, `make fmt-check`, `make lint`, and `make check` format and check the sources.
 - `make ghostty-offline-check` proves that the pinned libghostty rebuilds with the network off. It takes about four
   minutes, and `make ci` runs it.
-- `make ci` runs every CI job. `make ci-package` and `make ci-app` run one job each, so a failed job can be rerun on its
-  own.
+- `make ci` runs every CI job. `make ci-package` runs the package job, and `make ci-app` runs every UI test. CI splits the
+  UI tests into three shards that run in parallel. A failed shard reruns with `make test-app-shard SHARD=n SHARDS=3`.
 - `make swiftpm-offline-check` proves that the Swift packages resolve and build with the network off. The versions come
   from the committed `Package.resolved` files and the sources from `.cache/swiftpm`. It takes under a minute, and
   `make ci` runs it. CI does not keep `.cache/swiftpm`, so a CI run fetches the packages once before the offline step.
 - `make help` lists every target.
 
-GitHub CI runs three macOS jobs side by side: `package` for the checks and package tests, `app` for the app build
-and UI tests, and `ghostty-offline` for the offline Ghostty rebuild. The rebuild runs only when no earlier run proved
-the same Ghostty inputs on the same runner image. Otherwise the job ends in seconds. The required `ci` check passes
-only when all three pass.
+GitHub CI runs three macOS jobs side by side: `package` for the checks, package tests, and helper sandbox tests; `app`
+for the UI tests in three shards; and `ghostty-offline` for the offline Ghostty rebuild. The rebuild runs only when no
+earlier run proved the same Ghostty inputs on the same runner image. Otherwise the job ends in seconds. The required
+`ci` check passes only when all shards pass.
 
 CI skips the macOS jobs when all changed files are root-level Markdown or Markdown under `spec/`. The lightweight
 `ci` check still reports a result. Markdown shipped in the app, such as files under `Licenses/`, still triggers the
