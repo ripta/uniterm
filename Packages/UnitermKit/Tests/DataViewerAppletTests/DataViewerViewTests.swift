@@ -543,7 +543,12 @@ final class DataViewerViewTests: XCTestCase {
   }
 
   /// Catches a filter count that forgets the load stopped early. After a budget stop it reads "of
-  /// the first N rows", as the status bar does. VoiceOver reaches the count inside the field.
+  /// the first N rows", as the status bar does.
+  ///
+  /// It also catches a count VoiceOver cannot reach, or reaches through a parent that does not list
+  /// it. The search field's element is its cell, so the count hangs from the cell and names the cell
+  /// as its parent. A parent that does not match looped the UI tests' accessibility snapshot on the
+  /// main thread. This test cannot prove that the system walks the tree without looping.
   func testTheFilterCountNamesAStoppedLoadAndIsReachable() async throws {
     let scratch = try Scratch(self)
     var text = "id,v\n"
@@ -564,10 +569,20 @@ final class DataViewerViewTests: XCTestCase {
     let count = applet.content.filterField.count
     XCTAssertTrue(count.hasSuffix(" of the first \(loaded) rows"), count)
 
-    let children = applet.content.filterField.accessibilityChildren() ?? []
+    let field = try XCTUnwrap(applet.content.filterField.cell, "the field has no cell")
+    let element = (field.accessibilityChildren() ?? []).compactMap { $0 as? NSAccessibilityElement }
+      .first { $0.accessibilityIdentifier() == "data-viewer-filter-count" }
+    let reached = try XCTUnwrap(element, "the count is not among the field's accessibility children")
+
+    XCTAssertEqual(reached.accessibilityRole(), .staticText)
+    XCTAssertEqual(reached.accessibilityValue() as? String, count)
     XCTAssertTrue(
-      children.contains { ($0 as AnyObject) === applet.content.filterField.countLabel },
-      "the count is not among the field's accessibility children")
+      (reached.accessibilityParent() as AnyObject?) === field,
+      "the count names another parent than the field that lists it")
+    XCTAssertFalse(
+      applet.content.filterField.accessibilityChildren()?.contains {
+        ($0 as AnyObject) === applet.content.filterField.countLabel
+      } ?? false, "the count's label shows to VoiceOver a second time")
   }
 
   /// Catches a find strip whose buttons do nothing. Next and previous step the match, and Done
