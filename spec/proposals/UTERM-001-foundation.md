@@ -1293,6 +1293,12 @@ Added 2026-11-01 by amendment. It can run before or after the user records M9.
   for warnings, coalesced presentation of repeats, and a history of two bounded pools with a pane filter. M10 said the
   terminal holds back notifications until reattach. UTERM-017 keeps that, and also records each held alert in the
   history when it occurs, so a close before reattach loses nothing. The queue changes ship in UTERM-017 M2 and M3.
+- 2026-11-26: Reversed in part, by the user's choice and without a proposal. "What layout persistence restores, and
+  in what format" left scrollback out, since it would write terminal output to disk and replaying it could inject
+  escape sequences. Each shell tab now saves its scrollback as plain text at quit, in a file private to the user. The
+  next launch reads the file, deletes it, and shows the text above the tab's first prompt. Control characters are
+  dropped first, so the text cannot act as an escape sequence. A reopened tab shows its earlier output the same way,
+  from memory. Applets now hear a `willQuit` event before the last layout save.
 
 ## References
 
