@@ -30,8 +30,8 @@ here. The run's base is the snip after "Schedule UTERM-060 M1-M3 after UTERM-044
 | UTERM-060 M1-M3 | M1: A failed run keeps where its input went | DONE | [report](20261125-uterm-060-m1-m3-keep-input-evidence.md) |
 | | M2: The app records the input it receives | DONE | [report](20261125-uterm-060-m1-m3-keep-input-evidence.md) |
 | | M3: The flaky entries say what to look for | DONE | [report](20261125-uterm-060-m1-m3-keep-input-evidence.md) |
-| UTERM-046 M1-M2 | M1: The browser hung-process tests | QUEUED | |
-| | M2: The script fixture's helper exit | QUEUED | |
+| UTERM-046 M1-M2 | M1: The browser hung-process tests | DONE | [report](20261125-uterm-046-m1-m2-deterministic-package-test-flakes.md) |
+| | M2: The script fixture's helper exit | DONE | [report](20261125-uterm-046-m1-m2-deterministic-package-test-flakes.md) |
 | UTERM-046 M4 | M4: The product's kills signal by audit token | QUEUED | |
 | UTERM-046 M3 | M3: Every test signal goes through a guarded sender | QUEUED | |
 | UTERM-045 M2 | M2: One way to send a wheel | HELD | |

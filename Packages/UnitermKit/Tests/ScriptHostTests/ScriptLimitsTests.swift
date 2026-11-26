@@ -80,7 +80,7 @@ final class ScriptLimitsTests: XCTestCase {
     let spinner = try ScriptFixtures.start(
       socket: host.instanceAddress, script: ScriptFixtures.script("spin"))
 
-    defer { if spinner.isRunning { kill(spinner.processIdentifier, SIGKILL) } }
+    defer { spinner.signal(SIGKILL) }
 
     expect(await posted("spinning"), "the script never reached its loop")
 
@@ -90,12 +90,11 @@ final class ScriptLimitsTests: XCTestCase {
     XCTAssertEqual(
       other.status, 0, "the app stopped serving while a script spun: \(other.standardError)")
     XCTAssertTrue(spinner.isRunning, "the loop ended on its own")
+    XCTAssertEqual(spinner.signal(SIGINT), .sent)
 
-    kill(spinner.processIdentifier, SIGINT)
+    let run = try await ScriptFixtures.finish(spinner)
 
-    let run = await ScriptFixtures.finish(spinner)
-
-    XCTAssertEqual(run.status, 130, run.standardError)
+    XCTAssertEqual(run.exit, .exited(130), run.standardError)
     XCTAssertTrue(run.standardError.contains("interrupted"), run.standardError)
     XCTAssertFalse(run.standardError.contains("error"), "an interrupt read as a failure")
   }
@@ -111,8 +110,7 @@ final class ScriptLimitsTests: XCTestCase {
       allow: ["fs-write"], arguments: [marker], input: input)
 
     defer {
-      if stuck.isRunning { kill(stuck.processIdentifier, SIGKILL) }
-
+      stuck.signal(SIGKILL)
       withExtendedLifetime(input) {}
     }
 
@@ -126,9 +124,8 @@ final class ScriptLimitsTests: XCTestCase {
 
     // The marker comes just before the read. An interrupt that lands before the read begins would
     // stop the script at the call, so the first interrupt waits until the main thread is blocked.
-    expect(await waitUntilBlocked(stuck.processIdentifier), "the script never blocked in the read")
-
-    kill(stuck.processIdentifier, SIGINT)
+    expect(await waitUntilBlocked(stuck.pid), "the script never blocked in the read")
+    XCTAssertEqual(stuck.signal(SIGINT), .sent)
 
     // Cost: this 1 s wait proves a negative. A helper stuck in C survives one interrupt, and no
     // event marks that nothing happened. The call has no reply to wait for. A shorter wait could
@@ -137,12 +134,11 @@ final class ScriptLimitsTests: XCTestCase {
     try await Task.sleep(for: .seconds(1))
 
     XCTAssertTrue(stuck.isRunning, "the first Ctrl-C ended a call the interrupt cannot reach")
+    XCTAssertEqual(stuck.signal(SIGINT), .sent)
 
-    kill(stuck.processIdentifier, SIGINT)
+    let run = try await ScriptFixtures.finish(stuck)
 
-    let run = await ScriptFixtures.finish(stuck)
-
-    XCTAssertEqual(run.status, 130, run.standardError)
+    XCTAssertEqual(run.exit, .exited(130), run.standardError)
     XCTAssertTrue(run.standardError.contains("interrupted again"), run.standardError)
   }
 
@@ -158,8 +154,7 @@ final class ScriptLimitsTests: XCTestCase {
 
     defer {
       listener.stop()
-
-      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+      process.signal(SIGKILL)
     }
 
     let answered = await listener.drive(timeout: .seconds(30)) { event in

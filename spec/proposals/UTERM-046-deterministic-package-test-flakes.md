@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-24
+**Updated:** 2026-11-25
 
 ## Impacts
 
@@ -49,9 +49,11 @@ bytes, not time.
 ### Production keeps its rules
 
 Decision: production code keeps its bounds, its time sources, and its `busyShare`. A test seam replaces only what the
-test supplies, never the rule the production code applies. The one production change is how two kills name their
-target. `WebContentProcess.kill` and ScriptHost's `ProcessReaper` signal through `ProcessInspection`'s guarded call,
-by a fresh audit token where the system gives one. Amended 2026-11-23; see Decision Log.
+test supplies, never the rule the production code applies. The one planned production change is how two kills name
+their target. `WebContentProcess.kill` and ScriptHost's `ProcessReaper` signal through `ProcessInspection`'s guarded
+call, by a fresh audit token where the system gives one. Separately, "Keep a stopped exec driver from reading as
+exited" fixed a bug found along the way: the exec driver's transport took a paused driver for one that had exited.
+Amended 2026-11-25; see Decision Log.
 
 Rationale: the hung-process bound and the busy-share rule are how a hung page stays contained, per ADR-07. A test
 shortcut that weakened them would trade a flaky test for a weaker product. Signalling by token keeps every rule. It
@@ -189,8 +191,8 @@ reaps, so no test handle can hold the reap:
 
 - **Reaped by other code in the test process.** `ExecPaneTests.swift:815` probes the driver with `kill(pid, 0)`, then
   sends SIGKILL. The product's exec transport spawns the driver in the test process and reaps it. Its reaped-flag
-  signal is private, and the channel exposes only the pid. libghostty spawns `login(1)` as a child of the test process,
-  and reaps it itself.
+  signal is private, and the channel exposes only the pid. `ExecDriverChannelTests`' pause test sends the same driver
+  SIGSTOP and then SIGCONT by pid. libghostty spawns `login(1)` as a child of the test process, and reaps it itself.
 - **Reaped by launchd after a reparent.** `ExecDriverChannelTests.swift:451` kills the driver's background child, whose
   pid the driver writes to a file. `TerminalSessionIntegrationTests.swift:93`, `:756`, and `:762` kill the tree under
   `login`: the shell and its `sleep`, which launchd adopts once `login` exits on SIGHUP. `tearDown` and the defer at
@@ -198,8 +200,8 @@ reaps, so no test handle can hold the reap:
   freed pid on every run.
 - **WebKit content processes.** `WebContent.kill` in `BrowserRecoveryTests` and `MarkdownRig.swift:172` signal the pid
   that `_webProcessIdentifier` names. The `if WebContent.isRunning(pid) { Darwin.kill(pid, SIGKILL) }` defers in
-  `BrowserRecoveryTests` and `BrowserHungProcessTests` check, then kill. `BrowserHungProcessTests.swift:218` passes the
-  product's chosen pid to a real `kill`.
+  `BrowserRecoveryTests` and `BrowserHungProcessTests` check, then kill. The `policy(_:log:sample:)` helper in
+  `BrowserHungProcessTests` passes the product's chosen pid to a real `kill`.
 
 Making the test the parent does not help. It already is the parent of the driver and of `login`, but other code in the
 same process holds the reap. macOS has no subreaper, so the test cannot take the reap of reparented or WebKit
@@ -268,10 +270,11 @@ Callers handle each result. The product's two kills treat gone as done, and log 
 test on unreached or refused.
 
 A new test-support target, `ProcessTestSupport`, depends only on `ProcessInspection`. It holds the per-site sender,
-and each site states which path it expects. `WebContentProcess` and the REPL channel record the microsecond identity.
-Their kills go through the same call. `WebContentProcess.kill` keeps its path check before it. With no token, it still
-signals, so a hung page is still ended. `RemoteClientWatcherTests` spawns `sh` in its own process group, and sends
-`killpg` before its own `waitpid`. Amended 2026-11-23; see Decision Log.
+and each site states which path it expects. It also holds the reader that tells whether a process is stopped.
+`WebContentProcess` and the REPL channel record the microsecond identity. Their kills go through the same call.
+`WebContentProcess.kill` keeps its path check before it. With no token, it still signals, so a hung page is still
+ended. `RemoteClientWatcherTests` spawns `sh` in its own process group, and sends `killpg` before its own `waitpid`.
+Amended 2026-11-25; see Decision Log.
 
 Rationale: the token is the only option that closes the window outright, for every target that gives one. The token is
 read before the start time. So when the start time still matches, the token names the recorded process, or that
@@ -336,7 +339,7 @@ None.
 
 ### M1: The browser hung-process tests
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 - The closed-tab tests pass on a runner whose cores are all busy with other work
 - The live-sample test fails when either time field of the live reading is in the wrong units. Its bracket allows the
@@ -359,11 +362,35 @@ None.
   and stays under Potential until it meets the closing rule in the `spec/flaky-tests.md` Rule section
 - Production's `busyShare`, bound, and time sources are unchanged
 
+**As built:**
+
+- The before-change measurement found no product finding. Every run read the closed page at 0.966 of a core or more.
+  That held over the test's 0.3 s window and over the product's 10 s bound, idle and with a busy loop per core. The
+  closed process kept its priority and its Darwin role from the close to the fire. The numbers are in the closed-tab
+  test's entry in `spec/flaky-tests.md`. The busy loops ran at default priority, below the page's, so none could
+  starve it. The CI failure did not reproduce, so its cause stays unconfirmed, and the test pins the fix, not the bug.
+- The derived busy sample checks each reading of a process against the one before it. That covers every watch a test
+  arms, including the one the harness's teardown arms. A sample made to read the same time every time failed the four
+  derived-sample tests with the sampler's message. With the check also removed, the busy-opener test passed without
+  reaching the live-tab check.
+- Removing the live-tab check failed the busy-opener test and the first close of the last-live-tab test. The idle
+  pop-up test still passed, as its doc comment says.
+- The bracket reads the test's own processor time from the POSIX process CPU clock, and its uptime from Foundation's
+  system uptime. Its allowance is 10 µs. Over 100,000 measured brackets, the CPU clock trailed the usage reader by at
+  most 1.5 µs, and the uptime reader never fell outside. The live-sample test failed with the processor time left in
+  Mach ticks, with it converted twice, with the time taken in Mach ticks, and with both in Mach ticks. It is now
+  `testTheLiveSampleIsInNanosecondsAndReadsAnIdlePageAsIdle`, since it no longer reads a spinning page.
+- `testClosingAnIdlePopUpSignalsNothing` also checks that the watch's own live readings, at the close and at the fire,
+  read under the share. They read under 0.006 in each of the four runs that printed them, idle and loaded. Its wait
+  stays a fixed 0.3 s.
+- After the change, the class passed idle, with 14 and with 42 busy loops in the test process, and with 14 busy
+  processes. The closed-tab test went from 0.73 s to 0.14 s. Production code is unchanged.
+
 ### M2: The script fixture's helper exit
 
-**Status:** NOT STARTED
+**Status:** DONE
 
-Amended 2026-11-23; see Decision Log.
+Amended 2026-11-25; see Decision Log.
 
 - `ScriptFixtures.finish` returns once its helper exits, without `waitUntilExit`, including for a helper that exited
   before `finish` was called
@@ -381,7 +408,8 @@ Amended 2026-11-23; see Decision Log.
 - The regression test says that it pins the fix and not the bug, since no test reproduced Foundation missing an exit
 - A test can still tell a helper's exit from its death by a signal
 - The watchdog never signals a helper that has been reaped. The reaper waits with `waitid` and `WNOWAIT`, sets the reaped
-  flag under the lock, and only then reaps with `waitpid`
+  flag under the lock, and only then reaps with `waitpid`. Darwin's `waitid` also reports a stopped child to a wait for
+  exits alone. The reaper takes that report with a wait for stops alone, and waits again
 - Callers of `start` and `finish` signal a helper through the fixture's handle, never with a raw `kill` on its process
   id
 - The tests among those callers that send SIGINT, such as the Ctrl-C tests in `ScriptLimitsTests`,
@@ -403,11 +431,41 @@ Amended 2026-11-23; see Decision Log.
 - The `ScriptFixtures.finish` entry in `spec/flaky-tests.md` records the change, says which of its sightings it
   explains, and stays under Potential until it meets the closing rule in the `spec/flaky-tests.md` Rule section
 
+**As built:**
+
+- The handle spawns any executable with any argument list, environment, and folder. Each standard stream is the null
+  device, a file handle the caller owns, or a pipe the handle captures and reads from the spawn on. Each caller names its
+  own deadlines. `start` keeps the 60 s SIGTERM and 70 s SIGKILL. The handle sends with `signal(_:)`, which reports
+  sent, refused because the helper was reaped, or the errno `kill` returned. It reports whether the helper runs, its
+  exit without waiting, and a wait for the exit. An exit and a death by signal are separate cases. The names and the
+  stream and result types are run best guesses. See the Decision Log for 2026-11-25.
+- `finish` now throws. A wait that finds no child marks the helper reaped and throws an error that names another
+  reaper. The run's result keeps `status`, the exit status or the signal number as Foundation read it, and adds the
+  exit case that tells the two apart. When a helper is reaped while a process it started holds a captured pipe open,
+  `finish` keeps what the pipe held at the reap and returns.
+- The stopped-helper test caught Darwin's `waitid` reporting a stop to the reaper's wait for exits. The reaper now takes
+  that report and waits again, and the milestone's reaper bullet is amended. See the Decision Log for 2026-11-25. The
+  exec driver's transport had the same gap. "Keep a stopped exec driver from reading as exited" fixes it. The
+  product's `HelperProcess` uses the same wait, but it kills its helper before it waits, so a stop never reads as an
+  exit there. It needed no change.
+- Three moved callers had no hang guard: the shipped command's `open` run, the deleted-folder `open` run, and the
+  fake-app run. Each now has a 60 s SIGKILL deadline. See the Decision Log for 2026-11-25.
+- `HelperHandleTests` proves the bullets, and its regression test says it pins the fix, not the bug. Mutations each
+  failed a test, and each was restored: signalling after the reap, waiting without `WNOWAIT`, a `waitid` that gives up
+  on EINTR, pipe ends left inheritable, no close-on-exec default for the spawn, no signal default, no empty mask, no
+  stop-report wait, a reader that waits for a held pipe's end, reading that starts only at `finish`, and a signal to the
+  helper's group. Dropping the lock in `signal` passed the plain tests and drew a Thread Sanitizer data race report on
+  the reaped flag. The unmutated fixture runs clean under the sanitizer.
+- The EINTR proof interrupts the reaper's `waitid` with a thread-directed SIGUSR2. The `waitpid` retry has no proof,
+  since no test can catch the reaper inside it.
+- `ScriptHostTests` passed 358 tests, with 3 skipped, and the 3 skipped shipped-command tests passed under
+  `make test-helper-sandbox`. The SIGINT tests still deliver the signal and see the exit.
+
 ### M3: Every test signal goes through a guarded sender
 
 **Status:** NOT STARTED
 
-Amended 2026-11-23; see Decision Log.
+Amended 2026-11-25; see Decision Log.
 
 Starts after M2 and M4. It moves sites onto M2's handle, and onto M4's guarded call.
 
@@ -443,12 +501,17 @@ No package test signals a process by an id that the process may no longer hold.
   gets no signal
 - The injected `signal` closure in `BrowserHungProcessTests` forwards the identity the product read to the sender, and
   records the pid. It signals nothing for an identity it was not given
+- `ExecDriverChannelTests`' pause test sends its SIGSTOP and SIGCONT through the sender, and expects the token path.
+  It records the driver's identity while the channel is connected
+- The stopped-state reader lives in `ProcessTestSupport`, and `HelperHandleTests` and `ExecDriverChannelTests` drop
+  their copies of `isStopped`. Reading whether the fixture's own helper is stopped is not a signal site
 - `RemoteClientWatcherTests` spawns `sh` in its own process group. `tearDown` sends `killpg` before its own `waitpid`,
   so the client `sh` forks ends with it
 - The As built block records which path each site took, and whether `login` gave a token
 - No package test sends a signal with a raw `kill` on a process id, or with `Process.terminate` or `interrupt`
 - Signal 0 probes are exempt. So is the relay's forked child, which its parent never reaps. So are tests that signal
-  their own child before their own `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock
+  their own child before their own `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock. So is the
+  `pthread_kill` in `HelperHandleTests`' EINTR test, which signals a thread of the test process and names no process id
 - `ReplProcess` and every moved site expose the fixture's handle and no `Process`, so `.terminate()` on them does not
   compile
 - A search of `Tests/` for `kill(`, `.terminate()`, and `.interrupt()` finds only the fixture, the sender, the
@@ -665,6 +728,38 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
   test sender fails the test on it.
 - 2026-11-24: Review gate: kept all. The last re-check converged, and no decision is open. No decision gets an ADR.
   Status set to accepted.
+- 2026-11-25: M1's mechanisms were chosen in the work-queue run. The bracket's independent readers are the POSIX
+  process CPU clock and Foundation's system uptime. Its 10 µs allowance comes from a measurement. The derived busy
+  sample's forward check covers every reading of a process, not only the close and the fire. The idle pop-up test
+  checks that the watch's live readings read idle, which is how "still sees an idle page" is checked. The live-sample
+  test was renamed, since it no longer reads a spinning page. The before-change measurement added runs with separate
+  busy processes and runs over the product's 10 s bound. Busy loops in the test process left the page 98% of a core
+  even at user-interactive QoS. (run best guess)
+- 2026-11-25: M2's mechanisms were chosen in the work-queue run. The handle is `HelperHandle`, with
+  `signal(_:)`, `isRunning`, `exitStatus()`, `waitForExit()`, and `finish()`. Its signal reports sent, reaped, or
+  failed. Each stream is the null device, a caller's file handle, or a captured pipe. `finish` throws when a wait finds
+  no child, so no status is made up. It keeps the old `status` and adds the exit case. It stops reading a captured pipe
+  at the reap, so a process the helper started cannot hold it open. Three moved callers had no hang guard and now get
+  a 60 s SIGKILL, so a hang fails one test instead of the run. The closed-output test of `uniterm ask` now hands the
+  command a pipe it owns and closes both ends right after the spawn, since the handle reads its captured pipes itself.
+  The SIGINT checks moved from the bare status to the exit case, such as `.exited(130)` for the helper and
+  `.signalled(SIGINT)` for `uniterm ask`, so a death by signal can no longer pass for an exit. Correction of fact:
+  M2's reaper bullet said "The reaper waits with `waitid` and `WNOWAIT`, sets the reaped flag under the lock, and
+  only then reaps with `waitpid`". On Darwin that wait also returns for a stopped child, and the reaper would then
+  refuse every later signal. The bullet now says the reaper takes a stop report with a wait for stops alone, and
+  waits again. (run best guess)
+- 2026-11-25: The row review of M1-M2 amended M3 and two settled decisions. M2 and the driver fix added signal sites
+  that M3's search would find. The pause test in `ExecDriverChannelTests` sends its driver SIGSTOP and SIGCONT by pid.
+  It now sits under "Reaped by other code in the test process", and M3 moves it to the sender on the token path, since
+  the driver is a child of the test process. The thread-directed `pthread_kill` in `HelperHandleTests` names no
+  process id, so M3 exempts it. M3's exemption list said "So are tests that signal their own child before their own
+  `waitpid`, and `HelperProcess.kill`, which signals under its reaper's lock". The stopped-state reader was copied
+  into two test files, so `ProcessTestSupport` now holds it. "Production keeps its rules" said "The one production
+  change is how two kills name their target". That stopped being true once "Keep a stopped exec driver from reading
+  as exited" fixed a bug found along the way, so the decision now names that change as the planned one and the fix as
+  separate. Correction of fact: "How a test signals a process it does not reap" cited
+  `BrowserHungProcessTests.swift:218`, which M1 moved. It now names the `policy(_:log:sample:)` helper.
+  (run best guess)
 
 ## References
 

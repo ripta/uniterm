@@ -143,27 +143,13 @@ final class DeclaredFileRunTests: XCTestCase {
   private func run(_ file: URL, allow: [String] = [], arguments: [String] = []) async throws
     -> HelperRun
   {
-    let process = Process()
-
-    process.executableURL = try HardenedHelper.url()
-    process.arguments =
-      ["run", "--socket", host.instanceAddress] + allow.flatMap { ["--allow", $0] } + [file.path]
-      + arguments
-    process.environment = environment()
-    process.currentDirectoryURL = work
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-
-    try process.run()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { kill(watchdog.processIdentifier, SIGKILL) }
-    }
-
-    return await ScriptFixtures.finish(process)
+    try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: try HardenedHelper.url(),
+        arguments: ["run", "--socket", host.instanceAddress] + allow.flatMap { ["--allow", $0] }
+          + [file.path] + arguments,
+        environment: environment(), directory: work,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)]))
   }
 
   // MARK: Review

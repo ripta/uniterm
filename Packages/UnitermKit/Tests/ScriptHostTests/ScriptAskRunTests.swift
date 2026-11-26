@@ -44,7 +44,7 @@ final class ScriptAskRunTests: XCTestCase {
   // MARK: Helpers
 
   private struct Asking {
-    let process: Process
+    let process: HelperHandle
     let input: Pipe
   }
 
@@ -54,40 +54,29 @@ final class ScriptAskRunTests: XCTestCase {
   /// closes at once so the command reads to its end.
   ///
   /// `ignoringSIGPIPE` starts it through a shell that ignores SIGPIPE first, as a caller may leave
-  /// it. Foundation resets the signal for a process it starts itself.
+  /// it. The fixture resets the signal for a process it starts itself.
   private func launch(
-    _ arguments: [String], form: String? = nil, ignoringSIGPIPE: Bool = false
+    _ arguments: [String], form: String? = nil, ignoringSIGPIPE: Bool = false,
+    standardOutput: HelperOutput = .captured
   ) throws -> Asking {
-    let process = Process()
     let input = Pipe()
     var environment = ProcessInfo.processInfo.environment
 
     environment["UNITERM_SOCKET"] = nil
-    process.environment = environment
-    if ignoringSIGPIPE {
-      process.executableURL = URL(fileURLWithPath: "/bin/sh")
-      process.arguments =
-        ["-c", "trap '' PIPE; exec \"$0\" \"$@\"", ScriptFixtures.helper().path, "ask"] + arguments
-    } else {
-      process.executableURL = ScriptFixtures.helper()
-      process.arguments = ["ask"] + arguments
-    }
 
-    process.standardInput = input
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-
-    try process.run()
+    let process = try HelperHandle.spawn(
+      executable: ignoringSIGPIPE ? URL(fileURLWithPath: "/bin/sh") : ScriptFixtures.helper(),
+      arguments: ignoringSIGPIPE
+        ? ["-c", "trap '' PIPE; exec \"$0\" \"$@\"", ScriptFixtures.helper().path, "ask"]
+          + arguments
+        : ["ask"] + arguments,
+      environment: environment, standardInput: .file(input.fileHandleForReading),
+      standardOutput: standardOutput,
+      deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)])
 
     if let form { try input.fileHandleForWriting.write(contentsOf: Data(form.utf8)) }
 
     try input.fileHandleForWriting.close()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { kill(watchdog.processIdentifier, SIGKILL) }
-    }
 
     return Asking(process: process, input: input)
   }
@@ -95,11 +84,11 @@ final class ScriptAskRunTests: XCTestCase {
   /// Starts `uniterm ask kind` against the test's host, with the flags and words after it.
   private func start(
     kind: String, _ arguments: [String], form: String? = nil, socket: String? = nil,
-    ignoringSIGPIPE: Bool = false
+    ignoringSIGPIPE: Bool = false, standardOutput: HelperOutput = .captured
   ) throws -> Asking {
     try launch(
       [kind, "--socket", socket ?? host.instanceAddress] + arguments, form: form,
-      ignoringSIGPIPE: ignoringSIGPIPE)
+      ignoringSIGPIPE: ignoringSIGPIPE, standardOutput: standardOutput)
   }
 
   /// Waits for the app to hold `count` forms.
@@ -123,8 +112,8 @@ final class ScriptAskRunTests: XCTestCase {
     .submitted(submission: 1, action: action, answers: answers)
   }
 
-  private func finish(_ asking: Asking) async -> HelperRun {
-    await ScriptFixtures.finish(asking.process)
+  private func finish(_ asking: Asking) async throws -> HelperRun {
+    try await ScriptFixtures.finish(asking.process)
   }
 
   /// Runs one shorthand to its answer and returns what it did.
@@ -135,7 +124,7 @@ final class ScriptAskRunTests: XCTestCase {
 
     try await answer(outcome)
 
-    return await finish(asking)
+    return try await finish(asking)
   }
 
   // MARK: Answers
@@ -188,7 +177,7 @@ final class ScriptAskRunTests: XCTestCase {
 
     try await answer(submitted(["answer": .text("dev")]))
 
-    let result = await finish(asking)
+    let result = try await finish(asking)
     let question = try XCTUnwrap(windows.askedForms.first?.spec.questions.first)
 
     XCTAssertEqual(result.standardOutput, "dev\n")
@@ -239,7 +228,7 @@ final class ScriptAskRunTests: XCTestCase {
 
       try await answer(outcome)
 
-      let full = await finish(asking)
+      let full = try await finish(asking)
 
       XCTAssertEqual(full.status, 3, full.standardError)
       XCTAssertEqual(full.standardOutput, "")
@@ -264,7 +253,7 @@ final class ScriptAskRunTests: XCTestCase {
     try await answer(
       submitted(["region": .text("eu"), "count": .number("4")], action: "deploy"))
 
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 0, result.standardError)
     XCTAssertEqual(windows.askedForms.first?.spec.title, "Deploy settings")
@@ -288,7 +277,7 @@ final class ScriptAskRunTests: XCTestCase {
   func testAUsageErrorExitsSixtyFourAndConnectsToNothing() async throws {
     for arguments in [[], ["nope"], ["confirm"], ["choose", "only a prompt"]] {
       let asking = try launch(arguments)
-      let result = await finish(asking)
+      let result = try await finish(asking)
 
       XCTAssertEqual(result.status, 64, "\(arguments): \(result.standardError)")
       XCTAssertTrue(result.standardError.contains("usage: uniterm ask"), result.standardError)
@@ -302,14 +291,14 @@ final class ScriptAskRunTests: XCTestCase {
   /// field, nothing is printed on standard output, and no form opens.
   func testASpecTheAppRefusesExitsSixtyFiveNamingTheField() async throws {
     let bad = try start(kind: "form", [], form: #"{"items": [], "extra": 1}"#)
-    let result = await finish(bad)
+    let result = try await finish(bad)
 
     XCTAssertEqual(result.status, 65, result.standardError)
     XCTAssertTrue(result.standardError.contains("extra"), result.standardError)
     XCTAssertEqual(result.standardOutput, "")
 
     let pattern = try start(kind: "text", ["--pattern", "(?<=a)b", "Name?"])
-    let refused = await finish(pattern)
+    let refused = try await finish(pattern)
 
     XCTAssertEqual(refused.status, 65, refused.standardError)
     XCTAssertTrue(windows.askedForms.isEmpty)
@@ -317,7 +306,7 @@ final class ScriptAskRunTests: XCTestCase {
     let large = try start(
       kind: "form", [],
       form: "{\"items\": [], \"title\": \"" + String(repeating: "x", count: 40_000) + "\"}")
-    let tooLarge = await finish(large)
+    let tooLarge = try await finish(large)
 
     XCTAssertEqual(tooLarge.status, 65, tooLarge.standardError)
     XCTAssertTrue(tooLarge.standardError.contains("larger than"), tooLarge.standardError)
@@ -329,7 +318,7 @@ final class ScriptAskRunTests: XCTestCase {
     windows.formCap = 0
 
     let asking = try start(kind: "text", ["Name?"])
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 75, result.standardError)
     XCTAssertEqual(result.standardOutput, "")
@@ -342,7 +331,7 @@ final class ScriptAskRunTests: XCTestCase {
     windows.formRefusal = .refused("uniterm cannot show a form here")
 
     let asking = try start(kind: "text", ["Name?"])
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 77, result.standardError)
     XCTAssertTrue(result.standardError.contains("cannot show a form here"), result.standardError)
@@ -356,7 +345,7 @@ final class ScriptAskRunTests: XCTestCase {
 
     try await answer(.ended)
 
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 4, result.standardError)
     XCTAssertEqual(result.standardOutput, "")
@@ -368,7 +357,7 @@ final class ScriptAskRunTests: XCTestCase {
   func testAnAppThatIsNotThereExitsSixtyNine() async throws {
     let asking = try start(
       kind: "text", ["Name?"], socket: directory.appendingPathComponent("none.sock").path)
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 69, result.standardError)
     XCTAssertEqual(result.standardOutput, "")
@@ -399,7 +388,7 @@ final class ScriptAskRunTests: XCTestCase {
     defer { Darwin.close(server) }
 
     let asking = try start(kind: "text", ["Name?"], socket: path)
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 70, result.standardError)
     XCTAssertTrue(result.standardError.contains(ScriptProtocol.mismatchText), result.standardError)
@@ -450,7 +439,7 @@ final class ScriptAskRunTests: XCTestCase {
     defer { Darwin.close(server) }
 
     let asking = try start(kind: "text", ["Name?"], socket: path)
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 74, result.standardError)
     XCTAssertEqual(result.standardOutput, "")
@@ -473,12 +462,11 @@ final class ScriptAskRunTests: XCTestCase {
     let key = try XCTUnwrap(windows.askedForms.first?.requester.key)
 
     XCTAssertTrue(windows.hasOpenForm(requester: key))
-    kill(asking.process.processIdentifier, SIGINT)
+    XCTAssertEqual(asking.process.signal(SIGINT), .sent)
 
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
-    XCTAssertEqual(asking.process.terminationReason, .uncaughtSignal)
-    XCTAssertEqual(asking.process.terminationStatus, SIGINT)
+    XCTAssertEqual(result.exit, .signalled(SIGINT))
     XCTAssertEqual(result.standardOutput, "")
 
     let closed = await waitUntil { !self.windows.hasOpenForm(requester: key) }
@@ -547,7 +535,7 @@ final class ScriptAskRunTests: XCTestCase {
     defer { Darwin.close(server) }
 
     let asking = try start(kind: "text", ["Name?"], socket: path)
-    let result = await finish(asking)
+    let result = try await finish(asking)
 
     XCTAssertEqual(result.status, 0, result.standardError)
     XCTAssertEqual(result.standardOutput, "x\n")
@@ -563,7 +551,7 @@ final class ScriptAskRunTests: XCTestCase {
   func testACallerBoundToNoPaneIsRefusedWithTheRefusedStatus() async throws {
     TestSessionRoot.remove(from: host)
 
-    let first = await finish(try start(kind: "text", ["Name?"]))
+    let first = try await finish(try start(kind: "text", ["Name?"]))
 
     XCTAssertEqual(first.status, 77, first.standardError)
     XCTAssertEqual(first.standardOutput, "")
@@ -578,22 +566,23 @@ final class ScriptAskRunTests: XCTestCase {
   /// standard error and exits 74, the I/O error status. A command that wrote through
   /// `FileHandle` would raise an exception and die with 134 instead.
   func testAClosedStandardOutputExitsSeventyFourAndSaysWhy() async throws {
-    let asking = try start(kind: "text", ["Name?"], ignoringSIGPIPE: true)
+    let output = Pipe()
+    let asking = try start(
+      kind: "text", ["Name?"], ignoringSIGPIPE: true,
+      standardOutput: .file(output.fileHandleForWriting))
 
-    try (asking.process.standardOutput as! Pipe).fileHandleForReading.close()
+    try output.fileHandleForReading.close()
+    try output.fileHandleForWriting.close()
     try await answer(submitted(["answer": .text("Ada")]))
 
     let ended = await pollUntil(timeout: .seconds(30)) { !asking.process.isRunning }
 
     XCTAssertTrue(ended, "the command never ended")
-    XCTAssertEqual(asking.process.terminationReason, .exit)
-    XCTAssertEqual(asking.process.terminationStatus, 74)
 
-    let message = (asking.process.standardError as! Pipe).fileHandleForReading
-      .readDataToEndOfFile()
+    let result = try await finish(asking)
 
+    XCTAssertEqual(result.exit, .exited(74))
     XCTAssertTrue(
-      String(decoding: message, as: UTF8.self).contains("cannot write the answer"),
-      String(decoding: message, as: UTF8.self))
+      result.standardError.contains("cannot write the answer"), result.standardError)
   }
 }

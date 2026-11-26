@@ -285,7 +285,21 @@ Fixed by: "Wait for the form's focus before typing its answers" and "Give the Qu
   and an AppletKit doc comment. `ScriptHostAPITests.testEveryFunctionRejectsBadArgumentsBeforeTheAppHearsOfThem` ran
   past its 120 s limit. The sample again showed `ScriptFixtures.finish` blocked in `waitUntilExit`. `ScriptHostTests`
   does not depend on WindowKit. The full rerun of the same tree passed all 3214 tests.
-- Status: unresolved. UTERM-046 proposes replacing `waitUntilExit` in `finish`.
+- Change: UTERM-046 M2. The script fixture spawns each helper with `posix_spawn` and is its only reaper. One thread
+  per helper waits with `waitid` and `WNOWAIT`, sets the reaped flag under a lock, and then reaps with `waitpid`.
+  `finish` waits on that reap, not on Foundation's exit report, and returns at once for a helper already reaped.
+  Every caller of `start` and `finish` now runs its helper this way, including the nine that built their own
+  `Process`.
+- Which sightings it explains: the 2026-11-21 CI sighting. It recorded that no child of `xctest` was alive, so the
+  helper had been reaped and Foundation never reported it. The fixture no longer waits on that report. If another
+  reaper took the helper, the wait now fails the test with an error that names another reaper.
+- The other two `waitUntilExit` sightings recorded no process listing. They are explained only if their helper had
+  been reaped. A helper that was still running would be ended by the fixture's 60 s and 70 s deadlines, as the old
+  watchdogs already ended it. The first sighting shows only a wait, so the same holds for it.
+- After the change, `ScriptHostTests` passed 358 tests, with 3 skipped, and the 3 shipped-command tests passed under
+  `make test-helper-sandbox`. No test reproduced Foundation missing an exit, so the fixture's tests pin the fix, not
+  the bug.
+- Status: unresolved. It stays under Potential until it meets the closing rule in the Rule section.
 
 ### `ExecPaneUITests.testARestoredExecPaneRunsOnlyAfterValuesAndApprovalThenDrivesTheApplet`
 
@@ -476,7 +490,27 @@ Fixed by: "Wait for the form's focus before typing its answers" and "Give the Qu
 - Suspected cause: the test gives the spinning page 0.3 s of real time, and the watch signals only a page that used at
   least half a core over it. On a loaded runner the page can get less, and the watch then rightly sends nothing. Not
   confirmed.
-- Status: unresolved. UTERM-046 proposes a fix.
+- Measured before the change: 2026-11-25, on a 14-core Apple silicon Mac. The test recorded the watch's two live
+  readings. It also read the closed process's scheduling state at the close and at the fire.
+  - Over the test's 0.3 s window, the watch read a share of 0.989 of a core on the idle machine. With a busy loop per
+    core it read 0.966 for 14 loops in the test process, 0.987 for 14 separate processes, and 0.997 for 42 of them.
+  - Over a 10 s window, the product's bound, it read 0.9999 idle, 1.000 with 14 loops, and 0.9994 with 14 processes.
+  - In every run, at the close and at the fire, `proc_pidinfo` read the task's priority as 31 and its spinning
+    thread's as 47. `getpriority(PRIO_DARWIN_PROCESS)` read 0, so Darwin did not run it in the background. Its Darwin
+    role read UI focal. In three loaded runs, the thread's current priority read 0 at the close, before its loop had
+    used the core. It read 47 at the fire.
+  - No run read a share under half a core, and no priority dropped after the close. The loops ran at default priority,
+    below the page's 47. Even 42 loops at user-interactive QoS in the test process left the page 98% of a core. The CI
+    failure did not reproduce, so its cause stays unconfirmed.
+- Change: UTERM-046 M1, in "Feed the closed-tab browser tests a derived busy sample". The closed-tab tests read the
+  page through a sample derived from the live one. It keeps the live start time, time taken, and nil for a process
+  that is gone. Only the processor time is replaced, by the time taken, so the page always reads as one full core. The
+  tests fire the bound right after the close, with no window. A reading no later than the one before it fails the
+  test, so a skipped watch cannot pass a test that expects no signal. The live-sample test now checks its units
+  against independent readers instead of timing a spinning page.
+- After the change, the class passed 9 of 9 on the idle machine, with 14 and with 42 busy loops in the test process,
+  and with 14 busy processes. The failure never reproduced locally, so the test pins the fix, not the bug.
+- Status: unresolved. It stays under Potential until it meets the closing rule in the Rule section.
 
 ### `BrowserUITests.testCommandLFocusesTheAddressBar`
 

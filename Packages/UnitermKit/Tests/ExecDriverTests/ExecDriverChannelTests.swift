@@ -451,6 +451,56 @@ final class ExecDriverChannelTests: XCTestCase {
     if kill(child, 0) == 0 { kill(child, SIGKILL) }
   }
 
+  /// Catches a paused driver that the transport ends as if it had exited.
+  ///
+  /// Darwin's `waitid` reports a stopped child even to a wait for exits alone. A transport that
+  /// believes that report sends the driver's group SIGKILL.
+  ///
+  /// The test pauses a connected driver with SIGSTOP and resumes it with SIGCONT. The driver stays
+  /// connected and still answers the user's Next. It signals the driver by pid. The transport
+  /// holds the driver unreaped while it runs, and this driver never exits on its own. SIGCONT goes
+  /// out only while the driver still reads as stopped, since a driver that was ended may already be
+  /// reaped.
+  func testAStoppedDriverStaysConnectedAndAnswersOnceContinued() async throws {
+    let channel = try start(
+      "script",
+      [
+        command("set-deck", #"{"titles":["One","Two","Three"]}"#),
+        command("show-slide", #"{"index":1}"#),
+      ])
+
+    await waitUntil("the second slide shows") { applet.index == 1 }
+
+    let pid = try XCTUnwrap(channel.pid)
+
+    XCTAssertEqual(kill(pid, SIGSTOP), 0)
+    await waitUntil("the driver stops or ends") { isStopped(pid) || !ended.isEmpty }
+
+    guard ended.isEmpty, isStopped(pid) else {
+      return XCTFail("the driver did not stay paused, so the pause ended it. Ends seen: \(ended)")
+    }
+
+    XCTAssertEqual(kill(pid, SIGCONT), 0)
+
+    applet.button.performClick(nil)
+
+    await waitUntil("the driver advances or ends") { applet.index == 2 || !ended.isEmpty }
+
+    XCTAssertEqual(ended, [], "the pause ended the driver")
+    XCTAssertEqual(applet.index, 2)
+    XCTAssertEqual(channel.phase, .connected)
+  }
+
+  /// Whether the process is stopped, as SIGSTOP leaves it.
+  private func isStopped(_ pid: pid_t) -> Bool {
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
+
+    return info.pbi_status == UInt32(SSTOP)
+  }
+
   /// Catches a channel whose applet closed before it started, and that spawns a child anyway or
   /// never reports its end, so the pane would show a driver running that nothing reaps.
   func testAChannelForAClosedAppletSpawnsNothingAndEnds() throws {

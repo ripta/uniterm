@@ -148,6 +148,10 @@ public final class HelperProcess: @unchecked Sendable {
     // Waiting without reaping keeps the pid from being reused. The flag is set under the lock
     // before the real reap, and `kill` signals only under the same lock, so a signal can never
     // reach a pid that the system has handed to another process.
+    //
+    // Darwin's `waitid` also reports a stopped child to a wait for exits alone. That cannot read
+    // as an exit here, because `kill` above has already sent SIGKILL. Moving the wait before the
+    // kill would make a stopped helper read as reaped, and every later kill would be refused.
     var info = siginfo_t()
     var waited: Int32
 

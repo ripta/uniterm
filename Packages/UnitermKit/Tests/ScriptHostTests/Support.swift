@@ -12,13 +12,6 @@ import XCTest
 
 @testable import ScriptHost
 
-/// What a helper process left behind.
-struct HelperRun {
-  let status: Int32
-  let standardOutput: String
-  let standardError: String
-}
-
 /// A settings store in a defaults domain of its own, so a test never reads or writes the
 /// developer's settings. A new store holds no stored mode, which reads as strict.
 @MainActor
@@ -166,77 +159,45 @@ enum ScriptFixtures {
   /// closing is the end of the input. With none, the input is empty and a read ends at once.
   ///
   /// `memoryCap` is the allocator's cap in bytes, which only a debug helper accepts. A test that
-  /// leaves a helper running is ended by SIGTERM after 60 seconds and by SIGKILL after 70, since a
-  /// helper that handles SIGINT is not always ended by the first.
+  /// leaves a helper running has it ended by SIGTERM after 60 seconds and by SIGKILL after 70,
+  /// since a helper that handles SIGINT is not always ended by the first.
   ///
-  /// `executable` is the command to start, and nil means `helper()`.
+  /// `executable` is the command to start, and nil means `helper()`. `onExit` runs once the
+  /// helper's status is known.
   static func start(
     socket: String?, script: URL, allow: [String] = [], arguments: [String] = [],
     environment: [String: String] = [:], memoryCap: UInt64? = nil, input: Pipe? = nil,
     executable: URL? = nil, onExit: (@Sendable () -> Void)? = nil
-  ) throws -> Process {
-    let process = Process()
-
-    if let onExit {
-      process.terminationHandler = { _ in onExit() }
-    }
-
+  ) throws -> HelperHandle {
     var inherited = ProcessInfo.processInfo.environment
 
     inherited["UNITERM_SOCKET"] = nil
 
-    process.environment = inherited.merging(environment) { _, new in new }
-    process.executableURL = executable ?? helper()
-    process.arguments =
-      ["run"] + (memoryCap.map { ["--memory-cap", String($0)] } ?? [])
-      + allow.flatMap { ["--allow", $0] } + (socket.map { ["--socket", $0] } ?? [])
-      + [script.path] + arguments
-    process.standardInput = input ?? FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-
-    try process.run()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { watchdog.terminate() }
-    }
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 70) {
-      if watchdog.isRunning { kill(watchdog.processIdentifier, SIGKILL) }
-    }
-
-    return process
+    return try HelperHandle.spawn(
+      executable: executable ?? helper(),
+      arguments: ["run"] + (memoryCap.map { ["--memory-cap", String($0)] } ?? [])
+        + allow.flatMap { ["--allow", $0] } + (socket.map { ["--socket", $0] } ?? [])
+        + [script.path] + arguments,
+      environment: inherited.merging(environment) { _, new in new },
+      standardInput: input.map { .file($0.fileHandleForReading) } ?? .null,
+      deadlines: [
+        HelperDeadline(after: .seconds(60), signal: SIGTERM),
+        HelperDeadline(after: .seconds(70), signal: SIGKILL),
+      ],
+      onExit: onExit)
   }
 
-  /// Waits for the helper to exit and reads what it wrote. Neither pipe is read before the
-  /// process ends, which holds because a script's output is small.
-  static func finish(_ process: Process) async -> HelperRun {
-    let out = (process.standardOutput as! Pipe).fileHandleForReading
-    let err = (process.standardError as! Pipe).fileHandleForReading
-
-    return await withCheckedContinuation { continuation in
-      DispatchQueue.global().async {
-        let outData = out.readDataToEndOfFile()
-        let errData = err.readDataToEndOfFile()
-
-        process.waitUntilExit()
-
-        continuation.resume(
-          returning: HelperRun(
-            status: process.terminationStatus,
-            standardOutput: String(decoding: outData, as: UTF8.self),
-            standardError: String(decoding: errData, as: UTF8.self)))
-      }
-    }
+  /// Waits for the helper to end and returns what it wrote. See `HelperHandle.finish()` for a
+  /// pipe that outlives the helper, and for a helper that another reaper took.
+  static func finish(_ helper: HelperHandle) async throws -> HelperRun {
+    try await helper.finish()
   }
 
   static func run(
     socket: String?, script: URL, allow: [String] = [], arguments: [String] = [],
     environment: [String: String] = [:], memoryCap: UInt64? = nil, executable: URL? = nil
   ) async throws -> HelperRun {
-    await finish(
+    try await finish(
       try start(
         socket: socket, script: script, allow: allow, arguments: arguments,
         environment: environment, memoryCap: memoryCap, executable: executable))

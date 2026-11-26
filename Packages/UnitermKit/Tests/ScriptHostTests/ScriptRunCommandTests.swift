@@ -221,23 +221,11 @@ final class ScriptRunCommandTests: XCTestCase {
   }
 
   private func runRaw(_ arguments: [String]) async throws -> HelperRun {
-    let process = Process()
-
-    process.executableURL = ScriptFixtures.helper()
-    process.arguments = arguments
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-
-    try process.run()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { watchdog.terminate() }
-    }
-
-    return await ScriptFixtures.finish(process)
+    try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: ScriptFixtures.helper(), arguments: arguments,
+        environment: ProcessInfo.processInfo.environment,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGTERM)]))
   }
 }
 
@@ -262,7 +250,7 @@ final class ScriptRunAppQuitTests: XCTestCase {
     let process = try ScriptFixtures.start(
       socket: listener.path, script: ScriptFixtures.script("post-status"))
 
-    defer { if process.isRunning { process.terminate() } }
+    defer { process.signal(SIGTERM) }
 
     let asked = await listener.drive { event in
       if case .undeclaredBegun(let connection, _) = event {
@@ -280,7 +268,7 @@ final class ScriptRunAppQuitTests: XCTestCase {
 
     XCTAssertTrue(asked, "the helper never made its call")
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
     XCTAssertEqual(run.status, 74, run.standardError)
     XCTAssertTrue(run.standardError.contains("uniterm quit"), run.standardError)
@@ -299,8 +287,7 @@ final class ScriptRunAppQuitTests: XCTestCase {
 
     defer {
       listener.stop()
-
-      if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+      process.signal(SIGKILL)
     }
 
     Task {
@@ -335,7 +322,7 @@ final class ScriptRunAppQuitTests: XCTestCase {
 
     guard outcome == .completed else { return }
 
-    let run = await ScriptFixtures.finish(process)
+    let run = try await ScriptFixtures.finish(process)
 
     XCTAssertEqual(run.status, 74, run.standardError)
     XCTAssertTrue(run.standardError.contains("uniterm quit"), run.standardError)

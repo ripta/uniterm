@@ -29,26 +29,15 @@ final class ScriptLintCommandTests: XCTestCase {
   }
 
   private func lint(_ arguments: [String], socket: String? = nil) async throws -> HelperRun {
-    let process = Process()
     var environment = ProcessInfo.processInfo.environment
 
     environment["UNITERM_SOCKET"] = socket
-    process.environment = environment
-    process.executableURL = ScriptFixtures.helper()
-    process.arguments = ["lint"] + arguments
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
 
-    try process.run()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { kill(watchdog.processIdentifier, SIGKILL) }
-    }
-
-    return await ScriptFixtures.finish(process)
+    return try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: ScriptFixtures.helper(), arguments: ["lint"] + arguments,
+        environment: environment,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)]))
   }
 
   /// Catches a lint that contacts the app, or one that runs the file. A listener waits at the

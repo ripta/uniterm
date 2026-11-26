@@ -60,24 +60,12 @@ final class ScriptOpenRunTests: XCTestCase {
   private func run(
     _ arguments: [String], in directory: URL? = nil, socket: String? = nil
   ) async throws -> HelperRun {
-    let process = Process()
-
-    process.executableURL = ScriptFixtures.helper()
-    process.arguments = ["open", "--socket", socket ?? host.instanceAddress] + arguments
-    process.currentDirectoryURL = directory
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-
-    try process.run()
-
-    let watchdog = process
-
-    DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
-      if watchdog.isRunning { watchdog.terminate() }
-    }
-
-    return await ScriptFixtures.finish(process)
+    try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: ScriptFixtures.helper(),
+        arguments: ["open", "--socket", socket ?? host.instanceAddress] + arguments,
+        environment: ProcessInfo.processInfo.environment, directory: directory,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGTERM)]))
   }
 
   /// A folder under the temporary folder, named as `realpath` names it, which is how the command
@@ -122,20 +110,15 @@ final class ScriptOpenRunTests: XCTestCase {
 
     try FileManager.default.createDirectory(at: doomed, withIntermediateDirectories: false)
 
-    let process = Process()
-
-    process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = [
-      "-c", "cd \"$1\" && rmdir \"$1\" && exec \"$2\" open --socket \"$3\" relative.txt", "sh",
-      doomed.path, ScriptFixtures.helper().path, host.instanceAddress,
-    ]
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
-
-    try process.run()
-
-    let result = await ScriptFixtures.finish(process)
+    let result = try await ScriptFixtures.finish(
+      try HelperHandle.spawn(
+        executable: URL(fileURLWithPath: "/bin/sh"),
+        arguments: [
+          "-c", "cd \"$1\" && rmdir \"$1\" && exec \"$2\" open --socket \"$3\" relative.txt",
+          "sh", doomed.path, ScriptFixtures.helper().path, host.instanceAddress,
+        ],
+        environment: ProcessInfo.processInfo.environment,
+        deadlines: [HelperDeadline(after: .seconds(60), signal: SIGKILL)]))
 
     XCTAssertEqual(result.status, 66, result.standardError)
     XCTAssertTrue(result.standardError.contains("working directory"), result.standardError)
