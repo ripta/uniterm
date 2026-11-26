@@ -62,11 +62,14 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
   private weak var session: TableSession?
   private let isNested: Bool
-  let filterField = NSSearchField()
+  let filterField = FilterField()
+  let filterCaption = makeCaption(
+    "FILTER", label: "Filter", identifier: "data-viewer-filter-caption")
   let findField = NSSearchField()
   let findCountLabel = NSTextField(labelWithString: "")
   let sheetPicker = NSPopUpButton(frame: .zero, pullsDown: false)
-  private let findRow = NSStackView()
+  let findRow: FindStrip
+  private(set) var colors = FilterFindColors(.latte)
   private let header = NSStackView()
   private var findVisible = false
   private let scrollView = NSScrollView()
@@ -91,6 +94,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   }
   private var identities: [ColumnIdentity] = []
   private var sort: SortSpec?
+  private var filter = ""
   private var palette = ThemePalette.latte
   private(set) var body = DataViewerBody.message("")
 
@@ -100,14 +104,16 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     self.session = session
     self.isNested = isNested
 
+    let suffix = isNested ? "-nested" : ""
+    findRow = FindStrip(field: findField, count: findCountLabel, suffix: suffix)
+
     super.init(frame: .zero)
 
     wantsLayer = true
     if !isNested { registerForDraggedTypes([.fileURL]) }
 
-    let suffix = isNested ? "-nested" : ""
-
     filterField.placeholderString = "Filter rows"
+    filterField.setAccessibilityLabel("Filter rows")
     filterField.sendsWholeSearchString = false
     filterField.sendsSearchStringImmediately = true
     filterField.target = self
@@ -122,16 +128,15 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     findField.action = #selector(findChanged)
     findField.delegate = self
     findField.setAccessibilityIdentifier("data-viewer-find\(suffix)")
+    findField.setAccessibilityLabel("Find in rows")
 
     findCountLabel.font = .systemFont(ofSize: 11)
     findCountLabel.setContentHuggingPriority(.required, for: .horizontal)
     findCountLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
     findCountLabel.setAccessibilityIdentifier("data-viewer-find-count\(suffix)")
 
-    findRow.orientation = .horizontal
-    findRow.spacing = 8
-    findRow.addArrangedSubview(findField)
-    findRow.addArrangedSubview(findCountLabel)
+    findRow.onStep = { [weak self] forward in self?.onStep?(forward) }
+    findRow.onDone = { [weak self] in self?.hideFind() }
 
     sheetPicker.target = self
     sheetPicker.action = #selector(sheetPicked)
@@ -224,8 +229,11 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     fileRow.spacing = 8
     fileRow.alignment = .centerY
     fileRow.addArrangedSubview(fileNameLabel)
+    fileRow.addArrangedSubview(filterCaption)
     fileRow.addArrangedSubview(filterField)
     fileRow.addArrangedSubview(headerOpenButton)
+    fileRow.setCustomSpacing(12, after: fileNameLabel)
+    fileRow.setCustomSpacing(4, after: filterCaption)
 
     // A nested table belongs to its cell, not to a file, and a pane-local Open there would replace
     // the file under the popover.
@@ -361,12 +369,47 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
     findCountLabel.stringValue = find.status
     findCountLabel.isHidden = find.status.isEmpty
+    findRow.update(hasMatch: session?.matches.isEmpty == false)
+
+    self.filter = filter
+    filterField.count = filterCount(filter)
 
     self.sort = sort
     syncColumns()
     updateIndicators(sort: sort)
     tableView.reloadData()
     updateEdgeJumps()
+  }
+
+  /// The count inside the filter field, such as "5 of 250 rows", while a filter hides rows. Empty
+  /// with no filter, where the status bar already gives the count.
+  private func filterCount(_ filter: String) -> String {
+    guard let session, !filter.isEmpty else { return "" }
+
+    let shown = session.visibleCount.formatted()
+    let loaded = session.snapshot.rowCount.formatted()
+
+    return "\(shown) of \(loaded) rows"
+  }
+
+  /// The parts of a cell's text the filter matched, ignoring case as the filter does.
+  private func filterMatches(in text: String) -> [NSRange] {
+    guard !filter.isEmpty else { return [] }
+
+    let string = text as NSString
+    var ranges: [NSRange] = []
+    var search = NSRange(location: 0, length: string.length)
+
+    while search.length > 0 {
+      let found = string.range(of: filter, options: .caseInsensitive, range: search)
+
+      guard found.location != NSNotFound, found.length > 0 else { break }
+
+      ranges.append(found)
+      search = NSRange(location: NSMaxRange(found), length: string.length - NSMaxRange(found))
+    }
+
+    return ranges
   }
 
   // MARK: Edge jumps
@@ -423,9 +466,14 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     layer?.backgroundColor = palette[.base].cgColor
     tableView.backgroundColor = palette[.base].nsColor
     tableView.gridColor = palette[.surface0].nsColor
+    colors = FilterFindColors(palette)
     messageLabel.textColor = palette[.subtext1].nsColor
-    findCountLabel.textColor = palette[.subtext1].nsColor
+    findCountLabel.textColor = Contrast.readable(
+      palette[.subtext1].nsColor, on: colors.findStrip, toward: palette[.text].nsColor)
     fileNameLabel.textColor = palette[.subtext1].nsColor
+    filterCaption.textColor = colors.filterAccent
+    filterField.countLabel.textColor = palette[.subtext1].nsColor
+    findRow.apply(colors)
     edgeJumps.apply(palette)
     tableView.reloadData()
   }
@@ -678,27 +726,30 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     let source = session.selection.row(at: row)
 
     switch session.matchState(row: row, column: column) {
-    case .current:
-      cell.tint = palette[.peach].nsColor.withAlphaComponent(0.6)
-
-    case .match:
-      cell.tint = palette[.yellow].nsColor.withAlphaComponent(0.3)
-
-    case .none:
-      cell.tint = nil
+    case .current: cell.setTint(colors.strongMatch, ink: colors.inkOnStrongMatch)
+    case .match: cell.setTint(colors.paleMatch, ink: colors.inkOnPaleMatch)
+    case .none: cell.setTint(nil, ink: nil)
     }
 
-    cell.label.stringValue = ColumnWidth.displayText(
+    let text = ColumnWidth.displayText(
       session.snapshot, row: source, column: column, limit: 2_000)
+
+    cell.label.stringValue = text
     let numeric = session.numericColumns.contains(column)
     cell.label.alignment = numeric ? .right : .left
     cell.label.font = numeric ? DataCell.numberFont : DataCell.font
 
-    switch session.snapshot.kind(row: source, column: column) {
+    let kind = session.snapshot.kind(row: source, column: column)
+
+    switch kind {
     case .nested: cell.restingColor = palette[.blue].nsColor
     case .null, .notComputed: cell.restingColor = palette[.overlay1].nsColor
     default: cell.restingColor = palette[.text].nsColor
     }
+
+    // Null and a missing formula result hold no text, so the filter never matched their words.
+    let matchable = kind != .null && kind != .notComputed
+    cell.setUnderlines(matchable ? filterMatches(in: text) : [], color: colors.filterUnderline)
 
     return cell
   }
