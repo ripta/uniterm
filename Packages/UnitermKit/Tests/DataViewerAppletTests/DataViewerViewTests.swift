@@ -365,6 +365,74 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertTrue(nested.view.fileNameLabel.isHidden)
   }
 
+  // MARK: Edge jumps
+
+  private func jumpHidden(_ view: DataViewerView) -> [EdgeJumps.Edge: Bool] {
+    view.edgeJumps.buttons.mapValues(\.isHidden)
+  }
+
+  /// Catches arrows that cover a small table, and arrows missing from a wide one. The column pair
+  /// shows when the columns pass ten times the columns in view, and the row pair stays hidden for
+  /// five rows. The last-column arrow scrolls the last column into view, and the first-column
+  /// arrow brings the first one back.
+  func testAWideTableShowsTheColumnArrowsAndTheyReachBothEdges() async throws {
+    let scratch = try Scratch(self)
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    let window = hosted(applet.view, width: 900, height: 500)
+
+    try applet.replaceSource(with: try wideJSON(scratch), startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded && !applet.content.isAddingColumns }
+    window.layoutIfNeeded()
+    applet.content.updateEdgeJumps()
+
+    let hidden = jumpHidden(applet.content)
+    XCTAssertEqual(hidden[.firstColumn], false)
+    XCTAssertEqual(hidden[.lastColumn], false)
+    XCTAssertEqual(hidden[.firstRow], true)
+    XCTAssertEqual(hidden[.lastRow], true)
+
+    let table = applet.content.tableView
+    applet.content.edgeJumps.buttons[.lastColumn]?.performClick(nil)
+    XCTAssertTrue(table.columnIndexes(in: table.visibleRect).contains(1_000))
+
+    applet.content.edgeJumps.buttons[.firstColumn]?.performClick(nil)
+    XCTAssertTrue(table.columnIndexes(in: table.visibleRect).contains(0))
+
+    for edge in EdgeJumps.Edge.allCases {
+      XCTAssertEqual(applet.content.edgeJumps.buttons[edge]?.accessibilityLabel(), edge.label)
+    }
+  }
+
+  /// Catches row arrows that never follow the pane's size. A tall file in a short pane shows them,
+  /// and the same file in a pane tall enough to hold a tenth of it hides them again.
+  func testTheRowArrowsFollowThePanesHeight() async throws {
+    let scratch = try Scratch(self)
+    var text = "n\n"
+    for index in 0..<500 { text += "\(index)\n" }
+
+    let file = try scratch.write("tall.csv", text)
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    let window = hosted(applet.view, width: 600, height: 300)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+    window.layoutIfNeeded()
+    applet.content.updateEdgeJumps()
+
+    XCTAssertEqual(jumpHidden(applet.content)[.lastRow], false)
+    XCTAssertEqual(jumpHidden(applet.content)[.lastColumn], true)
+
+    applet.content.edgeJumps.buttons[.lastRow]?.performClick(nil)
+    let table = applet.content.tableView
+    XCTAssertTrue(table.rows(in: table.visibleRect).contains(499))
+
+    window.setContentSize(NSSize(width: 600, height: 1_400))
+    window.layoutIfNeeded()
+
+    let hid = await eventually { self.jumpHidden(applet.content)[.lastRow] == true }
+    XCTAssertTrue(hid, "the row arrows stayed after the pane grew")
+  }
+
   // MARK: Color math
 
   private static func resolved(_ color: NSColor, in view: NSView) -> NSColor {
