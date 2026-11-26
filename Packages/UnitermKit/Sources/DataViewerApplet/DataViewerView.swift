@@ -6,6 +6,10 @@ import Theme
 enum DataViewerBody: Equatable {
   case table
   case message(String)
+
+  /// A file on its way in, before any row shows. The fraction is how much of the file has been
+  /// read, or nil while that is not known yet.
+  case loading(String, fraction: Double?)
 }
 
 /// What the find bar shows: the query in its field and a line about the matches.
@@ -66,7 +70,9 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   private let messageLabel = NSTextField(wrappingLabelWithString: "")
   private let openButton = NSButton(title: "Open\u{2026}", target: nil, action: nil)
   private let messageStack = NSStackView()
+  let progress = NSProgressIndicator()
   private var identities: [ColumnIdentity] = []
+  private var sort: SortSpec?
   private var palette = ThemePalette.latte
   private(set) var body = DataViewerBody.message("")
 
@@ -128,6 +134,18 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     tableView.doubleAction = #selector(cellDoubleClicked)
 
     scrollView.documentView = tableView
+    scrollView.contentView.postsBoundsChangedNotifications = true
+    scrollView.contentView.postsFrameChangedNotifications = true
+
+    for (name, object) in [
+      (NSView.boundsDidChangeNotification, scrollView.contentView as AnyObject),
+      (NSView.frameDidChangeNotification, scrollView.contentView),
+      (NSTableView.columnDidResizeNotification, tableView),
+    ] {
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(visibleAreaChanged), name: name, object: object)
+    }
+
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = true
     scrollView.drawsBackground = true
@@ -146,7 +164,16 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     messageStack.alignment = .centerX
     messageStack.spacing = 12
     messageStack.translatesAutoresizingMaskIntoConstraints = false
+    progress.style = .bar
+    progress.minValue = 0
+    progress.maxValue = 1
+    progress.isHidden = true
+    progress.translatesAutoresizingMaskIntoConstraints = false
+    progress.setAccessibilityIdentifier("data-viewer-progress\(suffix)")
+    progress.setAccessibilityLabel("Reading the file")
+
     messageStack.addArrangedSubview(messageLabel)
+    messageStack.addArrangedSubview(progress)
     messageStack.addArrangedSubview(openButton)
 
     header.orientation = .vertical
@@ -176,6 +203,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
       messageStack.centerYAnchor.constraint(equalTo: centerYAnchor),
       messageStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
       messageStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+      progress.widthAnchor.constraint(equalToConstant: 200),
     ])
 
     setAccessibilityElement(true)
@@ -242,9 +270,29 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     findRow.isHidden = !showsTable || !findVisible
     messageStack.isHidden = showsTable
 
-    if case .message(let text) = body {
+    switch body {
+    case .table:
+      progress.stopAnimation(nil)
+      progress.isHidden = true
+
+    case .message(let text):
       messageLabel.stringValue = text
       openButton.isHidden = isNested
+      progress.stopAnimation(nil)
+      progress.isHidden = true
+
+    case .loading(let text, let fraction):
+      messageLabel.stringValue = text
+      openButton.isHidden = true
+      progress.isHidden = false
+      progress.isIndeterminate = fraction == nil
+
+      if let fraction {
+        progress.stopAnimation(nil)
+        progress.doubleValue = fraction
+      } else {
+        progress.startAnimation(nil)
+      }
     }
 
     showSheets(sheets)
@@ -260,6 +308,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     findCountLabel.stringValue = find.status
     findCountLabel.isHidden = find.status.isEmpty
 
+    self.sort = sort
     syncColumns()
     updateIndicators(sort: sort)
     tableView.reloadData()
@@ -293,32 +342,152 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
   // MARK: Columns
 
+  /// The most columns one turn of the main run loop adds to the table.
+  ///
+  /// `addTableColumn` costs time in proportion to the columns already there, so adding 1,000 in one
+  /// go held the main thread for close to half a second. The table takes them in batches instead,
+  /// one batch a turn, and events run between them. The last batch of a 1,000-column table costs
+  /// tens of milliseconds.
+  static let columnBatch = 64
+
+  /// The columns the session's snapshot has. The table holds a prefix of them while batches are
+  /// still being added.
+  private var targetColumns: [TableColumn] = []
+
+  private var columnFillScheduled = false
+
+  /// True while the table holds fewer columns than the snapshot has.
+  var isAddingColumns: Bool { identities.count < targetColumns.count }
+
   private func syncColumns() {
-    let columns = session?.snapshot.columns ?? []
-    let next = columns.map(\.identity)
+    targetColumns = session?.snapshot.columns ?? []
 
-    if next != identities {
-      if !next.starts(with: identities) {
-        for column in tableView.tableColumns {
-          tableView.removeTableColumn(column)
-        }
-
-        identities = []
+    if !targetColumns.map(\.identity).starts(with: identities) {
+      for column in tableView.tableColumns {
+        tableView.removeTableColumn(column)
       }
 
-      for index in identities.count..<next.count {
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c\(index)"))
-        column.minWidth = 40
-        column.width = 160
-        column.resizingMask = .userResizingMask
-        tableView.addTableColumn(column)
-      }
-
-      identities = next
+      identities = []
+      columnWindow = nil
     }
 
-    for (index, column) in columns.enumerated() where index < tableView.tableColumns.count {
-      tableView.tableColumns[index].title = column.title
+    addColumnBatch()
+  }
+
+  private func addColumnBatch() {
+    let start = identities.count
+    let end = min(targetColumns.count, start + Self.columnBatch)
+
+    for index in start..<end {
+      let column = DataColumn(index: index)
+      column.minWidth = 40
+      column.width = 160
+      column.resizingMask = .userResizingMask
+      tableView.addTableColumn(column)
+    }
+
+    if end > start {
+      identities += targetColumns[start..<end].map(\.identity)
+      columnWindow = nil
+    }
+
+    // `tableColumns` bridges a fresh array on each read, so it is read once.
+    let tableColumns = tableView.tableColumns
+
+    for (index, column) in targetColumns.enumerated() where index < tableColumns.count {
+      if tableColumns[index].title != column.title {
+        tableColumns[index].title = column.title
+      }
+    }
+
+    if end < targetColumns.count, !columnFillScheduled {
+      columnFillScheduled = true
+
+      // A zero-delay perform waits for the next turn of the run loop, after pending events.
+      perform(#selector(continueColumnFill), with: nil, afterDelay: 0)
+    }
+  }
+
+  @objc private func continueColumnFill() {
+    columnFillScheduled = false
+
+    guard isAddingColumns else { return }
+
+    let before = identities.count
+    addColumnBatch()
+    updateIndicators(sort: sort)
+
+    var rows = IndexSet()
+    tableView.enumerateAvailableRowViews { _, row in rows.insert(row) }
+
+    if !rows.isEmpty {
+      tableView.reloadData(
+        forRowIndexes: rows, columnIndexes: IndexSet(integersIn: before..<identities.count))
+    }
+  }
+
+  // MARK: Column window
+
+  /// Columns this far past the visible ones, in visible widths, get cell views ahead of a scroll.
+  private static let columnReach = 1
+
+  /// The columns that get cell views, or nil before the table has been measured for them.
+  ///
+  /// A view-based table makes a cell view for every column of each row it shows, not only the
+  /// visible ones. With the 1,000 columns a wide JSON file can have, every reload made thousands
+  /// of views and blocked the main thread for about a second. Cells outside this window get no
+  /// view. A scroll, a resize, or a column resize moves the window, and the columns that come into
+  /// it are reloaded in the rows the table holds.
+  private var columnWindow: Range<Int>?
+
+  private var columnWindowRect = NSRect.zero
+
+  /// The column window for the table's visible rect now. It is measured again only when the
+  /// visible rect moved.
+  private func currentColumnWindow() -> Range<Int> {
+    let visible = tableView.visibleRect
+
+    if let columnWindow, visible == columnWindowRect { return columnWindow }
+
+    let window = Self.columnWindow(
+      visible: tableView.columnIndexes(in: visible), count: tableView.numberOfColumns)
+
+    columnWindow = window
+    columnWindowRect = visible
+
+    return window
+  }
+
+  /// The visible columns, widened by `columnReach` times their count on each side. With nothing
+  /// visible yet, the first few columns, so a table that has not been laid out still fills.
+  static func columnWindow(visible: IndexSet, count: Int) -> Range<Int> {
+    guard let first = visible.first, let last = visible.last else { return 0..<min(count, 32) }
+
+    let reach = (last - first + 1) * columnReach
+
+    return max(0, first - reach)..<min(count, last + 1 + reach)
+  }
+
+  @objc private func visibleAreaChanged() {
+    guard let old = columnWindow else { return }
+
+    // A column resize moves columns under a visible rect that stayed put.
+    columnWindowRect = .zero
+
+    let new = currentColumnWindow()
+
+    guard new != old else { return }
+
+    // Columns that left the window are reloaded too, so their views go and a long scroll does not
+    // gather a view for every column again.
+    let moved = IndexSet(integersIn: new).symmetricDifference(IndexSet(integersIn: old))
+      .filteredIndexSet { $0 < tableView.numberOfColumns }
+
+    var rows = IndexSet()
+    tableView.enumerateAvailableRowViews { _, row in rows.insert(row) }
+
+    if !rows.isEmpty, !moved.isEmpty {
+      tableView.reloadData(forRowIndexes: rows, columnIndexes: moved)
     }
   }
 
@@ -344,9 +513,8 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView?
   {
-    guard let session, let tableColumn,
-      let column = tableView.tableColumns.firstIndex(of: tableColumn),
-      row < session.visibleCount
+    guard let session, let column = (tableColumn as? DataColumn)?.index,
+      row < session.visibleCount, currentColumnWindow().contains(column)
     else { return nil }
 
     let cell =
@@ -388,8 +556,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   }
 
   func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
-    guard let index = tableView.tableColumns.firstIndex(of: tableColumn), index < identities.count
-    else { return }
+    guard let index = (tableColumn as? DataColumn)?.index, index < identities.count else { return }
 
     onSort?(identities[index])
   }

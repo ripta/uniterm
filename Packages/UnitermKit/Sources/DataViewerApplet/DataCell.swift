@@ -1,5 +1,22 @@
 import AppKit
 
+/// A column of the table that knows its place, so a cell finds its column without a search.
+@MainActor
+final class DataColumn: NSTableColumn {
+  let index: Int
+
+  init(index: Int) {
+    self.index = index
+
+    super.init(identifier: NSUserInterfaceItemIdentifier("c\(index)"))
+  }
+
+  @available(*, unavailable)
+  required init(coder: NSCoder) {
+    fatalError("init(coder:) is not supported")
+  }
+}
+
 /// One cell of the table: a single-line label whose color follows the row it sits in.
 ///
 /// The palette colors are chosen for the pane's background. A selected row in a focused table

@@ -97,6 +97,93 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertEqual(field.textColor, ThemePalette.latte[.text].nsColor)
   }
 
+  // MARK: Wide tables
+
+  /// Five objects of 1,100 keys each, which fill the 1,000-column cap and its `(more keys)` cell.
+  private func wideJSON(_ scratch: Scratch) throws -> URL {
+    let rows = (0..<5).map { row in
+      "{" + (0..<1_100).map { #""key\#($0)":"value \#(row)-\#($0)""# }.joined(separator: ",")
+        + "}"
+    }
+
+    return try scratch.write("wide.json", "[" + rows.joined(separator: ",") + "]")
+  }
+
+  private func cellCount(_ table: NSTableView, row: Int) -> Int {
+    table.rowView(atRow: row, makeIfNecessary: false)?.subviews.filter { $0 is DataCell }.count
+      ?? 0
+  }
+
+  /// Catches a table that makes a cell view for every column of each row it shows. A view-based
+  /// table does that by default, and with 1,000 columns each reload made thousands of views on the
+  /// main thread. The cells stay near the visible columns, and a scroll to the far edge fills the
+  /// cells there and lets the first ones go.
+  func testAWideTableMakesCellsOnlyNearTheVisibleColumns() async throws {
+    let scratch = try Scratch(self)
+    let file = try wideJSON(scratch)
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    let window = hosted(applet.view, width: 900, height: 500)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded && !applet.content.isAddingColumns }
+
+    let table = applet.content.tableView
+    XCTAssertEqual(table.numberOfColumns, 1_001)
+
+    window.layoutIfNeeded()
+
+    let visible = table.columnIndexes(in: table.visibleRect).count
+    XCTAssertGreaterThan(cellCount(table, row: 0), 0)
+    XCTAssertLessThanOrEqual(cellCount(table, row: 0), 3 * visible + 2)
+
+    table.scrollColumnToVisible(1_000)
+    window.layoutIfNeeded()
+
+    let last = table.rowView(atRow: 0, makeIfNecessary: false)?.view(atColumn: 1_000) as? DataCell
+    XCTAssertNotNil(last, "no cell at the far edge after the scroll")
+    XCTAssertNil(table.rowView(atRow: 0, makeIfNecessary: false)?.view(atColumn: 0))
+    XCTAssertLessThanOrEqual(cellCount(table, row: 0), 3 * visible + 2)
+  }
+
+  /// Catches a table that adds all of a wide file's columns in one turn of the run loop.
+  /// `addTableColumn` grows slower with each column, so 1,000 at once held the main thread for
+  /// close to half a second. The first turn adds one batch, and the rest follow.
+  func testAWideTableAddsItsColumnsInBatches() async throws {
+    let scratch = try Scratch(self)
+    let session = TableSession(budget: makeBudget())
+    session.load(.file(try wideJSON(scratch)))
+    _ = await eventually { session.phase == .loaded }
+
+    // The view's first show runs in its initializer, against the loaded session.
+    let view = DataViewerView(session: session)
+    XCTAssertEqual(view.tableView.numberOfColumns, DataViewerView.columnBatch)
+
+    let filled = await eventually { view.tableView.numberOfColumns == 1_001 }
+    XCTAssertTrue(filled)
+    XCTAssertEqual(view.tableView.tableColumns.last?.title, "(more keys)")
+  }
+
+  /// Catches a pane that says only "Loading" while a file opens, or that forgets which file. The
+  /// pane names the file from the moment the open starts.
+  func testAFileOnItsWayInNamesItself() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("people.csv", "name\nann\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+
+    guard case .loading(let text, _) = applet.content.body else {
+      return XCTFail("no loading state: \(applet.content.body)")
+    }
+
+    XCTAssertEqual(text, "Opening people.csv\u{2026}")
+    XCTAssertFalse(applet.content.progress.isHidden)
+
+    _ = await eventually { applet.session.phase == .loaded }
+    XCTAssertEqual(applet.content.body, .table)
+    XCTAssertTrue(applet.content.progress.isHidden)
+  }
+
   // MARK: Color math
 
   private static func resolved(_ color: NSColor, in view: NSView) -> NSColor {
