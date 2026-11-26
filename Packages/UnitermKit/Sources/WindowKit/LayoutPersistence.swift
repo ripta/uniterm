@@ -143,7 +143,14 @@ public final class LayoutPersistence {
 
   /// Writes the layout now, waits for it to reach the disk, stops further saves, and lets go of the
   /// lock. Quitting calls it, so a change made an instant before the quit is still on disk.
+  ///
+  /// When this instance saves, each applet hears that the app is quitting first, so its last
+  /// description can hold what it saves only at quit.
   public func saveForQuit() {
+    if saver.isEnabled {
+      windows.prepareLayoutForQuit()
+    }
+
     saver.saveNow()
     saver.waitForWrites()
     saver.disable()

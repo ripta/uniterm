@@ -196,10 +196,10 @@ public enum TabCloseResult: Sendable, Equatable {
 
 /// What a pane runs. Every applet implements this contract.
 ///
-/// The host sends the lifecycle events: `start`, `detach`, `reattach`, and `close`. It sends each
-/// when it happens and does nothing else on the applet's behalf. It never keeps an applet alive
-/// after closing it, and it never stops or signals the applet's work itself. Each applet decides
-/// what an event means for its own content.
+/// The host sends the lifecycle events: `start`, `detach`, `reattach`, `willQuit`, and `close`. It
+/// sends each when it happens and does nothing else on the applet's behalf. It never keeps an
+/// applet alive after closing it, and it never stops or signals the applet's work itself. Each
+/// applet decides what an event means for its own content.
 ///
 /// Undo reopens a closed pane from its description, in the same place, with the same kind of
 /// applet. An applet that wants an undo to bring back more saves it in the description's undo-only
@@ -269,6 +269,11 @@ public protocol Applet: AnyObject {
   /// The applet is back on screen. It undoes what `detach` did.
   func reattach()
 
+  /// The app is quitting, and the layout is saved as soon as this returns. The applet puts into
+  /// its description what is too costly to keep there all the time. The host sends it only when
+  /// this instance saves the layout. An applet with nothing of that kind does nothing.
+  func willQuit()
+
   /// Selects the tab with this ID. Returns false when the applet has no such tab, as when it
   /// closed. An applet with one tab selects nothing and returns true when the ID is that tab's.
   func selectTab(id: AppletTabID) -> Bool
@@ -308,6 +313,8 @@ public protocol Applet: AnyObject {
 }
 
 extension Applet {
+  public func willQuit() {}
+
   public func controlDidChange(_ control: PaneControl) {}
 
   public func hostBadgeReachDidChange(_ width: CGFloat) {}
