@@ -231,6 +231,32 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertEqual(column.width, 250)
   }
 
+  // MARK: Alignment
+
+  /// Catches numbers set flush left, where their places do not line up. A numeric column's cells
+  /// and its header sit on the right, and a text column stays on the left.
+  func testANumericColumnIsRightAligned() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "name,amount\nann,3\nbob,1250.5\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.numericColumns == IndexSet([1]) }
+
+    let table = applet.content.tableView
+    table.layoutSubtreeIfNeeded()
+
+    let cells = (0..<2).map {
+      table.rowView(atRow: 0, makeIfNecessary: true)?.view(atColumn: $0) as? DataCell
+    }
+
+    XCTAssertEqual(cells[0]?.label.alignment, .left)
+    XCTAssertEqual(cells[1]?.label.alignment, .right)
+    XCTAssertEqual(table.tableColumns[0].headerCell.alignment, .left)
+    XCTAssertEqual(table.tableColumns[1].headerCell.alignment, .right)
+  }
+
   // MARK: Color math
 
   private static func resolved(_ color: NSColor, in view: NSView) -> NSColor {

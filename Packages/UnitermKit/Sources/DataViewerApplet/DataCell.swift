@@ -28,6 +28,9 @@ final class DataCell: NSTableCellView {
   static let identifier = NSUserInterfaceItemIdentifier("cell")
   static let font = NSFont.systemFont(ofSize: 12)
 
+  /// Digits of one width, so the numbers of a right-aligned column line up by place.
+  static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+
   let label = NSTextField(labelWithString: "")
 
   /// The label's color on the pane's own background.

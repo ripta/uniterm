@@ -61,6 +61,10 @@ public final class TableSession {
   /// effect once the load ends.
   public private(set) var query = TableQuery()
 
+  /// The columns that hold numbers, by the rule of `NumericColumns`. Decided off the main thread
+  /// once the first rows arrive, and again when the load ends. Empty until the first decision.
+  public private(set) var numericColumns = IndexSet()
+
   public var onChange: (() -> Void)?
 
   private let budget: TableBudget
@@ -75,6 +79,8 @@ public final class TableSession {
   private var searchTask: Task<Void, Never>?
   private var searchSequence = 0
   private var revealOnCompletion = false
+  private var numericTask: Task<Void, Never>?
+  private var numericStarted = false
 
   /// Where the next search puts the current match, as a row of the file and a column. The cell
   /// itself when it still matches. Otherwise the first match after it.
@@ -96,6 +102,7 @@ public final class TableSession {
     loadTask?.cancel()
     evaluation?.cancel()
     searchTask?.cancel()
+    numericTask?.cancel()
   }
 
   /// How a cell stands in the find: part of a match, the match the user stands on, or neither. The
@@ -335,6 +342,10 @@ public final class TableSession {
     evaluation?.cancel()
     evaluation = nil
     evaluationIsStale = false
+    numericTask?.cancel()
+    numericTask = nil
+    numericStarted = false
+    numericColumns = IndexSet()
 
     lease.release()
     lease = budget.makeLease()
@@ -358,6 +369,9 @@ public final class TableSession {
       snapshot = next
       progress = latest
       adoptWorkbook(latest, clearsWithoutSheets: false)
+
+      if !numericStarted, next.rowCount > 0 { decideNumericColumns() }
+
       snapshotDidChange()
 
     case .finished(let final, let end, let finalProgress):
@@ -389,6 +403,7 @@ public final class TableSession {
         // A failed load keeps the stored query, so a save does not lose it.
       } else {
         applyRestoredQuery()
+        decideNumericColumns()
       }
 
       snapshotDidChange()
@@ -405,6 +420,34 @@ public final class TableSession {
       sheets = []
       selectedSheet = nil
     }
+  }
+
+  /// Scans the snapshot for numeric columns off the main thread. A newer scan replaces an older
+  /// one, and a reset drops it.
+  private func decideNumericColumns() {
+    numericStarted = true
+    numericTask?.cancel()
+
+    let snapshot = snapshot
+    let started = generation
+
+    numericTask = Task { [weak self] in
+      let found = await Self.numeric(snapshot)
+
+      guard let self, let found, !Task.isCancelled, self.generation == started else { return }
+
+      self.numericTask = nil
+
+      guard found != self.numericColumns else { return }
+
+      self.numericColumns = found
+      self.onChange?()
+    }
+  }
+
+  @concurrent
+  private static func numeric(_ snapshot: TableSnapshot) async -> IndexSet? {
+    NumericColumns.find(in: snapshot, isCancelled: { Task.isCancelled })
   }
 
   /// Drops a stored sort whose column the file does not have, and lets the query take effect.
