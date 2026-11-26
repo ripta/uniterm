@@ -524,6 +524,34 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertEqual(applet.content.filterField.count, "")
   }
 
+  /// Catches a filter count that forgets the load stopped early. After a budget stop it reads "of
+  /// the first N rows", as the status bar does. VoiceOver reaches the count inside the field.
+  func testTheFilterCountNamesAStoppedLoadAndIsReachable() async throws {
+    let scratch = try Scratch(self)
+    var text = "id,v\n"
+    for index in 0..<5_000 { text += "\(index),row number \(index)\n" }
+
+    let file = try scratch.write("big.csv", text)
+    let applet = DataViewerApplet(
+      startDirectory: nil, budget: TableBudget(limit: 40_000, floor: 8_000), pageTarget: 2_000)
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .stoppedAtBudget }
+
+    applet.session.setFilter("number 1")
+    _ = await eventually { applet.session.visibleCount < applet.session.snapshot.rowCount }
+
+    let loaded = applet.session.snapshot.rowCount.formatted()
+    let count = applet.content.filterField.count
+    XCTAssertTrue(count.hasSuffix(" of the first \(loaded) rows"), count)
+
+    let children = applet.content.filterField.accessibilityChildren() ?? []
+    XCTAssertTrue(
+      children.contains { ($0 as AnyObject) === applet.content.filterField.countLabel },
+      "the count is not among the field's accessibility children")
+  }
+
   /// Catches a find strip whose buttons do nothing. Next and previous step the match, and Done
   /// closes the strip and clears the query. Each control and caption has a label for VoiceOver.
   func testTheFindStripStepsAndCloses() async throws {

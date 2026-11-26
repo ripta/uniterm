@@ -382,14 +382,16 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   }
 
   /// The count inside the filter field, such as "5 of 250 rows", while a filter hides rows. Empty
-  /// with no filter, where the status bar already gives the count.
+  /// with no filter, where the status bar already gives the count. After a load that stopped
+  /// early, it reads "of the first N rows", as the status bar does.
   private func filterCount(_ filter: String) -> String {
     guard let session, !filter.isEmpty else { return "" }
 
     let shown = session.visibleCount.formatted()
     let loaded = session.snapshot.rowCount.formatted()
+    let cut = session.phase == .stoppedAtBudget || session.phase == .stoppedLowMemory
 
-    return "\(shown) of \(loaded) rows"
+    return cut ? "\(shown) of the first \(loaded) rows" : "\(shown) of \(loaded) rows"
   }
 
   /// The parts of a cell's text the filter matched, ignoring case as the filter does.
