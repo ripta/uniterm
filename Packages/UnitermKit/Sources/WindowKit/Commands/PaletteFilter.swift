@@ -89,6 +89,17 @@ enum PaletteFilter: Hashable, Sendable {
 /// results. Two or more letters that start a keyword add a hint row above the results. The chip
 /// keeps only the candidates it admits, and the text then searches among those.
 enum PaletteListing {
+  /// The rows on show, each replaced by its entry in `current` where that entry still exists. The
+  /// rows keep their order and their number. A row whose entry is gone, and a row the listing made
+  /// itself such as a keyword hint, stays as it was.
+  static func updatedInPlace(_ shown: [PaletteEntry], from current: [PaletteEntry])
+    -> [PaletteEntry]
+  {
+    let byID = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+    return shown.map { byID[$0.id] ?? $0 }
+  }
+
   /// The fewest letters that offer a keyword. One letter would offer one on most queries.
   static let hintMinimumLength = 2
 
