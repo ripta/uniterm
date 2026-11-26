@@ -53,9 +53,11 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
   private(set) var workingDirectory: String?
   private(set) var hasExited = false
 
+  /// `shellCommand` replaces the login shell with a command libghostty runs as is, quotes and all,
+  /// and picks shell integration for. A program launch ignores it.
   init(
     app: ghostty_app_t, launch: TerminalLaunch, clipboardPolicy: TerminalClipboardPolicy,
-    pasteboard: NSPasteboard
+    pasteboard: NSPasteboard, shellCommand: String? = nil
   ) throws {
     self.clipboardPolicy = clipboardPolicy
     self.pasteboard = pasteboard
@@ -97,6 +99,8 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     // uniterm takes the child-exited action instead and reports the exit at once.
     if let program = launch.program {
       config.command = UnsafePointer(copy(ShellWords.quote(program)))
+    } else if let shellCommand {
+      config.command = UnsafePointer(copy(shellCommand))
     }
 
     var variables = launch.environment.sorted { $0.key < $1.key }.map {
@@ -191,6 +195,29 @@ final class GhosttySurfaceView: NSView, TerminalSession, TerminalMenuActions, NS
     clipboardPolicy = policy
     sessionAllowed = []
     asking = []
+  }
+
+  func scrollbackText() -> String? {
+    guard let surface else { return nil }
+
+    func corner(_ coord: ghostty_point_coord_e) -> ghostty_point_s {
+      ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: coord, x: 0, y: 0)
+    }
+
+    var text = ghostty_text_s()
+    let selection = ghostty_selection_s(
+      top_left: corner(GHOSTTY_POINT_COORD_TOP_LEFT),
+      bottom_right: corner(GHOSTTY_POINT_COORD_BOTTOM_RIGHT), rectangle: false)
+    guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+
+    defer { ghostty_surface_free_text(surface, &text) }
+
+    guard let pointer = text.text else { return nil }
+
+    let bytes = UnsafeBufferPointer(
+      start: UnsafeRawPointer(pointer).assumingMemoryBound(to: UInt8.self),
+      count: Int(text.text_len))
+    return ScrollbackText.prepared(String(decoding: bytes, as: UTF8.self))
   }
 
   func close() {
