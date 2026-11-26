@@ -302,7 +302,7 @@ None.
   Apple's own, with no stated format. M1 records the Xcode version whose lines it reads. A run whose kept log has no
   event lines at all says so, rather than leaving an empty file that reads as "nothing happened".
 - **A CI runner hides the log** — likelihood: low, impact: high. Mitigation: the lines are at the default level, which
-  the system keeps. M4 checks that a failed CI run's kept log holds them. Amended 2026-11-25; see Decision Log.
+  the system keeps. M6 checks that a failed CI run's kept log holds them. Amended 2026-11-25; see Decision Log.
 - **Unconfirmed does not mean undelivered** — likelihood: medium, impact: medium. Accepted: a confirmation that never
   came can come from an event that arrived and posted no notification. The kept log says which events went
   unconfirmed, not why. The frontmost record narrows it, and M2's in-app record answers the rest.
@@ -317,7 +317,7 @@ None.
   then too, which is accepted: without XCTest's event lines, its records could not be matched to unconfirmed events.
 - **Keeping the log adds time to a failed CI job** — likelihood: medium, impact: high. Mitigation: a `log show` over a
   full suite's window runs after the tests, inside the job's time limit. If it pushed the job past the limit, the job
-  would be cancelled, and its upload, the test results included, would never run. M4 measures it on a failed full
+  would be cancelled, and its upload, the test results included, would never run. M6 measures it on a failed full
   suite, and requires the results and the kept log to upload even when the job reaches its limit. Amended 2026-11-25;
   see Decision Log.
 - **Recording changes the timing it measures** — likelihood: medium, impact: medium. Mitigation: pointer moves arrive
@@ -330,7 +330,7 @@ None.
   build, and only when a UI test launch asks. A person's key events keep no key code and no flags, so typed text never
   reaches the log. Amended 2026-11-25; see Decision Log.
 - **UTERM-044 lands its per-shard upload without the kept log** — likelihood: medium, impact: low. Mitigation: UTERM-044
-  M1 is ahead of this proposal in the queue, and its checks name only the test results. M4 here carries the check that
+  M1 is ahead of this proposal in the queue, and its checks name only the test results. M6 here carries the check that
   each failing shard's upload also carries its kept log. Amended 2026-11-25; see Decision Log.
 - **The evidence shows a cause that no test-side change can fix** — likelihood: medium, impact: low. Accepted: knowing
   that the runner drops events is itself the finding. It moves the entries from "suspected" to a known cause, and the
@@ -553,17 +553,36 @@ Times are local, on 2026-11-25.
 
 ### M4: The kept evidence on CI
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 Amended 2026-11-25; see Decision Log.
 
-- A failed CI `app` job uploads the same log with its test results
 - CI's upload path matches the kept log
-- `log show`'s time on a failed full suite is measured on CI and recorded in the As built block. The test results and
-  the kept log still upload when the job reaches its time limit
-- When UTERM-044's shards land, each failing shard's upload carries its own kept log
 - When the tap is used, M2's grant check for a listen-only event tap on uniterm's own process also runs on the CI
   image's macOS
+
+**As built:**
+
+Times are UTC, on 2026-11-26. No run has failed a shard, so this milestone proves the upload path by reading the files
+that name it. See Decision Log.
+
+- The kept log's path is the same in the Makefile's shard target, the scripts, the follow-up collection step, and the
+  upload glob. The shard index in the file name is the job index on both sides. The start-time file is written where
+  the follow-up step reads it.
+- The upload uses `if-no-files-found: ignore`, so a mismatch would pass silently. M6 holds the only proof on a live run.
+- Eight runs were inspected. One of them, 45749818748, predates the collection step. Its three shards skipped the upload
+  step.
+- Runs 45752629043, 45755641410, and 45760228289 are the pull request runs with the collection step. Both the
+  collection step and the upload step were skipped on all three shards of each. The skipped collection steps ran at
+  04:10:51 to 04:13:56 UTC for 45752629043, 04:38:33 to 04:44:17 UTC for 45755641410, and 05:24:28 to 05:25:47 UTC for
+  45760228289. Attempt 1 of 45755641410 failed its `package` job, not a shard. Its three shards passed.
+- The other four runs are main pushes, 45751929530, 45754927772, 45759466625, and 45762275495. Their `app` job was
+  skipped, since a merged pull request had passed the same tree.
+- All eight artifact lists are empty. A passing run uploads nothing. This matches "A passing run keeps nothing new".
+- No path mismatch or bug turned up. Whether an upload from a failed shard reaches the artifact store waits on a failed
+  shard. M6 takes it.
+- The tap bullet does not apply, since no tap code ships. It applies only if a tap is added later. See M2's As built
+  block.
 
 ### M5: The recorder sees a Cmd-T stall
 
@@ -574,6 +593,17 @@ Amended 2026-11-25; see Decision Log.
 - With recording on, the shortcut test still reproduces the Cmd-T stall at about its usual rate
 - A run of the shortcut test alone that reproduces the Cmd-T stall shows, for the unconfirmed T events, whether
   uniterm recorded them. The result goes in the As built block and in the test's flaky entry
+
+### M6: A failed CI shard keeps its evidence
+
+**Status:** NOT STARTED
+
+Split from M4 on 2026-11-25; see Decision Log.
+
+- A failed CI `app` job uploads the same log with its test results
+- `log show`'s time on a failed full suite is measured on CI and recorded in the As built block. The test results and
+  the kept log still upload when the job reaches its time limit
+- When UTERM-044's shards land, each failing shard's upload carries its own kept log
 
 ## Decision Log
 
@@ -692,6 +722,19 @@ Amended 2026-11-25; see Decision Log.
   in a local run or in a kept CI log. The risk "Recording changes the timing it measures" now names M5 for the stall,
   where it named M2. Queue row `| UTERM-060 M5 | UTERM-060 M2 | Needs a Cmd-T stall with recording on. It advances
   only when the shortcut test stalls |` added after UTERM-060 M4. (run best guess)
+- 2026-11-25: M6 "A failed CI shard keeps its evidence" split from M4 by amendment, since no CI shard has failed since
+  the kept-log upload landed, and this run can neither push nor rerun CI. Eight upstream runs ran. No shard failed, and
+  none uploaded an artifact. M4's bullets read: "A failed CI `app` job uploads the same log with its test results",
+  "`log show`'s time on a failed full suite is measured on CI and recorded in the As built block. The test results and
+  the kept log still upload when the job reaches its time limit", and "When UTERM-044's shards land, each failing
+  shard's upload carries its own kept log". M6 takes all three, verbatim. M4 keeps "CI's upload path matches the kept
+  log", which a static read proves, and the tap bullet, which does not apply. Three risks that named M4 for these
+  checks now name M6: "A CI runner hides the log", "Keeping the log adds time to a failed CI job", and "UTERM-044 lands
+  its per-shard upload without the kept log". The UTERM-044 impact line names no milestone, so it stays. Queue row
+  `| UTERM-060 M6 | UTERM-060 M4 | Needs a shard to fail on CI. It advances only when one does |` added after
+  UTERM-060 M5. (run best guess)
+- 2026-11-25: M4's tap bullet does not apply, since no tap code ships. The bullet stays in M4, and its As built block
+  says so. The decision is M2's entry on the grant probe. (run best guess)
 
 ## References
 

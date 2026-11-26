@@ -5,6 +5,7 @@
 | UTERM-044 M3 | UTERM-044 M2 | Needs a shard to fail on CI. It advances only when one does |
 | UTERM-060 M4 | UTERM-060 M3 | Needs a pushed CI run of M1's kept-log upload |
 | UTERM-060 M5 | UTERM-060 M2 | Needs a Cmd-T stall with recording on. It advances only when the shortcut test stalls |
+| UTERM-060 M6 | UTERM-060 M4 | Needs a shard to fail on CI. It advances only when one does |
 | UTERM-046 M3 | UTERM-046 M2, UTERM-046 M4 | Split from M1-M2 and M4: moves test sites onto M2's fixture handle and M4's guarded call |
 | UTERM-045 M3 | UTERM-045 M1 | Split from M1: the count gates M2. It advances only as pushed CI runs accumulate. A later run recounts |
 | UTERM-045 M2 | UTERM-045 M3, UTERM-044 M1 | Split from M1: starts once M3's clean count is met. After UTERM-044 M1, so its own count runs on shards and never spans that landing |
