@@ -30,6 +30,9 @@ enum ColumnWidth {
   }
 
   /// The width for a column, from its title and the sampled rows of `snapshot`.
+  ///
+  /// The caller measures cells in the tabular-digit font. Whether a column is numeric is decided
+  /// later, and that font is never narrower than the plain one, so a number never gets cut.
   static func fitted(
     title: String, column: Int, in snapshot: TableSnapshot, headerFont: NSFont, cellFont: NSFont
   ) -> CGFloat {

@@ -537,7 +537,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     return ColumnWidth.fitted(
       title: targetColumns[index].title, column: index, in: snapshot,
       headerFont: column.headerCell.font ?? .systemFont(ofSize: NSFont.smallSystemFontSize),
-      cellFont: DataCell.font)
+      cellFont: DataCell.numberFont)
   }
 
   private func refitColumnsSizedWithoutRows() {
