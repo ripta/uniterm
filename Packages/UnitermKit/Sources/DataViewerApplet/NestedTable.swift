@@ -19,6 +19,8 @@ final class NestedTable: NSObject, NSPopoverDelegate {
   private let budget: TableBudget
   private let popover = NSPopover()
   private var child: NestedTable?
+  private(set) var valuePopover: ValuePopover?
+  private let pasteboard: NSPasteboard
   private var palette: ThemePalette
   private var closed = false
   private var posted = AppletNotices()
@@ -29,11 +31,12 @@ final class NestedTable: NSObject, NSPopoverDelegate {
 
   init(
     bytes: [UInt8], title: String, budget: TableBudget, palette: ThemePalette,
-    pageTarget: Int = TableLoader.defaultPageTarget
+    pageTarget: Int = TableLoader.defaultPageTarget, pasteboard: NSPasteboard = .general
   ) {
     self.title = title
     self.budget = budget
     self.palette = palette
+    self.pasteboard = pasteboard
 
     session = TableSession(budget: budget, pageTarget: pageTarget)
     view = DataViewerView(session: session, isNested: true)
@@ -46,6 +49,7 @@ final class NestedTable: NSObject, NSPopoverDelegate {
     view.onSort = { [weak self] column in self?.session.cycleSort(column) }
     view.onFilter = { [weak self] text in self?.session.setFilter(text) }
     view.onExpand = { [weak self] request in self?.expand(request) }
+    view.onShowValue = { [weak self] request in self?.showValue(request) }
     session.onChange = { [weak self] in self?.refresh() }
 
     let controller = NSViewController()
@@ -67,6 +71,7 @@ final class NestedTable: NSObject, NSPopoverDelegate {
     self.palette = palette
     view.apply(palette)
     child?.apply(palette)
+    valuePopover?.apply(palette)
   }
 
   /// Closes the popover and every popover opened from it, and frees the rows.
@@ -76,6 +81,8 @@ final class NestedTable: NSObject, NSPopoverDelegate {
     closed = true
     child?.close()
     child = nil
+    valuePopover?.close()
+    valuePopover = nil
     session.onChange = nil
     session.close()
     popover.close()
@@ -87,13 +94,26 @@ final class NestedTable: NSObject, NSPopoverDelegate {
 
   private func expand(_ request: NestedRequest) {
     child?.close()
+    valuePopover?.close()
+    valuePopover = nil
 
     let next = NestedTable(
-      bytes: request.bytes, title: request.title, budget: budget, palette: palette)
+      bytes: request.bytes, title: request.title, budget: budget, palette: palette,
+      pasteboard: pasteboard)
 
     next.onNotice = onNotice
     child = next
     next.present(relativeTo: request.rect, of: request.anchor)
+  }
+
+  private func showValue(_ request: ValueRequest) {
+    child?.close()
+    child = nil
+    valuePopover?.close()
+
+    let popover = ValuePopover(request, palette: palette, pasteboard: pasteboard)
+    valuePopover = popover
+    popover.present(relativeTo: request.rect, of: request.anchor)
   }
 
   private func refresh() {
