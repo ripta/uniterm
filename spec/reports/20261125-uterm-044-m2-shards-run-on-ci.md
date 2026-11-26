@@ -7,7 +7,7 @@ Started 2026-11-25, as the first row of a `/work-queue` run of `next 2`. Every c
 
 - Run base: "8< --- snip ---", on top of "Merge pull request #118 from ripta/agent/petunia-land5/uterm-046-m4". `git
   cherry upstream/main HEAD` showed only the snip, so the run needed no rebase.
-- Row `UTERM-044 M2`: base is the run base. M2 is DONE. The row review is next.
+- Row `UTERM-044 M2`: base is the run base. M2 is DONE. The row review is done, and the row is finished.
 - Row `UTERM-060 M4`: QUEUED. Report: [20261125-uterm-060-m4-kept-evidence-on-ci.md](20261125-uterm-060-m4-kept-evidence-on-ci.md).
 - No row is held or blocked. `next` skipped no row.
 
@@ -55,7 +55,7 @@ the timings use the four PR runs only.
 - Shard 1 started late in two runs, 36 s and 2:41. Both overlapped a main push run. The block says the cap of 5
   concurrent macOS jobs probably queued it. That is not proven.
 - The Design Decisions estimate "near 234 tests" assumed 15 to 17 minute shard jobs. The measured jobs take 8 to 12
-  minutes. The text is left alone. The As built block notes the larger margin.
+  minutes. The row review amended the estimates in place. See "Row review" below.
 
 ### Bugs and flakes
 
@@ -77,3 +77,21 @@ the timings use the four PR runs only.
 ### Commits
 
 - "Log a second CI sighting of the subframe unsent-input flake"
+- "Prove the UI test shards on CI and split the failed-shard rerun into UTERM-044 M3"
+
+## Row review
+
+- adr-impact: no ADR touched. No uncovered decision.
+- Reviewer finding: M2's As built block said the `package` failure's cause "was not examined". That contradicted the
+  flaky sighting in the same row. Fixed. The block now names the test, its line, its 19.049 s timeout, and the "3243
+  tests, 1 failure" summary.
+- Reviewer finding: the three-shard Design Decision still carried the pre-measurement estimates. Fixed by an amendment
+  in place, with a Decision Log entry quoting the old text. The options bullet keeps the estimates as estimates and
+  gives M2's measured test time and job time. The Rationale gives the one-shard rerun as the measured shard job
+  length, 8 to 12 minutes. That is 9 to 15 minutes shorter than the two-shard estimate. The rerun's own length waits
+  on M3. "Near 234 tests" now reads "Near 395 tests".
+- The coordinator caught two errors in the first fix pass, and the implementer corrected them. The first fix kept
+  "about 11.7 minutes of tests, so its job takes about 8 to 12 minutes". It also stated a measured rerun as "about 10
+  minutes shorter" than an estimate.
+- Checks: `proposals.py check` shows only the expected history move. `make lint` passes. The freeze shows only
+  UTERM-004's hunk with origin `other`.
