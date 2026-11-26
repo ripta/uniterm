@@ -434,6 +434,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       record.sheet = session.selectedSheet
     }
 
+    content.fileName = fileName
     content.show(
       body(), filter: query.filter, sort: query.sort, find: findDisplay(),
       sheets: SheetDisplay(names: session.sheets, selected: session.selectedSheet))

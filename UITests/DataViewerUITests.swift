@@ -70,6 +70,31 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "3 rows" })
   }
 
+  /// Catches a pane that hides which file it shows, or that offers no way to open another without
+  /// the File menu. The row beside the filter names the file, and its Open button replaces it.
+  func testTheFileRowNamesTheFileAndItsOpenButtonReplacesIt() throws {
+    let first = try makeCSV("region,amount\neast,3\n", name: "first.csv")
+    let second = try makeCSV("name\nann\nbob\n", name: "second.csv")
+
+    try plantViewer(path: first.path)
+
+    let app = launchApp(realOpenPanel: true)
+    let window = mainWindow(in: app)
+    let name = window.staticTexts["data-viewer-file-name"]
+
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 20), "no table")
+    XCTAssertTrue(waitFor(name, timeout: 5) { $0 == "first.csv" }, "the row does not name the file")
+
+    let open = window.buttons["data-viewer-open-file"]
+    XCTAssertTrue(open.exists, "no Open button beside the filter")
+    open.click()
+
+    choose(second, in: app, window: window)
+
+    XCTAssertTrue(waitFor(name, timeout: 10) { $0 == "second.csv" }, "the file was not replaced")
+    XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "2 rows" })
+  }
+
   /// Catches Cmd-O routing a CSV file anywhere but the data viewer. The file opens in a new pane
   /// beside the terminal.
   func testCommandORoutesACSVFileToTheDataViewer() throws {
