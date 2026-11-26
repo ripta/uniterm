@@ -63,8 +63,10 @@ let package = Package(
     .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.20")
   ],
   targets: [
-    // Process info helpers that TerminalSurface and ScriptHost both use, with no dependencies. It
-    // reads process identity and ancestry through sysctl, which works on setuid root processes.
+    // Process info helpers with no dependencies. It reads process identity and ancestry through
+    // sysctl, which works on setuid root processes, and signals a process only while it is the one
+    // a caller recorded. TerminalSurface, TerminalApplet, ScriptHost, and BrowserApplet use it, and
+    // so do the ScriptTestSupport, ScriptHostTests, and BrowserAppletTests test targets.
     .target(name: "ProcessInspection"),
     // Writes a private file so a crash leaves the old one or the new one. The layout store and the
     // controller policy store both use it. It has no dependencies.
@@ -144,7 +146,9 @@ let package = Package(
     .target(name: "BrowserModel"),
     .target(
       name: "BrowserApplet",
-      dependencies: ["AppletKit", "BrowserModel", "Preferences", "StatusKit", "Theme"]),
+      dependencies: [
+        "AppletKit", "BrowserModel", "Preferences", "ProcessInspection", "StatusKit", "Theme",
+      ]),
     // What every helper's wire shares: frame headers, the framed socket with descriptor passing,
     // big-endian field coding, and zero-filled page buffers. It has no AppKit.
     .target(name: "HelperWire"),
@@ -362,8 +366,8 @@ let package = Package(
     .testTarget(
       name: "BrowserAppletTests",
       dependencies: [
-        "BrowserApplet", "BrowserModel", "AppletKit", "Preferences", "StatusKit", "Theme",
-        "BrowserTestSupport", "AppletTestSupport",
+        "BrowserApplet", "BrowserModel", "AppletKit", "Preferences", "ProcessInspection",
+        "StatusKit", "Theme", "BrowserTestSupport", "AppletTestSupport",
       ]),
     // Generates document files in code for the text viewer's tests, and finds the unsandboxed
     // helper that SwiftPM builds beside the test bundle.
@@ -396,8 +400,8 @@ let package = Package(
       name: "ScriptHostTests",
       dependencies: [
         "ControllerNativeFixture", "ControllerPackage", "ControllerTestSupport", "FileRouting",
-        "Preferences", "ScriptHost", "ScriptWire", "ScriptHelper", "ScriptTestSupport",
-        "SourceAccess", "StatusKit", "DefaultsTestSupport",
+        "Preferences", "ProcessInspection", "ScriptHost", "ScriptWire", "ScriptHelper",
+        "ScriptTestSupport", "SourceAccess", "StatusKit", "DefaultsTestSupport",
       ],
       resources: [.copy("Fixtures")]),
     .testTarget(

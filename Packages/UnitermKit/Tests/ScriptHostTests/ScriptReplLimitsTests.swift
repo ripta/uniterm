@@ -56,8 +56,8 @@ final class ScriptReplLimitsTests: XCTestCase {
     let reaper = ProcessReaper(
       delay: .milliseconds(20), isRunning: { $0.isRunning },
       kill: {
-        killed.add($0)
-        _ = Darwin.kill($0, SIGKILL)
+        killed.add($0.pid)
+        _ = Darwin.kill($0.pid, SIGKILL)
       })
 
     let host = ScriptHost(

@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import HelperHost
+import OSLog
 import ProcessInspection
 import ScriptWire
 
@@ -36,6 +37,31 @@ public enum ScriptReplEvent: Sendable, Equatable {
 /// How the app makes sure a helper it started is gone. The app never trusts a process ID alone,
 /// since the system reuses them.
 public struct ProcessReaper: Sendable {
+  /// A helper as the reaper kills it: its identity, and the microsecond it started, both read in
+  /// one look at the process. The identity's start time has one-second resolution, which leaves
+  /// room for a reused process ID. The microsecond start time is what the kill checks.
+  public struct Target: Equatable, Sendable {
+    public let identity: ProcessIdentity
+    public let startedMicroseconds: Int
+
+    public var pid: pid_t { identity.pid }
+
+    public init(identity: ProcessIdentity, startedMicroseconds: Int) {
+      self.identity = identity
+      self.startedMicroseconds = startedMicroseconds
+    }
+
+    /// Reads the process `pid` names now. A process that is gone, or whose start the system will
+    /// not report, reads as having started at zero, which no live process matches.
+    static func reading(_ pid: pid_t) -> Target {
+      let started = ProcessInspection.startTimeMicroseconds(of: pid) ?? 0
+
+      return Target(
+        identity: ProcessIdentity(pid: pid, started: started / 1_000_000),
+        startedMicroseconds: started)
+    }
+  }
+
   /// How long a helper has to leave on its own after its connection closes and its pty hangs up.
   public var delay: Duration
 
@@ -43,34 +69,62 @@ public struct ProcessReaper: Sendable {
   /// process, so it reads false.
   public var isRunning: @Sendable (ProcessIdentity) -> Bool
 
-  public var kill: @Sendable (pid_t) -> Void
+  public var kill: @Sendable (Target) -> Void
 
   public init(
     delay: Duration, isRunning: @escaping @Sendable (ProcessIdentity) -> Bool,
-    kill: @escaping @Sendable (pid_t) -> Void
+    kill: @escaping @Sendable (Target) -> Void
   ) {
     self.delay = delay
     self.isRunning = isRunning
     self.kill = kill
   }
 
-  public static let live = ProcessReaper(
-    delay: .seconds(2), isRunning: { $0.isRunning }, kill: { _ = Darwin.kill($0, SIGKILL) })
+  public static let live = guarded(delay: .seconds(2), signal: ProcessInspection.signal)
+
+  private static let log = Logger(subsystem: "dev.uniterm.app", category: "repl")
+
+  /// A reaper whose kill sends SIGKILL through `signal`, the guarded call or a test's stand-in, and
+  /// logs what the call did. A process the call reports gone needs no word.
+  static func guarded(
+    delay: Duration,
+    signal: @escaping @Sendable (Int32, pid_t, Int) -> ProcessInspection.SignalResult
+  ) -> ProcessReaper {
+    ProcessReaper(
+      delay: delay, isRunning: { $0.isRunning },
+      kill: { target in
+        let pid = target.pid
+
+        switch signal(SIGKILL, pid, target.startedMicroseconds) {
+        case .byToken, .gone:
+          break
+
+        case .byPid:
+          log.notice("ended helper \(pid) by its process ID: the system gave no audit token")
+
+        case .unreached:
+          log.error("could not end helper \(pid): the signal did not reach it")
+
+        case .refused:
+          log.error("not ending helper \(pid): the process ID is never signalled")
+        }
+      })
+  }
 
   /// Kills the process now, when it is still the one that was recorded. A process ID that the
   /// system has given to another process is left alone.
-  func killNow(_ identity: ProcessIdentity) {
-    if isRunning(identity) { kill(identity.pid) }
+  func killNow(_ target: Target) {
+    if isRunning(target.identity) { kill(target) }
   }
 
   /// Kills the process after the delay, when it is still the one that was recorded.
-  func reap(_ identity: ProcessIdentity) {
+  func reap(_ target: Target) {
     let reaper = self
 
     Task.detached {
       try? await Task.sleep(for: reaper.delay)
 
-      if reaper.isRunning(identity) { reaper.kill(identity.pid) }
+      if reaper.isRunning(target.identity) { reaper.kill(target) }
     }
   }
 }
@@ -86,7 +140,10 @@ public final class ScriptReplChannel {
   public let launch: ScriptReplLaunch
 
   /// The helper's process, once it has attached.
-  public private(set) var helper: ProcessIdentity?
+  public var helper: ProcessIdentity? { helperTarget?.identity }
+
+  /// The helper's process as the reaper kills it, once it has attached.
+  private(set) var helperTarget: ProcessReaper.Target?
 
   /// The terminal session the helper runs under, once the terminal reports the process it
   /// spawned. Only a descendant of it may spend the token.
@@ -148,11 +205,11 @@ public final class ScriptReplChannel {
   func bind(_ connection: ScriptConnection) {
     self.connection = connection
 
-    let started = ProcessInspection.startTime(of: connection.peer.pid) ?? 0
+    let target = ProcessReaper.Target.reading(connection.peer.pid)
 
-    helper = ProcessIdentity(pid: connection.peer.pid, started: started)
+    helperTarget = target
     liveness.markBusy(now: probes.now())
-    onEvent?(.attached(helper!))
+    onEvent?(.attached(target.identity))
   }
 
   func connectionClosed() {
@@ -245,9 +302,9 @@ public final class ScriptReplChannel {
 
   /// Kills the helper, when it is still the process that attached, and says why.
   func terminate(_ reason: ScriptReplEnd) {
-    guard !ended, let helper else { return }
+    guard !ended, let helperTarget else { return }
 
-    reaper.killNow(helper)
+    reaper.killNow(helperTarget)
     connection?.close()
     connection = nil
     onEvent?(.terminated(reason))
@@ -267,7 +324,7 @@ public final class ScriptReplChannel {
     connection?.close()
     connection = nil
 
-    if let helper { reaper.reap(helper) }
+    if let helperTarget { reaper.reap(helperTarget) }
   }
 }
 

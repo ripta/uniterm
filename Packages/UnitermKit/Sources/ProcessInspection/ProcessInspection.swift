@@ -1,8 +1,8 @@
 import Darwin
 import Foundation
 
-/// Reads process information from the system without depending on ScriptHost or TerminalSurface.
-/// Both modules use this to query process identity and ancestry through sysctl.
+/// Reads process information from the system, and signals a process only while it is the one a
+/// caller recorded. It has no dependencies, so any module can use it.
 ///
 /// `proc_pidinfo` refuses a setuid-root process, such as the `/usr/bin/login` that libghostty
 /// spawns, for a caller that is not root. `sysctl(KERN_PROC_PID)` reads it.
@@ -13,6 +13,19 @@ public enum ProcessInspection {
     guard let info = record(of: pid) else { return nil }
 
     return Int(info.kp_proc.p_starttime.tv_sec)
+  }
+
+  /// The start time of the given process, in microseconds since epoch. Returns nil when the process
+  /// does not exist, has exited, or the system refuses the query.
+  ///
+  /// A later process that takes a freed pid starts later, unless the system clock was set back in
+  /// between. So a pid and this time name one process. An exec keeps both.
+  public static func startTimeMicroseconds(of pid: pid_t) -> Int? {
+    guard let info = record(of: pid) else { return nil }
+
+    let started = info.kp_proc.p_starttime
+
+    return Int(started.tv_sec) * 1_000_000 + Int(started.tv_usec)
   }
 
   /// The parent PID and start time of the given process. Returns nil when the process does not

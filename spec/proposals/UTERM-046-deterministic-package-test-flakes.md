@@ -263,7 +263,9 @@ matches, it reports the process gone. After three tries it reports the process u
 reports which path it took, or that the process is gone, unreached, or refused. It refuses a pid of 1 or below and
 the caller's own pid, and signals nothing for them. It also gains a public microsecond start-time reader, which rejects
 a zombie as the existing record reader does. The token stays inside the call as Darwin's `audit_token_t`. So
-`ProcessInspection` keeps no dependencies. `FileRouting`'s `AuditToken` is unchanged.
+`ProcessInspection` keeps no dependencies. `FileRouting`'s `AuditToken` is unchanged. The token signal answers
+EINVAL for signal 0. So a signal 0 probe through the call reports unreached with a token, and without one the pid
+path sends it. Signal 0 probes stay outside the call.
 
 Callers handle each result. The product's two kills treat gone as done, and log unreached and refused as errors.
 `WebContentProcess.kill` returns false for gone, unreached, and refused. The test sender accepts gone, and fails the
@@ -526,7 +528,7 @@ No package test signals a process by an id that the process may no longer hold.
 
 ### M4: The product's kills signal by audit token
 
-**Status:** NOT STARTED
+**Status:** DONE
 
 Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its guarded call.
 
@@ -576,6 +578,30 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
 - Production's `busyShare`, bound, and time sources are unchanged
 - The As built block records which path WebContent and the REPL helper took. It says M4 pins the fix and not the bug,
   since no test can force a process id's reuse
+
+**As built:**
+
+- The guarded call and the microsecond reader shipped as the bullets give them. The token read also rejects a token
+  that names another pid. A failure other than ESRCH reports unreached on either path. The names are run best guesses,
+  in the Decision Log entry for M4's mechanisms.
+- The token signal answers EINVAL for signal 0. So a signal 0 probe with a token reports unreached, and without one
+  the pid path sends it. The tests probe with SIGCONT instead, and the decision now says so.
+- The browser reads the content process's identity at the close, and arms no bound when it reads none. The kill at
+  the fire names that identity. The hang path reads it from the live view right before its kill. The kill returns
+  true for the token and pid paths only.
+- The REPL channel takes the seconds and the microseconds from one reading of the helper, so its `ProcessIdentity`
+  is unchanged. A reaper whose peer is the test process now gets refused, instead of sending SIGKILL to itself.
+- Both WebContent and the REPL helper took the token path. The four BrowserApplet tests that end a real content
+  process assert it, so a macOS that stops giving WebContent a token fails them. A ScriptHost test ends a real REPL
+  helper through the guarded call and sees the token path.
+- The log checks read `OSLogStore(scope: .currentProcessIdentifier)` with a made-up pid per result, through an
+  injected signal. Each takes about 1 to 3 s, which is the store's own read.
+- Mutations each failed a test, and each was restored: a start time compared to the second, a pid fallback after
+  ESRCH, no task name port release, no refusal, a microsecond reader that skips the zombie check, two tries, one try,
+  `kill` without its path check, a watch that reads the identity at the fire, a browser seam and a live reaper that
+  signal the stored pid alone, and a missing pid-path log line in each kill.
+- M4 pins the fix and not the bug, since no test can force a process id's reuse. `busyShare`, the bound, and the time
+  sources are unchanged.
 
 ## Decision Log
 
@@ -760,6 +786,17 @@ Needs nothing from M1 to M3. It lands before M3, since M3's sender wraps its gua
   separate. Correction of fact: "How a test signals a process it does not reap" cited
   `BrowserHungProcessTests.swift:218`, which M1 moved. It now names the `policy(_:log:sample:)` helper.
   (run best guess)
+- 2026-11-25: M4's mechanisms were chosen in the work-queue run. The guarded call is
+  `ProcessInspection.signal(_:pid:startedMicroseconds:)`, and its result is `SignalResult`. The reader is
+  `startTimeMicroseconds(of:)`. The browser's identity is `ContentProcessIdentity`, read by an `identify` seam beside
+  `sample`, and its `Signal` seam returns the call's result so `kill` can log it. The REPL's identity is
+  `ProcessReaper.Target`. `ProcessReaper.kill` still returns nothing, and an internal `guarded(delay:signal:)` builds
+  `.live` and does the logging, so a test can feed it each result. The watch arms no bound when it cannot read the
+  identity at the close, since a kill could then name only the pid. A token signal that fails with an errno other
+  than ESRCH reports unreached. The token read rejects a token whose pid field is not the pid it was read for.
+  Correction of fact: "How a test signals a process it does not reap" said nothing about signal 0. The token signal
+  answers EINVAL for it. So a signal 0 probe through the call reports unreached with a token, and without one the
+  pid path sends it. The decision now says so, and signal 0 probes stay outside the call. (run best guess)
 
 ## References
 

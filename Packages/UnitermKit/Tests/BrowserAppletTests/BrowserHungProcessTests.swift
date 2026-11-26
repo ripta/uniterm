@@ -1,56 +1,188 @@
 import Darwin
+import OSLog
+import ProcessInspection
 import Synchronization
 import WebKit
 import XCTest
 
 @testable import BrowserApplet
 
-/// Records every signal a test sends through `WebContentProcess`, and sends none.
+/// Records every signal a test sends through `WebContentProcess`, with what the guarded call
+/// reported. `record` sends none.
 private final class SignalLog: Sendable {
-  private let sent = Mutex<[pid_t]>([])
+  private struct Sent {
+    var identity: ContentProcessIdentity
+    var result: ProcessInspection.SignalResult
+  }
 
-  var pids: [pid_t] { sent.withLock { $0 } }
+  private let sent = Mutex<[Sent]>([])
 
-  func record(_ pid: pid_t, _: Int32) {
-    sent.withLock { $0.append(pid) }
+  var identities: [ContentProcessIdentity] { sent.withLock { $0.map(\.identity) } }
+  var pids: [pid_t] { identities.map(\.pid) }
+  var results: [ProcessInspection.SignalResult] { sent.withLock { $0.map(\.result) } }
+
+  /// Records the signal and sends none, as if the token reached the process.
+  func record(_ identity: ContentProcessIdentity, _: Int32) -> ProcessInspection.SignalResult {
+    add(identity, .byToken)
+  }
+
+  @discardableResult
+  func add(_ identity: ContentProcessIdentity, _ result: ProcessInspection.SignalResult)
+    -> ProcessInspection.SignalResult
+  {
+    sent.withLock { $0.append(Sent(identity: identity, result: result)) }
+
+    return result
   }
 }
 
+/// An identity for a made-up id, read the way the product reads a real one.
+private func madeUp(_ pid: pid_t, started: Int = 7) -> ContentProcessIdentity {
+  ContentProcessIdentity(pid: pid, startedMicroseconds: started)
+}
+
+private let contentPath = "/x/com.apple.WebKit.WebContent.xpc/Contents/MacOS/x"
+
 /// The guards of the one place that signals a process. A wrong id here would end a process that
-/// has nothing to do with the browser, so these tests never let a signal out.
+/// has nothing to do with the browser, so these tests never let a signal out, except to a child
+/// the test spawned.
 final class WebContentProcessTests: XCTestCase {
-  private func process(
-    log: SignalLog, path: String? = "/x/com.apple.WebKit.WebContent.xpc/Contents/MacOS/x"
-  ) -> WebContentProcess {
-    WebContentProcess(pathOf: { _ in path }, signal: log.record)
+  private func process(log: SignalLog, path: String? = contentPath) -> WebContentProcess {
+    WebContentProcess(pathOf: { _ in path }, identify: { madeUp($0) }, signal: log.record)
   }
 
   /// Catches a kill that reaches the test run's own process group or a process that is not a
   /// content process. `kill(0, ...)` signals the caller's group, and 1 is launchd. The own id has
   /// a real path that is not WebKit's. Each is refused even when the path reader would say yes.
-  func testIdsThatAreNotContentProcessesAreNeverSignalled() {
+  func testIdsThatAreNotContentProcessesAreNeverSignalled() throws {
     let log = SignalLog()
     let guarded = process(log: log)
 
-    XCTAssertFalse(guarded.kill(0))
-    XCTAssertFalse(guarded.kill(1))
-    XCTAssertFalse(guarded.kill(-1))
+    XCTAssertFalse(guarded.kill(madeUp(0)))
+    XCTAssertFalse(guarded.kill(madeUp(1)))
+    XCTAssertFalse(guarded.kill(madeUp(-1)))
 
     let live = WebContentProcess(signal: log.record)
+    let own = try XCTUnwrap(WebContentProcess.startIdentity(getpid()))
 
-    XCTAssertFalse(live.kill(getpid()), "the test's own process is not a content process")
+    XCTAssertFalse(live.kill(own), "the test's own process is not a content process")
     XCTAssertTrue(log.pids.isEmpty)
   }
 
   /// Catches a path check that never lets a real id through, or one that lets any path through. A
-  /// path reader that finds nothing, such as for an id that ended, also signals nothing.
+  /// path reader that finds nothing, such as for an id that ended, also signals nothing. The
+  /// identity the kill was given is the one the seam receives.
   func testOnlyAWebKitContentProcessPathIsSignalled() {
     let log = SignalLog()
 
-    XCTAssertTrue(process(log: log).kill(4242))
-    XCTAssertFalse(process(log: log, path: "/usr/bin/true").kill(4243))
-    XCTAssertFalse(process(log: log, path: nil).kill(4244))
-    XCTAssertEqual(log.pids, [4242])
+    XCTAssertTrue(process(log: log).kill(madeUp(4242)))
+    XCTAssertFalse(process(log: log, path: "/usr/bin/true").kill(madeUp(4243)))
+    XCTAssertFalse(process(log: log, path: nil).kill(madeUp(4244)))
+    XCTAssertEqual(log.identities, [madeUp(4242)])
+  }
+
+  /// Catches a kill that reports a signal the guarded call did not send. Only the token path and
+  /// the id path signalled. Gone, unreached, and refused did not.
+  func testAKillSucceedsOnlyWhenTheGuardedCallSignalled() {
+    let cases: [(ProcessInspection.SignalResult, Bool)] = [
+      (.byToken, true), (.byPid, true), (.gone, false), (.unreached, false), (.refused, false),
+    ]
+
+    for (result, signalled) in cases {
+      let process = WebContentProcess(
+        pathOf: { _ in contentPath }, identify: { madeUp($0) }, signal: { _, _ in result })
+
+      XCTAssertEqual(process.kill(madeUp(4242)), signalled, "\(result)")
+    }
+  }
+
+  /// Catches a kill that hides a fall back to the id or a failure, and one that logs a process
+  /// that was already gone. Each result goes to a made-up id, and nothing is signalled. It cannot
+  /// show that a real content process ever takes the id path.
+  ///
+  /// The log line is the contract, and only the unified log holds it, so no cheaper layer can
+  /// prove it. The test needs a readable log store for the current process. Its reads cost 1 to
+  /// 3 s. It reads until the last expected entry shows, since the entries before it were written
+  /// first.
+  func testAKillLogsThePidPathAndFailuresButNotAGoneProcess() throws {
+    let since = Date()
+    let cases: [(pid: pid_t, result: ProcessInspection.SignalResult)] = [
+      (4501, .byToken), (4502, .byPid), (4503, .gone), (4504, .unreached), (4505, .refused),
+    ]
+
+    for (pid, result) in cases {
+      let process = WebContentProcess(
+        pathOf: { _ in contentPath }, identify: { madeUp($0) }, signal: { _, _ in result })
+
+      process.kill(madeUp(pid))
+    }
+
+    // No documented guarantee says a store read sees an entry written just before it. So the test
+    // reads until the last expected entry shows, or ten seconds pass. Each read takes about a
+    // second, so the loop needs no sleep.
+    let deadline = Date().addingTimeInterval(10)
+    let matching = NSPredicate(
+      format: "subsystem == %@ AND category == %@", "dev.uniterm.app", "browser")
+    var logged: [OSLogEntryLog] = []
+
+    repeat {
+      let store = try OSLogStore(scope: .currentProcessIdentifier)
+
+      logged = try store.getEntries(at: store.position(date: since), matching: matching)
+        .compactMap { $0 as? OSLogEntryLog }
+    } while !logged.contains(where: { $0.composedMessage.contains("process 4505") })
+      && Date() < deadline
+
+    func levels(_ pid: pid_t) -> [OSLogEntryLog.Level] {
+      logged.filter { $0.composedMessage.contains("process \(pid)") }.map(\.level)
+    }
+
+    XCTAssertEqual(levels(4501), [], "a kill by token was logged")
+    XCTAssertEqual(levels(4502), [.notice], "a kill by id was not logged")
+    XCTAssertEqual(levels(4503), [], "a process that was gone was logged")
+    XCTAssertEqual(levels(4504), [.error], "an unreached process was not logged as an error")
+    XCTAssertEqual(levels(4505), [.error], "a refused process was not logged as an error")
+  }
+
+  /// Catches a kill that signals a stored id alone, or skips the guarded call. A real child stands
+  /// in for a content process through the path reader. A start one microsecond off, in the same
+  /// second, leaves it alive. Its recorded identity ends it.
+  func testTheLiveKillEndsOnlyTheRecordedProcess() throws {
+    var pid: pid_t = 0
+    let path = "/bin/sleep"
+    var argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), strdup("30"), nil]
+
+    defer {
+      for word in argv { free(word) }
+    }
+
+    XCTAssertEqual(posix_spawn(&pid, path, nil, nil, &argv, environ), 0)
+
+    var reaped = false
+
+    defer {
+      if !reaped {
+        kill(pid, SIGKILL)
+
+        var status: Int32 = 0
+        waitpid(pid, &status, 0)
+      }
+    }
+
+    let recorded = try XCTUnwrap(WebContentProcess.startIdentity(pid))
+    let started = recorded.startedMicroseconds
+    let off = madeUp(pid, started: started % 1_000_000 < 999_999 ? started + 1 : started - 1)
+    let process = WebContentProcess(pathOf: { _ in contentPath })
+
+    XCTAssertFalse(process.kill(off), "a start one microsecond off was signalled")
+    XCTAssertEqual(ProcessInspection.startTimeMicroseconds(of: pid), started, "the child ended")
+    XCTAssertTrue(process.kill(recorded))
+
+    var status: Int32 = 0
+
+    XCTAssertEqual(waitpid(pid, &status, 0), pid)
+    reaped = true
+    XCTAssertEqual(status & 0x7F, SIGKILL)
   }
 
   /// Catches a read that reports a process before the view has one. A fresh view has no content
@@ -119,6 +251,19 @@ private final class Samples: Sendable {
 
   func next(_: pid_t) -> ProcessSample? {
     queue.withLock { $0.isEmpty ? nil : $0.removeFirst() }
+  }
+}
+
+/// Hands out a fixed list of identities, one per read, then the last one again.
+private final class Identities: Sendable {
+  private let queue: Mutex<[ContentProcessIdentity]>
+
+  init(_ identities: [ContentProcessIdentity]) {
+    queue = Mutex(identities)
+  }
+
+  func next(_: pid_t) -> ContentProcessIdentity? {
+    queue.withLock { $0.count > 1 ? $0.removeFirst() : $0.first }
   }
 }
 
@@ -201,21 +346,24 @@ final class ClosedProcessWatchTests: XCTestCase {
       takenNanoseconds: UInt64(at * Double(Self.second)))
   }
 
-  /// Arms a watch for a closed tab, runs its bound out, and returns what it signalled.
-  private func signals(for samples: [ProcessSample?]) -> (pids: [pid_t], scheduled: Int) {
+  /// Arms a watch for a closed tab, runs its bound out, and returns what it signalled. The made-up
+  /// id reaches the seam through an injected identity reader.
+  private func signals(
+    for samples: [ProcessSample?],
+    identify: @escaping WebContentProcess.Identify = { madeUp($0) }
+  ) -> (identities: [ContentProcessIdentity], scheduled: Int) {
     let log = SignalLog()
     let feed = Samples(samples)
     let timer = ManualHangTimer()
     var policy = timer.policy
 
     policy.process = WebContentProcess(
-      pathOf: { _ in "/x/com.apple.WebKit.WebContent.xpc/Contents/MacOS/x" }, sample: feed.next,
-      signal: log.record)
+      pathOf: { _ in contentPath }, sample: feed.next, identify: identify, signal: log.record)
 
     ClosedProcessWatch.watch(pid: 4242, policy: policy)
     timer.fire()
 
-    return (log.pids, timer.scheduled)
+    return (log.identities, timer.scheduled)
   }
 
   /// Catches a watch that leaves a spinning process behind. Nine and a half seconds of processor
@@ -223,7 +371,28 @@ final class ClosedProcessWatchTests: XCTestCase {
   func testAProcessThatSpinsThroughTheBoundEnds() {
     let result = signals(for: [sample(processor: 1, at: 0), sample(processor: 10.5, at: 10)])
 
-    XCTAssertEqual(result.pids, [4242])
+    XCTAssertEqual(result.identities, [madeUp(4242)])
+  }
+
+  /// Catches a kill that names the process by what it reads at the fire. The identity is read at
+  /// the close, when the tab still knew the process, so the seam gets that one even when a later
+  /// read would name another process under the same id.
+  func testTheKillNamesTheIdentityReadAtTheClose() {
+    let feed = Identities([madeUp(4242, started: 100), madeUp(4242, started: 200)])
+    let result = signals(
+      for: [sample(processor: 1, at: 0), sample(processor: 10.5, at: 10)], identify: feed.next)
+
+    XCTAssertEqual(result.identities, [madeUp(4242, started: 100)])
+  }
+
+  /// Catches work armed for a process whose identity cannot be read at the close. A kill could
+  /// then name nothing but the id.
+  func testAProcessWithNoIdentityAtTheCloseArmsNoBound() {
+    let result = signals(
+      for: [sample(processor: 1, at: 0), sample(processor: 10.5, at: 10)], identify: { _ in nil })
+
+    XCTAssertTrue(result.identities.isEmpty)
+    XCTAssertEqual(result.scheduled, 0)
   }
 
   /// Catches a watch that ends a process doing nothing. WebKit keeps idle processes for reuse, and
@@ -231,7 +400,7 @@ final class ClosedProcessWatchTests: XCTestCase {
   func testAnIdleProcessIsLeftAlone() {
     let result = signals(for: [sample(processor: 1, at: 0), sample(processor: 1.2, at: 10)])
 
-    XCTAssertTrue(result.pids.isEmpty)
+    XCTAssertTrue(result.identities.isEmpty)
   }
 
   /// Catches a kill that reaches a process which took over the id. A process that started at
@@ -241,7 +410,7 @@ final class ClosedProcessWatchTests: XCTestCase {
       sample(started: 7, processor: 1, at: 0), sample(started: 8, processor: 10, at: 10),
     ])
 
-    XCTAssertTrue(result.pids.isEmpty)
+    XCTAssertTrue(result.identities.isEmpty)
   }
 
   /// Catches a signal to an id with nothing behind it. A process that ended during the bound
@@ -249,14 +418,14 @@ final class ClosedProcessWatchTests: XCTestCase {
   func testAProcessThatEndedDuringTheBoundIsLeftAlone() {
     let result = signals(for: [sample(processor: 1, at: 0), nil])
 
-    XCTAssertTrue(result.pids.isEmpty)
+    XCTAssertTrue(result.identities.isEmpty)
   }
 
   /// Catches work armed for a process that is already gone at the close.
   func testAProcessGoneAtTheCloseArmsNoBound() {
     let result = signals(for: [nil])
 
-    XCTAssertTrue(result.pids.isEmpty)
+    XCTAssertTrue(result.identities.isEmpty)
     XCTAssertEqual(result.scheduled, 0)
   }
 }
@@ -297,9 +466,12 @@ final class BrowserHungProcessTests: XCTestCase {
 
     policy.process = WebContentProcess(
       sample: sample,
-      signal: { pid, number in
-        log?.record(pid, number)
-        _ = Darwin.kill(pid, number)
+      signal: { identity, number in
+        let result = WebContentProcess.guardedSignal(identity, number)
+
+        log?.add(identity, result)
+
+        return result
       })
 
     return policy
@@ -320,6 +492,9 @@ final class BrowserHungProcessTests: XCTestCase {
   /// Catches a hung process that survives its replaced view. The bound runs out, the tab builds
   /// a new view, and the old process is gone. The new view runs in a different process and shows
   /// the page. Without the kill the spinning process lives on after its view is released.
+  ///
+  /// The kill reaches the real content process by its audit token. A macOS that stops giving one
+  /// for a content process sends the kill down the id path, and this test fails on the result.
   func testTheBoundEndsTheHungProcessAndTheNewViewRunsInAnother() async throws {
     let timer = ManualHangTimer()
     let log = SignalLog()
@@ -343,6 +518,7 @@ final class BrowserHungProcessTests: XCTestCase {
     }
 
     XCTAssertEqual(log.pids, [pid])
+    XCTAssertEqual(log.results, [.byToken], "the content process gave no audit token")
     XCTAssertFalse(harness.tab.isStopped)
 
     let fresh = try XCTUnwrap(WebContent.processID(of: harness.tab.webView))
@@ -423,6 +599,7 @@ final class BrowserHungProcessTests: XCTestCase {
     await waitUntilGone(pid, in: harness, "the closed tab's process ends")
 
     XCTAssertEqual(log.pids, [pid])
+    XCTAssertEqual(log.results, [.byToken], "the content process gave no audit token")
   }
 
   /// Catches a live sample in the wrong units. The kernel reports processor time in Mach ticks, so
@@ -631,6 +808,7 @@ final class BrowserHungProcessTests: XCTestCase {
     await waitUntilGone(pid, in: harness, "the process ends with the last tab on it")
 
     XCTAssertEqual(log.pids, [pid])
+    XCTAssertEqual(log.results, [.byToken], "the content process gave no audit token")
   }
 
   /// Pins what a tab reopened inside the window does, as measured. The hung tab closes and its
@@ -673,6 +851,7 @@ final class BrowserHungProcessTests: XCTestCase {
     await waitUntilGone(pid, in: harness, "the spinning process ends")
 
     XCTAssertEqual(log.pids, [pid])
+    XCTAssertEqual(log.results, [.byToken], "the content process gave no audit token")
     XCTAssertEqual(reopened.generation, 0)
 
     let value = await harness.run("1 + 1") as? Int
