@@ -26,6 +26,7 @@ final class DataColumn: NSTableColumn {
 @MainActor
 final class DataCell: NSTableCellView {
   static let identifier = NSUserInterfaceItemIdentifier("cell")
+  static let font = NSFont.systemFont(ofSize: 12)
 
   let label = NSTextField(labelWithString: "")
 
@@ -51,7 +52,7 @@ final class DataCell: NSTableCellView {
 
     label.lineBreakMode = .byTruncatingTail
     label.usesSingleLineMode = true
-    label.font = .systemFont(ofSize: 12)
+    label.font = Self.font
     label.translatesAutoresizingMaskIntoConstraints = false
     addSubview(label)
     textField = label

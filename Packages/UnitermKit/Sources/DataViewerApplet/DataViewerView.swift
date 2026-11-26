@@ -146,6 +146,10 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
         self, selector: #selector(visibleAreaChanged), name: name, object: object)
     }
 
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(columnResized), name: NSTableView.columnDidResizeNotification,
+      object: tableView)
+
     scrollView.hasVerticalScroller = true
     scrollView.hasHorizontalScroller = true
     scrollView.drawsBackground = true
@@ -369,9 +373,60 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
 
       identities = []
       columnWindow = nil
+      userSizedColumns = []
+      columnsSizedWithoutRows = []
     }
 
+    refitColumnsSizedWithoutRows()
     addColumnBatch()
+  }
+
+  // MARK: Column widths
+
+  /// Columns the user resized by hand. Their width is theirs from then on.
+  private var userSizedColumns = Set<Int>()
+
+  /// Columns that were sized before any row had loaded, from their header alone. They are sized
+  /// once more when the first rows arrive.
+  private var columnsSizedWithoutRows = Set<Int>()
+
+  /// True while the view sets widths itself, so the resize it causes is not taken for the user's.
+  private var settingWidths = false
+
+  private func fittedWidth(_ index: Int, column: NSTableColumn) -> CGFloat {
+    guard let snapshot = session?.snapshot else { return ColumnWidth.minimum }
+
+    if snapshot.rowCount == 0 { columnsSizedWithoutRows.insert(index) }
+
+    return ColumnWidth.fitted(
+      title: targetColumns[index].title, column: index, in: snapshot,
+      headerFont: column.headerCell.font ?? .systemFont(ofSize: NSFont.smallSystemFontSize),
+      cellFont: DataCell.font)
+  }
+
+  private func refitColumnsSizedWithoutRows() {
+    guard (session?.snapshot.rowCount ?? 0) > 0, !columnsSizedWithoutRows.isEmpty else { return }
+
+    let pending = columnsSizedWithoutRows.subtracting(userSizedColumns)
+    columnsSizedWithoutRows = []
+
+    let tableColumns = tableView.tableColumns
+
+    settingWidths = true
+    defer { settingWidths = false }
+
+    for index in pending where index < tableColumns.count {
+      tableColumns[index].width = fittedWidth(index, column: tableColumns[index])
+    }
+  }
+
+  @objc private func columnResized(_ notification: Notification) {
+    guard !settingWidths,
+      let column = notification.userInfo?["NSTableColumn"] as? DataColumn
+    else { return }
+
+    userSizedColumns.insert(column.index)
+    columnsSizedWithoutRows.remove(column.index)
   }
 
   private func addColumnBatch() {
@@ -381,7 +436,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     for index in start..<end {
       let column = DataColumn(index: index)
       column.minWidth = 40
-      column.width = 160
+      column.width = fittedWidth(index, column: column)
       column.resizingMask = .userResizingMask
       tableView.addTableColumn(column)
     }
@@ -534,22 +589,13 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
       cell.tint = nil
     }
 
+    cell.label.stringValue = ColumnWidth.displayText(
+      session.snapshot, row: source, column: column, limit: 2_000)
+
     switch session.snapshot.kind(row: source, column: column) {
-    case .nested:
-      cell.label.stringValue = "\u{25B8} " + session.snapshot.text(row: source, column: column)
-      cell.restingColor = palette[.blue].nsColor
-
-    case .null:
-      cell.label.stringValue = "null"
-      cell.restingColor = palette[.overlay1].nsColor
-
-    case .notComputed:
-      cell.label.stringValue = "not computed"
-      cell.restingColor = palette[.overlay1].nsColor
-
-    default:
-      cell.label.stringValue = session.snapshot.text(row: source, column: column)
-      cell.restingColor = palette[.text].nsColor
+    case .nested: cell.restingColor = palette[.blue].nsColor
+    case .null, .notComputed: cell.restingColor = palette[.overlay1].nsColor
+    default: cell.restingColor = palette[.text].nsColor
     }
 
     return cell

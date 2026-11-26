@@ -184,6 +184,53 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertTrue(applet.content.progress.isHidden)
   }
 
+  // MARK: Column widths
+
+  /// Catches columns that all start at one fixed width. A short column wastes room and a long one
+  /// cuts its text early. Each starts as wide as its header and its widest sampled value, within
+  /// the bounds, and the long one stops at the maximum so its popover carries the rest.
+  func testColumnsStartAsWideAsTheirContent() async throws {
+    let scratch = try Scratch(self)
+    let long = String(repeating: "word ", count: 80)
+    let file = try scratch.write(
+      "a.csv", "id,city,note\n1,Lisbon,short\n22,Ulaanbaatar,\(long)\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    let widths = applet.content.tableView.tableColumns.map(\.width)
+    XCTAssertEqual(widths.count, 3)
+    XCTAssertEqual(widths[0], ColumnWidth.minimum, "a two-digit column starts at the minimum")
+    XCTAssertGreaterThan(widths[1], widths[0])
+    XCTAssertLessThan(widths[1], ColumnWidth.maximum)
+    XCTAssertEqual(widths[2], ColumnWidth.maximum)
+
+    let cityText = ("Ulaanbaatar" as NSString).size(withAttributes: [.font: DataCell.font]).width
+    XCTAssertGreaterThanOrEqual(widths[1], cityText + ColumnWidth.cellPadding)
+  }
+
+  /// Catches a width the view sets again over one the user chose. A column resized by hand keeps
+  /// its width through later refreshes, such as a filter.
+  func testAColumnResizedByHandKeepsItsWidth() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.csv", "id,city\n1,Lisbon\n2,Oslo\n")
+    let applet = DataViewerApplet(startDirectory: nil, budget: makeBudget())
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    let column = applet.content.tableView.tableColumns[1]
+    column.width = 250
+
+    applet.session.setFilter("o")
+    _ = await eventually { applet.session.visibleCount == 2 }
+
+    XCTAssertEqual(column.width, 250)
+  }
+
   // MARK: Color math
 
   private static func resolved(_ color: NSColor, in view: NSView) -> NSColor {
