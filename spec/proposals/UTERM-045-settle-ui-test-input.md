@@ -207,9 +207,9 @@ None.
 
 ## Risks
 
-- **The launcher hypothesis is wrong** — likelihood: medium, impact: medium. Mitigation: M2 starts only after M1's
-  clean count. A CI failure with the pointer inside the list disproves the cause, and the proposal is then retargeted
-  or retracted, before anything is built on it.
+- **The launcher hypothesis is wrong** — likelihood: medium, impact: medium. Mitigation: M2 starts only after M3's
+  clean count. Amended 2026-11-25; see Decision Log. A CI failure with the pointer inside the list disproves the cause,
+  and the proposal is then retargeted or retracted, before anything is built on it.
 - **A settle never actually waits** — likelihood: medium, impact: low. Mitigation: if `hover()` returns only after the
   pointer moved, the wait proves the precondition but guards nothing. The wheel goes to the coordinate the wait
   checked, so the settle at least pins the wheel's point. M2's event trace shows whether any pointer move falls
@@ -228,17 +228,12 @@ None.
 
 ## Milestones
 
-### M1: The launcher change holds in CI
+### M1: The closing rule and the launcher recount
 
-**Status:** IN PROGRESS
+**Status:** DONE
 
 - The `spec/flaky-tests.md` Rule section states the closing rule above, in place of moving an entry to Fixed on a fix
   commit alone
-- The launcher change has run clean in consecutive CI runs, as built, to the count the closing rule sets. The rate that
-  sets the count follows "Which observed rate sets the count": 2 failures in 22 attempts, so 33 runs. Amended 2026-11-24;
-  see Decision Log. A clean run is one as "What a clean run is" defines it. The launcher entry records the count, and
-  notes that 5 of the clean runs came before "Poll UI test waits every quarter second instead of XCTest's second". A
-  wheel failure, or a change to the aim, restarts the count. M2 does not start before the count is met
 - The Rule section's closing rule defines a clean run as "What a clean run is" does, names no CI job or shard, and
   reads the same with one `app` job or with shards. The launcher recount reads every attempt of every run
 - The Rule section takes N, for every entry, from the lowest failure rate among the windows between the fixes the
@@ -257,16 +252,12 @@ None.
 - The Rule section takes N from CI attempts only, as it counts clean runs. A sighting from a local run is logged, and
   adds nothing to N
 - The Rule section says that a Fixed entry seen again moves back to Potential with the sighting
-- The launcher entry stays under Potential until the count is met, whichever version of `spec/flaky-tests.md` lands
-- A CI failure with the pointer inside the list sends the proposal to the user to retarget or retract
-- A CI failure in which the settle's own wait timed out, or the pointer left the list after the settle, is recorded in
-  the launcher entry, restarts the count, and reopens the aiming question
 
 **As built:**
 
-- The Rule section, the help text, and the recount are done. The count is not met. N is 11 and the count is 33. The
-  streak since the pointer change is 22 clean runs through 2026-11-25T05:48Z, so 11 remain. M2 stays gated on the
-  count. The figures are in the Decision Log.
+- The Rule section, the help text, and the recount are done. The count moved to M3. N is 11 and the count is 33. The
+  streak since the pointer change is 23 clean runs through 2026-11-25T07:27:48Z, so 10 remain. The figures are in the
+  Decision Log.
 
 ### M2: One way to send a wheel
 
@@ -295,6 +286,20 @@ None.
   the one call inside the shared helper, and rejects a raw wheel elsewhere in that file
 - Clean CI runs, as "What a clean run is" defines them, prove the change to the launcher entry's count from M1. Local
   runs do not count
+
+### M3: The launcher count is met
+
+**Status:** IN PROGRESS
+
+- The launcher change has run clean in consecutive CI runs, as built, to the count the closing rule sets. The rate that
+  sets the count follows "Which observed rate sets the count": 2 failures in 22 attempts, so 33 runs. Amended 2026-11-24;
+  see Decision Log. A clean run is one as "What a clean run is" defines it. The launcher entry records the count, and
+  notes that 5 of the clean runs came before "Poll UI test waits every quarter second instead of XCTest's second". A
+  wheel failure, or a change to the aim, restarts the count. M2 does not start before the count is met
+- The launcher entry stays under Potential until the count is met, whichever version of `spec/flaky-tests.md` lands
+- A CI failure with the pointer inside the list sends the proposal to the user to retarget or retract
+- A CI failure in which the settle's own wait timed out, or the pointer left the list after the settle, is recorded in
+  the launcher entry, restarts the count, and reopens the aiming question
 
 ## Decision Log
 
@@ -398,6 +403,18 @@ None.
 - 2026-11-24: Recount from the previous cutoff. One more `app` job finished: 138998184972, finished 2026-11-25T05:48Z,
   passed. Five other runs skipped the `app` job, so they are neutral. The streak is now 22 clean runs through
   2026-11-25T05:48Z. 11 clean runs remain.
+- 2026-11-25: Recount from the previous cutoff. Three runs finished since 2026-11-25T05:48Z. Run 259, job 139008918170,
+  skipped the `app` job. Run 260, job 139036554483, passed. Run 261, job 139049211184, skipped the `app` job. The
+  streak is now 23 clean runs through 2026-11-25T07:27:48Z. 10 clean runs remain.
+- 2026-11-25: M1's clean count split into M3 by amendment, as a run best guess. M1 had the count as a condition of
+  DONE. The `/work-queue` run never pushes, so no CI run can happen inside it. M3 takes the consecutive-clean-runs
+  bullet with its 33-run figure and the 5-runs note; the bullet that the launcher entry stays under Potential until the
+  count is met; the bullet that a CI failure with the pointer inside the list sends the proposal to the user to retarget
+  or retract; and the bullet that a CI failure in which the settle's own wait timed out or the pointer left the list
+  after the settle restarts the count and reopens the aiming question. M1 keeps every bullet about the Rule section, the
+  help text, and how the recount reads attempts. M1 is DONE. M3 is IN PROGRESS, since the recount itself updates the
+  figures. M2 waits on M3. The Risks section now says M2 starts only after M3's clean count. M1's title read "The
+  launcher change holds in CI".
 
 ## References
 

@@ -2,13 +2,13 @@
 
 | Milestones | Depends on | Note |
 |------------|------------|------|
-| UTERM-045 M1 | None | Split from M2: M1 writes the closing rule and recounts the launcher test's clean CI runs, and its count gates M2 |
 | UTERM-044 M1 | None | Shards CI's UI tests first, so every later row gets a shorter run and a shorter flake rerun |
 | UTERM-060 M1-M3 | UTERM-044 M1 | M1's kept-log upload builds on UTERM-044 M1's per-shard jobs, so it is built once |
 | UTERM-046 M1-M2 | UTERM-045 M1 | Its flaky-entry checks close by the rule UTERM-045 M1 writes into `spec/flaky-tests.md` |
 | UTERM-046 M4 | None | Split from M3: the product's kills move to the guarded signal call, and M3's sender wraps that call |
 | UTERM-046 M3 | UTERM-046 M2, UTERM-046 M4 | Split from M1-M2 and M4: moves test sites onto M2's fixture handle and M4's guarded call |
-| UTERM-045 M2 | UTERM-045 M1, UTERM-044 M1 | Split from M1: starts once M1's clean count is met. After UTERM-044 M1, so its own count runs on shards and never spans that landing |
+| UTERM-045 M3 | UTERM-045 M1 | Split from M1: the count gates M2. It advances only as pushed CI runs accumulate. A later run recounts |
+| UTERM-045 M2 | UTERM-045 M3, UTERM-044 M1 | Split from M1: starts once M3's clean count is met. After UTERM-044 M1, so its own count runs on shards and never spans that landing |
 | UTERM-043 M1 | None | Split from M2: M1 builds only on today's control code. M2 checks it against newer features |
 | UTERM-041 M1-M2 | None | |
 | UTERM-042 M1-M3 | UTERM-041 M2 | M2 builds on UTERM-041 M1's tab bar and markers. M3 builds on its chip. M1 needs neither |
