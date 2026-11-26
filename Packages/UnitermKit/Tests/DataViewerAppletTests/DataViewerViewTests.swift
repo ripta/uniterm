@@ -572,7 +572,8 @@ final class DataViewerViewTests: XCTestCase {
     let field = try XCTUnwrap(applet.content.filterField.cell, "the field has no cell")
     let element = (field.accessibilityChildren() ?? []).compactMap { $0 as? NSAccessibilityElement }
       .first { $0.accessibilityIdentifier() == "data-viewer-filter-count" }
-    let reached = try XCTUnwrap(element, "the count is not among the field's accessibility children")
+    let reached = try XCTUnwrap(
+      element, "the count is not among the field's accessibility children")
 
     XCTAssertEqual(reached.accessibilityRole(), .staticText)
     XCTAssertEqual(reached.accessibilityValue() as? String, count)
