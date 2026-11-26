@@ -36,7 +36,8 @@ struct NestedRequest {
 /// The data viewer's body: a filter field, the table, and a message that stands in for it. It
 /// takes a dropped file anywhere in the pane, unless it shows a nested value.
 ///
-/// A double click on a nested cell asks the owner to open it as a table of its own.
+/// A double click on a nested cell asks the owner to open it as a table of its own. A double click
+/// on any other cell with a value asks the owner to show that value whole.
 @MainActor
 final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   NSSearchFieldDelegate
@@ -49,6 +50,9 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   var onStep: ((Bool) -> Void)?
   var onOpen: (() -> Void)?
   var onExpand: ((NestedRequest) -> Void)?
+
+  /// Gets a text or number cell the user asked to read in full.
+  var onShowValue: ((ValueRequest) -> Void)?
 
   /// Gets the name of the sheet the user picked.
   var onSheet: ((String) -> Void)?
@@ -653,21 +657,36 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   }
 
   @objc private func cellDoubleClicked() {
-    guard let session, tableView.clickedRow >= 0, tableView.clickedRow < session.visibleCount,
-      tableView.clickedColumn >= 0, tableView.clickedColumn < tableView.tableColumns.count
+    openCell(row: tableView.clickedRow, column: tableView.clickedColumn)
+  }
+
+  /// Opens the cell at a visible row and column. A nested cell opens as a table of its own. Text,
+  /// a number, or a boolean opens as its whole value. An empty or absent cell opens nothing.
+  func openCell(row: Int, column: Int) {
+    guard let session, row >= 0, row < session.visibleCount, column >= 0,
+      column < tableView.numberOfColumns
     else { return }
 
-    let source = session.selection.row(at: tableView.clickedRow)
-    let column = tableView.clickedColumn
+    let source = session.selection.row(at: row)
+    let title = tableView.tableColumns[column].title
+    let rect = tableView.frameOfCell(atColumn: column, row: row)
+    let bytes = session.snapshot.cell(row: source, column: column)
 
-    guard session.snapshot.kind(row: source, column: column) == .nested else { return }
+    switch session.snapshot.kind(row: source, column: column) {
+    case .nested:
+      onExpand?(NestedRequest(bytes: Array(bytes), title: title, rect: rect, anchor: tableView))
 
-    onExpand?(
-      NestedRequest(
-        bytes: Array(session.snapshot.cell(row: source, column: column)),
-        title: tableView.tableColumns[column].title,
-        rect: tableView.frameOfCell(atColumn: column, row: tableView.clickedRow),
-        anchor: tableView))
+    case .text, .string, .number, .bool:
+      guard !bytes.isEmpty else { return }
+
+      onShowValue?(
+        ValueRequest(
+          text: String(decoding: bytes, as: UTF8.self), title: title, rect: rect,
+          anchor: tableView))
+
+    case .null, .missing, .notComputed:
+      return
+    }
   }
 
   @objc private func sheetPicked() {

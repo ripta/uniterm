@@ -152,6 +152,35 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(nested.staticTexts["beta"].exists, "no second nested row")
   }
 
+  /// Catches a long text cell that cannot be read past the column's edge. A double click opens the
+  /// whole value in a popover with a Copy button. The test does not press Copy, since that writes
+  /// to the system clipboard. The package tests prove Copy on a private pasteboard.
+  func testADoubleClickOnALongTextCellShowsItsWholeValue() throws {
+    let long = String(repeating: "lorem ipsum ", count: 40) + "THE END"
+    let file = try makeCSV("id,note\n7,\(long)\n", name: "notes.csv")
+
+    try plantViewer(path: file.path)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    let table = window.tables["data-viewer-table"]
+
+    XCTAssertTrue(table.appears(timeout: 20), "no table")
+
+    let cell = table.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "lorem"))
+      .firstMatch
+
+    XCTAssertTrue(cell.appears(timeout: 10), "no long cell")
+    cell.doubleClick()
+
+    let text = app.descendants(matching: .any)["data-viewer-value-text"]
+
+    XCTAssertTrue(text.appears(timeout: 10), "the value popover never opened")
+    XCTAssertTrue(
+      waitFor(text, timeout: 5) { $0.hasSuffix("THE END") }, "the popover cut the value")
+    XCTAssertTrue(app.buttons["data-viewer-value-copy"].exists, "no Copy button")
+  }
+
   /// Catches a missing file that shows an empty table or crashes the restore. The pane says the
   /// file is missing.
   func testARestoredViewerWhoseFileIsGoneSaysSo() throws {

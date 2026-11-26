@@ -257,6 +257,70 @@ final class DataViewerViewTests: XCTestCase {
     XCTAssertEqual(table.tableColumns[1].headerCell.alignment, .right)
   }
 
+  // MARK: Whole values
+
+  private func privatePasteboard() -> NSPasteboard {
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("uniterm-test-\(UUID().uuidString)"))
+    addTeardownBlock { pasteboard.releaseGlobally() }
+
+    return pasteboard
+  }
+
+  /// Catches a long cell that the table cuts with no way to read the rest. A double click opens
+  /// the whole value, past the table's own 2,000-byte cut, and Copy puts all of it on the
+  /// pasteboard the pane was given. The test never touches the system clipboard.
+  func testOpeningATextCellShowsAndCopiesItsWholeValue() async throws {
+    let scratch = try Scratch(self)
+    let long = String(repeating: "abcdefghij", count: 400) + "END"
+    let file = try scratch.write("a.csv", "id,note\n7,\(long)\n")
+    let pasteboard = privatePasteboard()
+    let applet = DataViewerApplet(
+      startDirectory: nil, budget: makeBudget(), pasteboard: pasteboard)
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    applet.content.openCell(row: 0, column: 1)
+
+    let popover = try XCTUnwrap(applet.valuePopover)
+    XCTAssertEqual(popover.textView.string, long)
+    XCTAssertFalse(popover.textView.isEditable)
+    XCTAssertTrue(popover.textView.isSelectable)
+
+    popover.copyValue()
+    XCTAssertEqual(pasteboard.string(forType: .string), long)
+    XCTAssertEqual(popover.copyButton.title, "Copied")
+  }
+
+  /// Catches a nested cell that opens as text, and an empty cell that opens an empty popover. A
+  /// nested cell keeps its table, and an empty one opens nothing.
+  func testOnlyCellsWithAPlainValueOpenAsText() async throws {
+    let scratch = try Scratch(self)
+    let file = try scratch.write("a.json", #"[{"n":12,"list":[1],"gone":null}]"#)
+    let applet = DataViewerApplet(
+      startDirectory: nil, budget: makeBudget(), pasteboard: privatePasteboard())
+    _ = hosted(applet.view)
+
+    try applet.replaceSource(with: file, startDirectory: scratch.url.path)
+    _ = await eventually { applet.session.phase == .loaded }
+
+    applet.content.openCell(row: 0, column: 0)
+    XCTAssertEqual(applet.valuePopover?.textView.string, "12")
+
+    var expanded = 0
+    let showValue = applet.content.onShowValue
+    applet.content.onExpand = { _ in expanded += 1 }
+    applet.content.onShowValue = { request in
+      XCTFail("\(request.title) opened as text")
+      showValue?(request)
+    }
+
+    applet.content.openCell(row: 0, column: 1)
+    applet.content.openCell(row: 0, column: 2)
+    XCTAssertEqual(expanded, 1)
+  }
+
   // MARK: Color math
 
   private static func resolved(_ color: NSColor, in view: NSView) -> NSColor {
