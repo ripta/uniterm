@@ -206,6 +206,37 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(app.buttons["data-viewer-value-copy"].exists, "no Copy button")
   }
 
+  /// Catches a wide table with no quick way to its far edge. A file of 1,100 keys shows the column
+  /// arrows, and the last-column arrow brings the `(more keys)` cell into view. Five rows show no
+  /// row arrows.
+  func testTheColumnArrowsReachTheFarEdgeOfAWideTable() throws {
+    let rows = (0..<5).map { row in
+      "{" + (0..<1_100).map { #""key\#($0)":"v\#(row)-\#($0)""# }.joined(separator: ",") + "}"
+    }
+    let file = try makeCSV("[" + rows.joined(separator: ",") + "]", name: "wide.json")
+
+    try plantViewer(path: file.path)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    let table = window.tables["data-viewer-table"]
+
+    XCTAssertTrue(table.appears(timeout: 20), "no table")
+
+    let last = window.buttons["data-viewer-jump-last-column"]
+    XCTAssertTrue(last.appears(timeout: 10), "no last-column arrow")
+    XCTAssertTrue(window.buttons["data-viewer-jump-first-column"].exists, "no first-column arrow")
+    XCTAssertFalse(window.buttons["data-viewer-jump-last-row"].exists, "row arrows on five rows")
+
+    last.click()
+
+    let moreKeys = table.staticTexts.matching(
+      NSPredicate(format: "value BEGINSWITH %@", "\u{25B8} {")
+    )
+    .firstMatch
+    XCTAssertTrue(moreKeys.appears(timeout: 5), "the far edge did not come into view")
+  }
+
   /// Catches a missing file that shows an empty table or crashes the restore. The pane says the
   /// file is missing.
   func testARestoredViewerWhoseFileIsGoneSaysSo() throws {

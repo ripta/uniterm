@@ -75,6 +75,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   private let openButton = NSButton(title: "Open\u{2026}", target: nil, action: nil)
   private let messageStack = NSStackView()
   let progress = NSProgressIndicator()
+  let edgeJumps = EdgeJumps()
   private let fileRow = NSStackView()
   let fileNameLabel = NSTextField(labelWithString: "")
   let headerOpenButton = NSButton(title: "Open\u{2026}", target: nil, action: nil)
@@ -239,6 +240,9 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     addSubview(scrollView)
     addSubview(messageStack)
 
+    edgeJumps.install(in: self, over: scrollView, suffix: suffix)
+    edgeJumps.onJump = { [weak self] edge in self?.jump(to: edge) }
+
     NSLayoutConstraint.activate([
       fileRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
       findRow.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
@@ -362,6 +366,40 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     syncColumns()
     updateIndicators(sort: sort)
     tableView.reloadData()
+    updateEdgeJumps()
+  }
+
+  // MARK: Edge jumps
+
+  /// Shows or hides the arrows for the table's size now. The view calls it as rows arrive and as
+  /// the visible area moves or resizes.
+  func updateEdgeJumps() {
+    let clip = scrollView.contentView.bounds
+    let rowStride = tableView.rowHeight + tableView.intercellSpacing.height
+
+    edgeJumps.update(
+      showsTable: body == .table, columns: targetColumns.count,
+      visibleColumns: tableView.columnIndexes(in: tableView.visibleRect).count,
+      rows: tableView.numberOfRows,
+      visibleRows: rowStride > 0 ? Int(clip.height / rowStride) : 0)
+  }
+
+  func jump(to edge: EdgeJumps.Edge) {
+    switch edge {
+    case .firstColumn:
+      if tableView.numberOfColumns > 0 { tableView.scrollColumnToVisible(0) }
+
+    case .lastColumn:
+      if tableView.numberOfColumns > 0 {
+        tableView.scrollColumnToVisible(tableView.numberOfColumns - 1)
+      }
+
+    case .firstRow:
+      if tableView.numberOfRows > 0 { tableView.scrollRowToVisible(0) }
+
+    case .lastRow:
+      if tableView.numberOfRows > 0 { tableView.scrollRowToVisible(tableView.numberOfRows - 1) }
+    }
   }
 
   /// The picker stays up beside a message too, so a sheet with no rows never traps the user on it.
@@ -388,6 +426,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
     messageLabel.textColor = palette[.subtext1].nsColor
     findCountLabel.textColor = palette[.subtext1].nsColor
     fileNameLabel.textColor = palette[.subtext1].nsColor
+    edgeJumps.apply(palette)
     tableView.reloadData()
   }
 
@@ -582,6 +621,8 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   }
 
   @objc private func visibleAreaChanged() {
+    updateEdgeJumps()
+
     guard let old = columnWindow else { return }
 
     // A column resize moves columns under a visible rect that stayed put.
