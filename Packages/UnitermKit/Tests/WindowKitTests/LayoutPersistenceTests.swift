@@ -503,6 +503,40 @@ final class LayoutPersistenceTests: XCTestCase {
     XCTAssertEqual(second.first.paneIDs.count, 2)
   }
 
+  /// Catches a quit that saves before applets hear of it, or that never tells them. Each applet in
+  /// each window hears once, and what one changes then is in the next launch.
+  func testAppletsHearOfTheQuitBeforeTheLastSave() throws {
+    let (first, _) = try launch()
+    first.first.openPane(.terminalShell, axis: .row)
+    _ = try first.windows.open()
+
+    let applets = first.windows.controllers.flatMap { $0.paneArea.applets }.compactMap {
+      $0 as? FakeApplet
+    }
+    XCTAssertEqual(applets.count, 3)
+    applets[1].titleAtQuit = "saved at quit"
+
+    first.persistence.saveForQuit()
+
+    XCTAssertEqual(applets.map(\.willQuitCount), [1, 1, 1])
+
+    let (second, _) = try launch()
+    XCTAssertTrue(titles(of: second.first).contains("saved at quit"), "\(titles(of: second.first))")
+  }
+
+  /// Catches a second instance that tells its applets to save for a layout it never writes.
+  func testASecondInstanceDoesNotTellItsAppletsOfTheQuit() throws {
+    let (first, _) = try launch()
+    let (second, outcome) = try launch()
+    XCTAssertEqual(outcome, .secondInstance)
+
+    let applet = try XCTUnwrap(second.first.paneArea.applets.first as? FakeApplet)
+    second.persistence.saveForQuit()
+
+    XCTAssertEqual(applet.willQuitCount, 0)
+    first.persistence.saveForQuit()
+  }
+
   /// Catches a title that animates starving the saver. A title change that leaves the saved
   /// description the same is not a layout change. A change to the description still is.
   func testATitleOnlyChangeIsNotALayoutChange() throws {
