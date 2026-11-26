@@ -8,7 +8,7 @@ Started 2026-11-25, as the first row of a `/work-queue` run of `next 2`. Every c
 - Run base: "8< --- snip ---", on top of "Merge pull request #118 from ripta/agent/petunia-land5/uterm-046-m4". `git
   cherry upstream/main HEAD` showed only the snip, so the run needed no rebase.
 - Row `UTERM-044 M2`: base is the run base. M2 is DONE. The row review is done, and the row is finished.
-- Row `UTERM-060 M4`: QUEUED. Report: [20261125-uterm-060-m4-kept-evidence-on-ci.md](20261125-uterm-060-m4-kept-evidence-on-ci.md).
+- Row `UTERM-060 M4`: M4 is DONE. Its row review is done, and the row is finished. Report: [20261125-uterm-060-m4-kept-evidence-on-ci.md](20261125-uterm-060-m4-kept-evidence-on-ci.md).
 - No row is held or blocked. `next` skipped no row.
 
 ## UTERM-044 M2
@@ -95,3 +95,16 @@ the timings use the four PR runs only.
   minutes shorter" than an estimate.
 - Checks: `proposals.py check` shows only the expected history move. `make lint` passes. The freeze shows only
   UTERM-004's hunk with origin `other`.
+
+## Final review
+
+- The run covered UTERM-044 M2 and UTERM-060 M4, from the run base to "Move UTERM-060 M4's finished row to history".
+- The reviewer found nothing to fix. The two new milestones, UTERM-044 M3 and UTERM-060 M6, share the gate "Needs a
+  shard to fail on CI. It advances only when one does". `proposals.py check` is clean. No commit uses a forbidden
+  opener. The range adds or edits no ADR.
+- adr-impact: no ADR touched. No uncovered decision passes the ADR bar.
+- During UTERM-060 M4's row finish, the coordinator's first move to history matched `| UTERM-060 M4 |` as a substring.
+  That also caught the new `UTERM-060 M6` row, whose dependency is M4. The coordinator put M6 back in the queue after
+  M5 before the commit was final. The commit was amended and never pushed.
+- Left for the user: the freeze report's UTERM-004 hunk with origin `other`. It adds an ADR-14 reference line to that
+  proposal. This run did not make it.
