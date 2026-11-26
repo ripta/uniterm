@@ -30,3 +30,4 @@
 | UTERM-022 M5 | UTERM-022 M4 | The user's own checks in the running app, split from M2 and M4 |
 | UTERM-045 M1 | None | Split from M2: M1 writes the closing rule and recounts the launcher test's clean CI runs. M3 carries the count |
 | UTERM-044 M1 | None | Shards CI's UI tests first, so every later row gets a shorter run and a shorter flake rerun |
+| UTERM-060 M1-M3 | UTERM-044 M1 | M1's kept-log upload builds on UTERM-044 M1's per-shard jobs, so it is built once |

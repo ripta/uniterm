@@ -32,6 +32,26 @@ fixed ones.
 - Each CI entry records whether the test ran first in its shard job, and the shard's logged selection. A shard job
   means the matrix job that ran one of the three UI test shards. When a test ran in a full local run, those fields say
   so instead.
+- A sighting of a stalled event records which of its numbered events went unconfirmed, and which app was frontmost.
+  XCTest sends each key or click as numbered events. It waits up to 5 s for the app to confirm each key event and each
+  mouse up. A failed UI run keeps the evidence. A sighting whose run kept none says so.
+  - The kept log is `.build/DerivedData-test/ui-test-kept-log.txt.gz` after `make test-app` or
+    `make test-app-select`. A shard run keeps `ui-test-kept-log-shard-N.txt.gz` beside it. CI uploads that file with
+    a failed shard's test results. The log holds `testmanagerd`'s line for each numbered event. An unconfirmed event
+    reads "confirmed implicitly by confirmation delay timeout". The runner's test marks, issue marks, and frontmost
+    lines share its clock.
+  - A failing test's `.xcresult` carries a `frontmost-record.txt` attachment. It names the frontmost app at the test's
+    start and each activation after.
+  - A debug build writes an `input-recording` line for each event uniterm takes off its queue. A record matches
+    `testmanagerd`'s line by its `source_userdata`, which is the event's number, and by its `type`. Its `source_pid`
+    is `testmanagerd`'s pid. "Key 17 down" records as `type=keyDown keycode=17`. A modifier's down and up both record
+    as `type=flagsChanged`, as in `keycode=55` for Command. A click's "Mouse up" records as `type=leftMouseUp`.
+  - No record means AppKit never dequeued the event. Either it never reached uniterm, or it never left the queue. A
+    record of an unconfirmed event means uniterm took it and its confirmation never came. A record also names the key
+    window and the first responder at the moment uniterm took the event. AppKit merges queued moves, drags, and
+    scrolls, so a missing record for one of those proves nothing. A press on the menu bar leaves no record either.
+  - The app's `window_resigned_key` and `window_became_key` lines show another app's panel taking the keyboard while
+    uniterm stays frontmost.
 - A failure that reproduces reliably is a bug. File it under `spec/bugs/`.
 - Never fix a flake with retries, longer timeouts, or weaker assertions. A wait may grow only when a measurement
   shows that one observation costs most of the old wait. The entry then records that measurement.
@@ -291,6 +311,12 @@ Fixed by: "Wait for the form's focus before typing its answers" and "Give the Qu
   with "the title was not neutralized", after 10 s of row checks. It passed 3 of 3 alone on the same tree.
 - Status: unresolved. A single keystroke that takes about 20 s also shows in the `ControllerRunUITests` and
   `ExecPaneUITests` entries above. The app may stall now and then in a long run. That is not confirmed.
+- Next sighting: when a key stalls, as Cmd-K did, the kept log shows which of its four numbered events timed out. The
+  frontmost lines and the key-window lines show whether another app or a panel held the keyboard. The app's records
+  show whether uniterm dequeued each timed-out event. `testmanagerd`'s `Got NSAccessibilityEventProcessedNotification`
+  lines from uniterm's pid show whether its event loop ran through the stall. That tests the guess that the app stalls.
+  When nothing stalls, as in the two later sightings, the records name the first responder when uniterm took each
+  typed key.
 
 ### `CommandPaletteUITests.testChoosingABackgroundTabSelectsItAndTheKeyboardFollows`
 
@@ -322,6 +348,11 @@ Fixed by: "Wait for the form's focus before typing its answers" and "Give the Qu
   bar through the whole wait. The test passed 3 of 3 alone on the same tree.
 - Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
   `ControllerRunUITests`, and `ExecPaneUITests` entries above. Whether the click reached the control is not known.
+- Next sighting: the kept log shows whether the click's mouse up timed out. XCTest waits on no other event of a click.
+  The bar dismisses on the mouse down, which XCTest sends without waiting. The app's record of that mouse down says
+  whether uniterm took the press. Its `location` says where in the window the press landed. The bar answers every hit
+  test inside it, so the record's hit view reads `status-bar`, not `status-dismiss`. The frontmost lines show whether
+  another app was in front.
 
 ### `ScriptRunCommandTests.testSubprocessAndNetworkAreDeniedByDefaultAndGrantedByTheirNames`
 
@@ -407,6 +438,10 @@ Fixed by: "Wait for the form's focus before typing its answers" and "Give the Qu
 - Status: unresolved. A synthesized event that stalls for seconds also shows in the `CommandPaletteUITests`,
   `ControllerRunUITests`, `ExecPaneUITests`, and `StatusBarUITests` entries above. Whether a key sent that soon after
   launch makes it likelier is not known.
+- Next sighting: the kept log shows which of Cmd-N's four numbered events timed out. The app's `Recording input` line
+  marks its launch. The gap from it to Cmd-N's first event says how soon after launch the key went out. The app's
+  records show whether uniterm dequeued each timed-out event, and which window was key. The frontmost lines and the
+  key-window lines show whether another app or a panel held the keyboard.
 
 ### `CommandPaletteUITests.testATabThatClosesWhileThePaletteShowsDisappearsFromTheList`
 
@@ -485,13 +520,22 @@ Earlier fix: "Wait for the reference scroll view to move in the image viewer scr
   down and T up each "confirmed implicitly by confirmation delay timeout of 5.00s". uniterm sent `testmanagerd` other
   event notifications about every 8 ms through those 10 s, so its event loop ran. In the seventh, Command down timed
   out and the T events were confirmed.
+- Reruns: 2026-11-25, 45 local runs of the test alone on the same machine, with UTERM-060's in-app record built. None
+  stalled, and `testmanagerd` logged no confirmation timeout. With recording on, 15 ran as separate
+  `make test-app-select` runs and 15 as one run of `-test-iterations 15`. With recording off, 15 more ran as one run of
+  `-test-iterations 15`. The earlier run stalled in 3 of 9 iterations, so the rate fell in both conditions. These runs
+  cannot show whether recording changes it. No T event went unconfirmed, so whether uniterm records one stays open for
+  the next sighting.
 - Suspected cause: XCTest sends each key as numbered events and waits up to 5 s for the app to confirm each one. Each
   stall is that window running out for one or more events, and the effect of an unconfirmed key never came. Escape
   closes the palette only through its field's `cancelOperation`, and the palette sets that field as first responder
   before Cmd-T returns. This matches the stalled single events in the `CommandPaletteUITests`, `StatusBarUITests`, and
-  `WindowsUITests` entries. Not confirmed: why the events went unconfirmed. CI keeps no `testmanagerd` log, and
-  UTERM-060 proposes keeping it.
+  `WindowsUITests` entries. Not confirmed: why the events went unconfirmed. The CI run kept no `testmanagerd` log.
 - Status: unresolved.
+- Next sighting: the kept log shows which of the stalled key's numbered events timed out. The frontmost lines and the
+  key-window lines show whether another app or a panel held the keyboard. For each timed-out event, the app's records
+  show whether uniterm dequeued it, and which first responder held the keyboard then. UTERM-060 M5 reads this entry's
+  next Cmd-T stall. It records here whether uniterm recorded the unconfirmed T events.
 
 ## Fixed
 

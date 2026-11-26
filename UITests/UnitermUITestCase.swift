@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import XCTest
 
 /// The base class of every UI test. It launches the app in an isolated environment.
@@ -27,6 +28,27 @@ class UnitermUITestCase: XCTestCase {
   /// The file the app's open panel reads its answer from, when the test answers it.
   private var openPanelAnswer: String { scratch + "-open-panel" }
 
+  /// Logger for test marks, issue marks, and frontmost tracking.
+  private let logger = Logger(subsystem: "dev.uniterm.uitests", category: "test-marks")
+  private let issueLogger = Logger(subsystem: "dev.uniterm.uitests", category: "issue-marks")
+  private let frontmostLogger = Logger(subsystem: "dev.uniterm.uitests", category: "frontmost")
+
+  /// Observer for workspace activation notifications.
+  private var activationObserver: NSObjectProtocol?
+
+  /// The frontmost record for attaching to failing tests.
+  private let frontmostRecord = FrontmostRecord()
+
+  override func invokeTest() {
+    // Log the test's start before setup and its end after teardown, so the marks bracket every
+    // gesture.
+    //
+    // The name includes the class and method.
+    logger.log("Test start: \(self.name, privacy: .public)")
+    super.invokeTest()
+    logger.log("Test end: \(self.name, privacy: .public)")
+  }
+
   override func setUpWithError() throws {
     continueAfterFailure = false
     scratch = NSTemporaryDirectory() + "uniterm-ui-\(UUID().uuidString)"
@@ -35,10 +57,23 @@ class UnitermUITestCase: XCTestCase {
     try FileManager.default.createDirectory(
       atPath: scratch + "-shell", withIntermediateDirectories: true)
     try Data().write(to: URL(fileURLWithPath: scratch + "-shell/.zshrc"))
+
+    // Record the frontmost app at test start and observe activation changes.
+    startFrontmostTracking()
   }
 
   /// A leftover instance would be logged at the next launch, so every test ends its app.
   override func tearDownWithError() throws {
+    stopFrontmostTracking()
+
+    let record = frontmostRecord.lines
+    if !record.isEmpty {
+      let attachment = XCTAttachment(string: record.joined(separator: "\n"))
+      attachment.name = "frontmost-record.txt"
+      attachment.lifetime = .deleteOnSuccess
+      add(attachment)
+    }
+
     for app in launched where app.state != .notRunning {
       app.terminate()
     }
@@ -54,9 +89,58 @@ class UnitermUITestCase: XCTestCase {
     try? FileManager.default.removeItem(atPath: scriptDirectory)
   }
 
+  override func record(_ issue: XCTIssue) {
+    issueLogger.log(
+      "Issue in \(self.name, privacy: .public): \(issue.compactDescription, privacy: .public)")
+    super.record(issue)
+  }
+
   /// The folder the app saves its layout in during this test.
   var layoutDirectory: URL {
     URL(fileURLWithPath: scratch + "-layout", isDirectory: true)
+  }
+
+  /// Records the frontmost app at test start and observes activation changes.
+  ///
+  /// The observer runs on a background queue because XCTest can block the main thread while waiting
+  /// on a synthesized event's confirmation.
+  private func startFrontmostTracking() {
+    let initial = Self.describeFrontmost()
+    frontmostLogger.log("At test start: \(initial, privacy: .public)")
+
+    frontmostRecord.start(with: "At test start: \(initial)")
+
+    let queue = OperationQueue()
+    queue.qualityOfService = .userInitiated
+
+    activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didActivateApplicationNotification,
+      object: nil,
+      queue: queue
+    ) { [frontmostLogger, frontmostRecord] notification in
+      let frontmost = UnitermUITestCase.describeFrontmost()
+      let timestamp = Date().timeIntervalSinceReferenceDate
+
+      frontmostLogger.log("Activation: \(frontmost, privacy: .public)")
+      frontmostRecord.append("Activation at \(timestamp): \(frontmost)")
+    }
+  }
+
+  private func stopFrontmostTracking() {
+    if let observer = activationObserver {
+      NSWorkspace.shared.notificationCenter.removeObserver(observer)
+      activationObserver = nil
+    }
+  }
+
+  private static func describeFrontmost() -> String {
+    guard let app = NSWorkspace.shared.frontmostApplication else {
+      return "none"
+    }
+
+    let bundle = app.bundleIdentifier ?? "no bundle ID"
+    let name = app.localizedName ?? "unnamed"
+    return "\(name) (\(bundle), pid \(app.processIdentifier))"
   }
 
   /// Writes a layout file before the app launches.
@@ -109,6 +193,10 @@ class UnitermUITestCase: XCTestCase {
     app.launchEnvironment["UT_SCRATCH"] = scratch
     app.launchEnvironment["SSH_AUTH_SOCK"] = ""
     app.launchEnvironment["UNITERM_PLACE_NAMES"] = "off"
+
+    // The app records each input event it takes to the unified log, so a failed run's kept log
+    // shows which of XCTest's events reached it.
+    app.launchEnvironment["UNITERM_RECORD_INPUT"] = "1"
 
     usesRealOpenPanel = realOpenPanel
     if !realOpenPanel { app.launchEnvironment["UNITERM_OPEN_PANEL_ANSWER"] = openPanelAnswer }
@@ -451,5 +539,23 @@ class UnitermUITestCase: XCTestCase {
 
     app.typeKey(.return, modifierFlags: [])
     XCTAssertTrue(waitForNoSheet(in: window, timeout: 20), "the panel never closed")
+  }
+}
+
+/// The lines of a test's frontmost record. The activation observer appends from its own queue while
+/// the test reads the lines at teardown on the main thread, so every access goes through one serial
+/// queue. That queue is what makes the unchecked conformance safe.
+private final class FrontmostRecord: @unchecked Sendable {
+  private let queue = DispatchQueue(label: "dev.uniterm.uitests.frontmost-record")
+  private var stored: [String] = []
+
+  var lines: [String] { queue.sync { stored } }
+
+  func start(with line: String) {
+    queue.sync { stored = [line] }
+  }
+
+  func append(_ line: String) {
+    queue.sync { stored.append(line) }
   }
 }

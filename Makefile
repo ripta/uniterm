@@ -138,18 +138,20 @@ fuzz: ghostty ## Fuzz the table, GeoJSON, wire, exec frame, controller, policy, 
 # system attachments and captures screenshots, not recordings, so a direct xcodebuild test
 # records nothing either.
 .PHONY: test-app
-test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission. A local run needs the pointer and keyboard left alone
-	scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) test
+test-app: ghostty ## Run the UI tests with xcodebuild. They need a GUI session and Accessibility permission. A local run needs the pointer and keyboard left alone. A failed run keeps XCTest's event log in .build/DerivedData-test/ui-test-kept-log.txt.gz
+	UNITERM_UI_KEPT_LOG="$(TEST_DERIVED_DATA)/ui-test-kept-log.txt.gz" \
+		scripts/run-ui-tests.sh $(XCODEBUILD_TEST) $(UI_TEST_FLAGS) test
 
 # Like test-package-select, an empty list fails instead of running the whole suite. This fails loudly
 # when a named class does not exist, so a selection that matches nothing cannot pass.
 .PHONY: test-app-select
-test-app-select: ghostty ## Run only the named UI test classes or methods, e.g. make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'. A local run needs the pointer and keyboard left alone
+test-app-select: ghostty ## Run only the named UI test classes or methods, e.g. make test-app-select UI_TESTS='TabsUITests PaneTreeUITests/testCommandZLeavesAClosedPaneClosed'. A local run needs the pointer and keyboard left alone. A failed run keeps XCTest's event log in .build/DerivedData-test/ui-test-kept-log.txt.gz
 	$(if $(strip $(UI_TESTS)),,$(error UI_TESTS is empty. Name the tests to run, or use make test-app for the full suite))
-	scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$(UI_TESTS)" "$(EXPECTED_TESTS)" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
+	UNITERM_UI_KEPT_LOG="$(TEST_DERIVED_DATA)/ui-test-kept-log.txt.gz" \
+		scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$(UI_TESTS)" "$(EXPECTED_TESTS)" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
 
 .PHONY: test-app-shard
-test-app-shard: ghostty ## Run one shard of the UI tests, e.g. make test-app-shard SHARD=0 SHARDS=3. A local run needs the pointer and keyboard left alone
+test-app-shard: ghostty ## Run one shard of the UI tests, e.g. make test-app-shard SHARD=0 SHARDS=3. A local run needs the pointer and keyboard left alone. A failed shard keeps XCTest's event log in .build/DerivedData-test/ui-test-kept-log-shard-SHARD.txt.gz
 	if [[ -z "$(SHARD)" ]]; then echo "Error: SHARD is empty. Set SHARD to the 0-based shard index" >&2; exit 1; fi; \
 	if [[ -z "$(SHARDS)" ]]; then echo "Error: SHARDS is empty. Set SHARDS to the total number of shards" >&2; exit 1; fi; \
 	if ! [[ "$(SHARD)" =~ ^[0-9]+$$ ]] || ! [[ "$(SHARDS)" =~ ^[0-9]+$$ ]]; then echo "Error: SHARD and SHARDS must be numbers" >&2; exit 1; fi; \
@@ -168,7 +170,8 @@ test-app-shard: ghostty ## Run one shard of the UI tests, e.g. make test-app-sha
 	echo "Shard $(SHARD) of $(SHARDS) runs: $$shard_classes"; \
 	echo "Reproduce this shard with: make test-app-select UI_TESTS='$$shard_classes' EXPECTED_TESTS=$$test_count"; \
 	echo "Selected $$test_count tests"; \
-	scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$$shard_classes" "$$test_count" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
+	UNITERM_UI_KEPT_LOG="$(TEST_DERIVED_DATA)/ui-test-kept-log-shard-$(SHARD).txt.gz" \
+		scripts/run-ui-test-selection.sh "$(TEST_DERIVED_DATA)" "$$shard_classes" "$$test_count" "$(UI_TEST_TARGET)" $(XCODEBUILD_TEST) $(UI_TEST_FLAGS)
 
 .PHONY: ghostty-offline-check
 ghostty-offline-check: ## Rebuild the pinned Ghostty with the network off, from the kept caches
