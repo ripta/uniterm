@@ -62,7 +62,7 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
   private let header = NSStackView()
   private var findVisible = false
   private let scrollView = NSScrollView()
-  private let tableView = NSTableView()
+  let tableView = NSTableView()
   private let messageLabel = NSTextField(wrappingLabelWithString: "")
   private let openButton = NSButton(title: "Open\u{2026}", target: nil, action: nil)
   private let messageStack = NSStackView()
@@ -349,52 +349,42 @@ final class DataViewerView: NSView, NSTableViewDataSource, NSTableViewDelegate,
       row < session.visibleCount
     else { return nil }
 
-    let identifier = NSUserInterfaceItemIdentifier("cell")
-    let field =
-      tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTextField
-      ?? {
-        let field = NSTextField(labelWithString: "")
-        field.identifier = identifier
-        field.lineBreakMode = .byTruncatingTail
-        field.usesSingleLineMode = true
-        field.font = .systemFont(ofSize: 12)
-        return field
-      }()
+    let cell =
+      tableView.makeView(withIdentifier: DataCell.identifier, owner: nil) as? DataCell
+      ?? DataCell()
 
     let source = session.selection.row(at: row)
 
     switch session.matchState(row: row, column: column) {
     case .current:
-      field.drawsBackground = true
-      field.backgroundColor = palette[.peach].nsColor.withAlphaComponent(0.6)
+      cell.tint = palette[.peach].nsColor.withAlphaComponent(0.6)
 
     case .match:
-      field.drawsBackground = true
-      field.backgroundColor = palette[.yellow].nsColor.withAlphaComponent(0.3)
+      cell.tint = palette[.yellow].nsColor.withAlphaComponent(0.3)
 
     case .none:
-      field.drawsBackground = false
+      cell.tint = nil
     }
 
     switch session.snapshot.kind(row: source, column: column) {
     case .nested:
-      field.stringValue = "\u{25B8} " + session.snapshot.text(row: source, column: column)
-      field.textColor = palette[.blue].nsColor
+      cell.label.stringValue = "\u{25B8} " + session.snapshot.text(row: source, column: column)
+      cell.restingColor = palette[.blue].nsColor
 
     case .null:
-      field.stringValue = "null"
-      field.textColor = palette[.overlay1].nsColor
+      cell.label.stringValue = "null"
+      cell.restingColor = palette[.overlay1].nsColor
 
     case .notComputed:
-      field.stringValue = "not computed"
-      field.textColor = palette[.overlay1].nsColor
+      cell.label.stringValue = "not computed"
+      cell.restingColor = palette[.overlay1].nsColor
 
     default:
-      field.stringValue = session.snapshot.text(row: source, column: column)
-      field.textColor = palette[.text].nsColor
+      cell.label.stringValue = session.snapshot.text(row: source, column: column)
+      cell.restingColor = palette[.text].nsColor
     }
 
-    return field
+    return cell
   }
 
   func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
