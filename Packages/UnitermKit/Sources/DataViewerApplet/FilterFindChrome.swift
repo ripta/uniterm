@@ -104,6 +104,9 @@ enum Contrast {
 final class FilterField: NSSearchField {
   let countLabel = NSTextField(labelWithString: "")
 
+  /// The count as VoiceOver and the UI tests read it: static text inside the field.
+  let countElement = NSAccessibilityElement()
+
   override class var cellClass: AnyClass? {
     get { FilterFieldCell.self }
     set {}
@@ -120,8 +123,13 @@ final class FilterField: NSSearchField {
     countLabel.font = .monospacedDigitSystemFont(
       ofSize: NSFont.smallSystemFontSize, weight: .regular)
     countLabel.alignment = .right
-    countLabel.setAccessibilityIdentifier("data-viewer-filter-count")
+    countLabel.setAccessibilityElement(false)
     addSubview(countLabel)
+
+    countElement.setAccessibilityRole(.staticText)
+    countElement.setAccessibilityIdentifier("data-viewer-filter-count")
+    countElement.setAccessibilityParent(cell)
+    (cell as? FilterFieldCell)?.countElement = countElement
   }
 
   @available(*, unavailable)
@@ -137,16 +145,9 @@ final class FilterField: NSSearchField {
 
       countLabel.stringValue = newValue
       countLabel.isHidden = newValue.isEmpty
+      countElement.setAccessibilityValue(newValue)
       needsLayout = true
     }
-  }
-
-  /// A search field exposes only its own cell's parts, so the count is added by hand for VoiceOver
-  /// and the UI tests to reach.
-  override func accessibilityChildren() -> [Any]? {
-    let own = super.accessibilityChildren() ?? []
-
-    return countLabel.isHidden ? own : own + [countLabel]
   }
 
   override func layout() {
@@ -162,12 +163,32 @@ final class FilterField: NSSearchField {
 
     countLabel.frame = NSRect(
       x: cancel.minX - width - 2, y: (bounds.height - height) / 2, width: width, height: height)
+
+    // The parent's space has its origin at the bottom left.
+    var frame = countLabel.frame
+    if isFlipped { frame.origin.y = bounds.height - frame.maxY }
+    countElement.setAccessibilityFrameInParentSpace(frame)
   }
 }
 
-/// Keeps the typed text clear of the row count.
+/// Keeps the typed text clear of the row count, and carries the count for VoiceOver.
+///
+/// A search field's accessibility element is its cell, not the field view, and the cell lists only
+/// its own parts. The count is added to the cell's children, and it names the cell as its parent.
+/// A child whose parent does not list it, as the label view would be, sends a walk of the tree in
+/// a loop.
 final class FilterFieldCell: NSSearchFieldCell {
   var reservedTrailing: CGFloat = 0
+  weak var countElement: NSAccessibilityElement?
+
+  override func accessibilityChildren() -> [Any]? {
+    let own = super.accessibilityChildren() ?? []
+    let count = countElement?.accessibilityValue() as? String ?? ""
+
+    guard let countElement, !count.isEmpty else { return own }
+
+    return own + [countElement]
+  }
 
   override func searchTextRect(forBounds rect: NSRect) -> NSRect {
     var text = super.searchTextRect(forBounds: rect)
