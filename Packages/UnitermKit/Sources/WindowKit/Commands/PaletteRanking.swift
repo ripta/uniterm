@@ -42,9 +42,10 @@ struct PaletteEntry: Equatable, Sendable {
   var kind: Kind
   var title: String
 
-  /// The name of the applet type a tab belongs to, such as "Browser". It comes from the type's
-  /// declaration and never from the applet, so a program cannot set it. Nil for a command, and for
-  /// a tab whose type has no declaration.
+  /// The name of the applet type a tab or a command belongs to, such as "Browser". It comes from
+  /// the type's declaration and never from the applet, so a program cannot set it. Several applet
+  /// types declare a command with the same title, such as "Open…", and this tells their rows
+  /// apart. Nil for uniterm's own commands, and for a type with no declaration.
   var appletName: String? = nil
 
   /// The SF Symbol the row shows before its title. Nil leaves the icon's place empty.
@@ -65,7 +66,8 @@ struct PaletteEntry: Equatable, Sendable {
   /// query, Return skips it, since the user came to leave it.
   var isCurrent = false
 
-  /// The word on the row's right: the applet's name for a tab, or the kind when there is none.
+  /// The word on the row's right: the applet's name for a tab or an applet's command, or the kind
+  /// when there is none.
   var label: String { appletName ?? kind.label }
 
   /// Whether the highlight can rest on the row. A keyword hint shows but never takes it, so

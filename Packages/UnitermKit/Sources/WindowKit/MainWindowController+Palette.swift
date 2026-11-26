@@ -92,8 +92,14 @@ extension MainWindowController {
     var candidates = tabCandidates(target: target)
 
     for command in commands.commands where command.listedInPalette {
+      var appletName: String?
+
+      if case .applet(let typeID) = command.owner {
+        appletName = appletTypes.first { $0.typeID == typeID }?.displayName
+      }
+
       let entry = PaletteEntry(
-        id: .command(command.id), kind: .command, title: command.title,
+        id: .command(command.id), kind: .command, title: command.title, appletName: appletName,
         symbolName: PaletteEntry.commandSymbol, detail: nil,
         isEnabled: commands.isAvailable(command.id, in: context))
 

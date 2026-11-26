@@ -340,6 +340,32 @@ final class TabSearchTests: XCTestCase {
       palette.entries.first { $0.id == .command(.splitRight) }?.label, "Command")
   }
 
+  /// Catches several applet types' commands that read alike, such as each viewer's "Open…". A
+  /// command an applet type declares names that type on its row, from the type's declaration.
+  /// uniterm's own commands still read "Command".
+  func testACommandRowNamesTheAppletTypeThatDeclaresIt() throws {
+    controller.showCommandPalette()
+
+    let fake = try XCTUnwrap(palette.entries.first { $0.id == .command(.fakeNewTab) })
+    XCTAssertEqual(fake.kind, .command)
+    XCTAssertEqual(fake.label, WindowFixture.fakeType.displayName)
+
+    let own = try XCTUnwrap(palette.entries.first { $0.id == .command(.splitRight) })
+    XCTAssertEqual(own.label, "Command")
+  }
+
+  /// Catches a command row that takes its applet name from anywhere but a declaration. With no
+  /// declaration for its type, an applet's command reads as a plain command.
+  func testACommandOfAnUndeclaredTypeReadsAsACommand() throws {
+    fixture.cleanUp()
+    fixture = try WindowFixture(appletTypes: [])
+
+    controller.showCommandPalette()
+
+    let fake = try XCTUnwrap(palette.entries.first { $0.id == .command(.fakeNewTab) })
+    XCTAssertEqual(fake.label, "Command")
+  }
+
   /// Catches a tab row that does not name its applet, or that takes the name from anywhere but the
   /// type's declaration. A program title can say anything, so only the declaration may name the
   /// applet. A type with no declaration, such as the launcher, reads as a plain tab.
