@@ -33,3 +33,5 @@
 | UTERM-060 M1-M3 | UTERM-044 M1 | M1's kept-log upload builds on UTERM-044 M1's per-shard jobs, so it is built once |
 | UTERM-046 M1-M2 | UTERM-045 M1 | Its flaky-entry checks close by the rule UTERM-045 M1 writes into `spec/flaky-tests.md` |
 | UTERM-046 M4 | None | Split from M3: the product's kills move to the guarded signal call, and M3's sender wraps that call |
+| UTERM-044 M2 | UTERM-044 M1 | Needs a pushed CI run of M1's shards |
+| UTERM-060 M4 | UTERM-060 M3 | Needs a pushed CI run of M1's kept-log upload |

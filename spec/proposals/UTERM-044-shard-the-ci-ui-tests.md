@@ -2,7 +2,7 @@
 
 **Status:** accepted
 **Created:** 2026-11-21
-**Updated:** 2026-11-22
+**Updated:** 2026-11-25
 
 ## Impacts
 
@@ -206,9 +206,11 @@ runner setup and its own test build, a few minutes.
 - **Two.** A run starts 4 macOS jobs and holds 3 once `ghostty-offline` ends. A shard runs about 17.6 minutes of tests,
   so its job takes about 21 to 23 minutes. A one-shard rerun takes the same.
 - **Three.** A run starts 5 macOS jobs and holds 4 once `ghostty-offline` ends, so a second run at the same time often
-  queues. A shard runs about 11.7 minutes of tests, so its job takes about 15 to 17 minutes, at or just above the
-  15-minute `package` floor. That is about 6 minutes shorter than two shards, for a full run and for a rerun. The full-run
-  gain assumes `package` keeps its 15-minute floor. With the helper checks moved into `package`, it is closer to 4.
+  queues. A shard was estimated at about 11.7 minutes of tests and a job of about 15 to 17 minutes, at or just above
+  the 15-minute `package` floor. M2 measured a shard's test at 7:29 to 8:15 and its job at 7:55 to 12:09, below that
+  floor. Against the two-shard estimate, the estimated full-run gain was about 6 minutes, or closer to 4 with the helper
+  checks moved into `package`. That gain was an estimate that assumed `package` keeps its 15-minute floor. M2 measured
+  a full run ending when `package` does, and `package` took 17:26 to 20:54.
 
 A fix PR next to a batch PR, as on 2026-11-21, is the common case for two runs at once. A push to `main` adds a third,
 unless the tested-tree skip applies to it, which it does only when the merged PR's head held `main`'s previous commit.
@@ -218,17 +220,19 @@ unless the tested-tree skip applies to it, which it does only when the merged PR
   one-shard rerun is about 3 minutes shorter than with three.
 
 Decision: three shards, as one matrix value. The figures in the options above predate the move of the helper checks into
-`package`, which puts `package` at about 17 minutes.
+`package`, which puts `package` at about 17 minutes. M2 measured the shard jobs at 8 to 12 minutes. Amended 2026-11-25;
+see Decision Log.
 
 Rationale: a lone run ends when `package` does, about 17 minutes, against about 22 with two shards. A one-shard rerun
-takes about 15 to 16 minutes, about 6 minutes shorter than with two. That rerun gain is arithmetic on the test time,
-whatever the shard overhead turns out to be. Each run uses about the same slot-minutes at every count, so under the cap
-the count decides latency, not throughput. Two runs that start together end at about 17 and 31 to 34 minutes with three
-shards, against 22 and 34 to 39 with two, so the extra queueing does not make the second run slower. Four shards let a
-lone run queue against itself, and a full run is no shorter.
+takes about 8 to 12 minutes, the measured shard job length. Against the two-shard estimate of 21 to 23 minutes, that is
+9 to 15 minutes shorter. The rerun's own length waits on M3. The gain over two shards is arithmetic on the test time,
+whatever the shard overhead turns out to be. Each run uses about the same slot-minutes at every count, so under the
+cap the count decides latency, not throughput. Two runs that start together end at about 17 and 31 to 34 minutes with
+three shards, against 22 and 34 to 39 with two, so the extra queueing does not make the second run slower. Four shards
+let a lone run queue against itself, and a full run is no shorter.
 
 Leaves undone: `package` becomes the critical path, so the helper checks there cost about 2 minutes per full run. Near
-234 tests, or sooner if a shard's overhead is 5 minutes rather than 3 to 4, a shard passes `package` and the count
+395 tests, or sooner if a shard's overhead is 5 minutes rather than 3 to 4, a shard passes `package` and the count
 needs revisiting. A lone run takes all 5 macOS slots at start, so any other macOS workload in the organization queues
 this one. Each shard adds a first test, and the Risks section suspects first tests of cold-launch flakes. A later count
 change edits `ci.yml`, which is an input to the offline Ghostty proof key, so that run's `ghostty-offline` rebuilds
@@ -338,16 +342,81 @@ None.
 - The local test-app-select proof with BrowserRemoteUITests EXPECTED_TESTS=1 passed. With EXPECTED_TESTS=2 it failed
   with "Error: expected 2 tests, but 1 ran".
 - SHARD validation fails for empty, non-numeric, and out-of-range values.
-- M2 takes the CI checks that need a pushed run.
+- M2 and M3 take the CI checks that need a pushed run.
 
 ### M2: The shards run on CI
 
-**Status:** NOT STARTED
+**Status:** DONE
+
+Amended 2026-11-25; see Decision Log.
 
 - The first shard job proves on a real CI runner that the class listing works there, before the split depends on it
+- The measured length of a full CI run, of `package`, and of each shard's setup, build, and test time are recorded in
+  the As built block, with the suite size at which a shard's job would pass `package`
+
+**As built:**
+
+All clock times here are UTC. Local time in America/Los_Angeles is 8 hours earlier, so every run below ran on
+2026-11-25 local time. Lengths are minutes and seconds.
+
+- The timings use the four pull request runs 45749818748, 45752629043, 45755641410, and 45760228289. The four main push
+  runs 45751929530, 45754927772, 45759466625, and 45762275495 are left out. Their jobs show `app` and `package`
+  skipped as an already-tested tree, and their logs hold no "Selected N tests" line. No run uploaded an artifact, and no
+  shard failed.
+- The listing works on a real CI runner. In run 45749818748 each shard logged "Enumerating test classes under screen
+  lock...", then its reproduce line, then "Selected N tests". Shard 0 selected 69 tests in 10 classes, from
+  `BrowserRemoteUITests` through `ImageViewerUITests`. Shard 1 selected 67 tests in 10 classes, from
+  `LaunchServicesOpenUITests` through `QuestionsUITests`. Shard 2 selected 70 tests in 13 classes, from
+  `QuestionsWireUITests` through `WindowsUITests`.
+- The three selections hold 33 distinct classes. They are contiguous in the C-sorted name order, and they match the 33
+  UI test classes in the source at the pull request head. The totals add up: 69 + 67 + 70 is 206, the count M1's local
+  listing found. Each listing took 18 to 22 seconds and met no cold-launch failure.
+- Each shard executed exactly its selection with 0 failures, and its `EXPECTED_TESTS` check passed.
+- The later pull request runs list the same classes with one change. The commit "Record the input a UI test's app
+  receives in debug builds" added `InputRecordingProofTest` with 1 test. It sorts right after `ImageViewerUITests`, so
+  it opens shard 1. The suite is then 34 classes and 207 tests, split 69, 68, and 70. Shards 0 and 2 keep their
+  classes, and each shard again executed its selection.
+- A full run took 20:04, 21:14, and 17:49 from run start to the end of `ci`. Run 45755641410's first attempt ended at
+  16:45, when `ci` failed on `package`. Its second attempt took 17:26.
+- `package` took 19:41, 20:54, and 17:26 in the three runs that passed first time. In run 45755641410 it took 16:25 and
+  failed in `make ci-package`, then took 17:09 on the second attempt. The failure was
+  `BrowserUnsentInputTests.testEditsInASubframeMarkTheTabAndOnlyThatFrameClearsIt`. It failed at
+  `BrowserUnsentInputTests.swift:196`, a timeout after 19.049 seconds. The summary was "3243 tests, 1 failure". That
+  test's entry in `spec/flaky-tests.md` logs the sighting. `package` was the last job to end in
+  every run, and `ci` ended 7 to 9 seconds later in the three runs that passed first time.
+- Shard 0 was the slowest shard job in every run. Across the four runs, its setup took 0:21 to 0:29. Its build took
+  2:49 to 3:02. Its listing took 0:14 to 0:23. Its test took 7:29 to 8:15. Its whole job took 11:05 to 12:09.
+- Shard 1 took 0:16 to 0:27 to set up, 1:53 to 3:25 to build, 0:09 to 0:19 to list, and 5:35 to 6:52 to test. Its job
+  took 7:58 to 11:05.
+- Shard 2 took 0:15 to 0:28 to set up, 1:47 to 2:58 to build, 0:12 to 0:22 to list, and 5:37 to 7:08 to test. Its job
+  took 7:55 to 11:02.
+- Setup runs from job start to the shard step's start. Build runs to "** TEST BUILD SUCCEEDED **". Listing runs to
+  "Selected N tests". Test runs to the shard step's end, so it includes about 20 seconds of result handling after
+  xcodebuild's own time. Run 45749818748's shard 0 executed for 476 seconds and its test took 495.
+- The suite size at which a shard job outlasts `package`: shard 0's job minus its test time is 216 to 234 seconds, mean
+  225.5. Its test rate is 6.5 to 7.2 seconds per test, mean 6.85. The mean of the four successful `package` runs is
+  1127.5 seconds. Three shards each take a third of N tests, so the shard job passes `package` at N = 3 × (1127.5 −
+  225.5) / 6.85, which is about 395 tests. The fastest `package` run, 1029 seconds, gives about 352. The slowest, 1254
+  seconds, gives about 450. The suite holds 207 tests today.
+- The Design Decisions' estimate of 234 tests assumed shard jobs of 15 to 17 minutes. The measured shard jobs take 8 to
+  12 minutes, so `package` sets every run's length by a wider margin than estimated. The Design Decision now carries the
+  measured figures. The decision for three shards holds.
+- Shard 1 of run 45752629043 started 36 seconds after the other jobs, and shard 1 of run 45755641410 started 2:41 after
+  them. Each overlapped a main push run, so the cap of 5 macOS jobs probably queued them. The other two runs started
+  every job within a second.
+- Partial evidence for M3: "Re-run failed jobs" on run 45755641410 reran `package` and `ci` only. The attempt 2 jobs
+  list all seven jobs as attempt 2, but the three shard jobs carry attempt 1's start and end times. The failure was in
+  `package`, so this shows a rerun leaves passed shards alone. It does not show a failed shard rerunning alone. M3 owns
+  that, since no shard has failed on CI.
+
+### M3: A failed shard reruns alone on CI
+
+**Status:** NOT STARTED
+
+Split from M2 on 2026-11-25; see Decision Log.
+
 - Rerunning a failed job reruns only the failed shard
-- The measured length of a full CI run, of a one-shard rerun, of `package`, and of each shard's setup, build, and test
-  time are recorded in the As built block, with the suite size at which a shard's job would pass `package`
+- The measured length of a one-shard rerun is recorded in the As built block
 
 ## Decision Log
 
@@ -392,6 +461,25 @@ None.
   only the failed shard" to "A failing shard leaves the other shards running to completion". The rerun check moved to M2.
   The Risk "The class listing does not work on the CI runner" amended from "M1 proves it first" to "M2 proves it first".
   (run best guess)
+- 2026-11-25: M2's bullet "Rerunning a failed job reruns only the failed shard" and the one-shard rerun's length moved
+  to a new M3, "A failed shard reruns alone on CI". M2's third bullet read "The measured length of a full CI run, of a
+  one-shard rerun, of `package`, and of each shard's setup, build, and test time are recorded in the As built block,
+  with the suite size at which a shard's job would pass `package`". It now drops "of a one-shard rerun,". Eight CI runs
+  followed M1 and no shard failed in any of them. This run cannot push and must not rerun a job, so it cannot make one
+  fail. M3 needs a shard to fail on CI and advances only when one does. M2's As built block records the partial
+  evidence from run 45755641410's second attempt. M1's As built pointer read "M2 takes the CI checks that need a pushed
+  run." It now reads "M2 and M3 take the CI checks that need a pushed run." (run best guess)
+- 2026-11-25: The three-shard Design Decision's estimates were amended to M2's measurements. The options bullet read "A
+  shard runs about 11.7 minutes of tests, so its job takes about 15 to 17 minutes, at or just above the 15-minute
+  `package` floor. That is about 6 minutes shorter than two shards, for a full run and for a rerun." It now keeps the
+  estimates as estimates and gives M2's measured test time of 7:29 to 8:15 and job time of 7:55 to 12:09, below the
+  floor. It labels the 6 minute and 4 minute full-run gains as estimates against the two-shard estimate. A measured
+  full run ends when `package` does, and `package` took 17:26 to 20:54. The Rationale read "A one-shard rerun
+  takes about 15 to 16 minutes, about 6 minutes shorter than with two." It now reads about 8 to 12 minutes, the measured
+  shard job length, and 9 to 15 minutes shorter than the two-shard estimate of 21 to 23 minutes. The rerun figure is
+  derived from the shard job length and compared against an estimate. The rerun's own length waits on M3. "Near 234
+  tests" under Leaves undone now reads "Near 395 tests". M2 measured the crossover at about 395 tests, with a range of
+  352 to 450. The decision itself, three shards, stands. (run best guess)
 
 ## References
 
