@@ -206,12 +206,16 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(app.buttons["data-viewer-value-copy"].exists, "no Copy button")
   }
 
-  /// Catches a wide table with no quick way to its far edge. A file of 1,100 keys shows the column
-  /// arrows, and the last-column arrow brings the `(more keys)` cell into view. Five rows show no
+  /// Catches a wide table with no quick way to its far edge. A file of 200 keys shows the column
+  /// arrows, and the last-column arrow brings the last column's cell into view. Cells exist only
+  /// near the visible columns, so that cell is missing until the table scrolls. Five rows show no
   /// row arrows.
+  ///
+  /// The table stays well under the 1,000-column cap. Every query walks the window's accessibility
+  /// tree, and a thousand column headers made each one take up to 20 s on a CI runner.
   func testTheColumnArrowsReachTheFarEdgeOfAWideTable() throws {
     let rows = (0..<5).map { row in
-      "{" + (0..<1_100).map { #""key\#($0)":"v\#(row)-\#($0)""# }.joined(separator: ",") + "}"
+      "{" + (0..<200).map { #""key\#($0)":"v\#(row)-\#($0)""# }.joined(separator: ",") + "}"
     }
     let file = try makeCSV("[" + rows.joined(separator: ",") + "]", name: "wide.json")
 
@@ -230,11 +234,9 @@ final class DataViewerUITests: UnitermUITestCase {
 
     last.click()
 
-    let moreKeys = table.staticTexts.matching(
-      NSPredicate(format: "value BEGINSWITH %@", "\u{25B8} {")
-    )
-    .firstMatch
-    XCTAssertTrue(moreKeys.appears(timeout: 5), "the far edge did not come into view")
+    let farEdge = table.staticTexts.matching(NSPredicate(format: "value == %@", "v0-199"))
+      .firstMatch
+    XCTAssertTrue(farEdge.appears(timeout: 5), "the far edge did not come into view")
   }
 
   /// Catches a missing file that shows an empty table or crashes the restore. The pane says the
