@@ -140,8 +140,12 @@ wait "$runner"
 status=$?
 set -e
 
-kill "$watcher" 2>/dev/null || true
-wait "$watcher" 2>/dev/null || true
+# bash 3.2 prints a "Terminated" notice when it reaps a killed job before `wait` runs. The notice goes
+# to the stream that is open at that moment, so the kill and the wait share one redirection.
+{
+  kill "$watcher" || true
+  wait "$watcher" || true
+} 2>/dev/null
 
 # A process the command left behind can hold the output pipe open. The reader then never sees the
 # pipe's end, so it gets a moment to drain and is then ended.
@@ -154,9 +158,11 @@ done
 
 if kill -0 "$reader" 2>/dev/null; then
   note "a process the command left behind still holds its output, so the rest is dropped"
-  kill "$reader" 2>/dev/null || true
 fi
 
-wait "$reader" 2>/dev/null || true
+{
+  kill "$reader" || true
+  wait "$reader" || true
+} 2>/dev/null
 
 exit "$status"

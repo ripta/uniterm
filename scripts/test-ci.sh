@@ -405,6 +405,34 @@ if [[ -s "$scratch/watch-err" ]]; then
 fi
 echo "PASS: a passing run is passed through untouched"
 
+# CI's runners have only macOS's bash 3.2. When it reaps the stopped watcher before the script waits
+# for it, it prints a "Terminated" notice on the script's standard error. That depends on timing, so
+# the run is repeated under load until a regression would almost surely show.
+quiet_failures=0
+for batch in 1 2 3 4 5 6 7 8; do
+  for slot in 1 2 3 4 5 6 7 8; do
+    (
+      RUN_SWIFT_TESTS_POLL=1 RUN_SWIFT_TESTS_GRACE=5 \
+        /bin/bash "$root/scripts/run-swift-tests.sh" 30 "$watch_dir/passing" \
+        >/dev/null 2>"$scratch/quiet-err-$slot" || true
+    ) &
+  done
+  wait
+
+  for slot in 1 2 3 4 5 6 7 8; do
+    if [[ -s "$scratch/quiet-err-$slot" ]]; then
+      quiet_failures=$((quiet_failures + 1))
+      cp "$scratch/quiet-err-$slot" "$scratch/quiet-err"
+    fi
+  done
+done
+if ((quiet_failures > 0)); then
+  echo "FAIL: $quiet_failures of 64 passing runs under /bin/bash wrote to standard error" >&2
+  cat "$scratch/quiet-err" >&2
+  exit 1
+fi
+echo "PASS: passing runs under /bin/bash stay quiet"
+
 # A UI test build signs the helpers with Xcode's test exceptions, and a later plain build in the same
 # folder keeps the app's copies of them. So the UI tests must never build where the helper sandbox
 # probes and `make run` read the app.
