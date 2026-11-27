@@ -81,19 +81,49 @@ extension MainWindowController {
     return (responder as? NSView)?.isDescendant(of: palette) == true
   }
 
-  /// Rebuilds the list for the current text and the current state of the window. It runs when the
-  /// text changes and when the pane tree changes, so a pane that closes under the palette updates
-  /// what can run.
+  /// Sorts the list afresh for the current text and the current state of the window. Only the
+  /// user's own edits call it: showing the palette, typing, and choosing a filter.
   func refreshCommandPalette() {
     guard let target = paletteTarget else { return }
 
     let palette = contentController.commandPalette
+
+    palette.setEntries(
+      PaletteListing.entries(
+        paletteCandidates(target: target), query: palette.query, filter: palette.filter,
+        appletTypes: appletTypes.map(PaletteAppletType.init)))
+  }
+
+  /// Brings the rows on show up to date without moving any of them. A change the user did not
+  /// cause, such as a retitled tab, a pane that opens or closes, or a new layout, calls it.
+  ///
+  /// A row takes its entry's current title and state where it stands. A row whose tab or pane is
+  /// gone stays, and choosing it says so. Nothing new is listed until the user types. A list that
+  /// moved under the pointer would run whatever row slid there.
+  func updateCommandPaletteInPlace() {
+    guard let target = paletteTarget else { return }
+
+    let palette = contentController.commandPalette
+    let current = paletteCandidates(target: target).map(\.entry)
+
+    palette.setEntries(PaletteListing.updatedInPlace(palette.entries, from: current))
+  }
+
+  /// Every tab and every command the palette can list, in their natural order, before any query
+  /// or filter.
+  private func paletteCandidates(target: NodeID) -> [PaletteCandidate] {
     let context = CommandContext(controller: self, pane: target)
     var candidates = tabCandidates(target: target)
 
     for command in commands.commands where command.listedInPalette {
+      var appletName: String?
+
+      if case .applet(let typeID) = command.owner {
+        appletName = appletTypes.first { $0.typeID == typeID }?.displayName
+      }
+
       let entry = PaletteEntry(
-        id: .command(command.id), kind: .command, title: command.title,
+        id: .command(command.id), kind: .command, title: command.title, appletName: appletName,
         symbolName: PaletteEntry.commandSymbol, detail: nil,
         isEnabled: commands.isAvailable(command.id, in: context))
 
@@ -103,10 +133,7 @@ extension MainWindowController {
           order: candidates.count))
     }
 
-    palette.setEntries(
-      PaletteListing.entries(
-        candidates, query: palette.query, filter: palette.filter,
-        appletTypes: appletTypes.map(PaletteAppletType.init)))
+    return candidates
   }
 
   /// Moves the focused pane's selected tab to the front of the recent tabs.
@@ -162,7 +189,7 @@ extension MainWindowController {
     }
   }
 
-  /// Lists again after a short wait, so a burst of title changes costs one pass.
+  /// Updates the rows in place after a short wait, so a burst of title changes costs one pass.
   func schedulePaletteRefresh() {
     guard isPaletteVisible, !paletteRefreshPending else { return }
 
@@ -172,7 +199,7 @@ extension MainWindowController {
       guard let self else { return }
 
       paletteRefreshPending = false
-      refreshCommandPalette()
+      updateCommandPaletteInPlace()
     }
   }
 
@@ -197,14 +224,14 @@ extension MainWindowController {
     }
   }
 
-  /// Focuses the pane and selects the tab, both by ID. A tab that is gone, or that the applet refuses to select, leaves the palette up,
-  /// lists again, and says so. The palette hides without taking the keyboard back, so the chosen
-  /// tab ends up holding it.
+  /// Focuses the pane and selects the tab, both by ID. A tab that is gone, or that the applet
+  /// refuses to select, leaves the palette up with its row in place, and says so. The palette hides
+  /// without taking the keyboard back, so the chosen tab ends up holding it.
   private func chooseTab(pane: NodeID, tab: AppletTabID, title: String) {
     guard let applet = paneArea.applet(for: pane), applet.publishedTabs.contains(tab),
       applet.selectTab(id: tab)
     else {
-      refreshCommandPalette()
+      updateCommandPaletteInPlace()
       postTabGone(for: title)
       return
     }
@@ -216,7 +243,7 @@ extension MainWindowController {
   private func postTabGone(for title: String) {
     statusCenter.post(
       level: .warning,
-      text: "\u{201C}\(title)\u{201D} has closed. The list is up to date now.")
+      text: "\u{201C}\(title)\u{201D} has closed.")
   }
 
   /// A mouse press outside the palette's field and results hides it, or deactivates a docked one.

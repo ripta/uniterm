@@ -357,9 +357,10 @@ final class CommandPaletteUITests: UnitermUITestCase {
       "the command and the tab of the same name are not told apart")
   }
 
-  /// Catches a list that stays stale in the open palette. The second tab titles itself and exits
-  /// after a few seconds. The row shows while the palette is up and must go once the tab closes.
-  func testATabThatClosesWhileThePaletteShowsDisappearsFromTheList() {
+  /// Catches a row that vanishes or moves while the user reads the list. The second tab titles
+  /// itself and exits after a few seconds. Its row stays where it was while the palette is up, and
+  /// the next edit to the query lists the window afresh without it.
+  func testATabThatClosesWhileThePaletteShowsKeepsItsRowUntilTheQueryChanges() {
     let app = launchApp()
     _ = waitForTerminal(in: app)
 
@@ -371,10 +372,17 @@ final class CommandPaletteUITests: UnitermUITestCase {
     showPalette(in: app)
     app.typeText("yyq")
     XCTAssertTrue(row("yyq-title", in: app).appears(timeout: 10))
+    keepScreenshot("hold-1-before-close", of: app)
 
+    XCTAssertTrue(waitUntilGone(tab(1, in: app), timeout: 30), "the second tab never exited")
+    keepScreenshot("hold-2-after-close", of: app)
+    XCTAssertTrue(row("yyq-title", in: app).exists, "the closed tab's row left the open palette")
+
+    app.typeKey(.delete, modifierFlags: [])
     XCTAssertTrue(
-      waitUntilGone(row("yyq-title", in: app), timeout: 30),
-      "the closed tab stayed in the open palette")
+      waitUntilGone(row("yyq-title", in: app), timeout: 10),
+      "the closed tab stayed after the query changed")
     XCTAssertTrue(palette(in: app).exists)
+    keepScreenshot("hold-3-after-edit", of: app)
   }
 }

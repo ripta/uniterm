@@ -100,74 +100,48 @@ final class TabSearchTests: XCTestCase {
     XCTAssertEqual(firstApplet.selectedTabIndex, 2)
   }
 
-  /// Catches a list that goes stale in docked mode, where the palette stays up. A tab that
-  /// closes drops out once the held-back refresh runs.
-  func testATabThatClosesWhileTheListShowsDisappears() async throws {
-    let (first, _) = try twoPanes()
-    let firstApplet = try applet(first)
-    controller.showCommandPalette()
-
-    let closing = firstApplet.tabID(0)
-    XCTAssertNotNil(entry(pane: first, tab: closing))
-
-    _ = await firstApplet.closeCurrentTab()
-    firstApplet.tabsChanged()
-    wake.fire()
-
-    XCTAssertNil(entry(pane: first, tab: closing))
-    XCTAssertEqual(tabEntries().count, 3)
-  }
-
-  /// Catches a list that notices a new pane only on reopening. A split while the palette shows
-  /// adds its tabs at once.
-  func testAPaneCreatedWhileThePaletteShowsHasItsTabsAppear() throws {
-    let (first, _) = try twoPanes()
-    controller.showCommandPalette()
-    XCTAssertEqual(tabEntries().count, 4)
-
-    let third = try XCTUnwrap(controller.openPane(.terminalShell, axis: .row, from: first))
-    try applet(third).title = "fresh"
-
-    wake.fire()
-
-    XCTAssertEqual(tabEntries().count, 5)
-    XCTAssertTrue(tabEntries().contains { $0.title == "fresh" })
-  }
-
-  /// Catches a pane that closes under the palette and leaves its tabs listed.
-  func testAPaneThatClosesWhileThePaletteShowsTakesItsTabsWithIt() throws {
-    let (first, second) = try twoPanes()
-    controller.showCommandPalette()
-
-    controller.closePane(second, appletEnded: true)
-
-    XCTAssertEqual(tabEntries().count, 3)
-    XCTAssertNil(tabEntries().first { $0.title == "logs" })
-    XCTAssertEqual(controller.paneIDs, [first])
-  }
-
-  /// Catches Return that acts on a row or an index. The highlighted tab stays highlighted when
-  /// another tab's new title ranks above it, and Return goes to the tab that was highlighted.
-  func testReturnActsOnTheHighlightedTabEvenWhenTheListReSorts() throws {
+  /// Catches a list that re-sorts while the user reads it. A tab that newly matches adds no row, a
+  /// listed tab takes its new title where its row stands, and Return goes to the tab that was
+  /// highlighted.
+  func testARetitledTabUpdatesInPlaceAndNoRowMoves() throws {
     let (first, _) = try twoPanes()
     let firstApplet = try applet(first)
     controller.showCommandPalette()
     type("vim")
 
     let highlighted = try XCTUnwrap(palette.selection)
+    let before = palette.entries.map(\.id)
     XCTAssertEqual(highlighted, .tab(pane: first, tab: firstApplet.tabID(1)))
 
-    firstApplet.tabTitles = ["vim", "vim notes", "htop"]
+    firstApplet.tabTitles = ["vim", "vim notes 2", "htop"]
     firstApplet.tabsChanged()
     wake.fire()
 
-    XCTAssertEqual(palette.entries.first?.id, .tab(pane: first, tab: firstApplet.tabID(0)))
+    XCTAssertEqual(palette.entries.map(\.id), before)
+    XCTAssertNil(entry(pane: first, tab: firstApplet.tabID(0)))
+    XCTAssertEqual(entry(pane: first, tab: firstApplet.tabID(1))?.title, "vim notes 2")
     XCTAssertEqual(palette.selection, highlighted)
 
     pressReturn()
 
     XCTAssertEqual(firstApplet.selectedTabIndex, 1)
     XCTAssertEqual(controller.focusedPane, first)
+  }
+
+  /// Catches a re-sort that never happens. Once the user types, the retitled tab ranks by its new
+  /// title.
+  func testTypingAfterARetitleSortsTheListAfresh() throws {
+    let (first, _) = try twoPanes()
+    let firstApplet = try applet(first)
+    controller.showCommandPalette()
+    type("vim")
+
+    firstApplet.tabTitles = ["vim", "vim notes", "htop"]
+    firstApplet.tabsChanged()
+    wake.fire()
+    type("vi")
+
+    XCTAssertEqual(palette.entries.first?.id, .tab(pane: first, tab: firstApplet.tabID(0)))
   }
 
   /// Catches a refresh per title change, which would stall typing, or one that moves the
@@ -198,26 +172,27 @@ final class TabSearchTests: XCTestCase {
     XCTAssertTrue(wake.pending.isEmpty)
   }
 
-  /// Catches a stale entry that acts on a tab that closed. The list refreshes, the palette stays
-  /// up, and a message says why nothing happened.
-  func testChoosingATabThatIsGoneRefreshesAndPostsAMessage() async throws {
+  /// Catches a stale entry that acts on a tab that closed. The palette stays up, the row stays
+  /// where it was, and a message says why nothing happened.
+  func testChoosingATabThatIsGoneKeepsTheRowAndPostsAMessage() async throws {
     let (first, second) = try twoPanes()
     let firstApplet = try applet(first)
     controller.showCommandPalette()
 
     let stale = try XCTUnwrap(entry(pane: first, tab: firstApplet.tabID(1)))
+    let before = palette.entries.map(\.id)
     firstApplet.removeTab(at: 1)
 
     palette.onChoose?(stale)
 
     XCTAssertFalse(palette.isHidden)
-    XCTAssertNil(entry(pane: first, tab: stale.tabID!))
+    XCTAssertEqual(palette.entries.map(\.id), before)
     XCTAssertEqual(controller.focusedPane, second)
-    XCTAssertTrue(fixture.center.history.last?.text.contains("vim notes") == true)
+    XCTAssertEqual(fixture.center.history.last?.text, "\u{201C}vim notes\u{201D} has closed.")
   }
 
   /// Catches an applet that lists a tab but refuses to select it. The palette must not hide with the
-  /// keyboard going nowhere and no message. It stays up, lists again, and says why.
+  /// keyboard going nowhere and no message. It stays up, keeps its rows, and says why.
   func testChoosingATabTheAppletRefusesKeepsThePaletteUpAndPostsAMessage() throws {
     let (first, second) = try twoPanes()
     let firstApplet = try applet(first)
@@ -234,7 +209,7 @@ final class TabSearchTests: XCTestCase {
   }
 
   /// Catches the same for a pane that is gone.
-  func testChoosingATabOfAClosedPaneRefreshesAndPostsAMessage() throws {
+  func testChoosingATabOfAClosedPaneKeepsTheRowAndPostsAMessage() throws {
     let (first, second) = try twoPanes()
     controller.showCommandPalette()
 
@@ -244,9 +219,9 @@ final class TabSearchTests: XCTestCase {
     palette.onChoose?(stale)
 
     XCTAssertFalse(palette.isHidden)
-    XCTAssertNil(tabEntries().first { $0.title == "logs" })
+    XCTAssertNotNil(tabEntries().first { $0.title == "logs" })
     XCTAssertEqual(controller.focusedPane, first)
-    XCTAssertTrue(fixture.center.history.last?.text.contains("logs") == true)
+    XCTAssertEqual(fixture.center.history.last?.text, "\u{201C}logs\u{201D} has closed.")
   }
 
   // MARK: Ranking in the window
@@ -338,6 +313,32 @@ final class TabSearchTests: XCTestCase {
     XCTAssertEqual(shown.kind, .tab)
     XCTAssertEqual(
       palette.entries.first { $0.id == .command(.splitRight) }?.label, "Command")
+  }
+
+  /// Catches several applet types' commands that read alike, such as each viewer's "Open…". A
+  /// command an applet type declares names that type on its row, from the type's declaration.
+  /// uniterm's own commands still read "Command".
+  func testACommandRowNamesTheAppletTypeThatDeclaresIt() throws {
+    controller.showCommandPalette()
+
+    let fake = try XCTUnwrap(palette.entries.first { $0.id == .command(.fakeNewTab) })
+    XCTAssertEqual(fake.kind, .command)
+    XCTAssertEqual(fake.label, WindowFixture.fakeType.displayName)
+
+    let own = try XCTUnwrap(palette.entries.first { $0.id == .command(.splitRight) })
+    XCTAssertEqual(own.label, "Command")
+  }
+
+  /// Catches a command row that takes its applet name from anywhere but a declaration. With no
+  /// declaration for its type, an applet's command reads as a plain command.
+  func testACommandOfAnUndeclaredTypeReadsAsACommand() throws {
+    fixture.cleanUp()
+    fixture = try WindowFixture(appletTypes: [])
+
+    controller.showCommandPalette()
+
+    let fake = try XCTUnwrap(palette.entries.first { $0.id == .command(.fakeNewTab) })
+    XCTAssertEqual(fake.label, "Command")
   }
 
   /// Catches a tab row that does not name its applet, or that takes the name from anywhere but the

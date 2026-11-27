@@ -135,7 +135,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
   static let maximumRecentTabs = 64
 
-  /// How long a burst of tab changes waits before the palette lists again. Typing refreshes the
+  /// How long a burst of tab changes waits before the palette updates its rows. Typing refreshes the
   /// list at once, so only changes from the applets are held back.
   static let paletteRefreshInterval: TimeInterval = 0.1
 
@@ -296,7 +296,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     paneArea.onTreeChange = { [weak self] in
       self?.refreshControlMarks()
       self?.updateMinimumSize()
-      self?.refreshCommandPalette()
+      self?.updateCommandPaletteInPlace()
       self?.commands.menu?.sync()
     }
     paneArea.onLayoutChange = { [weak self] in
@@ -1458,7 +1458,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
   }
 
   /// Records the tab as recent when it is the focused pane's. A tab that changes in the
-  /// background never counts as recent. Then the palette lists again, a moment later.
+  /// background never counts as recent. Then the palette updates its rows in place, a moment later.
   public func appletTabsDidChange(_ applet: any Applet) {
     if applet === paneArea.applet(for: paneArea.focusedPane) {
       recordFocusedTab()
