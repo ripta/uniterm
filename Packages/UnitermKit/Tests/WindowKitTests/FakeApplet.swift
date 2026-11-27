@@ -206,6 +206,16 @@ class FakeApplet: Applet {
   func close() { closed = true }
   func detach() { detachCount += 1 }
   func reattach() { reattachCount += 1 }
+
+  /// How many times the host said the app is quitting, and the title the applet takes then, as an
+  /// applet that saves something only at quit.
+  var willQuitCount = 0
+  var titleAtQuit: String?
+
+  func willQuit() {
+    willQuitCount += 1
+    if let titleAtQuit { title = titleAtQuit }
+  }
   var focusCount = 0
 
   func focus() { focusCount += 1 }

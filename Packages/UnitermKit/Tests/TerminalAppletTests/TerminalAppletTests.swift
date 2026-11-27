@@ -64,6 +64,10 @@ final class FakeSession: TerminalSession {
   var clipboardPolicy: TerminalClipboardPolicy { clipboardPolicies.last ?? .interactive }
   func setClipboardPolicy(_ policy: TerminalClipboardPolicy) { clipboardPolicies.append(policy) }
 
+  /// What `scrollbackText` answers.
+  var scrollback: String?
+  func scrollbackText() -> String? { scrollback }
+
   func close() { closed = true }
 }
 

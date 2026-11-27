@@ -480,6 +480,11 @@ public final class WindowSet {
     onLayoutChange?()
   }
 
+  /// Tells every applet in every window that the app is quitting and the layout is saved next.
+  func prepareLayoutForQuit() {
+    for controller in controllers { controller.prepareLayoutForQuit() }
+  }
+
   /// The layout as a file holds it. Windows are listed oldest first.
   func savedLayout() -> SavedLayout {
     SavedLayout(windows: controllers.compactMap { $0.savedWindow() })

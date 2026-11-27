@@ -4,7 +4,8 @@ import Foundation
 /// The restorable state of a terminal applet.
 ///
 /// It is inert. Restoring a terminal starts a fresh shell in each tab's directory. It never runs a
-/// program. A program-mode terminal keeps its command here and shows it with a Run action.
+/// program. A program-mode terminal keeps its command here and shows it with a Run action. A shell
+/// tab saved at quit shows its earlier output again, as plain text above its first prompt.
 public struct TerminalDescription: Codable, Equatable, Sendable {
   public enum Mode: String, Codable, Sendable {
     case shell
@@ -20,9 +21,15 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
     /// reads as nil.
     public var startDirectory: String?
 
-    public init(workingDirectory: String?, startDirectory: String? = nil) {
+    /// The ID of the tab's scrollback in the `ScrollbackStore`, written as the app quit. A
+    /// description made at any other time has none. Version 2 added it.
+    public var scrollback: String?
+
+    public init(workingDirectory: String?, startDirectory: String? = nil, scrollback: String? = nil)
+    {
       self.workingDirectory = workingDirectory
       self.startDirectory = startDirectory
+      self.scrollback = scrollback
     }
   }
 
@@ -40,35 +47,42 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
 
   public static let typeID = "terminal"
 
-  /// The version of the payload this build reads and writes.
-  public static let currentVersion = 1
+  /// The version of the payload this build reads and writes. Version 2 added each tab's scrollback
+  /// ID. Version 1 reads as tabs with none.
+  public static let currentVersion = 2
 
   /// The description, with the closed tabs in its undo-only part when there are any. The payload
   /// is the same either way.
   public func appletDescription(closedTabs: [ClosedTab] = []) throws -> AppletDescription {
     AppletDescription(
       type: Self.typeID, version: Self.currentVersion, payload: try JSONValue(encoding: self),
-      undoState: closedTabs.isEmpty
-        ? nil : AppletUndoState(try JSONValue(encoding: UndoState(closedTabs: closedTabs))))
+      undoState: closedTabs.isEmpty ? nil : AppletUndoState(UndoState(closedTabs: closedTabs)))
   }
 
   /// A tab the user closed, as undo needs it. The stamp orders it against every other close in the
   /// window. The index is where the tab sat after the close dialog returned.
-  public struct ClosedTab: Codable, Equatable, Sendable {
+  public struct ClosedTab: Equatable, Sendable {
     public var stamp: UInt64
     public var index: Int
     public var title: String
     public var tab: Tab
 
-    public init(stamp: UInt64, index: Int, title: String, tab: Tab) {
+    /// The tab's output as it closed, which the reopened tab shows above its first prompt. It lives
+    /// only in memory, with the rest of the undo state.
+    public var scrollback: String?
+
+    public init(stamp: UInt64, index: Int, title: String, tab: Tab, scrollback: String? = nil) {
       self.stamp = stamp
       self.index = index
       self.title = title
       self.tab = tab
+      self.scrollback = scrollback
     }
   }
 
-  struct UndoState: Codable, Equatable, Sendable {
+  /// Held as the value itself, never encoded, since a closed tab's scrollback can be large and a
+  /// description is made on every layout save.
+  struct UndoState: Equatable, Sendable {
     var closedTabs: [ClosedTab]
   }
 
@@ -76,7 +90,7 @@ public struct TerminalDescription: Codable, Equatable, Sendable {
   /// one this build cannot read, carries none. That part is never saved, so nothing older exists.
   public static func closedTabs(in description: AppletDescription) -> [ClosedTab] {
     guard description.type == typeID,
-      let state = try? description.undoState?.value(as: JSONValue.self)?.decoded(as: UndoState.self)
+      let state = description.undoState?.value(as: UndoState.self)
     else { return [] }
 
     return state.closedTabs

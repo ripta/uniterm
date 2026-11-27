@@ -16,16 +16,20 @@ public struct TerminalLaunch: Sendable, Equatable {
   /// still inherits `GHOSTTY_SHELL_FEATURES`, which libghostty sets for every child.
   public var program: [String]?
 
+  /// Plain text the terminal shows before the login shell starts, such as a closed tab's earlier
+  /// output. A program launch ignores it. See `ScrollbackText.prepared`.
+  public var replay: String?
+
   /// Starts the user's default login shell, from `$SHELL` or the passwd entry. The launch reports
   /// uniterm as the terminal program. A variable in `environment` replaces that.
   public static func loginShell(
-    workingDirectory: String? = nil, environment: [String: String] = [:],
+    workingDirectory: String? = nil, environment: [String: String] = [:], replay: String? = nil,
     version: String = TerminalIdentity.bundleVersion
   ) -> TerminalLaunch {
     TerminalLaunch(
       workingDirectory: workingDirectory,
       environment: TerminalIdentity.environment(version: version).merging(environment) { $1 },
-      program: nil)
+      program: nil, replay: replay)
   }
 
   /// Starts one program. The words are the program and its arguments, exactly as given.
@@ -45,7 +49,7 @@ public struct TerminalLaunch: Sendable, Equatable {
     }
 
     return TerminalLaunch(
-      workingDirectory: workingDirectory, environment: environment, program: words)
+      workingDirectory: workingDirectory, environment: environment, program: words, replay: nil)
   }
 }
 
@@ -250,6 +254,11 @@ public protocol TerminalSession: AnyObject {
   /// including one already waiting for the user, whose answer is then stale if the generation or
   /// the mode changed. A session permission the user gave ends with the old policy.
   func setClipboardPolicy(_ policy: TerminalClipboardPolicy)
+
+  /// The screen and its scrollback as plain text, prepared by `ScrollbackText.prepared`. Colors and
+  /// other attributes are lost. While a program such as vim uses the alternate screen, this is that
+  /// screen. Nil when there is no text.
+  func scrollbackText() -> String?
 
   /// Hangs up the child and releases the session. The session is unusable afterwards.
   func close()

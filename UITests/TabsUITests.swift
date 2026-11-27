@@ -154,6 +154,28 @@ final class TabsUITests: UnitermUITestCase {
     XCTAssertEqual(app.state, .runningForeground)
   }
 
+  /// Catches a reopened tab that comes back empty. The second tab prints a marker and closes.
+  /// Cmd-Shift-T brings it back with the marker above a fresh prompt.
+  func testAReopenedTabShowsItsEarlierOutput() {
+    let app = launchApp()
+    _ = waitForTerminal(in: app)
+    let second = openTab(in: app)
+
+    app.typeText("echo \"RT:$((6*7)):reopen\"\n")
+    XCTAssertTrue(waitFor(second, timeout: 20) { $0.contains("RT:42:reopen") })
+
+    app.typeKey("w", modifierFlags: .command)
+    XCTAssertTrue(waitForGone(tab(1, in: app)), "Cmd-W left the second tab")
+
+    app.typeKey("t", modifierFlags: [.command, .shift])
+    XCTAssertTrue(tab(1, in: app).appears(timeout: 10), "Cmd-Shift-T did not reopen the tab")
+
+    let reopened = app.windows["main-window"].textViews["terminal"]
+    XCTAssertTrue(
+      waitFor(reopened, timeout: 40) { self.promptFollows("RT:42:reopen", in: $0) },
+      "the reopened tab lost its output: \(reopened.value as? String ?? "")")
+  }
+
   /// Catches a tab close that ends a running program without asking. `cat` is running something.
   /// Cmd-W asks, naming the tab. Cancel keeps the tab. Confirming closes it.
   func testClosingATabRunningSomethingAsksFirst() {

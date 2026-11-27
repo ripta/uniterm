@@ -1332,6 +1332,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
       focusedPane: paneArea.focusedPane, highWaterMark: paneArea.tree.highWaterMark)
   }
 
+  /// Tells each applet in the window that the app is quitting and the layout is saved next.
+  func prepareLayoutForQuit() {
+    for applet in paneArea.applets { applet.willQuit() }
+  }
+
   /// A pane saves the control it has as intent, or the intent it was restored with while the user
   /// has not changed it. A group saves its structure with no owner.
   private func savedNode(_ node: Node, described: inout [NodeID: AppletDescription]) -> SavedNode? {
