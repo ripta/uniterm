@@ -70,6 +70,31 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "3 rows" })
   }
 
+  /// Catches a pane that hides which file it shows, or that offers no way to open another without
+  /// the File menu. The row beside the filter names the file, and its Open button replaces it.
+  func testTheFileRowNamesTheFileAndItsOpenButtonReplacesIt() throws {
+    let first = try makeCSV("region,amount\neast,3\n", name: "first.csv")
+    let second = try makeCSV("name\nann\nbob\n", name: "second.csv")
+
+    try plantViewer(path: first.path)
+
+    let app = launchApp(realOpenPanel: true)
+    let window = mainWindow(in: app)
+    let name = window.staticTexts["data-viewer-file-name"]
+
+    XCTAssertTrue(window.tables["data-viewer-table"].appears(timeout: 20), "no table")
+    XCTAssertTrue(waitFor(name, timeout: 5) { $0 == "first.csv" }, "the row does not name the file")
+
+    let open = window.buttons["data-viewer-open-file"]
+    XCTAssertTrue(open.exists, "no Open button beside the filter")
+    open.click()
+
+    choose(second, in: app, window: window)
+
+    XCTAssertTrue(waitFor(name, timeout: 10) { $0 == "second.csv" }, "the file was not replaced")
+    XCTAssertTrue(waitFor(countText(in: window), timeout: 10) { $0 == "2 rows" })
+  }
+
   /// Catches Cmd-O routing a CSV file anywhere but the data viewer. The file opens in a new pane
   /// beside the terminal.
   func testCommandORoutesACSVFileToTheDataViewer() throws {
@@ -150,6 +175,68 @@ final class DataViewerUITests: UnitermUITestCase {
     XCTAssertTrue(nested.appears(timeout: 10), "the nested table never opened")
     XCTAssertTrue(nested.staticTexts["alpha"].appears(timeout: 5), "no nested row")
     XCTAssertTrue(nested.staticTexts["beta"].exists, "no second nested row")
+  }
+
+  /// Catches a long text cell that cannot be read past the column's edge. A double click opens the
+  /// whole value in a popover with a Copy button. The test does not press Copy, since that writes
+  /// to the system clipboard. The package tests prove Copy on a private pasteboard.
+  func testADoubleClickOnALongTextCellShowsItsWholeValue() throws {
+    let long = String(repeating: "lorem ipsum ", count: 40) + "THE END"
+    let file = try makeCSV("id,note\n7,\(long)\n", name: "notes.csv")
+
+    try plantViewer(path: file.path)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    let table = window.tables["data-viewer-table"]
+
+    XCTAssertTrue(table.appears(timeout: 20), "no table")
+
+    let cell = table.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@", "lorem"))
+      .firstMatch
+
+    XCTAssertTrue(cell.appears(timeout: 10), "no long cell")
+    cell.doubleClick()
+
+    let text = app.descendants(matching: .any)["data-viewer-value-text"]
+
+    XCTAssertTrue(text.appears(timeout: 10), "the value popover never opened")
+    XCTAssertTrue(
+      waitFor(text, timeout: 5) { $0.hasSuffix("THE END") }, "the popover cut the value")
+    XCTAssertTrue(app.buttons["data-viewer-value-copy"].exists, "no Copy button")
+  }
+
+  /// Catches a wide table with no quick way to its far edge. A file of 200 keys shows the column
+  /// arrows, and the last-column arrow brings the last column's cell into view. Cells exist only
+  /// near the visible columns, so that cell is missing until the table scrolls. Five rows show no
+  /// row arrows.
+  ///
+  /// The table stays well under the 1,000-column cap. Every query walks the window's accessibility
+  /// tree, and a thousand column headers made each one take up to 20 s on a CI runner.
+  func testTheColumnArrowsReachTheFarEdgeOfAWideTable() throws {
+    let rows = (0..<5).map { row in
+      "{" + (0..<200).map { #""key\#($0)":"v\#(row)-\#($0)""# }.joined(separator: ",") + "}"
+    }
+    let file = try makeCSV("[" + rows.joined(separator: ",") + "]", name: "wide.json")
+
+    try plantViewer(path: file.path)
+
+    let app = launchApp()
+    let window = mainWindow(in: app)
+    let table = window.tables["data-viewer-table"]
+
+    XCTAssertTrue(table.appears(timeout: 20), "no table")
+
+    let last = window.buttons["data-viewer-jump-last-column"]
+    XCTAssertTrue(last.appears(timeout: 10), "no last-column arrow")
+    XCTAssertTrue(window.buttons["data-viewer-jump-first-column"].exists, "no first-column arrow")
+    XCTAssertFalse(window.buttons["data-viewer-jump-last-row"].exists, "row arrows on five rows")
+
+    last.click()
+
+    let farEdge = table.staticTexts.matching(NSPredicate(format: "value == %@", "v0-199"))
+      .firstMatch
+    XCTAssertTrue(farEdge.appears(timeout: 5), "the far edge did not come into view")
   }
 
   /// Catches a missing file that shows an empty table or crashes the restore. The pane says the
@@ -399,5 +486,37 @@ final class DataViewerUITests: UnitermUITestCase {
 
     XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("1 of 1 matches") })
     XCTAssertEqual(filter.value as? String, "o", "typing after Cmd-F went to the filter")
+  }
+
+  /// Catches a filter and a find that look and act alike. The filter row carries its caption and
+  /// counts the rows it keeps. The find strip carries its own caption, and its arrow buttons step
+  /// and its Done button closes it. The colors need a screenshot, which this suite does not take.
+  func testTheFilterAndFindStripCarryTheirOwnControls() throws {
+    let (app, window) = try openFindFile()
+
+    XCTAssertTrue(window.staticTexts["data-viewer-filter-caption"].exists, "no FILTER caption")
+
+    window.searchFields["data-viewer-filter"].click()
+    app.typeText("rom")
+
+    let rows = window.descendants(matching: .any)["data-viewer-filter-count"]
+    XCTAssertTrue(waitFor(rows, timeout: 10) { $0 == "2 of 3 rows" }, "no row count in the filter")
+
+    app.typeKey("f", modifierFlags: .command)
+    app.typeText("rom")
+
+    // The filter still hides a row, so each count goes on to say which rows it covers.
+    let count = findCount(in: window)
+    XCTAssertTrue(waitFor(count, timeout: 10) { $0.hasPrefix("1 of 2 matches") })
+    XCTAssertTrue(window.staticTexts["data-viewer-find-caption"].exists, "no FIND caption")
+
+    window.buttons["data-viewer-find-next"].click()
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("2 of 2 matches") })
+
+    window.buttons["data-viewer-find-previous"].click()
+    XCTAssertTrue(waitFor(count, timeout: 5) { $0.hasPrefix("1 of 2 matches") })
+
+    window.buttons["data-viewer-find-done"].click()
+    XCTAssertTrue(waitUntilGone(window.searchFields["data-viewer-find"]), "Done left the strip up")
   }
 }

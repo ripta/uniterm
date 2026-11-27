@@ -55,6 +55,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private let budget: TableBudget
   private let pageTarget: Int
   private var nested: NestedTable?
+  private(set) var valuePopover: ValuePopover?
+
+  /// Where a value popover's Copy writes. The system pasteboard in the app, and a private named
+  /// one in tests, since the system clipboard may hold the user's secrets.
+  private let pasteboard: NSPasteboard
   private var revealedRevision = 0
   private var palette = ThemePalette.latte
 
@@ -63,10 +68,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   public init(
     startDirectory: String?, budget: TableBudget = .shared,
     pageTarget: Int = TableLoader.defaultPageTarget,
-    picker: @escaping OpenPicker = SystemOpenPanel.pick
+    picker: @escaping OpenPicker = SystemOpenPanel.pick, pasteboard: NSPasteboard = .general
   ) {
     record = DataViewerDescription(startDirectory: startDirectory)
     openPicker = picker
+    self.pasteboard = pasteboard
     restoreWaitsForStart = false
     describesFromRecord = false
     self.budget = budget
@@ -84,10 +90,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   public init(
     restoring description: AppletDescription, budget: TableBudget = .shared,
     pageTarget: Int = TableLoader.defaultPageTarget,
-    picker: @escaping OpenPicker = SystemOpenPanel.pick
+    picker: @escaping OpenPicker = SystemOpenPanel.pick, pasteboard: NSPasteboard = .general
   ) throws {
     record = try DataViewerDescription.decode(description)
     openPicker = picker
+    self.pasteboard = pasteboard
     restoreWaitsForStart = record.path != nil
     describesFromRecord = true
     self.budget = budget
@@ -105,9 +112,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   /// opens `file`.
   public static func opening(
     _ file: URL, startDirectory: String, budget: TableBudget = .shared,
-    picker: @escaping OpenPicker = SystemOpenPanel.pick
+    picker: @escaping OpenPicker = SystemOpenPanel.pick, pasteboard: NSPasteboard = .general
   ) throws -> DataViewerApplet {
-    let applet = DataViewerApplet(startDirectory: startDirectory, budget: budget, picker: picker)
+    let applet = DataViewerApplet(
+      startDirectory: startDirectory, budget: budget, picker: picker, pasteboard: pasteboard)
     try applet.replaceSource(with: file, startDirectory: startDirectory)
 
     return applet
@@ -148,6 +156,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     content.onOpen = { [weak self] in self?.showOpenPanel() }
     content.onDrop = { [weak self] urls in self?.handleDrop(urls) ?? false }
     content.onExpand = { [weak self] request in self?.expand(request) }
+    content.onShowValue = { [weak self] request in self?.showValue(request) }
     content.onSheet = { [weak self] name in self?.selectSheet(name) }
   }
 
@@ -240,11 +249,11 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
   /// Opens a nested cell as a table in a popover over the cell, within this pane.
   private func expand(_ request: NestedRequest) {
-    nested?.close()
+    closePopovers()
 
     let table = NestedTable(
       bytes: request.bytes, title: request.title, budget: budget, palette: palette,
-      pageTarget: pageTarget)
+      pageTarget: pageTarget, pasteboard: pasteboard)
     table.onNotice = { [weak self] notice in
       guard let self else { return }
 
@@ -253,6 +262,23 @@ public final class DataViewerApplet: Applet, SourceReplacing {
 
     nested = table
     table.present(relativeTo: request.rect, of: request.anchor)
+  }
+
+  /// Shows a cell's whole value in a popover over the cell.
+  private func showValue(_ request: ValueRequest) {
+    closePopovers()
+
+    let popover = ValuePopover(request, palette: palette, pasteboard: pasteboard)
+    valuePopover = popover
+    popover.present(relativeTo: request.rect, of: request.anchor)
+  }
+
+  /// Closes the nested table and the value popover, whichever is open. The pane shows one at a time.
+  private func closePopovers() {
+    nested?.close()
+    nested = nil
+    valuePopover?.close()
+    valuePopover = nil
   }
 
   // MARK: Source
@@ -279,8 +305,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     resolvedNotice = nil
     posted.reset()
     alerts.replaceLoad()
-    nested?.close()
-    nested = nil
+    closePopovers()
 
     let generation = openGeneration
     session.close()
@@ -351,8 +376,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     closed = true
     sourceSwap.cancel()
     alerts.discard()
-    nested?.close()
-    nested = nil
+    closePopovers()
     opening?.cancel()
     opening = nil
     session.onChange = nil
@@ -375,6 +399,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   public func apply(_ palette: ThemePalette) {
     self.palette = palette
     nested?.apply(palette)
+    valuePopover?.apply(palette)
     content.apply(palette)
   }
 
@@ -401,7 +426,6 @@ public final class DataViewerApplet: Applet, SourceReplacing {
   private func refresh() {
     guard !closed else { return }
 
-    let fileName = record.path.map { ($0 as NSString).lastPathComponent }
     let query = describesFromRecord ? record.query : session.query
 
     if session.phase == .loaded || session.phase == .stoppedAtBudget
@@ -410,6 +434,7 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       record.sheet = session.selectedSheet
     }
 
+    content.fileName = fileName
     content.show(
       body(), filter: query.filter, sort: query.sort, find: findDisplay(),
       sheets: SheetDisplay(names: session.sheets, selected: session.selectedSheet))
@@ -434,6 +459,10 @@ public final class DataViewerApplet: Applet, SourceReplacing {
     host?.appletDidChange(self)
   }
 
+  private var fileName: String? {
+    record.path.map { ($0 as NSString).lastPathComponent }
+  }
+
   private func body() -> DataViewerBody {
     if let failure = failure() {
       return .message(failure)
@@ -443,15 +472,16 @@ public final class DataViewerApplet: Applet, SourceReplacing {
       return .table
     }
 
+    let opening = "Opening \(fileName ?? "the file")\u{2026}"
+
     switch session.phase {
     case .idle:
-      return .message(
-        record.path == nil
-          ? "Open a CSV, JSON, or .xlsx file, or drop one here."
-          : "Opening\u{2026}")
+      return record.path == nil
+        ? .message("Open a CSV, JSON, or .xlsx file, or drop one here.")
+        : .loading(opening, fraction: nil)
 
     case .loading:
-      return .message("Loading\u{2026}")
+      return .loading(opening, fraction: session.progress.fraction)
 
     case .loaded:
       if let sheet = session.selectedSheet, session.sheets.count > 1 {
